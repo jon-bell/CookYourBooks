@@ -273,13 +273,68 @@ added via `moderation_grant_admin` (callable by any existing admin).
 
 ---
 
+## 9b. CLI (`apps/cli`)
+
+Command-line client, installed via the local workspace or future npm
+publish as `cyb`. Mints **no** credentials itself — users generate a
+token in Settings → CLI tokens in the web or mobile app, paste it into
+`cyb login`.
+
+### Token model
+
+- Format: `cyb_cli_` + 48 hex chars. Prefix makes leaks spot-checkable in
+  GitHub secret scanning, server logs, etc.
+- Table: `public.cli_tokens(id, owner_id, name, token_hash, prefix,
+  created_at, last_used_at)`. Only the SHA-256 hash is stored; the raw
+  string is shown exactly once at issue time and never recoverable.
+- RLS: owners can `select` / `delete` their own rows. `insert` goes
+  through `cli_issue_token` (`security definer`) so the client never
+  writes the hash itself.
+- Revoke = `delete from cli_tokens where id = ?` (RLS-gated). Any CLI
+  still using the token will start seeing `Invalid CLI token`.
+
+### RPC surface
+
+All callable with just the anon key + a token in the body.
+
+| RPC | Returns | Notes |
+|---|---|---|
+| `cli_issue_token(token_name)` | `text` (raw token) | Requires a signed-in user. |
+| `cli_verify_token(raw_token)` | `uuid` owner id (internal) | Hashes the input, bumps `last_used_at`, returns owner or NULL. Not granted to clients. |
+| `cli_export_library(raw_token)` | `jsonb` | Full dump of the caller's library. |
+| `cli_import_recipe(raw_token, target_collection_id, recipe)` | `uuid` new recipe id | `target_collection_id = null` creates a "CLI imports" collection on demand. |
+
+Admin / public-collection / moderation surfaces are **not** reachable
+via CLI tokens. A CLI token grants exactly what the token's owner could
+do to their own data.
+
+### CLI commands
+
+```bash
+cyb login --url <supabase-url> --anon-key <key> --token <cyb_cli_…>
+cyb whoami
+cyb export [-o file.json] [--pretty]
+cyb import <file.json> [--collection <uuid>]
+```
+
+Config at `$XDG_CONFIG_HOME/cookyourbooks/config.json` (mode `0600`),
+contains `{ url, anonKey, token }`. The anon key is public by design;
+the token is the real secret.
+
+`cyb import` accepts three shapes: a full `cli_export_library` blob, a
+`{ recipes: [...] }` single-collection wrapper, or a bare recipe — so
+round-tripping an export back into import works without post-processing.
+
+---
+
 ## 10. Testing matrix
 
-- **Unit (Vitest)** — 61 tests:
+- **Unit (Vitest)** — 65 tests:
   - `packages/domain` (53): Quantity, Unit, Conversion, Recipe, ShoppingList, Search, parseIngredientLine, parseRecipeText, Markdown, Servings formatting.
   - `packages/db` (3): row ↔ domain mapping round-trip, malformed-row fallback.
   - `apps/web` (5): `parseLlmJson` contract.
-- **E2E (Playwright, chromium)** — 43 tests across 12 spec files: auth (5), collections (5), recipes (4), recipe-features (6), shopping-list (2), search (3), discover (3), covers (2), sync-offline (2), sync-realtime (1), ocr-import (5), moderation (4).
+  - `apps/cli` (4): login validates token prefix, whoami without config, import without login, compiled binary shebang.
+- **E2E (Playwright, chromium)** — 45 tests across 13 spec files: auth (5), collections (5), recipes (4), recipe-features (6), shopping-list (2), search (3), discover (3), covers (2), sync-offline (2), sync-realtime (1), ocr-import (5), moderation (4), cli-tokens (2).
 
 Suite runs serially (`workers: 1`) because parallel runs contended on
 the single local Supabase realtime channel. Each test mints a fresh

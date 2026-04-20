@@ -70,6 +70,44 @@ export type Database = {
           },
         ]
       }
+      cli_tokens: {
+        Row: {
+          created_at: string
+          id: string
+          last_used_at: string | null
+          name: string
+          owner_id: string
+          prefix: string
+          token_hash: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_used_at?: string | null
+          name: string
+          owner_id: string
+          prefix: string
+          token_hash: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_used_at?: string | null
+          name?: string
+          owner_id?: string
+          prefix?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cli_tokens_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversion_rules: {
         Row: {
           factor: number
@@ -513,6 +551,13 @@ export type Database = {
       }
     }
     Functions: {
+      cli_export_library: { Args: { raw_token: string }; Returns: Json }
+      cli_import_recipe: {
+        Args: { raw_token: string; recipe: Json; target_collection_id: string }
+        Returns: string
+      }
+      cli_issue_token: { Args: { token_name: string }; Returns: string }
+      cli_verify_token: { Args: { raw_token: string }; Returns: string }
       fork_collection: {
         Args: { source_collection_id: string }
         Returns: string

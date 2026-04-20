@@ -9,6 +9,7 @@ import {
   type OcrProvider,
   type OcrSettings,
 } from '../settings/ocrSettings.js';
+import { CliTokensSection } from '../settings/CliTokensSection.js';
 
 /**
  * Per-device settings page. The API key lives in localStorage only — it
@@ -165,6 +166,8 @@ export function SettingsPage() {
           {saved && <span className="text-sm text-emerald-700">Saved.</span>}
         </div>
       </form>
+
+      <CliTokensSection />
     </div>
   );
 }
