@@ -9,6 +9,23 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="CookYourBooks" />
     <title>CookYourBooks</title>
+
+    <!-- Social preview: site-wide defaults. Per-recipe / per-collection
+         URLs get richer cards via the api/og serverless function when
+         accessed by link-unfurling bots. -->
+    <meta name="description" content="Your cookbook library, with you everywhere. Offline-first recipe manager with sync across phone and browser." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CookYourBooks" />
+    <meta property="og:title" content="CookYourBooks" />
+    <meta property="og:description" content="Your cookbook library, with you everywhere. Offline-first, free as in sourdough starter." />
+    <meta property="og:url" content="https://cookyourbooks.app/" />
+    <meta property="og:image" content="https://cookyourbooks.app/api/og-image?title=CookYourBooks&subtitle=Your+cookbook+library%2C+with+you+everywhere" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CookYourBooks" />
+    <meta name="twitter:description" content="Your cookbook library, with you everywhere." />
+    <meta name="twitter:image" content="https://cookyourbooks.app/api/og-image?title=CookYourBooks&subtitle=Your+cookbook+library%2C+with+you+everywhere" />
   </head>
   <body class="bg-stone-50 text-stone-900 antialiased">
     <div id="root"></div>

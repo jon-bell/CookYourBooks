@@ -1,0 +1,27 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/collections/:cid/recipes/:rid",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(bot|facebookexternalhit|twitterbot|slackbot|discordbot|whatsapp|linkedinbot|telegram|googlebot|bingbot|duckduckbot|redditbot|skypeuripreview|applebot|pinterest|embedly|quora|vkshare|google-pagespeed).*"
+        }
+      ],
+      "destination": "/api/og?kind=recipe&cid=:cid&rid=:rid"
+    },
+    {
+      "source": "/collections/:cid",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(bot|facebookexternalhit|twitterbot|slackbot|discordbot|whatsapp|linkedinbot|telegram|googlebot|bingbot|duckduckbot|redditbot|skypeuripreview|applebot|pinterest|embedly|quora|vkshare|google-pagespeed).*"
+        }
+      ],
+      "destination": "/api/og?kind=collection&cid=:cid"
+    }
+  ]
+}

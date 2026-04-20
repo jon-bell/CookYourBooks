@@ -9,6 +9,8 @@ import {
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
 import { SortableRecipeList } from '../components/SortableRecipeList.js';
+import { CopyLinkButton } from '../share/CopyLinkButton.js';
+import { collectionShareUrl } from '../share/shareUrl.js';
 
 export function CollectionPage() {
   const { collectionId } = useParams();
@@ -83,6 +85,12 @@ export function CollectionPage() {
         >
           {c.isPublic ? 'Make private' : 'Make public'}
         </button>
+        {c.isPublic && c.moderationState !== 'TAKEN_DOWN' && (
+          <CopyLinkButton
+            url={collectionShareUrl(c.id)}
+            className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+          />
+        )}
         <button
           onClick={async () => {
             if (confirm(`Delete "${c.title}" and all its recipes?`)) {

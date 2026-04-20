@@ -21,6 +21,8 @@ import {
   useSaveRecipe,
 } from '../data/queries.js';
 import { shareRecipe } from '../share/share.js';
+import { CopyLinkButton } from '../share/CopyLinkButton.js';
+import { recipeShareUrl } from '../share/shareUrl.js';
 
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
@@ -160,6 +162,9 @@ export function RecipePage() {
           >
             Share
           </button>
+          {collection.isPublic && collection.moderationState !== 'TAKEN_DOWN' && (
+            <CopyLinkButton url={recipeShareUrl(collection.id, recipe.id)} />
+          )}
           <button
             onClick={async () => {
               if (confirm(`Delete "${recipe.title}"?`)) {
