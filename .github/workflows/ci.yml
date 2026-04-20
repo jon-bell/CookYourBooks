@@ -111,6 +111,58 @@ jobs:
         # collide with other runners if they live on separate hosts.
         run: ${{ env.SUPABASE_CLI }} start
 
+      - name: Wait for Supabase services to be ready
+        # `supabase start` returns as soon as container healthchecks pass,
+        # but in practice PostgREST needs a moment more to pick up the
+        # migrated schema and GoTrue to finish its own migrations.
+        # Polling each public endpoint until it answers cleanly catches
+        # the "started but not actually ready" window before Playwright
+        # fires its first request. On failure, print docker status so the
+        # log has the full picture.
+        run: |
+          set -eo pipefail
+          status_json=$(${{ env.SUPABASE_CLI }} status --output json)
+          api_url=$(printf '%s' "$status_json" | node -e \
+            'let i=""; process.stdin.on("data",d=>i+=d).on("end",()=>console.log(JSON.parse(i).API_URL))')
+          anon_key=$(printf '%s' "$status_json" | node -e \
+            'let i=""; process.stdin.on("data",d=>i+=d).on("end",()=>console.log(JSON.parse(i).ANON_KEY))')
+          echo "api_url=$api_url"
+
+          probe() {
+            local label="$1" url="$2" expect_code="$3"
+            echo "::group::probe $label"
+            local code=000
+            for i in $(seq 1 60); do
+              code=$(curl -sS -o /tmp/probe.out -w '%{http_code}' \
+                -H "apikey: $anon_key" \
+                -H "Authorization: Bearer $anon_key" \
+                --max-time 3 \
+                "$url" || echo 000)
+              if [ "$code" = "$expect_code" ]; then
+                echo "$label ready after ${i}s (HTTP $code)"
+                echo "::endgroup::"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "::error::$label never became ready — last HTTP=$code"
+            echo "---- last body ----"
+            cat /tmp/probe.out || true
+            echo "---- docker ps ----"
+            docker ps --format 'table {{.Names}}\t{{.Status}}' || true
+            echo "::endgroup::"
+            return 1
+          }
+
+          # PostgREST: any query against a known table proves the schema
+          # is loaded and RLS is resolving. Expect a 200 empty array.
+          probe "postgrest"     "$api_url/rest/v1/recipe_collections?select=id&limit=0" 200
+          # Auth: /settings is public and cheap.
+          probe "auth"          "$api_url/auth/v1/settings"                             200
+          # Storage: listing buckets returns 200 (RLS filters the body to
+          # `[]` for anon; we just need to know the service is answering).
+          probe "storage"       "$api_url/storage/v1/bucket"                            200
+
       - name: Run Playwright E2E
         run: pnpm --filter @cookyourbooks/web exec playwright test --reporter=line
 

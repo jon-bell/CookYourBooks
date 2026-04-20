@@ -49,7 +49,10 @@ export default defineConfig({
     url: 'http://localhost:5173/',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    stdout: 'ignore',
+    // Stream the server's output in CI so a boot failure is diagnosable
+    // from the job log; locally keep stdout quiet so `pnpm dev`'s noise
+    // doesn't drown the test reporter.
+    stdout: process.env.CI ? 'pipe' : 'ignore',
     stderr: 'pipe',
   },
 });
