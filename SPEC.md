@@ -327,6 +327,71 @@ round-tripping an export back into import works without post-processing.
 
 ---
 
+## 9c. MCP server (`apps/web/api/mcp.ts`)
+
+A Model Context Protocol server so AI assistants (Claude Desktop,
+Claude Code, etc.) can drive CookYourBooks the way a human would:
+list collections, read recipes, search the library, create new
+recipes, and manage a persistent shopping list.
+
+Runs as a Vercel Edge function at `POST /api/mcp`. Auth is a bearer
+`cyb_cli_*` token — the same one users mint in Settings for the
+`cyb` CLI. Every tool thin-wraps a `security definer` Postgres RPC,
+so the MCP surface can't reach outside the token owner's own data.
+
+### Tools exposed
+
+| Tool | Backing RPC | Purpose |
+|---|---|---|
+| `list_collections` | `cli_export_library` (metadata subset) | Overview of the user's library. |
+| `get_collection` | `cli_export_toc` | One collection + titles-only recipe list. |
+| `get_recipe` | `cli_get_recipe` | Full recipe (ingredients, instructions, notes, lineage). |
+| `search_recipes` | `cli_search_recipes` | Substring match on title or ingredient name. |
+| `create_recipe` | `cli_import_recipe` | Add a recipe to a collection (auto-creates "CLI imports" if none). |
+| `list_shopping_items` | `cli_list_shopping` | Read the persistent shopping list. |
+| `add_shopping_item` | `cli_add_shopping` | Add an ad-hoc item; optional recipe attribution. |
+| `check_shopping_item` | `cli_check_shopping` | Toggle an item's `checked` flag. |
+| `remove_shopping_item` | `cli_remove_shopping` | Delete an item. |
+| `clear_shopping_list` | `cli_clear_shopping` | Delete all (or only checked) items. |
+
+### Shopping list surface
+
+The MCP shopping list is **separate** from the web app's recipe-
+aggregation view — that one is computed on the fly from selected
+recipes and isn't writable. The MCP talks to a new
+`shopping_list_items` table (owner-scoped, RLS-enforced, realtime-
+enabled) that also powers a "Pantry" section on the Shopping List
+page, so items added by the AI show up in the browser instantly.
+
+### Transport
+
+Streamable HTTP (MCP protocol version `2025-06-18`). The function
+hand-rolls JSON-RPC dispatch — no SDK — because every tool is
+simple request / response. Notifications (`notifications/initialized`
+et al.) are accepted with `202 Accepted`.
+
+### Claude Desktop / Claude Code setup
+
+```json
+{
+  "mcpServers": {
+    "cookyourbooks": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "https://cookyourbooks.app/api/mcp",
+        "--header", "Authorization: Bearer cyb_cli_XXXXXXXX"
+      ]
+    }
+  }
+}
+```
+
+The token comes from Settings → CLI tokens in the web app; the same
+minted token works for the `cyb` CLI and the MCP server.
+
+---
+
 ## 10. Testing matrix
 
 - **Unit (Vitest)** — 65 tests:

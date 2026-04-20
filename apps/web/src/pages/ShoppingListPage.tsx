@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { buildShoppingList } from '@cookyourbooks/domain';
 import { useCollections } from '../data/queries.js';
+import { PantrySection } from './PantrySection.js';
 
 export function ShoppingListPage() {
   const { data: collections = [], isLoading } = useCollections();
@@ -57,6 +58,8 @@ export function ShoppingListPage() {
           )}
         </div>
       </section>
+
+      <PantrySection />
 
       {selected.size > 0 && (
         <section className="space-y-4">

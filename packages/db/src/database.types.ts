@@ -487,6 +487,42 @@ export type Database = {
           },
         ]
       }
+      shopping_list_items: {
+        Row: {
+          checked: boolean
+          created_at: string
+          id: string
+          name: string
+          note: string | null
+          owner_id: string
+          quantity_text: string | null
+          recipe_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          checked?: boolean
+          created_at?: string
+          id?: string
+          name: string
+          note?: string | null
+          owner_id: string
+          quantity_text?: string | null
+          recipe_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          checked?: boolean
+          created_at?: string
+          id?: string
+          name?: string
+          note?: string | null
+          owner_id?: string
+          quantity_text?: string | null
+          recipe_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       reports: {
         Row: {
           created_at: string
