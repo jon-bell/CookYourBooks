@@ -71,4 +71,20 @@ describe('cyb cli', () => {
     const shebang = readFileSync(DIST, 'utf8').split('\n')[0];
     expect(shebang).toBe('#!/usr/bin/env node');
   });
+
+  it('exposes toc export/import under the toc subcommand', () => {
+    const result = runCli(['toc', '--help']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/\bexport\b/);
+    expect(result.stdout).toMatch(/\bimport\b/);
+  });
+
+  it('toc import without login prints a useful message', () => {
+    const result = runCli(
+      ['toc', 'import', '/nonexistent.txt', '--collection', '00000000-0000-0000-0000-000000000000'],
+      { XDG_CONFIG_HOME: '/tmp/cyb-missing-cfg' },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/Not logged in/);
+  });
 });

@@ -10,7 +10,7 @@ declare global {
       rpc(
         fn: string,
         args: Record<string, unknown>,
-      ): Promise<{ error?: { message?: string } | null }>;
+      ): Promise<{ data?: unknown; error?: { message?: string } | null }>;
       from(table: string): {
         select(cols: string): {
           eq(

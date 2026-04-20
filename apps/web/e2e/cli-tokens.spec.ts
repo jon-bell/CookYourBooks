@@ -87,6 +87,81 @@ test.describe('CLI tokens', () => {
     expect(postRevoke.body).toMatch(/Invalid CLI token/);
   });
 
+  test('ToC export lists titles; ToC import seeds placeholders', async ({ authedPage: page }) => {
+    // Seed: one collection with one existing recipe so we can assert
+    // append-style sort ordering after import.
+    await page.getByRole('link', { name: 'New collection' }).click();
+    await page.getByLabel('Title').fill('ToC Fixture');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.getByRole('heading', { name: 'ToC Fixture' })).toBeVisible();
+
+    // Grab the collection id out of the URL (…/collections/:id).
+    const collectionId = page.url().split('/').pop() ?? '';
+    expect(collectionId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // Mint a CLI token (the UI path is exercised in the test above, so
+    // here we just issue one via the in-page supabase client).
+    const rawToken = await page.evaluate(async () => {
+      const sb = window.__cybSupabase;
+      const { data, error } = await sb.rpc('cli_issue_token', { token_name: 'toc-e2e' });
+      if (error) throw error;
+      return data as string;
+    });
+
+    // Export the ToC — should surface the collection but zero recipes
+    // (we never added any to ToC Fixture).
+    const initialToc = await page.evaluate(
+      async ({ url, anonKey, rawToken, collectionId }) => {
+        const resp = await fetch(`${url}/rest/v1/rpc/cli_export_toc`, {
+          method: 'POST',
+          headers: { apikey: anonKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ raw_token: rawToken, collection_id: collectionId }),
+        });
+        return { status: resp.status, body: await resp.json() };
+      },
+      { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY, rawToken, collectionId },
+    );
+    expect(initialToc.status).toBe(200);
+    expect(initialToc.body.collections).toHaveLength(1);
+    expect(initialToc.body.collections[0].title).toBe('ToC Fixture');
+    expect(initialToc.body.collections[0].recipes).toEqual([]);
+
+    // Import a list of titles.
+    const imported = await page.evaluate(
+      async ({ url, anonKey, rawToken, collectionId }) => {
+        const resp = await fetch(`${url}/rest/v1/rpc/cli_import_toc`, {
+          method: 'POST',
+          headers: { apikey: anonKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            raw_token: rawToken,
+            target_collection_id: collectionId,
+            titles: ['Sourdough Loaf', 'Rye Starter', 'Focaccia'],
+          }),
+        });
+        return { status: resp.status, body: await resp.json() };
+      },
+      { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY, rawToken, collectionId },
+    );
+    expect(imported.status).toBe(200);
+    expect(Array.isArray(imported.body)).toBe(true);
+    expect(imported.body).toHaveLength(3);
+
+    // Re-exporting shows the new placeholders, in order.
+    const afterToc = await page.evaluate(
+      async ({ url, anonKey, rawToken, collectionId }) => {
+        const resp = await fetch(`${url}/rest/v1/rpc/cli_export_toc`, {
+          method: 'POST',
+          headers: { apikey: anonKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ raw_token: rawToken, collection_id: collectionId }),
+        });
+        return await resp.json();
+      },
+      { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY, rawToken, collectionId },
+    );
+    const titles = (afterToc.collections[0].recipes as { title: string }[]).map((r) => r.title);
+    expect(titles).toEqual(['Sourdough Loaf', 'Rye Starter', 'Focaccia']);
+  });
+
   test('an anonymous caller cannot issue tokens', async ({ page }) => {
     // Hit the issue RPC directly without signing in — should 401.
     const resp = await page.evaluate(

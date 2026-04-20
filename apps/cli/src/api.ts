@@ -59,6 +59,32 @@ export interface LibraryExport {
   collections: ExportedCollection[];
 }
 
+// --- ToC (titles-only) shapes ---
+
+export interface TocRecipe {
+  id: string;
+  title: string;
+  sort_order: number;
+}
+
+export interface TocCollection {
+  id: string;
+  title: string;
+  source_type: 'PERSONAL' | 'PUBLISHED_BOOK' | 'WEBSITE';
+  is_public: boolean;
+  author: string | null;
+  isbn: string | null;
+  publisher: string | null;
+  publication_year: number | null;
+  recipes: TocRecipe[];
+}
+
+export interface TocExport {
+  exported_at: string;
+  owner_id: string;
+  collections: TocCollection[];
+}
+
 // --- Low-level RPC client ---
 
 async function rpc<T>(config: CliConfig, fn: string, args: Record<string, unknown>): Promise<T> {
@@ -95,4 +121,26 @@ export async function importRecipe(
     recipe,
   });
   return newId;
+}
+
+export async function exportToc(
+  config: CliConfig,
+  collectionId?: string,
+): Promise<TocExport> {
+  return rpc<TocExport>(config, 'cli_export_toc', {
+    raw_token: config.token,
+    collection_id: collectionId ?? null,
+  });
+}
+
+export async function importToc(
+  config: CliConfig,
+  targetCollectionId: string,
+  titles: string[],
+): Promise<string[]> {
+  return rpc<string[]>(config, 'cli_import_toc', {
+    raw_token: config.token,
+    target_collection_id: targetCollectionId,
+    titles,
+  });
 }
