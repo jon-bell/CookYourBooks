@@ -63,6 +63,50 @@ export function LandingPage() {
         </Feature>
       </section>
 
+      <section className="rounded-lg border border-amber-200 bg-amber-50 p-8">
+        <h2 className="text-2xl font-semibold tracking-tight text-stone-900">
+          Free as in sourdough starter, not as in beer.
+        </h2>
+        <div className="mt-3 space-y-3 text-stone-700">
+          <p>
+            CookYourBooks is open source under the AGPL. Fork it, feed it, pass it on. The
+            recipe for the app itself is right there in the jar — take a scoop, add your own
+            flour, bake something new. If you run a modified copy for others, share what you
+            changed so the next cook can keep it alive.
+          </p>
+          <p className="text-sm text-stone-600">
+            Self-host it against your own Supabase project, read the code before you trust it
+            with your grandmother's brisket, or send a patch when something bugs you.
+          </p>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <a
+            href="https://github.com/jon-bell/CookYourBooks"
+            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+            target="_blank"
+            rel="noreferrer"
+          >
+            View on GitHub
+          </a>
+          <a
+            href="https://github.com/jon-bell/CookYourBooks/blob/main/CONTRIBUTING.md"
+            className="rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-800 hover:bg-stone-100"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Contributing
+          </a>
+          <a
+            href="https://github.com/jon-bell/CookYourBooks/blob/main/LICENSE"
+            className="rounded-md px-4 py-2 text-sm font-medium text-stone-700 hover:text-stone-900"
+            target="_blank"
+            rel="noreferrer"
+          >
+            AGPL-3.0 →
+          </a>
+        </div>
+      </section>
+
       <section className="rounded-lg border border-stone-200 bg-white p-6 text-sm text-stone-600">
         <p>
           Built as a local-first web app with a Capacitor wrapper for iOS + Android. Backed by
