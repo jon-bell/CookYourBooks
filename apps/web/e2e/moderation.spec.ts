@@ -146,17 +146,15 @@ test.describe('Moderation: user reports and admin takedowns', () => {
       // Admin signs in and bans via the RPC (carried by the page's
       // authenticated supabase client).
       await signIn(page, admin);
+      // The web app exposes its authenticated supabase client on
+      // `window.__cybSupabase` for tests like this; hitting it through
+      // the real client carries the signed-in session automatically and
+      // works against both the Vite dev server and a production build.
       const banError = await page.evaluate(
         async ({ target }) => {
-          const mod = (await import('/src/supabase.ts')) as {
-            supabase: {
-              rpc: (
-                fn: string,
-                args: Record<string, unknown>,
-              ) => Promise<{ error?: { message?: string } }>;
-            };
-          };
-          const { error } = await mod.supabase.rpc('moderation_ban_user', {
+          const client = window.__cybSupabase;
+          if (!client) throw new Error('window.__cybSupabase not set');
+          const { error } = await client.rpc('moderation_ban_user', {
             target_user_id: target,
             reason: 'e2e',
           });
@@ -193,33 +191,15 @@ test.describe('Moderation: user reports and admin takedowns', () => {
       // the victim's session. The database trigger must reject it.
       const { status, body } = await page.evaluate(
         async ({ collectionTitle }) => {
-          const mod = (await import('/src/supabase.ts')) as {
-            supabase: {
-              from: (t: string) => {
-                select: (cols: string) => {
-                  eq: (
-                    col: string,
-                    val: string,
-                  ) => {
-                    maybeSingle: () => Promise<{ data?: { id?: string } }>;
-                  };
-                };
-                update: (row: Record<string, unknown>) => {
-                  eq: (
-                    col: string,
-                    val: string,
-                  ) => Promise<{ error?: { message?: string } }>;
-                };
-              };
-            };
-          };
-          const { data } = await mod.supabase
+          const client = window.__cybSupabase;
+          if (!client) throw new Error('window.__cybSupabase not set');
+          const { data } = await client
             .from('recipe_collections')
             .select('id')
             .eq('title', collectionTitle)
             .maybeSingle();
           if (!data?.id) return { status: 'no-id', body: '' };
-          const { error } = await mod.supabase
+          const { error } = await client
             .from('recipe_collections')
             .update({ is_public: true })
             .eq('id', data.id);
