@@ -8,7 +8,12 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
-      "env": ["VITE_*"]
+      "env": [
+        "VITE_*",
+        "SUPABASE_URL",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_PUBLISHABLE_KEY"
+      ]
     },
     "dev": {
       "cache": false,
