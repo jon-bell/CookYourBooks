@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual trigger for sanity checks outside of PR flow.
+  workflow_dispatch:
+
+# A later push cancels any still-running CI for the same ref. Saves the
+# runner pool from stacking up when someone force-pushes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, unit, E2E, build
+    # Pinned to the `linux` label so the Linux-only Supabase Docker stack
+    # doesn't land on a macOS runner that might also be in the pool. See
+    # README.md §"Self-hosted runners" for the labels we expect.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+
+    env:
+      # Forces Playwright's reporter into html + list; tests already check
+      # this to turn retries on.
+      CI: "true"
+      # Skip Playwright's bundled-browser auto-download; we manage them
+      # explicitly below so the cache is shared across CI jobs.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
+      # The vendored Supabase CLI is at ./.bin/supabase (checked in).
+      SUPABASE_CLI: ./.bin/supabase
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # Matches `packageManager` in root package.json; bumping here
+          # without bumping that will drift the lockfile.
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        # --frozen-lockfile fails the job if pnpm-lock.yaml drifted.
+        run: pnpm install --frozen-lockfile
+
+      - name: Install vendored Supabase CLI
+        # The CLI binary is gitignored — fetch it into ./.bin/. On a
+        # persistent runner the existing copy is picked up next run.
+        run: scripts/install-supabase-cli.sh
+
+      - name: Typecheck (all packages)
+        run: pnpm -w typecheck
+
+      - name: Unit tests (domain + db + web)
+        run: pnpm -w test
+
+      - name: Build web
+        # Catch real build-time breakage (tsc -b) before the slower E2E pass.
+        run: pnpm --filter @cookyourbooks/web build
+
+      # ---- End-to-end tests -------------------------------------------------
+
+      - name: Install Playwright browsers
+        # `--with-deps` pulls apt packages Chromium needs (libnss3, etc.).
+        # On self-hosted runners these are usually already present, but the
+        # idempotent install keeps bring-up simple.
+        run: pnpm --filter @cookyourbooks/web exec playwright install --with-deps chromium
+
+      - name: Start local Supabase
+        # The CLI manages docker-compose under the hood. Ports are the
+        # project's 54420-range (see supabase/config.toml), so this won't
+        # collide with other runners if they live on separate hosts.
+        run: ${{ env.SUPABASE_CLI }} start
+
+      - name: Run Playwright E2E
+        run: pnpm --filter @cookyourbooks/web exec playwright test --reporter=line
+
+      - name: Upload Playwright HTML report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_attempt }}
+          path: apps/web/playwright-report/
+          retention-days: 14
+
+      - name: Upload Playwright trace/video artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results-${{ github.run_attempt }}
+          path: apps/web/test-results/
+          retention-days: 14
+
+      - name: Supabase logs on failure
+        if: failure()
+        run: |
+          echo "::group::auth"
+          docker logs supabase_auth_CookYourBooks 2>&1 | tail -200 || true
+          echo "::endgroup::"
+          echo "::group::db"
+          docker logs supabase_db_CookYourBooks 2>&1 | tail -200 || true
+          echo "::endgroup::"
+          echo "::group::realtime"
+          docker logs supabase_realtime_CookYourBooks 2>&1 | tail -200 || true
+          echo "::endgroup::"
+          echo "::group::kong"
+          docker logs supabase_kong_CookYourBooks 2>&1 | tail -200 || true
+          echo "::endgroup::"
+
+      - name: Stop local Supabase
+        # `if: always()` so this runs even if a prior step failed; leaving
+        # containers up would block the next job on the same runner.
+        if: always()
+        run: ${{ env.SUPABASE_CLI }} stop --no-backup || true

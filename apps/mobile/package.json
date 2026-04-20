@@ -1,0 +1,28 @@
+{
+  "name": "@cookyourbooks/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Capacitor wrapper around the web app. The web build output in ../web/dist is served from the native container on iOS and Android.",
+  "scripts": {
+    "build:web": "pnpm --filter @cookyourbooks/web build",
+    "sync": "pnpm run build:web && cap sync",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android",
+    "add:ios": "cap add ios",
+    "add:android": "cap add android",
+    "copy": "cap copy",
+    "assets": "capacitor-assets generate --assetPath=assets --ios --android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/camera": "^6.1.2",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/haptics": "^6.0.2",
+    "@capacitor/ios": "^6.2.0",
+    "@capacitor/share": "^6.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^6.2.1"
+  }
+}

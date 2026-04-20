@@ -1,0 +1,154 @@
+name: Mobile
+
+on:
+  # Mobile native builds require Xcode (iOS) or the Android SDK, which we
+  # only want to pay for when the native wrapper actually changes.
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/web/src/import/camera.ts'
+      - 'apps/web/src/share/share.ts'
+      - 'apps/web/src/pages/CookModePage.tsx'
+      - '.github/workflows/mobile.yml'
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/web/src/import/camera.ts'
+      - 'apps/web/src/share/share.ts'
+      - 'apps/web/src/pages/CookModePage.tsx'
+      - '.github/workflows/mobile.yml'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Native platform to build (sync = just verify Capacitor config)'
+        required: true
+        default: sync
+        type: choice
+        options: [sync, ios, android]
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capacitor-sync:
+    name: Capacitor sync (Linux)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 15
+    # Always runs on push/PR. Confirms the web build + capacitor config
+    # stay consistent without needing Xcode or the Android SDK.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        run: pnpm --filter @cookyourbooks/web build
+
+      - name: Capacitor sync (no platform)
+        # `cap sync` without native projects under `ios/` or `android/`
+        # prints skip warnings but still validates capacitor.config.ts and
+        # the webDir reference. Exits 0 as long as the config parses.
+        run: pnpm --filter @cookyourbooks/mobile exec cap sync
+
+  ios:
+    name: Build iOS
+    if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios'
+    runs-on: [self-hosted, macos]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web + cap sync
+        run: pnpm --filter @cookyourbooks/mobile sync
+
+      - name: Scaffold iOS project if missing
+        # `cap add ios` is a one-time op — check if the directory exists
+        # first. On runners that persist between jobs this is a fast no-op
+        # after the first run.
+        run: |
+          if [ ! -d apps/mobile/ios ]; then
+            pnpm --filter @cookyourbooks/mobile exec cap add ios
+          fi
+
+      - name: Regenerate icons + splashes
+        run: pnpm --filter @cookyourbooks/mobile assets || true
+
+      - name: Build via xcodebuild
+        working-directory: apps/mobile/ios/App
+        # Archive the Debug config for smoke-only validation. Real release
+        # archives should use fastlane with signing configured on the runner.
+        run: |
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+  android:
+    name: Build Android
+    if: github.event_name == 'workflow_dispatch' && inputs.platform == 'android'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web + cap sync
+        run: pnpm --filter @cookyourbooks/mobile sync
+
+      - name: Scaffold Android project if missing
+        run: |
+          if [ ! -d apps/mobile/android ]; then
+            pnpm --filter @cookyourbooks/mobile exec cap add android
+          fi
+
+      - name: Regenerate icons + splashes
+        run: pnpm --filter @cookyourbooks/mobile assets || true
+
+      - name: Gradle debug build
+        working-directory: apps/mobile/android
+        # Debug build only — signing keys for release are not on CI.
+        # `assembleDebug` verifies the native project compiles end-to-end.
+        run: ./gradlew assembleDebug --no-daemon

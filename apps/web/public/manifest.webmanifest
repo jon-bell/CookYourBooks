@@ -1,0 +1,11 @@
+{
+  "name": "CookYourBooks",
+  "short_name": "CookYourBooks",
+  "description": "Your cookbook library, with you everywhere. Offline-first recipes with LLM-powered photo import.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1c1917",
+  "theme_color": "#1c1917",
+  "icons": []
+}

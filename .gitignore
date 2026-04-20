@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.turbo/
+.next/
+.vite/
+coverage/
+*.log
+.DS_Store
+
+# Secrets + local config
+.env
+.env.local
+.env.*.local
+
+# Supabase CLI state
+supabase/.branches/
+supabase/.temp/
+
+# Vendored Supabase CLI binary — ~100MB, platform-specific.
+# Install via `scripts/install-supabase-cli.sh` (documented in CLAUDE.md).
+.bin/
+
+# Playwright artifacts
+apps/web/test-results/
+apps/web/playwright-report/
+
+# Capacitor-generated native projects
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/.capacitor/
