@@ -105,16 +105,23 @@ export async function upsertRecipeRow(
   if (existing[0] && existing[0].updated_at > incomingTs) return;
 
   await db.tx(async (tx) => {
+    const recipeRowX = recipeRow as RecipeRow & {
+      notes?: string | null;
+      parent_recipe_id?: string | null;
+    };
     await tx.exec(
       `insert into recipes
-         (id, collection_id, title, servings_amount, servings_description, sort_order, updated_at, deleted)
-       values (?,?,?,?,?,?,?,0)
+         (id, collection_id, title, servings_amount, servings_description,
+          sort_order, notes, parent_recipe_id, updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,0)
        on conflict(id) do update set
          collection_id=excluded.collection_id,
          title=excluded.title,
          servings_amount=excluded.servings_amount,
          servings_description=excluded.servings_description,
          sort_order=excluded.sort_order,
+         notes=excluded.notes,
+         parent_recipe_id=excluded.parent_recipe_id,
          updated_at=excluded.updated_at,
          deleted=0`,
       [
@@ -124,6 +131,8 @@ export async function upsertRecipeRow(
         recipeRow.servings_amount,
         recipeRow.servings_description,
         recipeRow.sort_order,
+        recipeRowX.notes ?? null,
+        recipeRowX.parent_recipe_id ?? null,
         incomingTs,
       ],
     );
@@ -417,6 +426,8 @@ async function saveLocalRecipe(
     updated_at: new Date().toISOString(),
     servings_amount: rInsert.servings_amount ?? null,
     servings_description: rInsert.servings_description ?? null,
+    notes: rInsert.notes ?? null,
+    parent_recipe_id: rInsert.parent_recipe_id ?? null,
   } as RecipeRow;
   const ingRows: IngredientRow[] = recipe.ingredients.map((ing, i) => {
     const ins = ingredientToInsert(ing, recipe.id, i);
@@ -454,6 +465,39 @@ async function saveLocalRecipe(
     })),
   );
   await upsertRecipeRow(recipeRow, ingRows, stepRows, refRows);
+}
+
+// ------------- Lineage lookups -------------
+
+/** Minimal info about a recipe, enough to render a "based on …" link. */
+export interface RecipeSummary {
+  id: string;
+  title: string;
+  collectionId: string;
+}
+
+/** Fetch a recipe's title + collection for a given id. Cross-collection. */
+export async function getRecipeSummary(id: string): Promise<RecipeSummary | undefined> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ id: string; title: string; collection_id: string }>(
+    `select id, title, collection_id from recipes where id = ? and deleted = 0`,
+    [id],
+  )) as { id: string; title: string; collection_id: string }[];
+  const row = rows[0];
+  if (!row) return undefined;
+  return { id: row.id, title: row.title, collectionId: row.collection_id };
+}
+
+/** List direct adaptations of a recipe, regardless of collection. */
+export async function listAdaptations(parentId: string): Promise<RecipeSummary[]> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ id: string; title: string; collection_id: string }>(
+    `select id, title, collection_id from recipes
+     where parent_recipe_id = ? and deleted = 0
+     order by title asc`,
+    [parentId],
+  )) as { id: string; title: string; collection_id: string }[];
+  return rows.map((r) => ({ id: r.id, title: r.title, collectionId: r.collection_id }));
 }
 
 function tsToMs(ts: string | number | null | undefined): number {

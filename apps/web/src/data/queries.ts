@@ -2,6 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Recipe, RecipeCollection } from '@cookyourbooks/domain';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
+import {
+  getRecipeSummary,
+  listAdaptations,
+  type RecipeSummary,
+} from '../local/repositories.js';
 import { collectionRepo, recipeRepo } from './repos.js';
 
 export function useCollections() {
@@ -71,6 +76,11 @@ export function useSaveRecipe(collectionId: string) {
       qc.invalidateQueries({ queryKey: ['collections', user?.id] });
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
       qc.invalidateQueries({ queryKey: ['recipe', collectionId, recipe.id] });
+      // Save could have created a new adaptation (parentRecipeId set) or
+      // renamed an existing one — either way, lineage lists across the
+      // app are potentially stale.
+      qc.invalidateQueries({ queryKey: ['adaptations'] });
+      qc.invalidateQueries({ queryKey: ['recipe-summary', recipe.id] });
       void syncNow();
     },
   });
@@ -87,6 +97,26 @@ export function useDeleteRecipe(collectionId: string) {
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
       void syncNow();
     },
+  });
+}
+
+export function useRecipeSummary(recipeId: string | undefined) {
+  const { user } = useAuth();
+  const { status } = useSync();
+  return useQuery<RecipeSummary | undefined>({
+    queryKey: ['recipe-summary', recipeId],
+    enabled: !!user && !!recipeId && status !== 'initializing',
+    queryFn: () => getRecipeSummary(recipeId!),
+  });
+}
+
+export function useAdaptations(parentRecipeId: string | undefined) {
+  const { user } = useAuth();
+  const { status } = useSync();
+  return useQuery<RecipeSummary[]>({
+    queryKey: ['adaptations', parentRecipeId],
+    enabled: !!user && !!parentRecipeId && status !== 'initializing',
+    queryFn: () => listAdaptations(parentRecipeId!),
   });
 }
 

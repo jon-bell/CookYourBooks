@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  adaptRecipe,
   createRegistry,
   formatQuantity,
   formatServings,
@@ -11,7 +13,13 @@ import {
   type Quantity,
   exact,
 } from '@cookyourbooks/domain';
-import { useCollection, useDeleteRecipe } from '../data/queries.js';
+import {
+  useAdaptations,
+  useCollection,
+  useDeleteRecipe,
+  useRecipeSummary,
+  useSaveRecipe,
+} from '../data/queries.js';
 import { shareRecipe } from '../share/share.js';
 
 export function RecipePage() {
@@ -20,6 +28,10 @@ export function RecipePage() {
   const { data: collection, isLoading } = useCollection(collectionId);
   const recipe = collection?.recipes.find((r) => r.id === recipeId);
   const deleteRecipe = useDeleteRecipe(collectionId ?? '');
+  const saveRecipe = useSaveRecipe(collectionId ?? '');
+  const { data: parent } = useRecipeSummary(recipe?.parentRecipeId);
+  const { data: adaptations = [] } = useAdaptations(recipe?.id);
+  const qc = useQueryClient();
 
   const [scale, setScale] = useState(1);
   const [targetUnit, setTargetUnit] = useState<string>('');
@@ -47,6 +59,17 @@ export function RecipePage() {
     await shareRecipe({ title: recipe!.title, markdown: md });
   }
 
+  async function adaptThisRecipe() {
+    const clone = adaptRecipe(recipe!);
+    await saveRecipe.mutateAsync(clone);
+    // `useSaveRecipe` invalidates the collection query but doesn't await
+    // the refetch. The editor bounces if it renders before the new recipe
+    // appears in `collection.recipes`, so force a refetch here before we
+    // navigate.
+    await qc.refetchQueries({ queryKey: ['collection', collection!.id] });
+    navigate(`/collections/${collection!.id}/recipes/${clone.id}/edit`);
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -54,6 +77,17 @@ export function RecipePage() {
           ← {collection.title}
         </Link>
         <h1 className="mt-1 text-3xl font-semibold">{recipe.title}</h1>
+        {parent && (
+          <p className="mt-1 text-sm text-stone-600">
+            Adapted from{' '}
+            <Link
+              to={`/collections/${parent.collectionId}/recipes/${parent.id}`}
+              className="underline hover:text-stone-900"
+            >
+              {parent.title}
+            </Link>
+          </p>
+        )}
         {scaled.servings && (
           <p className="mt-1 text-stone-600">Serves {formatServings(scaled.servings)}</p>
         )}
@@ -113,6 +147,13 @@ export function RecipePage() {
           >
             Edit
           </Link>
+          <button
+            onClick={adaptThisRecipe}
+            disabled={saveRecipe.isPending}
+            className="rounded-md px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+          >
+            Adapt
+          </button>
           <button
             onClick={shareAsMarkdown}
             className="rounded-md px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
@@ -175,6 +216,33 @@ export function RecipePage() {
           </ol>
         </section>
       </div>
+
+      {recipe.notes && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 className="text-sm font-semibold text-stone-900">Notes</h2>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-stone-700">{recipe.notes}</p>
+        </section>
+      )}
+
+      {adaptations.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-lg font-semibold">
+            Adaptations ({adaptations.length})
+          </h2>
+          <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
+            {adaptations.map((a) => (
+              <li key={a.id}>
+                <Link
+                  to={`/collections/${a.collectionId}/recipes/${a.id}`}
+                  className="block px-4 py-2 text-sm text-stone-700 hover:bg-stone-50"
+                >
+                  {a.title}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

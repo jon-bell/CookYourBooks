@@ -438,6 +438,8 @@ export type Database = {
           collection_id: string
           created_at: string
           id: string
+          notes: string | null
+          parent_recipe_id: string | null
           servings_amount: number | null
           servings_description: string | null
           sort_order: number
@@ -448,6 +450,8 @@ export type Database = {
           collection_id: string
           created_at?: string
           id?: string
+          notes?: string | null
+          parent_recipe_id?: string | null
           servings_amount?: number | null
           servings_description?: string | null
           sort_order?: number
@@ -458,6 +462,8 @@ export type Database = {
           collection_id?: string
           created_at?: string
           id?: string
+          notes?: string | null
+          parent_recipe_id?: string | null
           servings_amount?: number | null
           servings_description?: string | null
           sort_order?: number

@@ -38,12 +38,17 @@ export const SCHEMA_STATEMENTS: string[] = [
     servings_amount real,
     servings_description text,
     sort_order integer not null default 0,
+    notes text,
+    parent_recipe_id text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
 
   `create index if not exists recipes_collection_idx
     on recipes(collection_id)`,
+
+  `create index if not exists recipes_parent_idx
+    on recipes(parent_recipe_id)`,
 
   `create table if not exists ingredients (
     id text primary key not null default '',
@@ -120,4 +125,7 @@ export const CRR_TABLES = [
 export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipe_collections add column moderation_state text not null default 'ACTIVE'`,
   `alter table recipe_collections add column moderation_reason text`,
+  `alter table recipes add column notes text`,
+  `alter table recipes add column parent_recipe_id text`,
+  `create index if not exists recipes_parent_idx on recipes(parent_recipe_id)`,
 ];

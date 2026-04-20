@@ -150,6 +150,8 @@ describe('recipe mapping', () => {
       servings_amount: null,
       servings_description: null,
       sort_order: 0,
+      notes: null,
+      parent_recipe_id: null,
       created_at: '',
       updated_at: '',
     };

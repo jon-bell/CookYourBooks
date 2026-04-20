@@ -31,3 +31,6 @@ apps/web/playwright-report/
 apps/mobile/ios/
 apps/mobile/android/
 apps/mobile/.capacitor/
+
+# Claude Code local state
+.claude/

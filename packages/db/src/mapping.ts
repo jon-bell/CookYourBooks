@@ -142,6 +142,8 @@ export function rowsToRecipe(
         : undefined,
     ingredients,
     instructions,
+    notes: row.notes ?? undefined,
+    parentRecipeId: row.parent_recipe_id ?? undefined,
   });
 }
 
@@ -157,6 +159,8 @@ export function recipeToInsert(
     servings_amount: recipe.servings?.amount ?? null,
     servings_description: recipe.servings?.description ?? null,
     sort_order: sortOrder,
+    notes: recipe.notes ?? null,
+    parent_recipe_id: recipe.parentRecipeId ?? null,
   };
 }
 

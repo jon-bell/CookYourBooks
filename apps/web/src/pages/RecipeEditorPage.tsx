@@ -91,6 +91,8 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
   useEffect(() => setInstructions(initialInstructions), [initialInstructions]);
 
   const [bulkPaste, setBulkPaste] = useState('');
+  const [notes, setNotes] = useState(existing?.notes ?? '');
+  useEffect(() => setNotes(existing?.notes ?? ''), [existing?.notes]);
 
   useEffect(() => {
     if (mode === 'edit' && collection && !existing) navigate(`/collections/${collectionId}`);
@@ -126,6 +128,11 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
           : undefined,
       ingredients: builtIngredients,
       instructions: builtInstructions,
+      notes: notes.trim() || undefined,
+      // Preserve the adaptation link across edits — the editor should
+      // never drop lineage metadata just because it wasn't surfaced in
+      // the form.
+      parentRecipeId: existing?.parentRecipeId,
     });
     await saveRecipe.mutateAsync(recipe);
     navigate(`/collections/${collection!.id}/recipes/${recipe.id}`);
@@ -312,6 +319,18 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
             </li>
           ))}
         </ol>
+      </section>
+
+      <section className="space-y-2">
+        <Field label="Notes">
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={4}
+            placeholder="What worked, what to change next time, substitutions…"
+            className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
+          />
+        </Field>
       </section>
 
       {saveRecipe.isError && (
