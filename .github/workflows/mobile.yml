@@ -34,7 +34,7 @@ concurrency:
 jobs:
   capacitor-sync:
     name: Capacitor sync (Linux)
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ripley-cloud-linux-x64
     timeout-minutes: 15
     # Always runs on push/PR. Confirms the web build + capacitor config
     # stay consistent without needing Xcode or the Android SDK.
@@ -65,7 +65,10 @@ jobs:
   ios:
     name: Build iOS
     if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios'
-    runs-on: [self-hosted, macos]
+    # TODO: replace with the ripley-cloud macOS scale-set label once that
+    # pool is provisioned. Manual-dispatch only for now, so leaving it as
+    # a placeholder won't accidentally wake the job.
+    runs-on: ripley-cloud-macos-pending
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +116,7 @@ jobs:
   android:
     name: Build Android
     if: github.event_name == 'workflow_dispatch' && inputs.platform == 'android'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ripley-cloud-linux-x64
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

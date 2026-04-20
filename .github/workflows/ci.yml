@@ -16,10 +16,9 @@ concurrency:
 jobs:
   verify:
     name: Typecheck, unit, E2E, build
-    # Pinned to the `linux` label so the Linux-only Supabase Docker stack
-    # doesn't land on a macOS runner that might also be in the pool. See
-    # README.md §"Self-hosted runners" for the labels we expect.
-    runs-on: [self-hosted, linux, x64]
+    # Linux workloads land on the `ripley-cloud-linux-x64` ARC scale set.
+    # See `.github/RUNNERS.md` for the label → runner mapping.
+    runs-on: ripley-cloud-linux-x64
     timeout-minutes: 30
 
     env:

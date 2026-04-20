@@ -6,6 +6,8 @@ dist/
 coverage/
 *.log
 .DS_Store
+*.swp
+*.swo
 
 # Secrets + local config
 .env

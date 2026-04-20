@@ -1,58 +1,52 @@
-# Self-hosted runner requirements
+# Self-hosted runners
 
-CI runs on self-hosted runners keyed by labels in the workflow files.
-Any machine with the required labels + tools installed will pick up
-matching jobs.
+CI runs on Actions Runner Controller (ARC) scale sets. Each workflow
+job's `runs-on:` names the scale set directly.
 
-## Labels we use
+## Scale sets
 
-| Label set | Workflows | Required tools |
-|---|---|---|
-| `[self-hosted, linux, x64]` | `ci.yml`, `mobile.yml` (sync + Android) | Docker (daemon running as the runner user), Node 20+, `git`, Android SDK + JDK 17 for the Android job |
-| `[self-hosted, macos]` | `mobile.yml` (iOS) | Xcode 15+, Node 20+ |
+| Scale set label | Workflows | Status | Notes |
+|---|---|---|---|
+| `ripley-cloud-linux-x64` | `ci.yml`, `mobile.yml` (Capacitor sync + Android) | Active | Linux x86_64, Docker daemon available, first Supabase image pull warms the runner cache |
+| `ripley-cloud-macos-pending` | `mobile.yml` (iOS) | **Pending** — scale set not yet provisioned. The iOS job is manual-dispatch only, so the placeholder label is harmless until the real pool exists | Will be renamed when the macOS scale set lands |
 
-You don't need Node or pnpm pre-installed; `actions/setup-node` +
-`pnpm/action-setup` install them per job. Docker and Xcode you do need.
+`runs-on:` takes a bare scale-set name rather than the traditional
+`[self-hosted, linux, x64]` list — ARC attaches the scale-set name as
+the runner label and ignores the legacy `self-hosted` match rules.
 
-## Linux runner bring-up
+## What each scale set needs installed
 
-1. Register the runner against the repo with labels `linux x64` in
-   addition to the default `self-hosted`.
-2. Install Docker and add the runner user to the `docker` group so
-   `docker ps` works without `sudo`.
-3. Allow port range 54420–54429 inbound on `localhost` (default).
-   The Supabase stack binds to `127.0.0.1` so no external exposure is
-   required.
-4. First `supabase start` pulls ~1.5GB of container images from
-   public.ecr.aws. They're cached across runs on the same host.
-5. Playwright browsers are installed per-job via `playwright install
-   --with-deps chromium`. The `--with-deps` variant may prompt for
-   `sudo apt install` the first time; grant the runner user
-   `NOPASSWD` sudo for `apt` or pre-install the deps out-of-band.
+### Linux (`ripley-cloud-linux-x64`)
 
-## macOS runner bring-up (iOS only)
+- Docker daemon reachable to the runner user (`docker ps` without `sudo`).
+- Outbound network to `public.ecr.aws` (Supabase image pulls) and
+  `registry.npmjs.org` / `github.com` (pnpm + Playwright downloads).
+- No pre-installed Node or pnpm — `actions/setup-node` +
+  `pnpm/action-setup` install them per job.
+- Port range 54420–54429 bound to `127.0.0.1` only; no external exposure
+  needed. Multiple runners on the same host would collide here; keep one
+  runner per host or shift the port range per runner.
+- For the Android job: JDK 17 (via `actions/setup-java`) and the Android
+  SDK command-line tools. `./gradlew` in the generated project will
+  pull what else it needs on first run.
 
-Needed only if you dispatch the `mobile.yml` iOS job.
+### macOS (iOS) — *when provisioned*
 
-1. Xcode 15 or newer (command-line tools plus the full IDE).
-2. A CocoaPods install (`sudo gem install cocoapods`) — Capacitor's iOS
-   project uses it.
-3. For real release builds, also install a code-signing identity and
-   update the workflow to call `fastlane gym` or equivalent. The job as
-   written produces an unsigned Debug binary for validation.
+- Xcode 15+, CocoaPods (`sudo gem install cocoapods`).
+- The workflow runs an unsigned Debug build; real release archives will
+  need a signing identity + `fastlane` setup.
 
 ## Secrets
 
-None required for `ci.yml` — everything runs against a local Supabase
-stack started inside the job. `mobile.yml` release builds will need
-`APPLE_TEAM_ID`, `MATCH_PASSWORD` etc. when that path gets fleshed out.
+None required by `ci.yml` — the Supabase stack is started locally inside
+the job. Mobile release builds will want Apple signing / Google Play
+service-account secrets when those paths get fleshed out.
 
 ## Debugging a failed CI run
 
-- **`playwright-report-*`** artifact (uploaded on failure) has the full
-  HTML report with traces, screenshots, and videos.
-- **`playwright-test-results-*`** artifact has raw per-test directories
-  (trace.zip, video.webm) if you need to re-open a trace in the
-  Playwright UI.
-- Supabase container logs for the failing run are printed inline in the
-  job output (expand the "Supabase logs on failure" step).
+- **`playwright-report-*`** artifact has the HTML report with traces,
+  screenshots, and videos.
+- **`playwright-test-results-*`** artifact has the raw per-test
+  directories (trace.zip, video.webm) for replaying in the Playwright UI.
+- Supabase container logs are printed inline in the job output — expand
+  the "Supabase logs on failure" step.
