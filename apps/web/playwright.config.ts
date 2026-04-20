@@ -39,12 +39,16 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm dev',
+    // Local dev uses `vite` for HMR. CI serves the prebuilt `dist/` with
+    // `vite preview` — no dep-optimization pass, no HMR websocket, just
+    // static files. The `pnpm build` step earlier in the pipeline
+    // produces the artifacts this server consumes.
+    command: process.env.CI
+      ? 'pnpm exec vite preview --port 5173 --strictPort'
+      : 'pnpm dev',
     url: 'http://localhost:5173/',
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-    // Vite's dev server is fine but likes a moment to settle its
-    // dep-optimization pass the first time through.
+    timeout: 120_000,
     stdout: 'ignore',
     stderr: 'pipe',
   },
