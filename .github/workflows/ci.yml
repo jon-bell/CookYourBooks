@@ -88,8 +88,36 @@ jobs:
       - name: Unit tests (domain + db + web)
         run: pnpm -w test
 
+      # Supabase has to start *before* the web build — Vite inlines
+      # `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` at build time, and
+      # the app throws on module load if they're missing. Locally those
+      # come from `apps/web/.env.local`, which is gitignored; on CI we
+      # ask the running stack for them.
+      - name: Start local Supabase
+        # The CLI manages docker-compose under the hood. Ports are the
+        # project's 54420-range (see supabase/config.toml), so this won't
+        # collide with other runners if they live on separate hosts.
+        run: ${{ env.SUPABASE_CLI }} start
+
+      - name: Write apps/web/.env.local from the running stack
+        # Vite reads this at build time. Contents live only on the
+        # runner's scratch disk; the file is gitignored.
+        run: |
+          set -eo pipefail
+          status_json=$(${{ env.SUPABASE_CLI }} status --output json)
+          api_url=$(printf '%s' "$status_json" | node -e \
+            'let i=""; process.stdin.on("data",d=>i+=d).on("end",()=>console.log(JSON.parse(i).API_URL))')
+          anon_key=$(printf '%s' "$status_json" | node -e \
+            'let i=""; process.stdin.on("data",d=>i+=d).on("end",()=>console.log(JSON.parse(i).ANON_KEY))')
+          cat > apps/web/.env.local <<EOF
+          VITE_SUPABASE_URL=$api_url
+          VITE_SUPABASE_ANON_KEY=$anon_key
+          EOF
+          echo "Wrote apps/web/.env.local (VITE_SUPABASE_URL=$api_url, key len=${#anon_key})"
+
       - name: Build web
-        # Catch real build-time breakage (tsc -b) before the slower E2E pass.
+        # Now the env is populated, the bundle has the right backend URL
+        # baked in and `supabase.ts`'s module-load check passes.
         run: pnpm --filter @cookyourbooks/web build
 
       # ---- End-to-end tests -------------------------------------------------
@@ -104,12 +132,6 @@ jobs:
           else
             pnpm --filter @cookyourbooks/web exec playwright install-deps chromium
           fi
-
-      - name: Start local Supabase
-        # The CLI manages docker-compose under the hood. Ports are the
-        # project's 54420-range (see supabase/config.toml), so this won't
-        # collide with other runners if they live on separate hosts.
-        run: ${{ env.SUPABASE_CLI }} start
 
       - name: Wait for Supabase services to be ready
         # `supabase start` returns as soon as container healthchecks pass,
