@@ -164,7 +164,16 @@ jobs:
           probe "storage"       "$api_url/storage/v1/bucket"                            200
 
       - name: Run Playwright E2E
-        run: pnpm --filter @cookyourbooks/web exec playwright test --reporter=line
+        # Hard 12-minute wrapper so a total hang still produces logs and
+        # artifacts inside the 30-minute job budget. `timeout --foreground`
+        # sends SIGTERM first and lets Playwright flush its HTML report
+        # before exit.
+        run: |
+          timeout --foreground --signal=TERM --kill-after=30s 720 \
+            pnpm --filter @cookyourbooks/web exec playwright test --reporter=line
+        # Surface a timeout separately from test failure so the failure
+        # triage step picks the right path below.
+        timeout-minutes: 15
 
       - name: Upload Playwright HTML report on failure
         if: failure()

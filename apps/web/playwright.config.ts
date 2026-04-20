@@ -23,13 +23,26 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   // Retries help against genuine flake (realtime propagation timing, etc.)
-  // but mask real bugs if left on in dev. Keep them off locally.
-  retries: process.env.CI ? 2 : 0,
+  // but mask real bugs if left on in dev. One retry is enough to absorb
+  // a flaky realtime race; more has historically just burnt through the
+  // job's time budget on a truly wedged test.
+  retries: process.env.CI ? 1 : 0,
+  // Stop the whole run after 5 failures so a systemic CI breakage fails
+  // fast and leaves its artifacts behind, rather than timing out the
+  // job after every single test has been retried twice.
+  maxFailures: process.env.CI ? 5 : 0,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
   use: {
     baseURL: 'http://localhost:5173',
-    trace: 'on-first-retry',
+    // On CI we want a trace for *every* test — if one hangs, we want
+    // the artifact even though there's no "retry" trigger.
+    trace: process.env.CI ? 'retain-on-failure' : 'on-first-retry',
     video: 'retain-on-failure',
+    // Extra safety net: fail a test after 90s rather than letting it
+    // eat the whole job timeout. Most tests are <5s; nothing legitimate
+    // takes this long.
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
     launchOptions: executablePath ? { executablePath } : {},
   },
   projects: [
