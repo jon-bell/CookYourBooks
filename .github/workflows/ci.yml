@@ -36,25 +36,50 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up pnpm
+        # Version is read from `packageManager` in the root package.json.
+        # `pnpm/action-setup@v4` refuses an explicit `version:` when
+        # `packageManager` is set — keep package.json as the source of truth.
         uses: pnpm/action-setup@v4
-        with:
-          # Matches `packageManager` in root package.json; bumping here
-          # without bumping that will drift the lockfile.
-          version: 10
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          # setup-node wires `actions/cache` for the pnpm store behind the
+          # scenes, keyed on pnpm-lock.yaml.
           cache: pnpm
+
+      # Turbo's local cache persists build/test task outputs. On a warm
+      # runner we skip work for unchanged packages — most re-runs of `main`
+      # after a doc-only change finish in seconds.
+      - name: Cache Turbo outputs
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
+      # Playwright's managed browsers are ~300MB. Keyed on the lockfile —
+      # whenever @playwright/test moves, the cache invalidates and the
+      # post-install step re-downloads. `restore-keys` keeps us on the
+      # most recent previous cache when the lockfile churns for other deps.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Install dependencies
         # --frozen-lockfile fails the job if pnpm-lock.yaml drifted.
         run: pnpm install --frozen-lockfile
 
       - name: Install vendored Supabase CLI
-        # The CLI binary is gitignored — fetch it into ./.bin/. On a
-        # persistent runner the existing copy is picked up next run.
+        # The CLI binary is gitignored — fetch it into ./.bin/. Subsequent
+        # runs with a warm runner skip the re-download.
         run: scripts/install-supabase-cli.sh
 
       - name: Typecheck (all packages)
@@ -70,10 +95,15 @@ jobs:
       # ---- End-to-end tests -------------------------------------------------
 
       - name: Install Playwright browsers
-        # `--with-deps` pulls apt packages Chromium needs (libnss3, etc.).
-        # On self-hosted runners these are usually already present, but the
-        # idempotent install keeps bring-up simple.
-        run: pnpm --filter @cookyourbooks/web exec playwright install --with-deps chromium
+        # Full `playwright install` is a no-op when the cache hit restored
+        # `~/.cache/ms-playwright`. `--with-deps` still runs to ensure the
+        # apt dependencies are present on a new runner image.
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" != "true" ]; then
+            pnpm --filter @cookyourbooks/web exec playwright install --with-deps chromium
+          else
+            pnpm --filter @cookyourbooks/web exec playwright install-deps chromium
+          fi
 
       - name: Start local Supabase
         # The CLI manages docker-compose under the hood. Ports are the
