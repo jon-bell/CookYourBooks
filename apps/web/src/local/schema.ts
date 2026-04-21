@@ -37,9 +37,16 @@ export const SCHEMA_STATEMENTS: string[] = [
     title text not null default '',
     servings_amount real,
     servings_description text,
+    servings_amount_max real,
     sort_order integer not null default 0,
     notes text,
     parent_recipe_id text,
+    description text,
+    time_estimate text,
+    equipment text,            -- JSON array of strings
+    book_title text,
+    page_numbers text,         -- JSON array of numbers
+    source_image_text text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -58,6 +65,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     name text not null default '',
     preparation text,
     notes text,
+    description text,
     quantity_type text,
     quantity_amount real,
     quantity_whole integer,
@@ -74,16 +82,29 @@ export const SCHEMA_STATEMENTS: string[] = [
     id text primary key not null default '',
     recipe_id text not null default '',
     step_number integer not null default 0,
-    text text not null default ''
+    text text not null default '',
+    temperature_value real,
+    temperature_unit text,
+    sub_instructions text,    -- JSON array of strings
+    notes text
   )`,
 
   `create index if not exists instructions_recipe_idx on instructions(recipe_id)`,
 
   // Step → Ingredient references. Used by the recipe detail view + cook
-  // mode to highlight which ingredients a specific step consumes.
+  // mode to highlight which ingredients a specific step consumes, and
+  // (when `consumed_quantity_*` is set) how much of each.
   `create table if not exists instruction_ingredient_refs (
     instruction_id text not null default '',
     ingredient_id text not null default '',
+    consumed_quantity_type text,
+    consumed_quantity_amount real,
+    consumed_quantity_whole integer,
+    consumed_quantity_numerator integer,
+    consumed_quantity_denominator integer,
+    consumed_quantity_min real,
+    consumed_quantity_max real,
+    consumed_quantity_unit text,
     primary key (instruction_id, ingredient_id)
   )`,
 
@@ -128,4 +149,25 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipes add column notes text`,
   `alter table recipes add column parent_recipe_id text`,
   `create index if not exists recipes_parent_idx on recipes(parent_recipe_id)`,
+  // OCR-surfaced metadata (2026-04-21).
+  `alter table recipes add column servings_amount_max real`,
+  `alter table recipes add column description text`,
+  `alter table recipes add column time_estimate text`,
+  `alter table recipes add column equipment text`,
+  `alter table recipes add column book_title text`,
+  `alter table recipes add column page_numbers text`,
+  `alter table recipes add column source_image_text text`,
+  `alter table ingredients add column description text`,
+  `alter table instructions add column temperature_value real`,
+  `alter table instructions add column temperature_unit text`,
+  `alter table instructions add column sub_instructions text`,
+  `alter table instructions add column notes text`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_type text`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_amount real`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_whole integer`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_numerator integer`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_denominator integer`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_min real`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_max real`,
+  `alter table instruction_ingredient_refs add column consumed_quantity_unit text`,
 ];

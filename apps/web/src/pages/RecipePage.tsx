@@ -79,6 +79,15 @@ export function RecipePage() {
           ← {collection.title}
         </Link>
         <h1 className="mt-1 text-3xl font-semibold">{recipe.title}</h1>
+        {(recipe.bookTitle || (recipe.pageNumbers && recipe.pageNumbers.length > 0)) && (
+          <p className="mt-1 text-sm text-stone-500">
+            {recipe.bookTitle}
+            {recipe.bookTitle && recipe.pageNumbers && recipe.pageNumbers.length > 0 ? ' · ' : ''}
+            {recipe.pageNumbers && recipe.pageNumbers.length > 0
+              ? `p. ${recipe.pageNumbers.join(', ')}`
+              : ''}
+          </p>
+        )}
         {parent && (
           <p className="mt-1 text-sm text-stone-600">
             Adapted from{' '}
@@ -92,6 +101,24 @@ export function RecipePage() {
         )}
         {scaled.servings && (
           <p className="mt-1 text-stone-600">Serves {formatServings(scaled.servings)}</p>
+        )}
+        {recipe.timeEstimate && (
+          <p className="mt-1 text-sm text-stone-600">⏲ {recipe.timeEstimate}</p>
+        )}
+        {recipe.description && (
+          <p className="mt-3 whitespace-pre-wrap text-stone-700">{recipe.description}</p>
+        )}
+        {recipe.equipment && recipe.equipment.length > 0 && (
+          <ul className="mt-3 flex flex-wrap gap-1.5 text-xs">
+            {recipe.equipment.map((item) => (
+              <li
+                key={item}
+                className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-700"
+              >
+                {item}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
@@ -215,7 +242,27 @@ export function RecipePage() {
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-900 text-xs font-medium text-white">
                   {step.stepNumber}
                 </span>
-                <span>{step.text}</span>
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span>{step.text}</span>
+                    {step.temperature && (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-900 ring-1 ring-amber-200">
+                        {step.temperature.value}°
+                        {step.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
+                      </span>
+                    )}
+                  </div>
+                  {step.subInstructions && step.subInstructions.length > 0 && (
+                    <ul className="mt-1 ml-4 list-disc space-y-0.5 text-sm text-stone-600">
+                      {step.subInstructions.map((sub, i) => (
+                        <li key={i}>{sub}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {step.notes && (
+                    <p className="mt-1 text-xs italic text-stone-500">{step.notes}</p>
+                  )}
+                </div>
               </li>
             ))}
           </ol>

@@ -424,7 +424,7 @@ async function pushRecipe(
       [id],
     ) as Promise<InstructionRow[]>,
     db.execO<InstructionRefRow>(
-      `select r.instruction_id, r.ingredient_id
+      `select r.*
        from instruction_ingredient_refs r
        join instructions i on i.id = r.instruction_id
        where i.recipe_id = ?`,
@@ -437,9 +437,20 @@ async function pushRecipe(
     created_at?: unknown;
     updated_at?: unknown;
   };
+  // Local SQLite stores array-valued columns as JSON *text*; Postgres
+  // wants jsonb input. supabase-js would happily ship the text string
+  // through — which gets stored as a JSON string, not an array — so
+  // parse back to native arrays before upsert. Same on the
+  // instruction side below.
+  const recipePayload = {
+    ...recipeRow,
+    collection_id: collectionId,
+    equipment: parseJsonField((recipeRow as { equipment?: unknown }).equipment),
+    page_numbers: parseJsonField((recipeRow as { page_numbers?: unknown }).page_numbers),
+  } as RecipeRow;
   const { error: rErr } = await client
     .from('recipes')
-    .upsert({ ...recipeRow, collection_id: collectionId }, { onConflict: 'id' });
+    .upsert(recipePayload, { onConflict: 'id' });
   if (rErr) throw rErr;
 
   // Replace children wholesale. Matches the server-side save behavior.
@@ -453,7 +464,14 @@ async function pushRecipe(
     if (error) throw error;
   }
   if (stepRows.length > 0) {
-    const { error } = await client.from('instructions').insert(stepRows);
+    const payload = stepRows.map((s) => {
+      const sx = s as InstructionRow & { sub_instructions?: unknown };
+      return {
+        ...s,
+        sub_instructions: parseJsonField(sx.sub_instructions),
+      } as InstructionRow;
+    });
+    const { error } = await client.from('instructions').insert(payload);
     if (error) throw error;
   }
   // Refs cascade via FK when the parent instructions were deleted above,
@@ -462,4 +480,21 @@ async function pushRecipe(
     const { error } = await client.from('instruction_ingredient_refs').insert(refRows);
     if (error) throw error;
   }
+}
+
+// Local SQLite stores array-valued columns (equipment, page_numbers,
+// sub_instructions) as JSON text. Postgres expects native arrays in
+// jsonb columns. Normalize on push.
+function parseJsonField(val: unknown): unknown {
+  if (val === null || val === undefined) return null;
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    if (val.length === 0) return null;
+    try {
+      return JSON.parse(val);
+    } catch {
+      return null;
+    }
+  }
+  return val;
 }

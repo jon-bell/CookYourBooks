@@ -158,6 +158,7 @@ export type Database = {
       }
       ingredients: {
         Row: {
+          description: string | null
           id: string
           name: string
           notes: string | null
@@ -175,6 +176,7 @@ export type Database = {
           type: string
         }
         Insert: {
+          description?: string | null
           id?: string
           name: string
           notes?: string | null
@@ -192,6 +194,7 @@ export type Database = {
           type: string
         }
         Update: {
+          description?: string | null
           id?: string
           name?: string
           notes?: string | null
@@ -220,14 +223,38 @@ export type Database = {
       }
       instruction_ingredient_refs: {
         Row: {
+          consumed_quantity_amount: number | null
+          consumed_quantity_denominator: number | null
+          consumed_quantity_max: number | null
+          consumed_quantity_min: number | null
+          consumed_quantity_numerator: number | null
+          consumed_quantity_type: string | null
+          consumed_quantity_unit: string | null
+          consumed_quantity_whole: number | null
           ingredient_id: string
           instruction_id: string
         }
         Insert: {
+          consumed_quantity_amount?: number | null
+          consumed_quantity_denominator?: number | null
+          consumed_quantity_max?: number | null
+          consumed_quantity_min?: number | null
+          consumed_quantity_numerator?: number | null
+          consumed_quantity_type?: string | null
+          consumed_quantity_unit?: string | null
+          consumed_quantity_whole?: number | null
           ingredient_id: string
           instruction_id: string
         }
         Update: {
+          consumed_quantity_amount?: number | null
+          consumed_quantity_denominator?: number | null
+          consumed_quantity_max?: number | null
+          consumed_quantity_min?: number | null
+          consumed_quantity_numerator?: number | null
+          consumed_quantity_type?: string | null
+          consumed_quantity_unit?: string | null
+          consumed_quantity_whole?: number | null
           ingredient_id?: string
           instruction_id?: string
         }
@@ -251,20 +278,32 @@ export type Database = {
       instructions: {
         Row: {
           id: string
+          notes: string | null
           recipe_id: string
           step_number: number
+          sub_instructions: Json | null
+          temperature_unit: string | null
+          temperature_value: number | null
           text: string
         }
         Insert: {
           id?: string
+          notes?: string | null
           recipe_id: string
           step_number: number
+          sub_instructions?: Json | null
+          temperature_unit?: string | null
+          temperature_value?: number | null
           text: string
         }
         Update: {
           id?: string
+          notes?: string | null
           recipe_id?: string
           step_number?: number
+          sub_instructions?: Json | null
+          temperature_unit?: string | null
+          temperature_value?: number | null
           text?: string
         }
         Relationships: [
@@ -435,38 +474,59 @@ export type Database = {
       }
       recipes: {
         Row: {
+          book_title: string | null
           collection_id: string
           created_at: string
+          description: string | null
+          equipment: Json | null
           id: string
           notes: string | null
+          page_numbers: Json | null
           parent_recipe_id: string | null
           servings_amount: number | null
+          servings_amount_max: number | null
           servings_description: string | null
           sort_order: number
+          source_image_text: string | null
+          time_estimate: string | null
           title: string
           updated_at: string
         }
         Insert: {
+          book_title?: string | null
           collection_id: string
           created_at?: string
+          description?: string | null
+          equipment?: Json | null
           id?: string
           notes?: string | null
+          page_numbers?: Json | null
           parent_recipe_id?: string | null
           servings_amount?: number | null
+          servings_amount_max?: number | null
           servings_description?: string | null
           sort_order?: number
+          source_image_text?: string | null
+          time_estimate?: string | null
           title: string
           updated_at?: string
         }
         Update: {
+          book_title?: string | null
           collection_id?: string
           created_at?: string
+          description?: string | null
+          equipment?: Json | null
           id?: string
           notes?: string | null
+          page_numbers?: Json | null
           parent_recipe_id?: string | null
           servings_amount?: number | null
+          servings_amount_max?: number | null
           servings_description?: string | null
           sort_order?: number
+          source_image_text?: string | null
+          time_estimate?: string | null
           title?: string
           updated_at?: string
         }

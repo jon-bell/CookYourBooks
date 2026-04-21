@@ -10,6 +10,14 @@ export interface ParsedRecipeDraft {
   instructions: Instruction[];
   /** Lines we couldn't place. Shown to the user for manual review. */
   leftover: string[];
+  // Rich OCR metadata — all optional, plain-text parse fills none of
+  // these but the vision-model path (apps/web/src/import/llm.ts) does.
+  description?: string;
+  timeEstimate?: string;
+  equipment?: string[];
+  bookTitle?: string;
+  pageNumbers?: number[];
+  sourceImageText?: string;
 }
 
 const INGREDIENT_HEADINGS = [

@@ -86,35 +86,13 @@ describe('recipe mapping', () => {
       servings_amount: recipe.servings!.amount,
       servings_description: recipe.servings!.description ?? null,
     } as RecipeRow;
-    const ingRows: IngredientRow[] = recipe.ingredients.map((ing, i) => {
-      const ins = ingredientToInsert(ing, recipe.id, i);
-      return {
-        id: ins.id!,
-        recipe_id: ins.recipe_id,
-        sort_order: ins.sort_order,
-        type: ins.type,
-        name: ins.name,
-        preparation: ins.preparation ?? null,
-        notes: ins.notes ?? null,
-        quantity_type: ins.quantity_type ?? null,
-        quantity_amount: ins.quantity_amount ?? null,
-        quantity_whole: ins.quantity_whole ?? null,
-        quantity_numerator: ins.quantity_numerator ?? null,
-        quantity_denominator: ins.quantity_denominator ?? null,
-        quantity_min: ins.quantity_min ?? null,
-        quantity_max: ins.quantity_max ?? null,
-        quantity_unit: ins.quantity_unit ?? null,
-      } as IngredientRow;
-    });
-    const stepRows: InstructionRow[] = recipe.instructions.map((s) => {
-      const ins = instructionToInsert(s, recipe.id);
-      return {
-        id: ins.id!,
-        recipe_id: ins.recipe_id,
-        step_number: ins.step_number,
-        text: ins.text,
-      };
-    });
+    const ingRows: IngredientRow[] = recipe.ingredients.map(
+      (ing, i) =>
+        ({ ...ingredientToInsert(ing, recipe.id, i), id: ing.id }) as IngredientRow,
+    );
+    const stepRows: InstructionRow[] = recipe.instructions.map(
+      (s) => ({ ...instructionToInsert(s, recipe.id), id: s.id }) as InstructionRow,
+    );
 
     const back = rowsToRecipe(recipeRow, ingRows, stepRows);
     expect(back.title).toBe('Test');
@@ -143,7 +121,7 @@ describe('recipe mapping', () => {
   });
 
   it('treats malformed measured rows as vague (data integrity fallback)', () => {
-    const recipeRow: RecipeRow = {
+    const recipeRow = {
       id: 'r-2',
       collection_id: 'c',
       title: 't',
@@ -154,8 +132,8 @@ describe('recipe mapping', () => {
       parent_recipe_id: null,
       created_at: '',
       updated_at: '',
-    };
-    const badIng: IngredientRow = {
+    } as RecipeRow;
+    const badIng = {
       id: 'i',
       recipe_id: 'r-2',
       sort_order: 0,
@@ -171,7 +149,7 @@ describe('recipe mapping', () => {
       quantity_min: null,
       quantity_max: null,
       quantity_unit: 'cup',
-    };
+    } as IngredientRow;
     const back = rowsToRecipe(recipeRow, [badIng], []);
     expect(back.ingredients[0]?.type).toBe('VAGUE');
   });

@@ -7,11 +7,15 @@ export type OcrProgress = { status: string };
 export type OcrShim = (
   source: Blob | File,
   onProgress?: (p: OcrProgress) => void,
-) => Promise<ParsedRecipeDraft>;
+) => Promise<ParsedRecipeDraft[]>;
 
 declare global {
   interface Window {
-    /** E2E hook: bypasses the real LLM call and returns a canned draft. */
+    /**
+     * E2E hook: bypasses the real LLM call and returns canned drafts.
+     * Returning multiple drafts lets tests exercise the multi-recipe
+     * picker path.
+     */
     __cybOcrShim?: OcrShim;
   }
 }
@@ -24,15 +28,16 @@ export class OcrNotConfiguredError extends Error {
 }
 
 /**
- * Turn a captured photo into a recipe draft via the user's configured LLM
- * provider. Throws {@link OcrNotConfiguredError} when no settings exist —
- * the Import button surface catches that specifically and directs the user
- * to Settings.
+ * Turn a captured photo into one or more recipe drafts via the user's
+ * configured LLM provider. A single photograph can contain multiple
+ * recipes (a cookbook spread, a hand-written card with variations);
+ * callers are responsible for showing a picker when `length > 1`.
+ * Throws {@link OcrNotConfiguredError} when no settings exist.
  */
-export async function ocrImageToRecipe(
+export async function ocrImageToRecipes(
   source: Blob | File,
   onProgress?: (p: OcrProgress) => void,
-): Promise<ParsedRecipeDraft> {
+): Promise<ParsedRecipeDraft[]> {
   if (window.__cybOcrShim) return window.__cybOcrShim(source, onProgress);
   const settings = loadOcrSettings();
   if (!settings) throw new OcrNotConfiguredError();

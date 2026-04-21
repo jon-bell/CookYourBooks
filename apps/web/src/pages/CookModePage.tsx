@@ -74,10 +74,16 @@ export function CookModePage() {
   const step = recipe.instructions[idx];
   // Referenced ingredients for this step — the user's editor-time
   // annotation. Filter out any stale ids pointing at since-deleted
-  // ingredients.
+  // ingredients. Preserve the per-step `quantity` on each ref so we
+  // can render "use 2 cup flour" rather than the full ingredient
+  // total when the source recipe tells us how much.
   const ingredientById = new Map(recipe.ingredients.map((ing) => [ing.id, ing]));
   const stepIngredients = (step?.ingredientRefs ?? [])
-    .map((r) => ingredientById.get(r.ingredientId))
+    .map((r) => {
+      const ing = ingredientById.get(r.ingredientId);
+      if (!ing) return undefined;
+      return { ing, consumed: r.quantity };
+    })
     .filter(<T,>(x: T | undefined): x is T => x !== undefined);
 
   return (
@@ -101,23 +107,44 @@ export function CookModePage() {
             aria-label="Ingredients for this step"
             className="mt-4 flex flex-wrap gap-2 text-sm"
           >
-            {stepIngredients.map((ing) => (
-              <li
-                key={ing.id}
-                className="rounded-full bg-amber-50 px-3 py-1 text-amber-900 ring-1 ring-amber-200"
-              >
-                {isMeasured(ing) ? (
-                  <>
-                    <span className="font-medium">{formatQuantity(ing.quantity)}</span> {ing.name}
-                  </>
-                ) : (
-                  ing.name
-                )}
-              </li>
+            {stepIngredients.map(({ ing, consumed }) => {
+              // Prefer the step's explicit "consumed" quantity (from
+              // OCR's consumedIngredients). Fall back to the
+              // ingredient's full quantity only when measured.
+              const q = consumed ?? (isMeasured(ing) ? ing.quantity : undefined);
+              return (
+                <li
+                  key={ing.id}
+                  className="rounded-full bg-amber-50 px-3 py-1 text-amber-900 ring-1 ring-amber-200"
+                >
+                  {q ? (
+                    <>
+                      <span className="font-medium">{formatQuantity(q)}</span> {ing.name}
+                    </>
+                  ) : (
+                    ing.name
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {step?.temperature && (
+          <p className="mt-3 text-lg text-stone-600">
+            {step.temperature.value}°{step.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
+          </p>
+        )}
+        <p className="mt-4 text-2xl leading-relaxed">{step?.text ?? ''}</p>
+        {step?.subInstructions && step.subInstructions.length > 0 && (
+          <ul className="mt-3 ml-6 list-disc space-y-1 text-lg text-stone-700">
+            {step.subInstructions.map((sub, i) => (
+              <li key={i}>{sub}</li>
             ))}
           </ul>
         )}
-        <p className="mt-4 text-2xl leading-relaxed">{step?.text ?? ''}</p>
+        {step?.notes && (
+          <p className="mt-3 text-base italic text-stone-500">{step.notes}</p>
+        )}
       </div>
 
       <aside className="rounded-lg bg-white p-4 ring-1 ring-stone-200">

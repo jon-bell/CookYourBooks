@@ -33,4 +33,18 @@ describe('formatServings', () => {
   it('preserves leading case', () => {
     expect(formatServings(servings(2, 'Cookie'))).toBe('2 Cookies');
   });
+
+  it('renders a range yield as "4–6 people"', () => {
+    const s = servings(4, 'people', 6);
+    expect(s.amountMax).toBe(6);
+    expect(formatServings(s)).toBe('4–6 people');
+  });
+
+  it('treats amountMax === amount as a single value, not a range', () => {
+    expect(formatServings(servings(4, 'people', 4))).toBe('4 people');
+  });
+
+  it('rejects amountMax smaller than amount at the factory', () => {
+    expect(() => servings(4, 'people', 2)).toThrow();
+  });
 });

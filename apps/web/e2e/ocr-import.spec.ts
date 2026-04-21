@@ -49,7 +49,9 @@ test.describe('OCR import from photo', () => {
     // loaded session.
     await page.addInitScript((draftJson: string) => {
       const draft = JSON.parse(draftJson);
-      window.__cybOcrShim = async () => draft;
+      // Shim returns an array — the parser produces one draft per
+      // recipe on the page, even if there's only one.
+      window.__cybOcrShim = async () => [draft];
     }, JSON.stringify(FAKE_DRAFT));
     await page.reload();
 
@@ -59,7 +61,7 @@ test.describe('OCR import from photo', () => {
     await expect(page.getByRole('heading', { name: 'Photo Imports' })).toBeVisible();
 
     const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Import from photo' }).click();
+    await page.getByRole('button', { name: 'Take photo' }).click();
     const chooser = await fileChooserPromise;
     await chooser.setFiles({
       name: 'recipe.jpg',
@@ -97,7 +99,7 @@ test.describe('OCR import from photo', () => {
     await expect(page.getByRole('heading', { name: 'Needs Setup' })).toBeVisible();
 
     const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Import from photo' }).click();
+    await page.getByRole('button', { name: 'Take photo' }).click();
     const chooser = await fileChooserPromise;
     await chooser.setFiles({
       name: 'dummy.jpg',

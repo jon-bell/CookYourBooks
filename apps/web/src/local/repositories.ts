@@ -11,6 +11,7 @@ import {
   recipeToInsert,
   ingredientToInsert,
   instructionToInsert,
+  instructionRefToInsert,
   type CollectionRow,
   type IngredientRow,
   type InstructionRefRow,
@@ -108,20 +109,40 @@ export async function upsertRecipeRow(
     const recipeRowX = recipeRow as RecipeRow & {
       notes?: string | null;
       parent_recipe_id?: string | null;
+      servings_amount_max?: number | null;
+      description?: string | null;
+      time_estimate?: string | null;
+      equipment?: unknown;
+      book_title?: string | null;
+      page_numbers?: unknown;
+      source_image_text?: string | null;
     };
+    // Array-ish columns live as TEXT (JSON) in SQLite; the Postgres
+    // mirror uses jsonb. Accept either shape on input.
+    const equipmentJson = toJsonText(recipeRowX.equipment);
+    const pageNumbersJson = toJsonText(recipeRowX.page_numbers);
     await tx.exec(
       `insert into recipes
          (id, collection_id, title, servings_amount, servings_description,
-          sort_order, notes, parent_recipe_id, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,0)
+          servings_amount_max, sort_order, notes, parent_recipe_id,
+          description, time_estimate, equipment, book_title, page_numbers,
+          source_image_text, updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
        on conflict(id) do update set
          collection_id=excluded.collection_id,
          title=excluded.title,
          servings_amount=excluded.servings_amount,
          servings_description=excluded.servings_description,
+         servings_amount_max=excluded.servings_amount_max,
          sort_order=excluded.sort_order,
          notes=excluded.notes,
          parent_recipe_id=excluded.parent_recipe_id,
+         description=excluded.description,
+         time_estimate=excluded.time_estimate,
+         equipment=excluded.equipment,
+         book_title=excluded.book_title,
+         page_numbers=excluded.page_numbers,
+         source_image_text=excluded.source_image_text,
          updated_at=excluded.updated_at,
          deleted=0`,
       [
@@ -130,9 +151,16 @@ export async function upsertRecipeRow(
         recipeRow.title,
         recipeRow.servings_amount,
         recipeRow.servings_description,
+        recipeRowX.servings_amount_max ?? null,
         recipeRow.sort_order,
         recipeRowX.notes ?? null,
         recipeRowX.parent_recipe_id ?? null,
+        recipeRowX.description ?? null,
+        recipeRowX.time_estimate ?? null,
+        equipmentJson,
+        recipeRowX.book_title ?? null,
+        pageNumbersJson,
+        recipeRowX.source_image_text ?? null,
         incomingTs,
       ],
     );
@@ -148,12 +176,13 @@ export async function upsertRecipeRow(
     await tx.exec(`delete from ingredients where recipe_id = ?`, [recipeRow.id]);
     await tx.exec(`delete from instructions where recipe_id = ?`, [recipeRow.id]);
     for (const ing of ingredients) {
+      const ingX = ing as IngredientRow & { description?: string | null };
       await tx.exec(
         `insert into ingredients
-           (id, recipe_id, sort_order, type, name, preparation, notes,
+           (id, recipe_id, sort_order, type, name, preparation, notes, description,
             quantity_type, quantity_amount, quantity_whole, quantity_numerator,
             quantity_denominator, quantity_min, quantity_max, quantity_unit)
-         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           ing.id,
           ing.recipe_id,
@@ -162,6 +191,7 @@ export async function upsertRecipeRow(
           ing.name,
           ing.preparation,
           ing.notes,
+          ingX.description ?? null,
           ing.quantity_type,
           ing.quantity_amount,
           ing.quantity_whole,
@@ -174,20 +204,75 @@ export async function upsertRecipeRow(
       );
     }
     for (const step of instructions) {
+      const stepX = step as InstructionRow & {
+        temperature_value?: number | null;
+        temperature_unit?: string | null;
+        sub_instructions?: unknown;
+        notes?: string | null;
+      };
       await tx.exec(
-        `insert into instructions (id, recipe_id, step_number, text)
-         values (?,?,?,?)`,
-        [step.id, step.recipe_id, step.step_number, step.text],
+        `insert into instructions
+           (id, recipe_id, step_number, text,
+            temperature_value, temperature_unit, sub_instructions, notes)
+         values (?,?,?,?,?,?,?,?)`,
+        [
+          step.id,
+          step.recipe_id,
+          step.step_number,
+          step.text,
+          stepX.temperature_value ?? null,
+          stepX.temperature_unit ?? null,
+          toJsonText(stepX.sub_instructions),
+          stepX.notes ?? null,
+        ],
       );
     }
     for (const ref of refs) {
+      const refX = ref as InstructionRefRow & {
+        consumed_quantity_type?: string | null;
+        consumed_quantity_amount?: number | null;
+        consumed_quantity_whole?: number | null;
+        consumed_quantity_numerator?: number | null;
+        consumed_quantity_denominator?: number | null;
+        consumed_quantity_min?: number | null;
+        consumed_quantity_max?: number | null;
+        consumed_quantity_unit?: string | null;
+      };
       await tx.exec(
-        `insert into instruction_ingredient_refs (instruction_id, ingredient_id)
-         values (?,?) on conflict do nothing`,
-        [ref.instruction_id, ref.ingredient_id],
+        `insert into instruction_ingredient_refs
+           (instruction_id, ingredient_id,
+            consumed_quantity_type, consumed_quantity_amount,
+            consumed_quantity_whole, consumed_quantity_numerator,
+            consumed_quantity_denominator, consumed_quantity_min,
+            consumed_quantity_max, consumed_quantity_unit)
+         values (?,?,?,?,?,?,?,?,?,?) on conflict do nothing`,
+        [
+          ref.instruction_id,
+          ref.ingredient_id,
+          refX.consumed_quantity_type ?? null,
+          refX.consumed_quantity_amount ?? null,
+          refX.consumed_quantity_whole ?? null,
+          refX.consumed_quantity_numerator ?? null,
+          refX.consumed_quantity_denominator ?? null,
+          refX.consumed_quantity_min ?? null,
+          refX.consumed_quantity_max ?? null,
+          refX.consumed_quantity_unit ?? null,
+        ],
       );
     }
   });
+}
+
+/**
+ * Normalize an array-ish column value to JSON text suitable for a
+ * local SQLite TEXT column. Accepts an already-stringified JSON blob
+ * (pass-through), a native array (JSON-encode), or null/undefined.
+ */
+function toJsonText(val: unknown): string | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'string') return val.length > 0 ? val : null;
+  if (Array.isArray(val)) return val.length > 0 ? JSON.stringify(val) : null;
+  return null;
 }
 
 export async function softDeleteCollection(id: string): Promise<void> {
@@ -399,7 +484,7 @@ async function hydrateRecipe(row: RecipeRow): Promise<Recipe> {
       [row.id],
     ),
     db.execO<InstructionRefRow>(
-      `select r.instruction_id, r.ingredient_id
+      `select r.*
        from instruction_ingredient_refs r
        join instructions i on i.id = r.instruction_id
        where i.recipe_id = ?`,
@@ -420,49 +505,23 @@ async function saveLocalRecipe(
   sortOrder: number,
 ): Promise<void> {
   const rInsert = recipeToInsert(recipe, collectionId, sortOrder);
-  const recipeRow: RecipeRow = {
+  const recipeRow = {
     ...rInsert,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-    servings_amount: rInsert.servings_amount ?? null,
-    servings_description: rInsert.servings_description ?? null,
-    notes: rInsert.notes ?? null,
-    parent_recipe_id: rInsert.parent_recipe_id ?? null,
   } as RecipeRow;
   const ingRows: IngredientRow[] = recipe.ingredients.map((ing, i) => {
     const ins = ingredientToInsert(ing, recipe.id, i);
-    return {
-      id: ins.id!,
-      recipe_id: ins.recipe_id,
-      sort_order: ins.sort_order,
-      type: ins.type,
-      name: ins.name,
-      preparation: ins.preparation ?? null,
-      notes: ins.notes ?? null,
-      quantity_type: ins.quantity_type ?? null,
-      quantity_amount: ins.quantity_amount ?? null,
-      quantity_whole: ins.quantity_whole ?? null,
-      quantity_numerator: ins.quantity_numerator ?? null,
-      quantity_denominator: ins.quantity_denominator ?? null,
-      quantity_min: ins.quantity_min ?? null,
-      quantity_max: ins.quantity_max ?? null,
-      quantity_unit: ins.quantity_unit ?? null,
-    } as IngredientRow;
+    return { ...ins, id: ins.id! } as IngredientRow;
   });
   const stepRows: InstructionRow[] = recipe.instructions.map((s) => {
     const ins = instructionToInsert(s, recipe.id);
-    return {
-      id: ins.id!,
-      recipe_id: ins.recipe_id,
-      step_number: ins.step_number,
-      text: ins.text,
-    };
+    return { ...ins, id: ins.id! } as InstructionRow;
   });
   const refRows: InstructionRefRow[] = recipe.instructions.flatMap((s) =>
-    s.ingredientRefs.map((r) => ({
-      instruction_id: s.id,
-      ingredient_id: r.ingredientId,
-    })),
+    s.ingredientRefs.map((r) =>
+      instructionRefToInsert(s.id, r.ingredientId, r.quantity) as InstructionRefRow,
+    ),
   );
   await upsertRecipeRow(recipeRow, ingRows, stepRows, refRows);
 }

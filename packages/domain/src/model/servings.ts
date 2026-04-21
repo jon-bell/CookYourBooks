@@ -1,13 +1,27 @@
 export interface Servings {
   readonly amount: number;
   readonly description?: string;
+  /**
+   * Upper bound when the source spells a range ("serves 4–6"). When
+   * set, must be ≥ `amount`; `formatServings` renders as "4–6 people".
+   */
+  readonly amountMax?: number;
 }
 
-export function servings(amount: number, description?: string): Servings {
+export function servings(
+  amount: number,
+  description?: string,
+  amountMax?: number,
+): Servings {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error(`Invalid servings amount: ${amount}`);
   }
-  return { amount, description };
+  if (amountMax !== undefined) {
+    if (!Number.isFinite(amountMax) || amountMax < amount) {
+      throw new Error(`Invalid servings amountMax: ${amountMax}`);
+    }
+  }
+  return { amount, description, amountMax };
 }
 
 /**
@@ -20,8 +34,15 @@ export function servings(amount: number, description?: string): Servings {
  */
 export function formatServings(s: Servings): string {
   const amount = formatAmount(s.amount);
-  const desc = s.description?.trim() || (s.amount === 1 ? 'serving' : 'servings');
-  const word = s.amount === 1 ? singular(desc) : plural(desc);
+  // For range yields pluralize against the upper bound — "1–4 people"
+  // not "1–4 person", matching how cookbooks render this.
+  const countForGrammar = s.amountMax ?? s.amount;
+  const desc =
+    s.description?.trim() || (countForGrammar === 1 ? 'serving' : 'servings');
+  const word = countForGrammar === 1 ? singular(desc) : plural(desc);
+  if (s.amountMax !== undefined && s.amountMax > s.amount) {
+    return `${amount}–${formatAmount(s.amountMax)} ${word}`;
+  }
   return `${amount} ${word}`;
 }
 
@@ -45,6 +66,10 @@ const IRREGULAR_SINGULAR: Record<string, string> = {
 const IRREGULAR_PLURAL: Record<string, string> = {
   loaf: 'loaves',
   person: 'people',
+  // "people" is already-plural; keep it as-is when the input skips
+  // straight to the collective form. Otherwise the naïve "+s" rule
+  // produces the ungrammatical "peoples".
+  people: 'people',
   leaf: 'leaves',
   serving: 'servings',
   slice: 'slices',

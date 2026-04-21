@@ -51,9 +51,12 @@ export const Units = {
   PIECE: { name: 'piece', abbreviations: ['pc', 'pcs'], system: 'WHOLE', dimension: 'COUNT' },
   CLOVE: { name: 'clove', abbreviations: [], system: 'WHOLE', dimension: 'COUNT' },
   BUNCH: { name: 'bunch', abbreviations: [], system: 'WHOLE', dimension: 'COUNT' },
+  /** Serving count unit — "serves 4 people". Dimensionless / yield-only. */
+  PEOPLE: { name: 'people', abbreviations: [], system: 'WHOLE', dimension: 'COUNT' },
   // Taste (dimensionless)
   PINCH: { name: 'pinch', abbreviations: [], system: 'SPECIAL', dimension: 'TASTE' },
   DASH: { name: 'dash', abbreviations: [], system: 'SPECIAL', dimension: 'TASTE' },
+  HANDFUL: { name: 'handful', abbreviations: [], system: 'SPECIAL', dimension: 'TASTE' },
   TO_TASTE: { name: 'to taste', abbreviations: [], system: 'SPECIAL', dimension: 'TASTE' },
 } as const satisfies Record<string, UnitDef>;
 
@@ -73,4 +76,33 @@ export function findUnit(token: string): UnitDef | undefined {
 
 export function unitByName(name: string): UnitDef | undefined {
   return byName.get(name.toLowerCase());
+}
+
+// The canonicalizer accepts three kinds of input the wild produces:
+//   (a) a catalog key like `CUP` / `PEOPLE` / `GRAM` (upper-case, the
+//       form the LLM prompt asks the model to use);
+//   (b) a canonical name like `cup` / `people` / `gram`;
+//   (c) a known abbreviation like `tsp` / `kg`.
+// Returns the canonical lowercase name — what we actually store on
+// quantities so display is consistent regardless of source. Unknown
+// tokens round-trip unchanged (we don't want to destroy data the UI
+// can still render literally).
+const byKey = new Map<string, UnitDef>(
+  Object.entries(Units).map(([k, v]) => [k.toLowerCase(), v]),
+);
+// "WHOLE" is sometimes emitted by LLMs for countable yields (eggs,
+// loaves). We map it to `piece`, the closest thing in the catalog.
+byKey.set('whole', Units.PIECE);
+
+export function canonicalUnitName(token: string | null | undefined): string {
+  if (!token) return '';
+  const t = token.trim();
+  if (!t) return '';
+  const lower = t.toLowerCase();
+  return (
+    byKey.get(lower)?.name ??
+    byName.get(lower)?.name ??
+    byAbbr.get(lower)?.name ??
+    t
+  );
 }

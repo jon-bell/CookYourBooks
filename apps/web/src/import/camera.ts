@@ -7,7 +7,17 @@
  *  user cancelled. */
 export async function capturePhoto(): Promise<{ blob: Blob; name: string } | undefined> {
   if (isCapacitorNative()) return captureNative();
-  return captureWeb();
+  return captureWeb({ preferCamera: true });
+}
+
+/**
+ * Pick an existing image from the device library / file system. On
+ * native this opens the photo picker; on web it drops the `capture`
+ * hint so desktop browsers give the user the full file system.
+ */
+export async function pickPhoto(): Promise<{ blob: Blob; name: string } | undefined> {
+  if (isCapacitorNative()) return pickNative();
+  return captureWeb({ preferCamera: false });
 }
 
 function isCapacitorNative(): boolean {
@@ -35,13 +45,38 @@ async function captureNative(): Promise<{ blob: Blob; name: string } | undefined
   }
 }
 
-async function captureWeb(): Promise<{ blob: Blob; name: string } | undefined> {
+async function pickNative(): Promise<{ blob: Blob; name: string } | undefined> {
+  try {
+    const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+    const photo = await Camera.getPhoto({
+      resultType: CameraResultType.DataUrl,
+      source: CameraSource.Photos,
+      quality: 85,
+      allowEditing: false,
+      correctOrientation: true,
+    });
+    if (!photo.dataUrl) return undefined;
+    const blob = await dataUrlToBlob(photo.dataUrl);
+    return { blob, name: `upload.${photo.format ?? 'jpg'}` };
+  } catch (err) {
+    if (isCancellation(err)) return undefined;
+    throw err;
+  }
+}
+
+async function captureWeb(
+  opts: { preferCamera: boolean },
+): Promise<{ blob: Blob; name: string } | undefined> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    // `capture` is a mobile-browser hint. Desktop browsers ignore it.
-    input.setAttribute('capture', 'environment');
+    if (opts.preferCamera) {
+      // Mobile-browser hint; desktop ignores it. We only set it for
+      // the "take a photo" path so "upload" on desktop opens the full
+      // file system and on mobile web opens the gallery by default.
+      input.setAttribute('capture', 'environment');
+    }
     input.style.display = 'none';
     input.addEventListener('change', () => {
       const file = input.files?.[0];

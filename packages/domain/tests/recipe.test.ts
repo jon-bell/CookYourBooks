@@ -111,4 +111,77 @@ describe('adaptRecipe', () => {
     expect(base.instructions[0]!.id).toBe('step-1');
     expect(base.parentRecipeId).toBeUndefined();
   });
+
+  it('preserves provenance metadata through the adaptation', () => {
+    const rich = createRecipe({
+      id: 'rich-base',
+      title: 'Sourdough',
+      description: 'A slow-fermented everyday loaf.',
+      timeEstimate: '24 hours',
+      equipment: ['Dutch oven'],
+      bookTitle: 'Bread Book',
+      pageNumbers: [42],
+      sourceImageText: 'raw OCR text',
+      ingredients: [measured({ id: 'i1', name: 'flour', quantity: exact(500, 'gram') })],
+      instructions: [
+        instruction({
+          id: 's1',
+          stepNumber: 1,
+          text: 'Bake.',
+          ingredientRefs: [
+            { ingredientId: 'i1', quantity: exact(500, 'gram') },
+          ],
+        }),
+      ],
+    });
+    const adapted = adaptRecipe(rich);
+    expect(adapted.bookTitle).toBe('Bread Book');
+    expect(adapted.pageNumbers).toEqual([42]);
+    expect(adapted.description).toBe('A slow-fermented everyday loaf.');
+    expect(adapted.timeEstimate).toBe('24 hours');
+    expect(adapted.equipment).toEqual(['Dutch oven']);
+    expect(adapted.sourceImageText).toBe('raw OCR text');
+    // Per-step consumed quantity survives the id remap.
+    const newFlourId = adapted.ingredients[0]!.id;
+    const adaptedRef = adapted.instructions[0]!.ingredientRefs[0];
+    expect(adaptedRef?.ingredientId).toBe(newFlourId);
+    expect(adaptedRef?.quantity).toEqual({ type: 'EXACT', amount: 500, unit: 'gram' });
+  });
+});
+
+describe('Rich recipe metadata', () => {
+  it('createRecipe accepts and freezes OCR-surfaced fields', () => {
+    const r = createRecipe({
+      title: 't',
+      description: 'd',
+      timeEstimate: '1h',
+      equipment: ['pan'],
+      bookTitle: 'b',
+      pageNumbers: [1, 2],
+      sourceImageText: 'raw',
+    });
+    expect(r.description).toBe('d');
+    expect(r.timeEstimate).toBe('1h');
+    expect(r.equipment).toEqual(['pan']);
+    expect(r.pageNumbers).toEqual([1, 2]);
+    expect(r.sourceImageText).toBe('raw');
+  });
+
+  it('instruction factory carries temperature / subInstructions / notes', () => {
+    const s = instruction({
+      stepNumber: 1,
+      text: 'Bake.',
+      temperature: { value: 350, unit: 'FAHRENHEIT' },
+      subInstructions: ['rack in middle', 'door cracked last 5 min'],
+      notes: 'watch for browning',
+    });
+    expect(s.temperature).toEqual({ value: 350, unit: 'FAHRENHEIT' });
+    expect(s.subInstructions).toEqual(['rack in middle', 'door cracked last 5 min']);
+    expect(s.notes).toBe('watch for browning');
+  });
+
+  it('vague ingredient factory accepts a description qualifier', () => {
+    const v = vague({ name: 'salt', description: 'to taste' });
+    expect(v.description).toBe('to taste');
+  });
 });

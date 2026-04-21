@@ -100,31 +100,65 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
 
   if (!collection) return <p className="text-stone-500">Loading…</p>;
 
+  // The "source" recipe supplies metadata the editor doesn't currently
+  // surface but must preserve round-trip: per-step consumed quantities,
+  // temperatures, sub-instructions, per-step notes, vague-ingredient
+  // descriptions, book/page provenance, etc. Either an existing recipe
+  // being edited, or the OCR draft being seeded — both shapes carry
+  // the fields we need.
+  const source = existing ?? seedDraft;
+
   async function save() {
     if (!title.trim()) return;
-    const builtIngredients: Ingredient[] = ingredients.filter((d) => d.name.trim()).map(fromDraft);
+    const sourceIngredientsById = new Map(
+      (source?.ingredients ?? []).map((ing) => [ing.id, ing]),
+    );
+    const builtIngredients: Ingredient[] = ingredients
+      .filter((d) => d.name.trim())
+      .map((d) => preservingIngredient(fromDraft(d), sourceIngredientsById.get(d.id)));
     // Only keep ref ids that point at ingredients we're actually saving.
     // Protects against stale ids referring to ingredients the user deleted.
     const surviving = new Set(builtIngredients.map((ing) => ing.id));
+    const sourceStepsById = new Map((source?.instructions ?? []).map((s) => [s.id, s]));
     const builtInstructions: Instruction[] = instructions
       .filter((d) => d.text.trim())
-      .map((d, i) =>
-        instruction({
+      .map((d, i) => {
+        const src = sourceStepsById.get(d.id);
+        const refsBySource = new Map(
+          (src?.ingredientRefs ?? []).map((r) => [r.ingredientId, r]),
+        );
+        return instruction({
           id: d.id,
           stepNumber: i + 1,
           text: d.text.trim(),
           ingredientRefs: d.refIds
             .filter((id) => surviving.has(id))
-            .map((ingredientId) => ({ ingredientId })),
-        }),
-      );
+            .map((ingredientId) => ({
+              ingredientId,
+              quantity: refsBySource.get(ingredientId)?.quantity,
+            })),
+          temperature: src?.temperature,
+          subInstructions: src?.subInstructions,
+          notes: src?.notes,
+        });
+      });
     const servingsNum = servingsAmount ? Number(servingsAmount) : undefined;
+    const servingsMax =
+      existing?.servings?.amountMax ?? seedDraft?.servings?.amountMax;
     const recipe: Recipe = createRecipe({
       id: existing?.id,
       title: title.trim(),
       servings:
         servingsNum && Number.isFinite(servingsNum) && servingsNum > 0
-          ? makeServings(servingsNum, servingsDesc.trim() || undefined)
+          ? makeServings(
+              servingsNum,
+              servingsDesc.trim() || undefined,
+              // Preserve a range-style yield only when the upper bound
+              // is still compatible with the user-entered amount.
+              servingsMax !== undefined && servingsMax >= servingsNum
+                ? servingsMax
+                : undefined,
+            )
           : undefined,
       ingredients: builtIngredients,
       instructions: builtInstructions,
@@ -133,9 +167,27 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
       // never drop lineage metadata just because it wasn't surfaced in
       // the form.
       parentRecipeId: existing?.parentRecipeId,
+      // Rich OCR-surfaced metadata: keep it so cookbook provenance,
+      // equipment, descriptions, and raw OCR text survive a round trip
+      // through the editor even though the form doesn't surface them.
+      description: existing?.description ?? seedDraft?.description,
+      timeEstimate: existing?.timeEstimate ?? seedDraft?.timeEstimate,
+      equipment: existing?.equipment ?? seedDraft?.equipment,
+      bookTitle: existing?.bookTitle ?? seedDraft?.bookTitle,
+      pageNumbers: existing?.pageNumbers ?? seedDraft?.pageNumbers,
+      sourceImageText: existing?.sourceImageText ?? seedDraft?.sourceImageText,
     });
     await saveRecipe.mutateAsync(recipe);
     navigate(`/collections/${collection!.id}/recipes/${recipe.id}`);
+  }
+
+  function preservingIngredient(ing: Ingredient, src: Ingredient | undefined): Ingredient {
+    // The editor doesn't let the user type a "to taste" qualifier yet,
+    // but we shouldn't drop it on round-trip. Only applies to VAGUE.
+    if (ing.type === 'VAGUE' && src && src.type === 'VAGUE' && src.description) {
+      return { ...ing, description: src.description };
+    }
+    return ing;
   }
 
   function handleBulkPaste() {

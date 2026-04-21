@@ -15,6 +15,13 @@ export interface VagueIngredient {
   readonly name: string;
   readonly preparation?: string;
   readonly notes?: string;
+  /**
+   * Qualifier for the vagueness — "to taste", "as needed", "for
+   * greasing the pan". Kept separate from `preparation` (which is a
+   * transformation of the ingredient itself — "minced", "at room
+   * temperature") and `notes` (free-form extras).
+   */
+  readonly description?: string;
 }
 
 export type Ingredient = MeasuredIngredient | VagueIngredient;
@@ -25,6 +32,13 @@ export function isMeasured(i: Ingredient): i is MeasuredIngredient {
 
 export interface IngredientRef {
   readonly ingredientId: string;
+  /**
+   * How much of the ingredient is *consumed* in this step. Optional:
+   * when absent, the UI falls back to the ingredient's own quantity
+   * (i.e. "use all of it"). Used by Cook Mode to show a per-step
+   * measure — e.g. `"2 cup flour"` on step 1 of a recipe that calls
+   * for 3 cups total.
+   */
   readonly quantity?: Quantity;
 }
 
@@ -54,6 +68,7 @@ export function vague(params: {
   name: string;
   preparation?: string;
   notes?: string;
+  description?: string;
 }): VagueIngredient {
   return {
     type: 'VAGUE',
@@ -61,5 +76,6 @@ export function vague(params: {
     name: params.name,
     preparation: params.preparation,
     notes: params.notes,
+    description: params.description,
   };
 }
