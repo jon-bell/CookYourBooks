@@ -14,6 +14,7 @@ coverage/
 .env
 .env.local
 .env.*.local
+.secrets
 
 # Supabase CLI state
 supabase/.branches/

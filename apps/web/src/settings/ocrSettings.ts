@@ -7,7 +7,7 @@ export type OcrProvider = 'gemini' | 'openai-compatible';
 export interface OcrSettings {
   provider: OcrProvider;
   apiKey: string;
-  /** For Gemini, a model like `gemini-2.0-flash-exp`. For OpenAI-compat, `gpt-4o` / `gpt-4o-mini` / etc. */
+  /** For Gemini, a model like `gemini-3-pro-image-preview`. For OpenAI-compat, `gpt-4o` / `gpt-4o-mini` / etc. */
   model: string;
   /** Only used by OpenAI-compat (Groq, Together, OpenRouter, self-hosted …). */
   baseUrl?: string;
@@ -241,7 +241,7 @@ For each instruction, identify which ingredients from the recipe's ingredient li
   * "Add remaining flour" (if recipe has "2 cups flour" and 1 cup was used earlier) -> [{ "ingredientName": "flour", "quantity": { "type": "exact", "value": 1.0, "unit": "CUP" } }]`;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<OcrProvider, string> = {
-  gemini: 'gemini-2.0-flash-exp',
+  gemini: 'gemini-3-pro-image-preview',
   'openai-compatible': 'gpt-4o-mini',
 };
 

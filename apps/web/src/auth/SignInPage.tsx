@@ -6,8 +6,8 @@ export function SignInPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const redirectTo = (location.state as { from?: string } | null)?.from ?? '/';
-  const [email, setEmail] = useState('demo@cookyourbooks.local');
-  const [password, setPassword] = useState('demo1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -37,9 +37,7 @@ export function SignInPage() {
     <div className="mx-auto max-w-sm space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Sign in</h1>
-        <p className="mt-1 text-sm text-stone-600">
-          Welcome back. Seed account: <code>demo@cookyourbooks.local</code> / <code>demo1234</code>.
-        </p>
+        <p className="mt-1 text-sm text-stone-600">Welcome back.</p>
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block">
