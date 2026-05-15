@@ -144,3 +144,36 @@ export async function importToc(
     titles,
   });
 }
+
+export interface CookbookMetadata {
+  title: string;
+  author?: string | null;
+  isbn?: string | null;
+  publisher?: string | null;
+  publication_year?: number | null;
+  source_type?: 'PUBLISHED_BOOK' | 'PERSONAL' | 'WEBSITE';
+}
+
+export interface CookbookEntry {
+  title: string;
+  page_number?: number | null;
+}
+
+export interface ImportCookbookResult {
+  collection_id: string;
+  reused: boolean;
+  imported: number;
+  skipped: number;
+}
+
+export async function importCookbook(
+  config: CliConfig,
+  metadata: CookbookMetadata,
+  entries: CookbookEntry[],
+): Promise<ImportCookbookResult> {
+  return rpc<ImportCookbookResult>(config, 'cli_import_cookbook', {
+    raw_token: config.token,
+    metadata,
+    entries,
+  });
+}

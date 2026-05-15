@@ -1,12 +1,16 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import { loadConfig, requireConfig, saveConfig } from './config.js';
 import {
   exportLibrary,
   exportToc,
+  importCookbook,
   importRecipe,
   importToc,
+  type CookbookEntry,
+  type CookbookMetadata,
   type ExportedRecipe,
   type TocCollection,
 } from './api.js';
@@ -135,6 +139,68 @@ tocCommand
   );
 
 tocCommand
+  .command('import-cookbooks')
+  .description(
+    'Bulk-import Eat Your Books-style ToC JSON files as new cookbook collections',
+  )
+  .argument('<paths...>', 'JSON files and/or directories containing *.json ToC dumps')
+  .action(async (paths: string[]) => {
+    const config = requireConfig();
+    const files = expandTocInputs(paths);
+    if (files.length === 0) exitWith('No JSON files found in the given paths.');
+
+    let created = 0;
+    let reused = 0;
+    let totalImported = 0;
+    for (const file of files) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(file, 'utf8'));
+      } catch (e) {
+        console.error(`! ${file}: not valid JSON (${(e as Error).message})`);
+        continue;
+      }
+
+      const parsedBook = parseCookbookFile(parsed);
+      if (!parsedBook) {
+        console.error(`! ${file}: no cookbook metadata / recipes found`);
+        continue;
+      }
+      if (parsedBook.truncated) {
+        console.error(
+          `  ${file}: source reports more recipes than are in the file — ` +
+            `importing only the ${parsedBook.entries.length} included`,
+        );
+      }
+
+      try {
+        const result = await importCookbook(config, parsedBook.metadata, parsedBook.entries);
+        if (result.reused) {
+          reused += 1;
+          console.error(
+            `= ${parsedBook.metadata.title} — already imported (${result.collection_id}), ` +
+              `skipped ${result.skipped} entries`,
+          );
+        } else {
+          created += 1;
+          totalImported += result.imported;
+          console.error(
+            `+ ${parsedBook.metadata.title} → ${result.collection_id} ` +
+              `(${result.imported} recipe${result.imported === 1 ? '' : 's'})`,
+          );
+        }
+      } catch (e) {
+        console.error(`! ${parsedBook.metadata.title}: ${(e as Error).message}`);
+      }
+    }
+    console.error(
+      `Processed ${files.length} file(s): ${created} new cookbook(s), ` +
+        `${reused} already present, ${totalImported} recipe(s) imported.`,
+    );
+    if (created === 0 && reused === 0) process.exit(1);
+  });
+
+tocCommand
   .command('import')
   .description('Seed placeholder recipes (title only) into a collection from a list')
   .argument('<file>', 'Plain text (one title per line, blank lines + "#" comments ignored) or JSON')
@@ -241,6 +307,116 @@ function extractRecipes(input: unknown): ExportedRecipe[] {
     return [input as ExportedRecipe];
   }
   return [];
+}
+
+/**
+ * Expand a mixed list of file and directory paths into a sorted list of
+ * `.json` files. Directories are shallow-scanned; non-JSON files are
+ * dropped silently so a user can point at a grab-bag folder.
+ */
+function expandTocInputs(paths: string[]): string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    let st;
+    try {
+      st = statSync(p);
+    } catch {
+      console.error(`! ${p}: not found`);
+      continue;
+    }
+    if (st.isDirectory()) {
+      for (const name of readdirSync(p).sort()) {
+        if (name.endsWith('.json')) out.push(join(p, name));
+      }
+    } else if (st.isFile()) {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+interface ParsedCookbook {
+  metadata: CookbookMetadata;
+  entries: CookbookEntry[];
+  truncated: boolean;
+}
+
+/**
+ * Parse an Eat Your Books-style ToC dump into the shape the
+ * `cli_import_cookbook` RPC wants. The source format is nested:
+ * `bookDetails.book` holds identifying metadata, `bookDetails.authors`
+ * is a separate array of {title, id}, and `recipeSearchResults.recipes`
+ * is the ToC itself with optional `pageNumber` per entry.
+ *
+ * Returns null if the input doesn't look like one of these dumps at all
+ * — upstream prints a skip message rather than aborting the batch.
+ */
+function parseCookbookFile(input: unknown): ParsedCookbook | null {
+  if (!input || typeof input !== 'object') return null;
+  const root = input as {
+    bookDetails?: {
+      book?: {
+        title?: unknown;
+        isbn13?: unknown;
+        datePublished?: unknown;
+      };
+      authors?: Array<{ title?: unknown }>;
+    };
+    recipeSearchResults?: {
+      recipes?: Array<{ title?: unknown; pageNumber?: unknown }>;
+      hasMore?: unknown;
+      recipeCount?: unknown;
+    };
+  };
+
+  const book = root.bookDetails?.book;
+  const recipes = root.recipeSearchResults?.recipes;
+  if (!book || !Array.isArray(recipes)) return null;
+
+  const title = typeof book.title === 'string' ? book.title.trim() : '';
+  if (!title) return null;
+
+  const authorList = Array.isArray(root.bookDetails?.authors)
+    ? root.bookDetails!.authors!
+        .map((a) => (typeof a?.title === 'string' ? a.title.trim() : ''))
+        .filter((t) => t.length > 0)
+    : [];
+  const author = authorList.length > 0 ? authorList.join(', ') : null;
+
+  const isbn = typeof book.isbn13 === 'string' && book.isbn13.trim() !== ''
+    ? book.isbn13.trim()
+    : null;
+
+  let publicationYear: number | null = null;
+  if (typeof book.datePublished === 'string') {
+    const match = book.datePublished.match(/^(\d{4})/);
+    if (match) publicationYear = Number(match[1]);
+  }
+
+  const entries: CookbookEntry[] = [];
+  for (const r of recipes) {
+    const recipeTitle = typeof r?.title === 'string' ? r.title.trim() : '';
+    if (!recipeTitle) continue;
+    const page =
+      typeof r?.pageNumber === 'number' && Number.isFinite(r.pageNumber)
+        ? r.pageNumber
+        : null;
+    entries.push({ title: recipeTitle, page_number: page });
+  }
+
+  const truncated = root.recipeSearchResults?.hasMore === true;
+
+  return {
+    metadata: {
+      title,
+      author,
+      isbn,
+      publication_year: publicationYear,
+      source_type: 'PUBLISHED_BOOK',
+    },
+    entries,
+    truncated,
+  };
 }
 
 function exitWith(message: string): never {

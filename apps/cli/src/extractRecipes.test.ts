@@ -87,4 +87,13 @@ describe('cyb cli', () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/Not logged in/);
   });
+
+  it('toc import-cookbooks without login prints a useful message', () => {
+    const result = runCli(
+      ['toc', 'import-cookbooks', '/nonexistent-dir'],
+      { XDG_CONFIG_HOME: '/tmp/cyb-missing-cfg' },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/Not logged in/);
+  });
 });
