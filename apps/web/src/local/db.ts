@@ -20,17 +20,14 @@ async function initialize(): Promise<LocalDb> {
     await db.exec(stmt);
   }
 
-  // SQLite's `ALTER TABLE ADD COLUMN` doesn't accept `IF NOT EXISTS`, so
-  // we run each post-schema migration and swallow "duplicate column"
-  // errors. That keeps upgrades idempotent for users whose IndexedDB
-  // already has the old shape.
+  // Run post-schema migrations BEFORE promoting tables to CRR. Once a
+  // table is a CRR, cr-sqlite blocks plain `ALTER TABLE` ("table %s may
+  // not be altered") — you have to bracket it with crsql_begin_alter /
+  // crsql_commit_alter. On a user's existing browser DB the tables are
+  // already CRR from a previous boot, so we use the bracketed form for
+  // anything touching a CRR table.
   for (const stmt of POST_SCHEMA_MIGRATIONS) {
-    try {
-      await db.exec(stmt);
-    } catch (err) {
-      const msg = String((err as Error).message ?? '');
-      if (!/duplicate column name|already exists/i.test(msg)) throw err;
-    }
+    await applyPostSchemaMigration(db, stmt);
   }
 
   // Promote tables to CRRs. crsql_as_crr is idempotent — safe to re-run.
@@ -39,6 +36,43 @@ async function initialize(): Promise<LocalDb> {
   }
 
   return db;
+}
+
+const ADD_COLUMN_RE = /^\s*alter\s+table\s+([a-z_][a-z0-9_]*)\s+add\s+column\s+([a-z_][a-z0-9_]*)\b/i;
+
+async function applyPostSchemaMigration(db: LocalDb, stmt: string): Promise<void> {
+  const addCol = stmt.match(ADD_COLUMN_RE);
+  if (!addCol) {
+    // Non-ALTER statement (e.g. `create index if not exists ...`). Run
+    // directly; these are already idempotent.
+    await db.exec(stmt);
+    return;
+  }
+  const table = addCol[1]!;
+  const column = addCol[2]!;
+  if (await columnExists(db, table, column)) return;
+
+  const isCrr = CRR_TABLES.includes(table);
+  if (isCrr) await db.exec(`select crsql_begin_alter('${table}')`);
+  try {
+    await db.exec(stmt);
+  } catch (err) {
+    // Another concurrent boot raced us, or the column landed via a path
+    // we don't track. Either way: if the column is now present, the
+    // migration is effectively done.
+    const msg = String((err as Error).message ?? '');
+    if (!/duplicate column name|already exists/i.test(msg)) {
+      if (isCrr) await db.exec(`select crsql_commit_alter('${table}')`);
+      throw err;
+    }
+  }
+  if (isCrr) await db.exec(`select crsql_commit_alter('${table}')`);
+}
+
+async function columnExists(db: LocalDb, table: string, column: string): Promise<boolean> {
+  const rows = await db.execA<unknown[]>(`pragma table_info(${table})`);
+  // pragma_table_info returns rows shaped [cid, name, type, notnull, dflt, pk].
+  return rows.some((row) => row[1] === column);
 }
 
 // For tests/dev tools to reset the local database between runs.
