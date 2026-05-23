@@ -41,7 +41,16 @@ trap 'rm -rf "$TMP"' EXIT
 echo "Fetching $URL"
 curl -fsSL "$URL" -o "$TMP/supabase.tgz"
 tar -xzf "$TMP/supabase.tgz" -C "$TMP"
+
+# Recent releases (≥ v2.100) ship two co-located binaries: `supabase` is
+# a thin shim that exec's `supabase-go` from the same directory. The
+# shim aborts with "Could not find the `supabase-go` binary" if you
+# only place `supabase`, so install both side-by-side when present.
 mv "$TMP/supabase" "$REPO_ROOT/.bin/supabase"
 chmod +x "$REPO_ROOT/.bin/supabase"
+if [ -f "$TMP/supabase-go" ]; then
+  mv "$TMP/supabase-go" "$REPO_ROOT/.bin/supabase-go"
+  chmod +x "$REPO_ROOT/.bin/supabase-go"
+fi
 
 "$REPO_ROOT/.bin/supabase" --version
