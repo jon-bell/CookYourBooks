@@ -153,31 +153,48 @@ async function fetchRecipesForCollections(
   collectionIds: string[],
 ): Promise<Map<string, Recipe[]>> {
   if (collectionIds.length === 0) return new Map();
-  const [recipesRes, ingRes, stepRes] = await Promise.all([
-    client
-      .from('recipes')
-      .select('*')
-      .in('collection_id', collectionIds)
-      .order('sort_order', { ascending: true }),
-    client
-      .from('ingredients')
-      .select('*, recipes!inner(collection_id)')
-      .in('recipes.collection_id', collectionIds),
-    client
-      .from('instructions')
-      .select('*, recipes!inner(collection_id)')
-      .in('recipes.collection_id', collectionIds),
+  // Single-collection reads (the `.get(id)` path) stay on the cheap
+  // equality filter. For multi-collection reads we still need IN, but
+  // we chunk to keep each URL bounded in case the caller hands us a
+  // large set — PostgREST/Kong both cap URL length, and a 5k-row
+  // library will overflow the default cap with one big IN list.
+  const chunks = chunk(collectionIds, IN_CHUNK_SIZE);
+  const [recipeRows, ingRows, stepRows] = await Promise.all([
+    flatten(
+      chunks.map((ids) =>
+        client
+          .from('recipes')
+          .select('*')
+          .in('collection_id', ids)
+          .order('sort_order', { ascending: true })
+          .then(check),
+      ),
+    ) as Promise<RecipeRow[]>,
+    flatten(
+      chunks.map((ids) =>
+        client
+          .from('ingredients')
+          .select('*, recipes!inner(collection_id)')
+          .in('recipes.collection_id', ids)
+          .then(check),
+      ),
+    ) as Promise<IngredientRow[]>,
+    flatten(
+      chunks.map((ids) =>
+        client
+          .from('instructions')
+          .select('*, recipes!inner(collection_id)')
+          .in('recipes.collection_id', ids)
+          .then(check),
+      ),
+    ) as Promise<InstructionRow[]>,
   ]);
 
-  const recipes = check(recipesRes) as RecipeRow[];
-  const allIngredients = check(ingRes) as (IngredientRow & { recipes?: unknown })[];
-  const allInstructions = check(stepRes) as (InstructionRow & { recipes?: unknown })[];
-
-  const ingByRecipe = groupBy(allIngredients, (r) => r.recipe_id);
-  const stepsByRecipe = groupBy(allInstructions, (r) => r.recipe_id);
+  const ingByRecipe = groupBy(ingRows, (r) => r.recipe_id);
+  const stepsByRecipe = groupBy(stepRows, (r) => r.recipe_id);
 
   const byCollection = new Map<string, Recipe[]>();
-  for (const r of recipes) {
+  for (const r of recipeRows) {
     const built = rowsToRecipe(
       r,
       (ingByRecipe.get(r.id) ?? []) as IngredientRow[],
@@ -188,6 +205,25 @@ async function fetchRecipesForCollections(
     byCollection.set(r.collection_id, list);
   }
   return byCollection;
+}
+
+// PostgREST + Kong allow a fairly long URL but not unbounded. 200 ids
+// per IN clause keeps each request well under the default 8K line cap
+// (with UUIDs that's ~7.6K of identifiers + overhead).
+const IN_CHUNK_SIZE = 200;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  if (items.length <= size) return [items];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+async function flatten<T>(promises: PromiseLike<T[]>[]): Promise<T[]> {
+  const all = await Promise.all(promises);
+  return all.flat();
 }
 
 function groupBy<T, K>(items: T[], key: (t: T) => K): Map<K, T[]> {

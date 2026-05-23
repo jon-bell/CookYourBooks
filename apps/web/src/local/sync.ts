@@ -70,6 +70,7 @@ export async function pullAll(
   const { data: collections, error: colErr } = await client
     .from('recipe_collections')
     .select('*')
+    .eq('owner_id', ownerId)
     .gte('updated_at', collectionsSince)
     .order('updated_at', { ascending: true });
   if (colErr) throw colErr;
@@ -81,63 +82,86 @@ export async function pullAll(
   }
   if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
 
-  // For recipes: fetch everything in the user's collections that changed since
-  // our watermark. RLS restricts this to collections the user owns or that
-  // are public (but the join filters us to our own IDs).
-  const ids = (collections ?? []).map((c) => (c as CollectionRow).id);
-  // Also include collections we already have locally, so recipe sync covers
-  // previously-pulled data even if no collection changed this round.
-  const localIds = await listLocalCollectionIds(ownerId);
-  const allIds = Array.from(new Set([...ids, ...localIds]));
-
   const recipeTopic = `recipes:${ownerId}`;
   const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
 
-  let recipesFetched: RecipeRow[] = [];
-  if (allIds.length > 0) {
-    const { data, error } = await client
-      .from('recipes')
-      .select('*')
-      .in('collection_id', allIds)
-      .gte('updated_at', recipesSince)
-      .order('updated_at', { ascending: true });
-    if (error) throw error;
-    recipesFetched = (data ?? []) as RecipeRow[];
-  }
+  // Recipes (+ their ingredients / instructions / refs) are scoped via
+  // PostgREST embedded-resource inner joins. The old approach assembled
+  // a `.in('collection_id', […])` over every collection the user knew
+  // about and then a `.in('recipe_id', […])` over every recipe that
+  // had changed — for libraries with thousands of items that ran past
+  // PostgREST's URL/parameter ceiling. Filtering through the join
+  // keeps the URL tiny no matter how many rows the user owns.
+  const { data: recipeRowsRaw, error: recErr } = await client
+    .from('recipes')
+    .select('*, recipe_collections!inner(owner_id)')
+    .eq('recipe_collections.owner_id', ownerId)
+    .gte('updated_at', recipesSince)
+    .order('updated_at', { ascending: true });
+  if (recErr) throw recErr;
+  const recipesFetched: RecipeRow[] = (recipeRowsRaw ?? []).map((row) => {
+    const { recipe_collections: _rc, ...rest } = row as RecipeRow & {
+      recipe_collections?: unknown;
+    };
+    return rest as RecipeRow;
+  });
 
   let maxRecipeTs = await getWatermark(recipeTopic);
   let ingTotal = 0;
   let stepTotal = 0;
 
   if (recipesFetched.length > 0) {
-    const recipeIds = recipesFetched.map((r) => r.id);
-    const [ingRes, stepRes] = await Promise.all([
-      client.from('ingredients').select('*').in('recipe_id', recipeIds),
-      client.from('instructions').select('*').in('recipe_id', recipeIds),
+    // Children: filter by the parent recipe's `updated_at` so we only
+    // re-pull children for recipes that actually changed this round.
+    // Save flow rewrites all children on every recipe save, so the
+    // parent's updated_at moving is a sufficient signal.
+    const [ingRes, stepRes, refRes] = await Promise.all([
+      client
+        .from('ingredients')
+        .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+        .eq('recipes.recipe_collections.owner_id', ownerId)
+        .gte('recipes.updated_at', recipesSince),
+      client
+        .from('instructions')
+        .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+        .eq('recipes.recipe_collections.owner_id', ownerId)
+        .gte('recipes.updated_at', recipesSince),
+      client
+        .from('instruction_ingredient_refs')
+        .select(
+          '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
+        )
+        .eq('instructions.recipes.recipe_collections.owner_id', ownerId)
+        .gte('instructions.recipes.updated_at', recipesSince),
     ]);
     if (ingRes.error) throw ingRes.error;
     if (stepRes.error) throw stepRes.error;
-    const ings = (ingRes.data ?? []) as IngredientRow[];
-    const steps = (stepRes.data ?? []) as InstructionRow[];
+    if (refRes.error) throw refRes.error;
+
+    const ings = stripEmbedded(
+      (ingRes.data ?? []) as Array<IngredientRow & { recipes?: unknown }>,
+      'recipes',
+    );
+    const steps = stripEmbedded(
+      (stepRes.data ?? []) as Array<InstructionRow & { recipes?: unknown }>,
+      'recipes',
+    );
     const ingByRecipe = groupBy(ings, (i) => i.recipe_id);
     const stepsByRecipe = groupBy(steps, (s) => s.recipe_id);
 
-    // Ref fan-out: one batch query scoped to the instructions we just
-    // pulled. `select('*, instructions!inner(recipe_id)')` isn't strictly
-    // necessary because the join table keys in on instruction_id, but
-    // filtering on instruction_id in (…) keeps the payload bounded.
-    const instructionIds = steps.map((s) => s.id);
-    let refsByRecipe = new Map<string, InstructionRefRow[]>();
-    if (instructionIds.length > 0) {
-      const { data: refData, error: refErr } = await client
-        .from('instruction_ingredient_refs')
-        .select('*')
-        .in('instruction_id', instructionIds);
-      if (refErr) throw refErr;
-      const refs = (refData ?? []) as InstructionRefRow[];
-      // Map back to recipe via the already-fetched steps list.
-      const recipeByInstruction = new Map(steps.map((s) => [s.id, s.recipe_id]));
-      refsByRecipe = groupBy(refs, (r) => recipeByInstruction.get(r.instruction_id) ?? '');
+    const refRows = (refRes.data ?? []) as Array<
+      InstructionRefRow & { instructions?: { recipe_id?: string } }
+    >;
+    const refsByRecipe = new Map<string, InstructionRefRow[]>();
+    for (const row of refRows) {
+      const recipeId = row.instructions?.recipe_id ?? '';
+      const { instructions: _i, ...refOnly } = row as InstructionRefRow & {
+        instructions?: unknown;
+      };
+      if (!recipeId) continue;
+      const arr = refsByRecipe.get(recipeId) ?? [];
+      arr.push(refOnly as InstructionRefRow);
+      refsByRecipe.set(recipeId, arr);
     }
 
     for (const r of recipesFetched) {
@@ -162,13 +186,15 @@ export async function pullAll(
   };
 }
 
-async function listLocalCollectionIds(ownerId: string): Promise<string[]> {
-  const db = await getLocalDb();
-  const rows = (await db.execO<{ id: string }>(
-    `select id from recipe_collections where owner_id = ?`,
-    [ownerId],
-  )) as { id: string }[];
-  return rows.map((r) => r.id);
+function stripEmbedded<T extends Record<string, unknown>>(
+  rows: T[],
+  field: string,
+): T[] {
+  return rows.map((row) => {
+    const copy: Record<string, unknown> = { ...row };
+    delete copy[field];
+    return copy as T;
+  });
 }
 
 function groupBy<T, K>(items: T[], key: (t: T) => K): Map<K, T[]> {
