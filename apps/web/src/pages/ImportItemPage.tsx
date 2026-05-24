@@ -183,13 +183,17 @@ export function ImportItemPage() {
 
   // Look for an existing recipe in the target cookbook whose title
   // matches the draft. Used to merge into placeholder ToC entries
-  // rather than create duplicates.
+  // rather than create duplicates. Threshold is intentionally tight
+  // (0.85) — we want OCR-cleanup matches like "Garam Masala" vs
+  // "garam masala" to fold together, but distinct recipes that happen
+  // to share a noun ("Crispy Cookies" vs "Chewy Cookies", ~0.77) must
+  // stay separate.
   const matchedExisting = useMemo(() => {
     if (!targetCollection || !currentDraft?.title) return undefined;
     let best: { id: string; title: string; score: number } | undefined;
     for (const r of targetCollection.recipes ?? []) {
       const score = scoreTocMatch(currentDraft.title, r.title);
-      if (score >= 0.7 && (!best || score > best.score)) {
+      if (score >= 0.85 && (!best || score > best.score)) {
         best = { id: r.id, title: r.title, score };
       }
     }

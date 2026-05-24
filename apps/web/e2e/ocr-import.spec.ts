@@ -75,10 +75,12 @@ test.describe('OCR import from photo', () => {
     await expect(
       page.getByRole('button', { name: "Grandma's Lemon Bars" }),
     ).toBeVisible({ timeout: 10_000 });
-    // Ingredients render directly as a list now (no summary line).
-    // Pick a few we expect from FAKE_DRAFT to confirm the editor
-    // actually saw the parsed structure.
-    await expect(page.getByText('flour', { exact: false })).toBeVisible();
+    // Ingredients render as click-to-edit name buttons. Use an exact
+    // match against a unique name from FAKE_DRAFT so we don't double-
+    // count "flour" leaking into placeholders or instruction text.
+    await expect(
+      page.getByRole('button', { name: 'powdered sugar', exact: true }),
+    ).toBeVisible();
   });
 
   test('import button directs to Settings when no provider is configured', async ({
