@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createRecipe } from '@cookyourbooks/domain';
 import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
-import { useCollections, useSaveRecipe } from '../data/queries.js';
+import { createCookbook, type RecipeCollection } from '@cookyourbooks/domain';
+import { useCollections, useSaveCollection, useSaveRecipe } from '../data/queries.js';
 import {
   useImportBatch,
   useImportItem,
@@ -17,13 +18,14 @@ import { suggestTocMatches } from '../import/tocMatch.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
-  const { data: batch, isPending: batchPending } = useImportBatch(batchId);
-  const { data: item, isPending: itemPending } = useImportItem(itemId);
+  const { data: batch, isFetching: batchFetching } = useImportBatch(batchId);
+  const { data: item, isFetching: itemFetching } = useImportItem(itemId);
   const { data: attempts = [] } = useImportItemAttempts(itemId);
   const { data: tocEntries = [] } = useImportTocEntries(batchId);
-  const { data: collections = [] } = useCollections();
+  const { data: collections = [], isPending: collectionsPending } = useCollections();
+  const saveCollection = useSaveCollection();
   const updateItem = useUpdateImportItem();
-  const { syncNow } = useSync();
+  const { syncNow, status: syncStatus } = useSync();
   const navigate = useNavigate();
 
   const [activeDraft, setActiveDraft] = useState(0);
@@ -34,6 +36,10 @@ export function ImportItemPage() {
   const [pageNumberStr, setPageNumberStr] = useState('');
   const [showTocSuggestions, setShowTocSuggestions] = useState(false);
   const [draftPatches, setDraftPatches] = useState<Record<number, ParsedRecipeDraft>>({});
+  const [creatingCookbook, setCreatingCookbook] = useState(false);
+  const [newCookbookTitle, setNewCookbookTitle] = useState('');
+  const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
+  const [cookbookError, setCookbookError] = useState<string | undefined>();
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
 
@@ -101,7 +107,13 @@ export function ImportItemPage() {
     if (drag.current) drag.current.active = false;
   }
 
-  if (batchPending || itemPending) {
+  // Gate on `isFetching`, not `isPending`. A disabled query keeps
+  // isPending=true forever which was the source of the "stuck Loading"
+  // bug. `isFetching` is only true while there's actual work in flight.
+  if (syncStatus === 'initializing') {
+    return <p className="text-stone-500">Initializing local cache…</p>;
+  }
+  if ((batchFetching || itemFetching) && (!batch || !item)) {
     return <p className="text-stone-500">Loading…</p>;
   }
   if (!batch || !item) {
@@ -111,7 +123,7 @@ export function ImportItemPage() {
           {!batch ? 'Batch' : 'Item'} not found locally.
         </p>
         <p className="text-sm text-stone-500">
-          It may not have synced from the server yet.
+          It may not have synced from the server yet ({syncStatus}).
         </p>
         <button
           type="button"
@@ -353,18 +365,91 @@ export function ImportItemPage() {
             <>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Cookbook">
-                  <select
-                    value={assignedCollectionId}
-                    onChange={(e) => setAssignedCollectionId(e.target.value)}
-                    className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
-                  >
-                    <option value="">(unassigned)</option>
-                    {collections.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.title}
-                      </option>
-                    ))}
-                  </select>
+                  {creatingCookbook ? (
+                    <div className="space-y-2 rounded border border-stone-300 bg-stone-50 p-2">
+                      <input
+                        autoFocus
+                        placeholder="Cookbook title"
+                        value={newCookbookTitle}
+                        onChange={(e) => setNewCookbookTitle(e.target.value)}
+                        className="w-full rounded border border-stone-300 px-2 py-1 text-sm"
+                      />
+                      <input
+                        placeholder="Author (optional)"
+                        value={newCookbookAuthor}
+                        onChange={(e) => setNewCookbookAuthor(e.target.value)}
+                        className="w-full rounded border border-stone-300 px-2 py-1 text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const title = newCookbookTitle.trim();
+                            if (!title) return;
+                            const cookbook: RecipeCollection = createCookbook({
+                              title,
+                              author: newCookbookAuthor.trim() || undefined,
+                            });
+                            try {
+                              await saveCollection.mutateAsync(cookbook);
+                              setAssignedCollectionId(cookbook.id);
+                              setCreatingCookbook(false);
+                              setNewCookbookTitle('');
+                              setNewCookbookAuthor('');
+                              setCookbookError(undefined);
+                            } catch (err) {
+                              setCookbookError((err as Error).message);
+                            }
+                          }}
+                          disabled={!newCookbookTitle.trim() || saveCollection.isPending}
+                          className="rounded-md bg-stone-900 px-3 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                        >
+                          {saveCollection.isPending ? 'Creating…' : 'Create'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCreatingCookbook(false);
+                            setNewCookbookTitle('');
+                            setNewCookbookAuthor('');
+                          }}
+                          className="rounded-md px-3 py-1 text-xs text-stone-600 hover:text-stone-900"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {cookbookError && (
+                        <p className="text-xs text-red-700">{cookbookError}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <select
+                        value={assignedCollectionId}
+                        onChange={(e) => {
+                          if (e.target.value === '__new__') setCreatingCookbook(true);
+                          else setAssignedCollectionId(e.target.value);
+                        }}
+                        className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+                      >
+                        <option value="">(unassigned)</option>
+                        {collections.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.title}
+                          </option>
+                        ))}
+                        <option value="__new__">+ Create new cookbook…</option>
+                      </select>
+                      {collectionsPending && (
+                        <p className="mt-1 text-xs text-stone-500">Loading cookbooks…</p>
+                      )}
+                      {!collectionsPending && collections.length === 0 && (
+                        <p className="mt-1 text-xs text-stone-500">
+                          No cookbooks yet — create one to save this recipe.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </Field>
                 <Field label="Page number">
                   <div className="relative">

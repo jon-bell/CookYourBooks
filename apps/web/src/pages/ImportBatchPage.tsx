@@ -46,8 +46,8 @@ function matchesFilter(item: ImportItem, filter: Filter): boolean {
 export function ImportBatchPage() {
   const { batchId } = useParams();
   const { user } = useAuth();
-  const { syncNow } = useSync();
-  const { data: batch, isPending: batchPending } = useImportBatch(batchId);
+  const { syncNow, status: syncStatus } = useSync();
+  const { data: batch, isFetching: batchFetching } = useImportBatch(batchId);
   const { data: items = [] } = useImportItems(batchId);
   const { data: collections = [] } = useCollections();
   const updateBatch = useUpdateImportBatch();
@@ -113,13 +113,18 @@ export function ImportBatchPage() {
     if (batch && !editingName) setNameDraft(batch.name);
   }, [batch, editingName]);
 
-  if (batchPending) return <p className="text-stone-500">Loading…</p>;
+  if (syncStatus === 'initializing') {
+    return <p className="text-stone-500">Initializing local cache…</p>;
+  }
+  if (batchFetching && !batch) {
+    return <p className="text-stone-500">Loading…</p>;
+  }
   if (!batch) {
     return (
       <div className="space-y-3">
         <p className="text-stone-700">Batch not found locally.</p>
         <p className="text-sm text-stone-500">
-          It may not have synced from the server yet.
+          It may not have synced from the server yet ({syncStatus}).
         </p>
         <button
           type="button"

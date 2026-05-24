@@ -197,15 +197,44 @@ export function canonicalUnitName(token: string | null | undefined): string {
 
 // ---------- parseLlmJson + helpers (mirrors llm.ts) ----------
 
+const PARSE_FAILED = Symbol('PARSE_FAILED');
+
+/**
+ * Strict JSON.parse first. If that fails with a bad-escape error
+ * (Gemini occasionally emits invalid escapes like `\T` inside string
+ * values), re-try after escaping any backslash not already followed by
+ * one of the valid JSON escape characters. If that also fails, return
+ * the sentinel so callers can produce their own error.
+ *
+ * Also tolerates a stray trailing comma before `}` or `]` which Gemini
+ * has been seen emitting under load.
+ */
+function tolerantJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    const message = (err as Error).message;
+    if (!/bad escaped character|unexpected token/i.test(message)) {
+      return PARSE_FAILED;
+    }
+  }
+  // Repair pass: double any backslash that isn't followed by a valid
+  // JSON escape character, then collapse trailing commas.
+  const repaired = text
+    .replace(/\\(?!["\\/bfnrtu])/g, '\\\\')
+    .replace(/,(\s*[}\]])/g, '$1');
+  try {
+    return JSON.parse(repaired);
+  } catch {
+    return PARSE_FAILED;
+  }
+}
+
 export function parseLlmJson(text: string): ParsedRecipeDraft[] {
   const cleaned = stripFences(text).trim();
-  let raw: unknown;
-  try {
-    raw = JSON.parse(cleaned);
-  } catch (err) {
-    throw new Error(
-      `Could not parse LLM JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
-    );
+  const raw = tolerantJsonParse(cleaned);
+  if (raw === PARSE_FAILED) {
+    throw new Error(`Could not parse LLM JSON. Got: ${text.slice(0, 200)}`);
   }
 
   let recipeObjects: unknown[];
@@ -459,13 +488,9 @@ export interface TocEntry {
 
 export function parseTocJson(text: string): TocEntry[] {
   const cleaned = stripFences(text).trim();
-  let raw: unknown;
-  try {
-    raw = JSON.parse(cleaned);
-  } catch (err) {
-    throw new Error(
-      `Could not parse ToC JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
-    );
+  const raw = tolerantJsonParse(cleaned);
+  if (raw === PARSE_FAILED) {
+    throw new Error(`Could not parse ToC JSON. Got: ${text.slice(0, 200)}`);
   }
   const arr =
     raw && typeof raw === 'object' && !Array.isArray(raw)
