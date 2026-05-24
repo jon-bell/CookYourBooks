@@ -32,6 +32,7 @@ import {
   useUpdateImportItem,
 } from '../import/queries.js';
 import { kickOcr } from '../import/api.js';
+import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
 import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
@@ -624,25 +625,14 @@ export function ImportItemPage() {
                     </div>
                   ) : (
                     <>
-                      <select
+                      <CookbookCombobox
+                        options={pickerOptions}
                         value={assignedCollectionId}
-                        onChange={(e) => {
-                          if (e.target.value === '__new__') setCreatingCookbook(true);
-                          else setAssignedCollectionId(e.target.value);
-                        }}
-                        className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
-                      >
-                        <option value="">(unassigned)</option>
-                        {pickerOptions.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.title}
-                          </option>
-                        ))}
-                        <option value="__new__">+ Create new cookbook…</option>
-                      </select>
-                      {pickerLoading && (
-                        <p className="mt-1 text-xs text-stone-500">Loading cookbooks…</p>
-                      )}
+                        onChange={setAssignedCollectionId}
+                        onCreateNew={() => setCreatingCookbook(true)}
+                        loading={pickerLoading}
+                        matchedExistingTitle={matchedExisting?.title}
+                      />
                       {!pickerLoading && pickerOptions.length === 0 && (
                         <p className="mt-1 text-xs text-stone-500">
                           No cookbooks yet — create one to save this recipe.
@@ -1322,14 +1312,10 @@ function DraftEditor({
           className="block w-full text-2xl font-semibold leading-tight text-stone-900"
         />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
-          <Inline label="from">
-            <EditableText
-              value={draft.bookTitle ?? ''}
-              placeholder="(book title)"
-              onCommit={(v) => onPatch({ bookTitle: v.trim() || undefined })}
-              className="italic"
-            />
-          </Inline>
+          {/* The recipe's bookTitle is sourced from the assigned
+              cookbook on save (see saveAsRecipe). We don't render a
+              separate editable "from" field here — it was redundant
+              with the Cookbook combobox below and confused users. */}
           <Inline label="time">
             <EditableText
               value={draft.timeEstimate ?? ''}

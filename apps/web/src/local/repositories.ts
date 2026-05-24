@@ -332,6 +332,13 @@ export async function purgeRecipe(id: string): Promise<void> {
 export interface CollectionPickerOption {
   id: string;
   title: string;
+  /** Cookbooks carry an author; personal + web collections don't. */
+  author: string | null;
+  sourceType: CollectionRow['source_type'];
+  /** Number of recipes already saved into this collection. Used to
+   *  disambiguate near-empty placeholders from established cookbooks
+   *  in the picker. */
+  recipeCount: number;
 }
 
 /** Library grid card — metadata + recipe count, no recipe hydration. */
@@ -352,13 +359,39 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
   /** Fast list for dropdowns; avoids hydrating every recipe in every collection. */
   async listPickerOptions(): Promise<CollectionPickerOption[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<{ id: string; title: string }>(
-      `select id, title from recipe_collections
-       where owner_id = ? and deleted = 0
-       order by coalesce(updated_at, 0) desc`,
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      author: string | null;
+      source_type: CollectionRow['source_type'];
+      recipe_count: number;
+    }>(
+      `select c.id, c.title, c.author, c.source_type,
+              coalesce(rc.cnt, 0) as recipe_count
+         from recipe_collections c
+         left join (
+           select collection_id, count(*) as cnt
+             from recipes
+             where deleted = 0
+             group by collection_id
+         ) rc on rc.collection_id = c.id
+        where c.owner_id = ? and c.deleted = 0
+        order by coalesce(c.updated_at, 0) desc`,
       [this.ownerId],
-    )) as { id: string; title: string }[];
-    return rows;
+    )) as Array<{
+      id: string;
+      title: string;
+      author: string | null;
+      source_type: CollectionRow['source_type'];
+      recipe_count: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      author: r.author,
+      sourceType: r.source_type,
+      recipeCount: r.recipe_count,
+    }));
   }
 
   /** Fast list for the library grid — one grouped query, no per-recipe hydration. */
