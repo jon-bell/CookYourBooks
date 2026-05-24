@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SUPABASE_SERVICE_ROLE } from './env.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../../../..');
@@ -17,12 +18,20 @@ interface ServerState {
 }
 
 async function pingFunction(timeoutMs: number): Promise<boolean> {
+  // The function does its own bearer check (see authorized() in
+  // supabase/functions/import-worker/index.ts) — anything without the
+  // matching service-role token gets a 401 from the function itself,
+  // not the gateway. Use the live key from the running stack so the
+  // probe actually reaches the worker loop.
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const resp = await fetch(`${FUNCTIONS_BASE_URL}/import-worker`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        },
         body: JSON.stringify({ batch_id: null }),
       });
       if (resp.ok) {
@@ -53,8 +62,17 @@ export async function startFunctionsServer(): Promise<void> {
       detached: true,
     },
   );
-  child.stdout?.on('data', () => undefined);
-  child.stderr?.on('data', () => undefined);
+  // Mirror the function-server logs through to the Playwright runner.
+  // We previously swallowed stderr, which made CI failures opaque —
+  // the supabase CLI prints "Deno not found" / port-in-use diagnostics
+  // to stderr that are exactly what you want to see when the ping
+  // times out below.
+  child.stdout?.on('data', (chunk: Buffer) => {
+    process.stdout.write(`[functions-serve] ${chunk}`);
+  });
+  child.stderr?.on('data', (chunk: Buffer) => {
+    process.stderr.write(`[functions-serve] ${chunk}`);
+  });
   child.on('error', (err) => {
     console.error('[functionsServer] spawn error', err);
   });
