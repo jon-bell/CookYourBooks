@@ -43,6 +43,7 @@ export interface ImportItem {
   assignedPageNumber: number | null;
   isToc: boolean;
   status: ImportItemStatus;
+  claimExpiresAt: number;
   attempts: number;
   lastError: string | null;
   parsedDrafts: ParsedRecipeDraft[];

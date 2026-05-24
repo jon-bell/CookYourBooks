@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createCookbook, type RecipeCollection } from '@cookyourbooks/domain';
 import { useAuth } from '../auth/AuthProvider.js';
-import { useCollections, useSaveCollection } from '../data/queries.js';
+import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.js';
 import { useOcrKeys } from '../import/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
@@ -16,9 +16,9 @@ type Step = 'source' | 'review' | 'settings' | 'uploading';
 
 export function ImportNewPage() {
   const { user } = useAuth();
-  const { syncNow } = useSync();
+  const { syncNow, status: syncStatus } = useSync();
   const navigate = useNavigate();
-  const { data: collections = [], isPending: collectionsPending } = useCollections();
+  const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
   const { data: ocrKeys = [] } = useOcrKeys();
   const saveCollection = useSaveCollection();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -158,8 +158,8 @@ export function ImportNewPage() {
         },
         setProgress,
       );
-      await syncNow();
       navigate(`/import/${result.batchId}`);
+      void syncNow();
     } catch (e) {
       setError((e as Error).message);
       setStep('settings');
@@ -197,6 +197,11 @@ export function ImportNewPage() {
           </div>
           {progress?.message && (
             <div className="mt-1 text-xs text-stone-500">{progress.message}</div>
+          )}
+          {progress?.phase === 'finalizing' && syncStatus === 'syncing' && (
+            <div className="mt-1 text-xs text-stone-500">
+              Saving batch locally while your library syncs in the background…
+            </div>
           )}
         </div>
         {error && <p className="text-sm text-red-700">{error}</p>}
@@ -397,17 +402,17 @@ export function ImportNewPage() {
                     className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
                   >
                     <option value="">(unassigned)</option>
-                    {collections.map((c) => (
+                    {pickerOptions.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.title}
                       </option>
                     ))}
                     <option value="__new__">+ Create new cookbook…</option>
                   </select>
-                  {collectionsPending && (
+                  {pickerLoading && (
                     <p className="mt-1 text-xs text-stone-500">Loading cookbooks…</p>
                   )}
-                  {!collectionsPending && collections.length === 0 && (
+                  {!pickerLoading && pickerOptions.length === 0 && (
                     <p className="mt-1 text-xs text-stone-500">
                       No cookbooks yet — pick "Create new cookbook" above or leave unassigned.
                     </p>

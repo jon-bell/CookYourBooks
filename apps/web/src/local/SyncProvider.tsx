@@ -10,6 +10,12 @@ export type SyncStatus = 'initializing' | 'idle' | 'syncing' | 'error' | 'offlin
 
 interface SyncState {
   status: SyncStatus;
+  /** SQLite is open; false only during first boot. */
+  localReady: boolean;
+  /** First sync cycle for the signed-in user has finished. */
+  hydrated: boolean;
+  /** @deprecated Prefer {@link localReady} or query `isLoading`. True once DB is open and the first pull finished (signed-in only). */
+  isLocalReady: boolean;
   pendingWrites: number;
   lastSyncedAt: number | null;
   lastError: string | null;
@@ -19,14 +25,33 @@ interface SyncState {
 
 const SyncContext = createContext<SyncState | undefined>(undefined);
 
+const INVALIDATE_DEBOUNCE_MS = 100;
+const PULL_DEBOUNCE_MS = 2000;
+
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [status, setStatus] = useState<SyncStatus>('initializing');
+  const [localReady, setLocalReady] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const [pendingWrites, setPendingWrites] = useState(0);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
+  const pullPending = useRef(false);
+  const pullDebounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const invalidateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  function scheduleInvalidate() {
+    clearTimeout(invalidateTimer.current);
+    invalidateTimer.current = setTimeout(() => {
+      // Full `collections` hydration is very expensive (every recipe in every
+      // collection). Pull already updated SQLite; refetch picker/import keys only.
+      void qc.invalidateQueries({
+        predicate: (query) => query.queryKey[0] !== 'collections',
+      });
+    }, INVALIDATE_DEBOUNCE_MS);
+  }
 
   async function refreshPendingCount() {
     try {
@@ -37,7 +62,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function cycle(ownerId: string) {
-    if (inFlight.current) return inFlight.current;
+    if (inFlight.current) {
+      pullPending.current = true;
+      return inFlight.current;
+    }
     const run = (async () => {
       setStatus('syncing');
       setLastError(null);
@@ -53,7 +81,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         setStatus('error');
       } finally {
         await refreshPendingCount();
-        qc.invalidateQueries();
+        scheduleInvalidate();
       }
     })();
     inFlight.current = run;
@@ -61,7 +89,18 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       await run;
     } finally {
       inFlight.current = null;
+      if (pullPending.current) {
+        pullPending.current = false;
+        void cycle(ownerId);
+      }
     }
+  }
+
+  function schedulePull(ownerId: string) {
+    clearTimeout(pullDebounceTimer.current);
+    pullDebounceTimer.current = setTimeout(() => {
+      void cycle(ownerId);
+    }, PULL_DEBOUNCE_MS);
   }
 
   // Boot: ensure the local DB is ready before any page tries to read.
@@ -78,7 +117,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       await refreshPendingCount();
-      if (!cancelled) setStatus('idle');
+      if (!cancelled) {
+        setLocalReady(true);
+        setStatus('idle');
+      }
     })();
     return () => {
       cancelled = true;
@@ -88,16 +130,20 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   // When the user changes, kick off an initial sync and open a realtime
   // channel to keep local in step with server-side changes.
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setHydrated(false);
+      return;
+    }
     let handle: RealtimeHandle | undefined;
     let cancelled = false;
+    setHydrated(false);
     (async () => {
       await cycle(user.id);
       if (cancelled) return;
-      handle = subscribeRealtime(supabase, user.id, () => {
-        // Pull again to capture any cascading changes (e.g. ingredients
-        // referenced by the realtime-updated recipe).
-        void cycle(user.id);
+      setHydrated(true);
+      handle = subscribeRealtime(supabase, user.id, {
+        onLocalUpdate: scheduleInvalidate,
+        onNeedsPull: () => schedulePull(user.id),
       });
     })();
     return () => {
@@ -106,6 +152,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  useEffect(
+    () => () => {
+      clearTimeout(invalidateTimer.current);
+      clearTimeout(pullDebounceTimer.current);
+    },
+    [],
+  );
 
   // Online/offline transitions trigger a catch-up sync.
   useEffect(() => {
@@ -125,8 +179,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  const isLocalReady = localReady && (!user || hydrated);
+
   const value: SyncState = {
     status,
+    localReady,
+    hydrated,
+    isLocalReady,
     pendingWrites,
     lastSyncedAt,
     lastError,
@@ -142,4 +201,16 @@ export function useSync(): SyncState {
   const ctx = useContext(SyncContext);
   if (!ctx) throw new Error('useSync must be used within SyncProvider');
   return ctx;
+}
+
+/** Gate for React Query hooks that read the local SQLite cache (no initial-sync wait). */
+export function useLocalQueryEnabled(): boolean {
+  return useLocalDbReady();
+}
+
+/** Gate for lightweight reads once SQLite is open (no initial sync wait). */
+export function useLocalDbReady(): boolean {
+  const { user } = useAuth();
+  const { localReady } = useSync();
+  return !!user && localReady;
 }

@@ -6,6 +6,35 @@ export type LocalDb = DB;
 
 let initPromise: Promise<LocalDb> | undefined;
 
+/** Serializes WASM SQLite access — concurrent exec from sync + import deadlocks. */
+let dbLockTail: Promise<void> = Promise.resolve();
+
+async function withDbLock<T>(fn: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const prev = dbLockTail;
+  dbLockTail = prev.then(() => held);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function lockDb(db: DB): LocalDb {
+  return {
+    exec: (sql, bind) => withDbLock(() => db.exec(sql, bind)),
+    execO: (sql, bind) => withDbLock(() => db.execO(sql, bind)),
+    execA: (sql, bind) => withDbLock(() => db.execA(sql, bind)),
+    // Hold the mutex for the whole transaction — tx.exec runs on the raw handle.
+    tx: (fn) => withDbLock(() => db.tx(fn)),
+    close: () => db.close(),
+  } as LocalDb;
+}
+
 export function getLocalDb(): Promise<LocalDb> {
   if (!initPromise) initPromise = initialize();
   return initPromise;
@@ -53,7 +82,7 @@ async function initialize(): Promise<LocalDb> {
   // every load once a given user has been healed.
   await maybeHealCrrTriggers(db);
 
-  return db;
+  return lockDb(db);
 }
 
 async function maybeHealCrrTriggers(db: LocalDb): Promise<void> {

@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { searchLibrary, type SourceType } from '@cookyourbooks/domain';
 import { useCollections } from '../data/queries.js';
-
 type Filter = '' | SourceType;
 
 export function SearchPage() {

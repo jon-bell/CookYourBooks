@@ -38,7 +38,7 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { data: collection, isPending: collectionPending } = useCollection(collectionId);
+  const { data: collection, isLoading: collectionLoading } = useCollection(collectionId);
   const saveRecipe = useSaveRecipe(collectionId ?? '');
 
   const existing =
@@ -98,7 +98,9 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
     if (mode === 'edit' && collection && !existing) navigate(`/collections/${collectionId}`);
   }, [mode, collection, existing, collectionId, navigate]);
 
-  if (collectionPending) return <p className="text-stone-500">Loading…</p>;
+  if (collectionLoading) {
+    return <p className="text-stone-500">Loading…</p>;
+  }
   if (!collection) {
     return (
       <p className="text-stone-700">

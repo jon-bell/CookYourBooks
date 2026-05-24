@@ -591,11 +591,19 @@ export interface RealtimeHandle {
   unsubscribe: () => Promise<void>;
 }
 
+export interface RealtimeCallbacks {
+  /** Row already upserted locally — refresh UI only. */
+  onLocalUpdate: () => void;
+  /** Child row changed without local upsert — schedule a pull. */
+  onNeedsPull: () => void;
+}
+
 export function subscribeRealtime(
   client: CookbooksClient,
   ownerId: string,
-  onChange: () => void,
+  callbacks: RealtimeCallbacks,
 ): RealtimeHandle {
+  const { onLocalUpdate, onNeedsPull } = callbacks;
   const channel: RealtimeChannel = client
     .channel(`cyb:${ownerId}`)
     .on(
@@ -603,7 +611,7 @@ export function subscribeRealtime(
       { event: '*', schema: 'public', table: 'recipe_collections', filter: `owner_id=eq.${ownerId}` },
       async (payload) => {
         await handleCollectionEvent(payload);
-        onChange();
+        onLocalUpdate();
       },
     )
     .on(
@@ -611,7 +619,7 @@ export function subscribeRealtime(
       { event: '*', schema: 'public', table: 'recipes' },
       async (payload) => {
         await handleRecipeEvent(client, payload);
-        onChange();
+        onLocalUpdate();
       },
     )
     .on(
@@ -620,14 +628,14 @@ export function subscribeRealtime(
       async () => {
         // Ingredients don't carry owner info; piggy-back on the recipe's
         // next refresh instead of doing a broad refetch per event.
-        onChange();
+        onNeedsPull();
       },
     )
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'instructions' },
       async () => {
-        onChange();
+        onNeedsPull();
       },
     )
     .on(
@@ -635,7 +643,7 @@ export function subscribeRealtime(
       { event: '*', schema: 'public', table: 'import_batches', filter: `owner_id=eq.${ownerId}` },
       async (payload) => {
         await handleImportBatchEvent(payload);
-        onChange();
+        onLocalUpdate();
       },
     )
     .on(
@@ -643,7 +651,7 @@ export function subscribeRealtime(
       { event: '*', schema: 'public', table: 'import_items', filter: `owner_id=eq.${ownerId}` },
       async (payload) => {
         await handleImportItemEvent(payload);
-        onChange();
+        onLocalUpdate();
       },
     )
     .on(
@@ -651,7 +659,7 @@ export function subscribeRealtime(
       { event: '*', schema: 'public', table: 'import_item_attempts', filter: `owner_id=eq.${ownerId}` },
       async (payload) => {
         await handleImportAttemptEvent(payload);
-        onChange();
+        onLocalUpdate();
       },
     )
     .on(
@@ -659,7 +667,7 @@ export function subscribeRealtime(
       { event: '*', schema: 'public', table: 'import_toc_entries', filter: `owner_id=eq.${ownerId}` },
       async (payload) => {
         await handleImportTocEvent(payload);
-        onChange();
+        onLocalUpdate();
       },
     )
     .subscribe();

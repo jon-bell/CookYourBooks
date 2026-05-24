@@ -328,8 +328,81 @@ export async function purgeRecipe(id: string): Promise<void> {
 
 // ------------- Domain-facing repositories -------------
 
+/** Lightweight row for cookbook pickers — no recipe hydration. */
+export interface CollectionPickerOption {
+  id: string;
+  title: string;
+}
+
+/** Library grid card — metadata + recipe count, no recipe hydration. */
+export interface LibraryCollectionSummary {
+  id: string;
+  title: string;
+  coverImagePath: string | null;
+  isPublic: boolean;
+  sourceType: CollectionRow['source_type'];
+  author: string | null;
+  siteName: string | null;
+  recipeCount: number;
+}
+
 export class LocalRecipeCollectionRepository implements RecipeCollectionRepository {
   constructor(private readonly ownerId: string) {}
+
+  /** Fast list for dropdowns; avoids hydrating every recipe in every collection. */
+  async listPickerOptions(): Promise<CollectionPickerOption[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ id: string; title: string }>(
+      `select id, title from recipe_collections
+       where owner_id = ? and deleted = 0
+       order by coalesce(updated_at, 0) desc`,
+      [this.ownerId],
+    )) as { id: string; title: string }[];
+    return rows;
+  }
+
+  /** Fast list for the library grid — one grouped query, no per-recipe hydration. */
+  async listLibrarySummaries(): Promise<LibraryCollectionSummary[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      is_public: number | boolean;
+      source_type: CollectionRow['source_type'];
+      author: string | null;
+      site_name: string | null;
+      recipe_count: number;
+    }>(
+      `select c.id, c.title, c.cover_image_path, c.is_public, c.source_type,
+              c.author, c.site_name, count(r.id) as recipe_count
+       from recipe_collections c
+       left join recipes r on r.collection_id = c.id and r.deleted = 0
+       where c.owner_id = ? and c.deleted = 0
+       group by c.id
+       order by coalesce(c.updated_at, 0) desc`,
+      [this.ownerId],
+    )) as {
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      is_public: number | boolean;
+      source_type: CollectionRow['source_type'];
+      author: string | null;
+      site_name: string | null;
+      recipe_count: number;
+    }[];
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      coverImagePath: row.cover_image_path,
+      isPublic: Boolean(row.is_public),
+      sourceType: row.source_type,
+      author: row.author,
+      siteName: row.site_name,
+      recipeCount: Number(row.recipe_count),
+    }));
+  }
 
   async list(): Promise<RecipeCollection[]> {
     const db = await getLocalDb();

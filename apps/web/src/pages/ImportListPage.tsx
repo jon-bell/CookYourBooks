@@ -6,7 +6,7 @@ import type { ImportBatch } from '../import/model.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
+import { useLocalQueryEnabled } from '../local/SyncProvider.js';
 
 interface BatchStats {
   total: number;
@@ -16,10 +16,10 @@ interface BatchStats {
 }
 
 function useBatchStats(ownerId: string | undefined, batchIds: string[]) {
-  const { status } = useSync();
+  const enabled = useLocalQueryEnabled();
   return useQuery<Record<string, BatchStats>>({
     queryKey: ['import-batch-stats', ownerId, batchIds.join(',')],
-    enabled: !!ownerId && status !== 'initializing',
+    enabled: enabled && batchIds.length > 0,
     queryFn: async () => {
       const repo = new LocalImportItemRepository(ownerId!);
       const out: Record<string, BatchStats> = {};
@@ -54,7 +54,9 @@ export function ImportListPage() {
 
   const hasOcrKey = ocrKeys.length > 0;
 
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
+  if (isLoading) {
+    return <p className="text-stone-500">Loading…</p>;
+  }
 
   return (
     <div className="space-y-6">

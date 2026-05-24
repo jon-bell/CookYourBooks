@@ -134,6 +134,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       assignedPageNumber: null,
       isToc: false,
       status: 'OCR_DONE',
+      claimExpiresAt: 0,
       attempts: 1,
       lastError: null,
       parsedDrafts: drafts,

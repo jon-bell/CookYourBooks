@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useCollections } from '../data/queries.js';
+import { useCollectionPickerOptions } from '../data/queries.js';
 import {
   useImportBatch,
   useImportItems,
@@ -8,9 +8,14 @@ import {
   useUpdateImportItem,
 } from '../import/queries.js';
 import { kickOcr, OcrWorkerNotConfiguredError, setRecitationPolicy } from '../import/api.js';
-import { useSync } from '../local/SyncProvider.js';
+import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { ImportThumb } from '../import/ImportThumb.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
+import {
+  compactOcrQueueLabel,
+  computeBatchQueueInfo,
+  isOcrInProgress,
+} from '../import/ocrStatus.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useQuery } from '@tanstack/react-query';
 import type { ImportItem, ImportItemStatus } from '../import/model.js';
@@ -46,10 +51,10 @@ function matchesFilter(item: ImportItem, filter: Filter): boolean {
 export function ImportBatchPage() {
   const { batchId } = useParams();
   const { user } = useAuth();
-  const { syncNow, status: syncStatus } = useSync();
-  const { data: batch, isFetching: batchFetching } = useImportBatch(batchId);
+  const { syncNow, status: syncStatus, localReady, hydrated } = useSync();
+  const { data: batch, isLoading: batchLoading } = useImportBatch(batchId);
   const { data: items = [] } = useImportItems(batchId);
-  const { data: collections = [] } = useCollections();
+  const { data: pickerOptions = [] } = useCollectionPickerOptions();
   const updateBatch = useUpdateImportBatch();
   const updateItem = useUpdateImportItem();
   const [filter, setFilter] = useState<Filter>('ALL');
@@ -60,9 +65,10 @@ export function ImportBatchPage() {
   const [kickBusy, setKickBusy] = useState(false);
   const [kickError, setKickError] = useState<string | undefined>();
 
+  const localQueryEnabled = useLocalQueryEnabled();
   const { data: attemptsByItem = {} } = useQuery<Record<string, number[]>>({
     queryKey: ['import-batch-rates', batchId],
-    enabled: !!user && !!batchId,
+    enabled: localQueryEnabled && !!batchId && items.length > 0,
     queryFn: async () => {
       const repo = new LocalImportItemRepository(user!.id);
       const out: Record<string, number[]> = {};
@@ -77,8 +83,8 @@ export function ImportBatchPage() {
   });
 
   const collectionsById = useMemo(
-    () => new Map(collections.map((c) => [c.id, c])),
-    [collections],
+    () => new Map(pickerOptions.map((c) => [c.id, c])),
+    [pickerOptions],
   );
 
   const totalCost = items.reduce((acc, i) => acc + i.costUsdMicros, 0) / 1_000_000;
@@ -113,11 +119,16 @@ export function ImportBatchPage() {
     if (batch && !editingName) setNameDraft(batch.name);
   }, [batch, editingName]);
 
-  if (syncStatus === 'initializing') {
-    return <p className="text-stone-500">Initializing local cache…</p>;
-  }
-  if (batchFetching && !batch) {
+  const pendingCount = items.filter((i) => i.status === 'PENDING').length;
+  const stalledCount = items.filter((i) => i.status === 'CLAIMED').length;
+  const activeOcrCount = pendingCount + stalledCount;
+  const now = useTickingNow(activeOcrCount > 0);
+
+  if (!localReady || batchLoading) {
     return <p className="text-stone-500">Loading…</p>;
+  }
+  if (!batch && !hydrated) {
+    return <p className="text-stone-500">Initializing local cache…</p>;
   }
   if (!batch) {
     return (
@@ -194,8 +205,6 @@ export function ImportBatchPage() {
     }
   }
 
-  const pendingCount = items.filter((i) => i.status === 'PENDING').length;
-  const stalledCount = items.filter((i) => i.status === 'CLAIMED').length;
   const movedCount = items.filter(
     (i) =>
       i.status === 'OCR_DONE' ||
@@ -326,7 +335,7 @@ export function ImportBatchPage() {
                 className="rounded border border-stone-300 px-2 py-1 text-sm"
               >
                 <option value="">(unassigned)</option>
-                {collections.map((c) => (
+                {pickerOptions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.title}
                   </option>
@@ -355,6 +364,22 @@ export function ImportBatchPage() {
           </div>
         </details>
       </div>
+
+      {activeOcrCount > 0 && (
+        <p className="text-sm text-stone-600" role="status">
+          {stalledCount > 0 && (
+            <>
+              <strong>{stalledCount}</strong> processing
+              {pendingCount > 0 ? ' · ' : ''}
+            </>
+          )}
+          {pendingCount > 0 && (
+            <>
+              <strong>{pendingCount}</strong> queued for OCR
+            </>
+          )}
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-1.5">
         {(
@@ -418,6 +443,10 @@ export function ImportBatchPage() {
         {filtered.map((item) => {
           const draftTitle = item.parsedDrafts[0]?.title;
           const isSelected = selected.has(item.id);
+          const queueInfo = isOcrInProgress(item.status)
+            ? computeBatchQueueInfo(item, items, now)
+            : null;
+          const queueLabel = queueInfo ? compactOcrQueueLabel(queueInfo) : null;
           return (
             <li key={item.id}>
               <Link
@@ -439,6 +468,9 @@ export function ImportBatchPage() {
                     <span className="text-xs text-stone-500">#{item.pageIndex + 1}</span>
                     <ItemStatusPill status={item.status} />
                   </div>
+                  {queueLabel && (
+                    <div className="text-[10px] leading-tight text-stone-600">{queueLabel}</div>
+                  )}
                   {draftTitle && (
                     <div className="truncate text-xs font-medium text-stone-800">
                       {draftTitle}
@@ -495,7 +527,7 @@ export function ImportBatchPage() {
       >
         <option value="">Reassign…</option>
         <option value="__unassign__">(unassigned)</option>
-        {collections.map((c) => (
+        {pickerOptions.map((c) => (
           <option key={c.id} value={c.id}>
             {c.title}
           </option>
@@ -507,7 +539,7 @@ export function ImportBatchPage() {
 
 function ItemStatusPill({ status }: { status: ImportItemStatus }) {
   const map: Record<ImportItemStatus, { label: string; cls: string }> = {
-    PENDING: { label: 'Pending', cls: 'bg-stone-200 text-stone-700' },
+    PENDING: { label: 'Queued', cls: 'bg-stone-200 text-stone-700' },
     CLAIMED: { label: 'Processing', cls: 'bg-blue-100 text-blue-800' },
     OCR_DONE: { label: 'Needs review', cls: 'bg-amber-100 text-amber-800' },
     NEEDS_FALLBACK: { label: 'Needs fallback', cls: 'bg-orange-100 text-orange-800' },
@@ -527,4 +559,14 @@ function formatEta(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
   return `${(seconds / 3600).toFixed(1)}h`;
+}
+
+function useTickingNow(active: boolean, intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [active, intervalMs]);
+  return now;
 }

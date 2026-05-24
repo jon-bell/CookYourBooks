@@ -27,6 +27,8 @@ import {
   useUpdateImportItem,
 } from '../import/queries.js';
 import { kickOcr } from '../import/api.js';
+import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
+import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { suggestTocMatches } from '../import/tocMatch.js';
@@ -41,7 +43,7 @@ export function ImportItemPage() {
   const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
   const saveCollection = useSaveCollection();
   const updateItem = useUpdateImportItem();
-  const { syncNow, status: syncStatus, isLocalReady } = useSync();
+  const { syncNow, status: syncStatus, localReady, hydrated } = useSync();
   const navigate = useNavigate();
 
   const [activeDraft, setActiveDraft] = useState(0);
@@ -124,11 +126,11 @@ export function ImportItemPage() {
     if (drag.current) drag.current.active = false;
   }
 
-  if (!isLocalReady) {
-    return <p className="text-stone-500">Initializing local cache…</p>;
-  }
-  if (batchLoading || itemLoading) {
+  if (!localReady || batchLoading || itemLoading) {
     return <p className="text-stone-500">Loading…</p>;
+  }
+  if ((!batch || !item) && !hydrated) {
+    return <p className="text-stone-500">Initializing local cache…</p>;
   }
   if (!batch || !item) {
     return (
@@ -152,6 +154,8 @@ export function ImportItemPage() {
 
   const targetCollectionId =
     assignedCollectionId || batch.targetCollectionId || '';
+
+  const reOcrAllowed = canReOcr(item.status);
 
   async function toggleIsToc() {
     if (!item) return;
@@ -395,6 +399,8 @@ export function ImportItemPage() {
         </div>
 
         <div className="space-y-3">
+          <OcrStatusBanner item={item} batchItems={batchItems} />
+
           <div className="rounded-md border border-stone-200 bg-white p-3 text-sm">
             <label className="flex items-center gap-2">
               <input
@@ -559,8 +565,13 @@ export function ImportItemPage() {
 
               {currentDraft ? (
                 <DraftEditor draft={currentDraft} onPatch={patchDraft} />
+              ) : item.status === 'OCR_FAILED' ? (
+                <p className="text-sm text-red-700">
+                  OCR failed{item.lastError ? `: ${item.lastError}` : '.'} Use Re-OCR to try
+                  again.
+                </p>
               ) : (
-                <p className="text-sm text-stone-600">No drafts yet. Waiting for OCR…</p>
+                <p className="text-sm text-stone-600">No drafts yet — OCR results will appear here.</p>
               )}
 
               <div className="flex flex-wrap gap-2 pt-2">
@@ -583,7 +594,13 @@ export function ImportItemPage() {
                 <button
                   type="button"
                   onClick={() => void reOcrWithFallback()}
-                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+                  disabled={!reOcrAllowed}
+                  title={
+                    reOcrAllowed
+                      ? 'Clear drafts and queue this page for OCR again'
+                      : 'Wait until OCR finishes or fails before re-running'
+                  }
+                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Re-OCR
                 </button>

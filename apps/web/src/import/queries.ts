@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
+import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { listOcrKeys, type OcrKeySummary } from './api.js';
 import {
   LocalImportBatchRepository,
@@ -15,50 +15,50 @@ import type {
 
 export function useImportBatches() {
   const { user } = useAuth();
-  const { status } = useSync();
+  const enabled = useLocalQueryEnabled();
   return useQuery<ImportBatch[]>({
     queryKey: ['import-batches', user?.id],
-    enabled: !!user && status !== 'initializing',
+    enabled,
     queryFn: () => new LocalImportBatchRepository(user!.id).list(),
   });
 }
 
 export function useImportBatch(batchId: string | undefined) {
   const { user } = useAuth();
-  const { status } = useSync();
+  const enabled = useLocalQueryEnabled();
   return useQuery<ImportBatch | undefined>({
     queryKey: ['import-batch', batchId],
-    enabled: !!user && !!batchId && status !== 'initializing',
+    enabled: enabled && !!batchId,
     queryFn: () => new LocalImportBatchRepository(user!.id).get(batchId!),
   });
 }
 
 export function useImportItems(batchId: string | undefined) {
   const { user } = useAuth();
-  const { status } = useSync();
+  const enabled = useLocalQueryEnabled();
   return useQuery<ImportItem[]>({
     queryKey: ['import-items', batchId],
-    enabled: !!user && !!batchId && status !== 'initializing',
+    enabled: enabled && !!batchId,
     queryFn: () => new LocalImportItemRepository(user!.id).listByBatch(batchId!),
   });
 }
 
 export function useImportItem(itemId: string | undefined) {
   const { user } = useAuth();
-  const { status } = useSync();
+  const enabled = useLocalQueryEnabled();
   return useQuery<ImportItem | undefined>({
     queryKey: ['import-item', itemId],
-    enabled: !!user && !!itemId && status !== 'initializing',
+    enabled: enabled && !!itemId,
     queryFn: () => new LocalImportItemRepository(user!.id).get(itemId!),
   });
 }
 
 export function useImportItemAttempts(itemId: string | undefined) {
   const { user } = useAuth();
-  const { status } = useSync();
+  const enabled = useLocalQueryEnabled();
   return useQuery<ImportItemAttempt[]>({
     queryKey: ['import-item-attempts', itemId],
-    enabled: !!user && !!itemId && status !== 'initializing',
+    enabled: enabled && !!itemId,
     queryFn: () =>
       new LocalImportItemRepository(user!.id).listAttempts(itemId!),
   });
@@ -66,10 +66,10 @@ export function useImportItemAttempts(itemId: string | undefined) {
 
 export function useImportTocEntries(batchId: string | undefined) {
   const { user } = useAuth();
-  const { status } = useSync();
+  const enabled = useLocalQueryEnabled();
   return useQuery<ImportTocEntry[]>({
     queryKey: ['import-toc', batchId],
-    enabled: !!user && !!batchId && status !== 'initializing',
+    enabled: enabled && !!batchId,
     queryFn: () =>
       new LocalImportItemRepository(user!.id).listTocEntries(batchId!),
   });
