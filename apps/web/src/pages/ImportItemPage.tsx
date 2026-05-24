@@ -17,8 +17,8 @@ import { suggestTocMatches } from '../import/tocMatch.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
-  const { data: batch } = useImportBatch(batchId);
-  const { data: item } = useImportItem(itemId);
+  const { data: batch, isPending: batchPending } = useImportBatch(batchId);
+  const { data: item, isPending: itemPending } = useImportItem(itemId);
   const { data: attempts = [] } = useImportItemAttempts(itemId);
   const { data: tocEntries = [] } = useImportTocEntries(batchId);
   const { data: collections = [] } = useCollections();
@@ -101,7 +101,28 @@ export function ImportItemPage() {
     if (drag.current) drag.current.active = false;
   }
 
-  if (!batch || !item) return <p className="text-stone-500">Loading…</p>;
+  if (batchPending || itemPending) {
+    return <p className="text-stone-500">Loading…</p>;
+  }
+  if (!batch || !item) {
+    return (
+      <div className="space-y-3">
+        <p className="text-stone-700">
+          {!batch ? 'Batch' : 'Item'} not found locally.
+        </p>
+        <p className="text-sm text-stone-500">
+          It may not have synced from the server yet.
+        </p>
+        <button
+          type="button"
+          onClick={() => void syncNow()}
+          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+        >
+          Sync now
+        </button>
+      </div>
+    );
+  }
 
   const targetCollectionId =
     assignedCollectionId || batch.targetCollectionId || '';

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createCookbook, type RecipeCollection } from '@cookyourbooks/domain';
 import { useAuth } from '../auth/AuthProvider.js';
-import { useCollections } from '../data/queries.js';
+import { useCollections, useSaveCollection } from '../data/queries.js';
 import { useOcrKeys } from '../import/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
@@ -17,8 +18,9 @@ export function ImportNewPage() {
   const { user } = useAuth();
   const { syncNow } = useSync();
   const navigate = useNavigate();
-  const { data: collections = [] } = useCollections();
+  const { data: collections = [], isPending: collectionsPending } = useCollections();
   const { data: ocrKeys = [] } = useOcrKeys();
+  const saveCollection = useSaveCollection();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
 
@@ -27,6 +29,9 @@ export function ImportNewPage() {
   const [previews, setPreviews] = useState<string[]>([]);
   const [name, setName] = useState(() => `Imported ${new Date().toLocaleDateString()}`);
   const [targetCollectionId, setTargetCollectionId] = useState<string>('');
+  const [creatingCookbook, setCreatingCookbook] = useState(false);
+  const [newCookbookTitle, setNewCookbookTitle] = useState('');
+  const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
   const [provider, setProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [model, setModel] = useState('');
   const [fallbackProvider, setFallbackProvider] = useState<'' | 'gemini' | 'openai-compatible'>('');
@@ -113,6 +118,24 @@ export function ImportNewPage() {
     e.preventDefault();
     setDragOver(false);
     addFiles(e.dataTransfer.files);
+  }
+
+  async function onCreateCookbook() {
+    const title = newCookbookTitle.trim();
+    if (!title) return;
+    const cookbook: RecipeCollection = createCookbook({
+      title,
+      author: newCookbookAuthor.trim() || undefined,
+    });
+    try {
+      await saveCollection.mutateAsync(cookbook);
+      setTargetCollectionId(cookbook.id);
+      setCreatingCookbook(false);
+      setNewCookbookTitle('');
+      setNewCookbookAuthor('');
+    } catch (e) {
+      setError(`Could not create cookbook: ${(e as Error).message}`);
+    }
   }
 
   async function startImport() {
@@ -244,22 +267,45 @@ export function ImportNewPage() {
       )}
 
       {(step === 'review' || step === 'settings') && (
-        <section className="space-y-4">
+        <section
+          onDragEnter={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          className={`space-y-4 rounded-lg transition ${
+            dragOver ? 'bg-stone-50 ring-2 ring-stone-900' : ''
+          }`}
+        >
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">
               {files.length} {files.length === 1 ? 'file' : 'files'} · {totalSizeMb} MB
             </h2>
-            <button
-              type="button"
-              onClick={() => {
-                setFiles([]);
-                setStep('source');
-              }}
-              className="text-sm text-stone-600 hover:text-stone-900"
-            >
-              Clear
-            </button>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-sm text-stone-600 hover:text-stone-900"
+              >
+                + Add more
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFiles([]);
+                  setStep('source');
+                }}
+                className="text-sm text-stone-600 hover:text-stone-900"
+              >
+                Clear
+              </button>
+            </div>
           </div>
+          <p className="text-xs text-stone-500">
+            Drop more files anywhere on this panel to add them.
+          </p>
           <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
             {files.map((f, i) => (
               <li
@@ -300,18 +346,74 @@ export function ImportNewPage() {
               />
             </Field>
             <Field label="Target cookbook">
-              <select
-                value={targetCollectionId}
-                onChange={(e) => setTargetCollectionId(e.target.value)}
-                className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
-              >
-                <option value="">(unassigned)</option>
-                {collections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
+              {creatingCookbook ? (
+                <div className="space-y-2 rounded border border-stone-300 bg-stone-50 p-2">
+                  <input
+                    autoFocus
+                    placeholder="Cookbook title"
+                    value={newCookbookTitle}
+                    onChange={(e) => setNewCookbookTitle(e.target.value)}
+                    className="w-full rounded border border-stone-300 px-3 py-1.5 text-sm"
+                  />
+                  <input
+                    placeholder="Author (optional)"
+                    value={newCookbookAuthor}
+                    onChange={(e) => setNewCookbookAuthor(e.target.value)}
+                    className="w-full rounded border border-stone-300 px-3 py-1.5 text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={onCreateCookbook}
+                      disabled={!newCookbookTitle.trim() || saveCollection.isPending}
+                      className="rounded-md bg-stone-900 px-3 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                    >
+                      {saveCollection.isPending ? 'Creating…' : 'Create'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreatingCookbook(false);
+                        setNewCookbookTitle('');
+                        setNewCookbookAuthor('');
+                      }}
+                      className="rounded-md px-3 py-1 text-xs text-stone-600 hover:text-stone-900"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={targetCollectionId}
+                    onChange={(e) => {
+                      if (e.target.value === '__new__') {
+                        setCreatingCookbook(true);
+                      } else {
+                        setTargetCollectionId(e.target.value);
+                      }
+                    }}
+                    className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">(unassigned)</option>
+                    {collections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                    <option value="__new__">+ Create new cookbook…</option>
+                  </select>
+                  {collectionsPending && (
+                    <p className="mt-1 text-xs text-stone-500">Loading cookbooks…</p>
+                  )}
+                  {!collectionsPending && collections.length === 0 && (
+                    <p className="mt-1 text-xs text-stone-500">
+                      No cookbooks yet — pick "Create new cookbook" above or leave unassigned.
+                    </p>
+                  )}
+                </>
+              )}
             </Field>
             <Field label="Default provider">
               <select

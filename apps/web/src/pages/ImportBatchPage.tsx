@@ -7,7 +7,8 @@ import {
   useUpdateImportBatch,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { setRecitationPolicy } from '../import/api.js';
+import { kickOcr, OcrWorkerNotConfiguredError, setRecitationPolicy } from '../import/api.js';
+import { useSync } from '../local/SyncProvider.js';
 import { ImportThumb } from '../import/ImportThumb.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
 import { useAuth } from '../auth/AuthProvider.js';
@@ -45,7 +46,8 @@ function matchesFilter(item: ImportItem, filter: Filter): boolean {
 export function ImportBatchPage() {
   const { batchId } = useParams();
   const { user } = useAuth();
-  const { data: batch } = useImportBatch(batchId);
+  const { syncNow } = useSync();
+  const { data: batch, isPending: batchPending } = useImportBatch(batchId);
   const { data: items = [] } = useImportItems(batchId);
   const { data: collections = [] } = useCollections();
   const updateBatch = useUpdateImportBatch();
@@ -55,6 +57,8 @@ export function ImportBatchPage() {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [recitationBusy, setRecitationBusy] = useState(false);
+  const [kickBusy, setKickBusy] = useState(false);
+  const [kickError, setKickError] = useState<string | undefined>();
 
   const { data: attemptsByItem = {} } = useQuery<Record<string, number[]>>({
     queryKey: ['import-batch-rates', batchId],
@@ -109,7 +113,24 @@ export function ImportBatchPage() {
     if (batch && !editingName) setNameDraft(batch.name);
   }, [batch, editingName]);
 
-  if (!batch) return <p className="text-stone-500">Loading…</p>;
+  if (batchPending) return <p className="text-stone-500">Loading…</p>;
+  if (!batch) {
+    return (
+      <div className="space-y-3">
+        <p className="text-stone-700">Batch not found locally.</p>
+        <p className="text-sm text-stone-500">
+          It may not have synced from the server yet.
+        </p>
+        <button
+          type="button"
+          onClick={() => void syncNow()}
+          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+        >
+          Sync now
+        </button>
+      </div>
+    );
+  }
 
   const filtered = items.filter((i) => matchesFilter(i, filter));
 
@@ -148,8 +169,76 @@ export function ImportBatchPage() {
     }
   }
 
+  async function kickWorker() {
+    if (!batch) return;
+    setKickBusy(true);
+    setKickError(undefined);
+    try {
+      await kickOcr(batch.id);
+      await syncNow();
+    } catch (e) {
+      if (e instanceof OcrWorkerNotConfiguredError) {
+        setKickError(
+          'OCR worker is not configured for this Supabase project. See CLAUDE.md → "Setting up the OCR worker".',
+        );
+      } else {
+        setKickError((e as Error).message);
+      }
+    } finally {
+      setKickBusy(false);
+    }
+  }
+
+  const pendingCount = items.filter((i) => i.status === 'PENDING').length;
+  const stalledCount = items.filter((i) => i.status === 'CLAIMED').length;
+  const movedCount = items.filter(
+    (i) =>
+      i.status === 'OCR_DONE' ||
+      i.status === 'OCR_FAILED' ||
+      i.status === 'NEEDS_FALLBACK' ||
+      i.status === 'REVIEWED' ||
+      i.status === 'DISCARDED',
+  ).length;
+  const batchAgeMs = Date.now() - batch.updatedAt;
+  // After 30s with pending items and no observable progress, the worker
+  // probably isn't reachable. Surface a kick + a setup pointer.
+  const showStuckBanner =
+    pendingCount > 0 &&
+    movedCount === 0 &&
+    stalledCount === 0 &&
+    batchAgeMs > 30_000;
+
   return (
     <div className="space-y-6 pb-20">
+      {showStuckBanner && (
+        <div className="rounded-md border border-stone-300 bg-stone-50 p-3 text-sm text-stone-800">
+          <div className="font-medium">
+            {pendingCount} item{pendingCount === 1 ? '' : 's'} queued — worker hasn't
+            picked them up.
+          </div>
+          <div className="mt-1 text-stone-600">
+            Pending = uploaded and waiting for the OCR worker. If this doesn't
+            clear, the worker may not be configured or running. See CLAUDE.md →
+            "Setting up the OCR worker".
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={kickWorker}
+              disabled={kickBusy}
+              className="rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+            >
+              {kickBusy ? 'Kicking…' : 'Process now'}
+            </button>
+          </div>
+          {kickError && (
+            <div className="mt-2 rounded border border-red-300 bg-red-50 p-2 text-xs text-red-800">
+              {kickError}
+            </div>
+          )}
+        </div>
+      )}
+
       {needsFallbackCount > 0 && batch.recitationPolicy === 'ASK' && (
         <div className="sticky top-0 z-10 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
           <div className="font-medium">

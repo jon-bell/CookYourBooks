@@ -507,13 +507,16 @@ grant execute on function public.import_set_recitation_policy(uuid, text) to aut
 
 -- ---------- ocr_kick ----------
 --
--- Nudges the worker to drain the queue. Both an on-demand entry point
--- for the UI ("Process now") and the body of the pg_cron defensive
--- tick. The function URL + service-role key live in a single vault
--- secret named `import_worker_config` whose decrypted_secret is JSON
--- like `{"function_url": "...", "service_role_key": "..."}`. If the
--- secret isn't set (local dev where no Edge Function is deployed) the
--- RPC silently no-ops so kicks don't fail.
+-- Nudges the worker to drain the queue. The function URL + service-role
+-- key live in a single vault secret named `import_worker_config` whose
+-- decrypted_secret is JSON like
+-- `{"function_url": "...", "service_role_key": "..."}`.
+--
+-- If the secret is missing or malformed, raises P0001 with message
+-- prefix `OCR_WORKER_NOT_CONFIGURED:` so the client can surface a
+-- targeted "set up the worker" error to the user. The pg_cron tick
+-- wraps this call in its own exception handler so missing config in
+-- local dev doesn't spam logs.
 
 create or replace function public.ocr_kick(p_batch_id uuid default null)
 returns void
@@ -541,13 +544,13 @@ begin
     where name = 'import_worker_config'
     limit 1;
   if cfg is null then
-    return;
+    raise exception 'OCR_WORKER_NOT_CONFIGURED: vault secret `import_worker_config` is not set. See CLAUDE.md "Setting up the OCR worker".';
   end if;
 
   url := cfg->>'function_url';
   key := cfg->>'service_role_key';
   if url is null or key is null then
-    return;
+    raise exception 'OCR_WORKER_NOT_CONFIGURED: vault secret `import_worker_config` is missing function_url or service_role_key.';
   end if;
 
   perform net.http_post(
@@ -645,7 +648,17 @@ do $$ begin
   perform cron.schedule(
     'import-worker-tick',
     '30 seconds',
-    $cron$ select public.ocr_kick(null); $cron$
+    $cron$
+      do $cronbody$
+      begin
+        perform public.ocr_kick(null);
+      exception when others then
+        -- Swallow OCR_WORKER_NOT_CONFIGURED and transient pg_net errors
+        -- so cron doesn't fill the log with red ink in local dev.
+        null;
+      end
+      $cronbody$;
+    $cron$
   );
 exception when others then null;
 end $$;

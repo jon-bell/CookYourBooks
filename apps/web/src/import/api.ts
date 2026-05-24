@@ -43,11 +43,23 @@ export async function setRecitationPolicy(
   if (error) throw error;
 }
 
+export class OcrWorkerNotConfiguredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OcrWorkerNotConfiguredError';
+  }
+}
+
 export async function kickOcr(batchId?: string): Promise<void> {
   const { error } = await supabase.rpc('ocr_kick', {
     p_batch_id: batchId ?? undefined,
   });
-  if (error) throw error;
+  if (error) {
+    if (error.message?.startsWith('OCR_WORKER_NOT_CONFIGURED')) {
+      throw new OcrWorkerNotConfiguredError(error.message);
+    }
+    throw error;
+  }
 }
 
 export async function listOcrKeys(): Promise<OcrKeySummary[]> {
