@@ -180,6 +180,17 @@ export function ImportBatchPage() {
         id: batch.id,
         patch: { recitationPolicy: policy },
       });
+      // FALLBACK moves the parked items back to PENDING server-side.
+      // Kick the worker so they're picked up immediately instead of
+      // waiting for the next 30s pg_cron tick. (FAIL drops them to
+      // OCR_FAILED — no point kicking.)
+      if (policy === 'FALLBACK') {
+        try {
+          await kickOcr(batch.id);
+        } catch {
+          // Cron will catch up if the kick fails.
+        }
+      }
     } finally {
       setRecitationBusy(false);
     }

@@ -200,6 +200,14 @@ test.describe('bulk OCR imports', () => {
     });
 
     await page.getByRole('button', { name: 'Yes, use fallback' }).click();
+    // Wait for applyRecitation to actually land server-side. The
+    // recitation banner is shown only when recitation_policy === 'ASK';
+    // once setRecitationPolicy lands and the local DB syncs, it goes
+    // away. Without this, triggerWorker below could race against the
+    // policy update and find no PENDING items to claim yet.
+    await expect(page.getByText(/hit copyright recitation/)).toHaveCount(0, {
+      timeout: 15_000,
+    });
     await triggerWorker(batchId);
     await waitForItemStatuses(batchId, (c) => c.ocrDone === 3, 45_000);
     await waitForBatchStatus(page, batchId, { done: 3, failed: 0, parked: 0 });
