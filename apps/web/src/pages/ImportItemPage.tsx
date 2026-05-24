@@ -3,14 +3,15 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   createRecipe,
   createCookbook,
+  formatQuantity,
   isMeasured,
   measured,
+  parseIngredientLine,
   vague,
   instruction,
   type Ingredient,
   type Instruction,
   type ParsedRecipeDraft,
-  type Quantity,
   type RecipeCollection,
 } from '@cookyourbooks/domain';
 import {
@@ -626,18 +627,10 @@ export function ImportItemPage() {
   );
 }
 
-function quantityText(q: Quantity | undefined): string {
-  if (!q) return '';
-  switch (q.type) {
-    case 'EXACT':
-      return `${q.amount}${q.unit ? ' ' + q.unit : ''}`;
-    case 'FRACTIONAL': {
-      const w = q.whole ? `${q.whole} ` : '';
-      return `${w}${q.numerator}/${q.denominator}${q.unit ? ' ' + q.unit : ''}`;
-    }
-    case 'RANGE':
-      return `${q.min}–${q.max}${q.unit ? ' ' + q.unit : ''}`;
-  }
+function ingredientLine(ing: Ingredient): string {
+  const qty = isMeasured(ing) ? formatQuantity(ing.quantity) : '';
+  const prep = ing.preparation ? `, ${ing.preparation}` : '';
+  return [qty, ing.name].filter(Boolean).join(' ') + prep;
 }
 
 /**
@@ -719,163 +712,276 @@ function DraftEditor({
   draft: ParsedRecipeDraft;
   onPatch: (p: Partial<ParsedRecipeDraft>) => void;
 }) {
-  function updateIngredient(idx: number, name: string) {
-    const next = draft.ingredients.map((ing, i) => {
-      if (i !== idx) return ing;
-      if (isMeasured(ing)) {
-        return measured({ id: ing.id, name, preparation: ing.preparation, notes: ing.notes, quantity: ing.quantity });
-      }
-      return vague({ id: ing.id, name, preparation: ing.preparation, notes: ing.notes, description: ing.description });
+  function replaceIngredient(idx: number, line: string): void {
+    const trimmed = line.trim();
+    const existing = draft.ingredients[idx];
+    if (!existing) return;
+    if (!trimmed) {
+      onPatch({ ingredients: draft.ingredients.filter((_, i) => i !== idx) });
+      return;
+    }
+    // Try to parse the line as a measured ingredient; fall back to a
+    // vague one carrying the user's whole string as the name. Either
+    // way, preserve the original ingredient id so step→ingredient refs
+    // don't snap.
+    const parsed = parseIngredientLine(trimmed);
+    const next: Ingredient = parsed
+      ? isMeasured(parsed)
+        ? measured({ id: existing.id, name: parsed.name, preparation: parsed.preparation, quantity: parsed.quantity })
+        : vague({ id: existing.id, name: parsed.name, preparation: parsed.preparation })
+      : vague({ id: existing.id, name: trimmed });
+    onPatch({
+      ingredients: draft.ingredients.map((ing, i) => (i === idx ? next : ing)),
     });
-    onPatch({ ingredients: next });
   }
-  function removeIngredient(idx: number) {
-    onPatch({ ingredients: draft.ingredients.filter((_, i) => i !== idx) });
+  function addIngredient(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const parsed = parseIngredientLine(trimmed) ?? vague({ name: trimmed });
+    onPatch({ ingredients: [...draft.ingredients, parsed] });
   }
-  function addIngredient() {
-    onPatch({ ingredients: [...draft.ingredients, vague({ name: '' })] });
+  function replaceInstruction(idx: number, text: string): void {
+    const trimmed = text.trim();
+    const existing = draft.instructions[idx];
+    if (!existing) return;
+    if (!trimmed) {
+      onPatch({ instructions: draft.instructions.filter((_, i) => i !== idx) });
+      return;
+    }
+    const next = instruction({
+      id: existing.id,
+      stepNumber: existing.stepNumber,
+      text: trimmed,
+      ingredientRefs: [...existing.ingredientRefs],
+      temperature: existing.temperature,
+      subInstructions: existing.subInstructions,
+      notes: existing.notes,
+    });
+    onPatch({
+      instructions: draft.instructions.map((s, i) => (i === idx ? next : s)),
+    });
   }
-  function updateInstruction(idx: number, text: string) {
-    const next = draft.instructions.map((s, i) =>
-      i === idx
-        ? instruction({
-            id: s.id,
-            stepNumber: s.stepNumber,
-            text,
-            ingredientRefs: [...s.ingredientRefs],
-            temperature: s.temperature,
-            subInstructions: s.subInstructions,
-            notes: s.notes,
-          })
-        : s,
-    );
-    onPatch({ instructions: next });
-  }
-  function removeInstruction(idx: number) {
-    onPatch({ instructions: draft.instructions.filter((_, i) => i !== idx) });
-  }
-  function addInstruction() {
-    const stepNumber = draft.instructions.length + 1;
+  function addInstruction(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
     onPatch({
       instructions: [
         ...draft.instructions,
-        instruction({ stepNumber, text: '', ingredientRefs: [] }),
+        instruction({
+          stepNumber: draft.instructions.length + 1,
+          text: trimmed,
+          ingredientRefs: [],
+        }),
       ],
     });
   }
 
   return (
-    <div className="space-y-3 rounded-md border border-stone-200 bg-white p-3">
-      <Field label="Title">
-        <input
+    <article className="space-y-5 rounded-md border border-stone-200 bg-white p-5">
+      <header className="space-y-2">
+        <EditableText
           value={draft.title ?? ''}
-          onChange={(e) => onPatch({ title: e.target.value })}
-          className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+          placeholder="(no title)"
+          onCommit={(v) => onPatch({ title: v.trim() || undefined })}
+          className="block w-full text-2xl font-semibold leading-tight text-stone-900"
         />
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Book title">
-          <input
-            value={draft.bookTitle ?? ''}
-            onChange={(e) => onPatch({ bookTitle: e.target.value || undefined })}
-            className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
-          />
-        </Field>
-        <Field label="Time estimate">
-          <input
-            value={draft.timeEstimate ?? ''}
-            onChange={(e) => onPatch({ timeEstimate: e.target.value || undefined })}
-            className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
-          />
-        </Field>
-      </div>
-
-      <div>
-        <div className="mb-1 text-sm font-medium text-stone-700">
-          Ingredients ({draft.ingredients.length})
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
+          <Inline label="from">
+            <EditableText
+              value={draft.bookTitle ?? ''}
+              placeholder="(book title)"
+              onCommit={(v) => onPatch({ bookTitle: v.trim() || undefined })}
+              className="italic"
+            />
+          </Inline>
+          <Inline label="time">
+            <EditableText
+              value={draft.timeEstimate ?? ''}
+              placeholder="(time)"
+              onCommit={(v) => onPatch({ timeEstimate: v.trim() || undefined })}
+            />
+          </Inline>
         </div>
-        <ul className="space-y-1.5">
+      </header>
+
+      <section>
+        <EditableText
+          multiline
+          value={draft.description ?? ''}
+          placeholder="(no description — click to add)"
+          onCommit={(v) => onPatch({ description: v.trim() || undefined })}
+          className="block w-full text-sm leading-relaxed text-stone-700"
+        />
+      </section>
+
+      <section>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+          Ingredients
+        </h3>
+        <ul className="space-y-1">
           {draft.ingredients.map((ing, i) => (
-            <li key={ing.id} className="flex items-center gap-1.5">
-              <span className="w-24 shrink-0 truncate text-right text-xs text-stone-500">
-                {isMeasured(ing) ? quantityText(ing.quantity) : '—'}
-              </span>
-              <input
-                value={ing.name}
-                onChange={(e) => updateIngredient(i, e.target.value)}
-                className="flex-1 rounded border border-stone-300 px-2 py-1 text-sm"
+            <li key={ing.id} className="text-sm leading-relaxed text-stone-800">
+              <EditableText
+                value={ingredientLine(ing)}
+                placeholder="(click to edit; leave blank to remove)"
+                onCommit={(v) => replaceIngredient(i, v)}
+                className="block w-full"
               />
-              <button
-                type="button"
-                onClick={() => removeIngredient(i)}
-                aria-label="Remove ingredient"
-                className="rounded px-1.5 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-900"
-              >
-                ×
-              </button>
             </li>
           ))}
+          <li>
+            <EditableText
+              value=""
+              placeholder="+ Add ingredient"
+              onCommit={(v) => addIngredient(v)}
+              className="block w-full text-stone-400"
+            />
+          </li>
         </ul>
-        <button
-          type="button"
-          onClick={addIngredient}
-          className="mt-1 text-xs text-stone-600 hover:text-stone-900"
-        >
-          + Add ingredient
-        </button>
-      </div>
+      </section>
 
-      <div>
-        <div className="mb-1 text-sm font-medium text-stone-700">
-          Instructions ({draft.instructions.length})
-        </div>
-        <ol className="space-y-1.5">
+      <section>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+          Instructions
+        </h3>
+        <ol className="space-y-3">
           {draft.instructions.map((step, i) => (
-            <li key={step.id} className="flex gap-1.5">
-              <span className="w-6 shrink-0 pt-1.5 text-right text-xs text-stone-500">
+            <li key={step.id} className="flex gap-3 text-sm leading-relaxed text-stone-800">
+              <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
                 {i + 1}.
               </span>
-              <textarea
+              <EditableText
+                multiline
                 value={step.text}
-                onChange={(e) => updateInstruction(i, e.target.value)}
-                rows={Math.max(2, Math.ceil(step.text.length / 60))}
-                className="flex-1 rounded border border-stone-300 px-2 py-1 text-sm"
+                placeholder="(click to edit; leave blank to remove)"
+                onCommit={(v) => replaceInstruction(i, v)}
+                className="flex-1"
               />
-              <button
-                type="button"
-                onClick={() => removeInstruction(i)}
-                aria-label="Remove step"
-                className="self-start rounded px-1.5 pt-1 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-900"
-              >
-                ×
-              </button>
             </li>
           ))}
+          <li className="flex gap-3">
+            <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
+              {draft.instructions.length + 1}.
+            </span>
+            <EditableText
+              multiline
+              value=""
+              placeholder="+ Add step"
+              onCommit={(v) => addInstruction(v)}
+              className="flex-1 text-stone-400"
+            />
+          </li>
         </ol>
-        <button
-          type="button"
-          onClick={addInstruction}
-          className="mt-1 text-xs text-stone-600 hover:text-stone-900"
-        >
-          + Add step
-        </button>
-      </div>
+      </section>
 
-      {draft.description && (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-stone-600">Description</summary>
-          <p className="mt-1 whitespace-pre-wrap text-stone-700">{draft.description}</p>
-        </details>
-      )}
       {draft.sourceImageText && (
         <details className="text-xs">
-          <summary className="cursor-pointer text-stone-600">Raw OCR text</summary>
+          <summary className="cursor-pointer text-stone-500">Raw OCR text</summary>
           <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-stone-50 p-2 text-stone-700">
             {draft.sourceImageText}
           </pre>
         </details>
       )}
-    </div>
+    </article>
+  );
+}
+
+/**
+ * View-first inline edit. Renders the value as plain text; click swaps
+ * it for an input that commits on blur or Enter (or Escape to cancel).
+ * Multiline mode uses a textarea and only commits on blur — Enter
+ * inserts a newline.
+ */
+function EditableText({
+  value,
+  onCommit,
+  multiline = false,
+  className = '',
+  placeholder = 'click to edit',
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  multiline?: boolean;
+  className?: string;
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
+
+  function commit() {
+    if (draft !== value) onCommit(draft);
+    setEditing(false);
+  }
+  function cancel() {
+    setDraft(value);
+    setEditing(false);
+  }
+
+  if (!editing) {
+    const empty = value.length === 0;
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className={`group rounded text-left hover:bg-stone-100 focus:bg-stone-100 focus:outline-none ${className}`}
+      >
+        {empty ? (
+          <span className="text-stone-400">{placeholder}</span>
+        ) : (
+          <span className="whitespace-pre-wrap">{value}</span>
+        )}
+      </button>
+    );
+  }
+
+  if (multiline) {
+    return (
+      <textarea
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        rows={Math.max(2, Math.ceil(Math.max(draft.length, value.length) / 60))}
+        className={`rounded border border-stone-300 bg-white px-2 py-1 outline-none focus:border-stone-500 ${className}`}
+      />
+    );
+  }
+  return (
+    <input
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancel();
+        }
+      }}
+      className={`rounded border border-stone-300 bg-white px-2 py-1 outline-none focus:border-stone-500 ${className}`}
+    />
+  );
+}
+
+function Inline({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="text-stone-400">{label}</span>
+      {children}
+    </span>
   );
 }
 
