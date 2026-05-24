@@ -12,6 +12,7 @@ import {
   type Ingredient,
   type Instruction,
   type ParsedRecipeDraft,
+  type Quantity,
   type RecipeCollection,
 } from '@cookyourbooks/domain';
 import {
@@ -627,10 +628,17 @@ export function ImportItemPage() {
   );
 }
 
-function ingredientLine(ing: Ingredient): string {
-  const qty = isMeasured(ing) ? formatQuantity(ing.quantity) : '';
-  const prep = ing.preparation ? `, ${ing.preparation}` : '';
-  return [qty, ing.name].filter(Boolean).join(' ') + prep;
+/**
+ * Reuse the same parser the OCR JSON pipeline relies on. Wraps the
+ * user's quantity-only input in a fake "<qty> x" sentence so we get
+ * back a measured Ingredient, then pulls the Quantity off it. Empty
+ * input clears the quantity (caller turns ingredient vague).
+ */
+function parseQuantityInput(input: string): Quantity | undefined | 'CLEAR' {
+  const trimmed = input.trim();
+  if (!trimmed) return 'CLEAR';
+  const parsed = parseIngredientLine(`${trimmed} x`);
+  return parsed && isMeasured(parsed) ? parsed.quantity : undefined;
 }
 
 /**
@@ -712,54 +720,37 @@ function DraftEditor({
   draft: ParsedRecipeDraft;
   onPatch: (p: Partial<ParsedRecipeDraft>) => void;
 }) {
-  function replaceIngredient(idx: number, line: string): void {
-    const trimmed = line.trim();
-    const existing = draft.ingredients[idx];
-    if (!existing) return;
-    if (!trimmed) {
-      onPatch({ ingredients: draft.ingredients.filter((_, i) => i !== idx) });
-      return;
-    }
-    // Try to parse the line as a measured ingredient; fall back to a
-    // vague one carrying the user's whole string as the name. Either
-    // way, preserve the original ingredient id so step→ingredient refs
-    // don't snap.
-    const parsed = parseIngredientLine(trimmed);
-    const next: Ingredient = parsed
-      ? isMeasured(parsed)
-        ? measured({ id: existing.id, name: parsed.name, preparation: parsed.preparation, quantity: parsed.quantity })
-        : vague({ id: existing.id, name: parsed.name, preparation: parsed.preparation })
-      : vague({ id: existing.id, name: trimmed });
-    onPatch({
-      ingredients: draft.ingredients.map((ing, i) => (i === idx ? next : ing)),
-    });
+  function patchIngredient(idx: number, next: Ingredient): void {
+    onPatch({ ingredients: draft.ingredients.map((ing, i) => (i === idx ? next : ing)) });
   }
-  function addIngredient(line: string): void {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    const parsed = parseIngredientLine(trimmed) ?? vague({ name: trimmed });
-    onPatch({ ingredients: [...draft.ingredients, parsed] });
+  function removeIngredient(idx: number): void {
+    const removed = draft.ingredients[idx];
+    if (!removed) return;
+    const nextIngredients = draft.ingredients.filter((_, i) => i !== idx);
+    // Drop any step refs that pointed at the now-gone ingredient.
+    const nextInstructions = draft.instructions.map((step) =>
+      step.ingredientRefs.some((r) => r.ingredientId === removed.id)
+        ? instruction({
+            id: step.id,
+            stepNumber: step.stepNumber,
+            text: step.text,
+            ingredientRefs: step.ingredientRefs.filter((r) => r.ingredientId !== removed.id),
+            temperature: step.temperature,
+            subInstructions: step.subInstructions,
+            notes: step.notes,
+          })
+        : step,
+    );
+    onPatch({ ingredients: nextIngredients, instructions: nextInstructions });
   }
-  function replaceInstruction(idx: number, text: string): void {
-    const trimmed = text.trim();
-    const existing = draft.instructions[idx];
-    if (!existing) return;
-    if (!trimmed) {
-      onPatch({ instructions: draft.instructions.filter((_, i) => i !== idx) });
-      return;
-    }
-    const next = instruction({
-      id: existing.id,
-      stepNumber: existing.stepNumber,
-      text: trimmed,
-      ingredientRefs: [...existing.ingredientRefs],
-      temperature: existing.temperature,
-      subInstructions: existing.subInstructions,
-      notes: existing.notes,
-    });
-    onPatch({
-      instructions: draft.instructions.map((s, i) => (i === idx ? next : s)),
-    });
+  function addIngredient(): void {
+    onPatch({ ingredients: [...draft.ingredients, vague({ name: 'new ingredient' })] });
+  }
+  function patchInstruction(idx: number, next: Instruction): void {
+    onPatch({ instructions: draft.instructions.map((s, i) => (i === idx ? next : s)) });
+  }
+  function removeInstruction(idx: number): void {
+    onPatch({ instructions: draft.instructions.filter((_, i) => i !== idx) });
   }
   function addInstruction(text: string): void {
     const trimmed = text.trim();
@@ -814,28 +805,32 @@ function DraftEditor({
         />
       </section>
 
+      <EquipmentRow
+        equipment={draft.equipment}
+        onChange={(next) => onPatch({ equipment: next.length > 0 ? next : undefined })}
+      />
+
       <section>
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
           Ingredients
         </h3>
         <ul className="space-y-1">
           {draft.ingredients.map((ing, i) => (
-            <li key={ing.id} className="text-sm leading-relaxed text-stone-800">
-              <EditableText
-                value={ingredientLine(ing)}
-                placeholder="(click to edit; leave blank to remove)"
-                onCommit={(v) => replaceIngredient(i, v)}
-                className="block w-full"
-              />
-            </li>
+            <IngredientRow
+              key={ing.id}
+              ingredient={ing}
+              onChange={(next) => patchIngredient(i, next)}
+              onRemove={() => removeIngredient(i)}
+            />
           ))}
           <li>
-            <EditableText
-              value=""
-              placeholder="+ Add ingredient"
-              onCommit={(v) => addIngredient(v)}
-              className="block w-full text-stone-400"
-            />
+            <button
+              type="button"
+              onClick={addIngredient}
+              className="text-xs text-stone-500 hover:text-stone-900"
+            >
+              + Add ingredient
+            </button>
           </li>
         </ul>
       </section>
@@ -844,20 +839,16 @@ function DraftEditor({
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
           Instructions
         </h3>
-        <ol className="space-y-3">
+        <ol className="space-y-4">
           {draft.instructions.map((step, i) => (
-            <li key={step.id} className="flex gap-3 text-sm leading-relaxed text-stone-800">
-              <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
-                {i + 1}.
-              </span>
-              <EditableText
-                multiline
-                value={step.text}
-                placeholder="(click to edit; leave blank to remove)"
-                onCommit={(v) => replaceInstruction(i, v)}
-                className="flex-1"
-              />
-            </li>
+            <InstructionRow
+              key={step.id}
+              step={step}
+              index={i}
+              availableIngredients={draft.ingredients}
+              onChange={(next) => patchInstruction(i, next)}
+              onRemove={() => removeInstruction(i)}
+            />
           ))}
           <li className="flex gap-3">
             <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
@@ -883,6 +874,324 @@ function DraftEditor({
         </details>
       )}
     </article>
+  );
+}
+
+function IngredientRow({
+  ingredient,
+  onChange,
+  onRemove,
+}: {
+  ingredient: Ingredient;
+  onChange: (next: Ingredient) => void;
+  onRemove: () => void;
+}) {
+  function commitQuantity(input: string) {
+    const result = parseQuantityInput(input);
+    if (result === undefined) return; // unparseable: leave as-is
+    if (result === 'CLEAR') {
+      onChange(
+        vague({
+          id: ingredient.id,
+          name: ingredient.name,
+          preparation: ingredient.preparation,
+          notes: ingredient.notes,
+          description: isMeasured(ingredient) ? undefined : ingredient.description,
+        }),
+      );
+      return;
+    }
+    onChange(
+      measured({
+        id: ingredient.id,
+        name: ingredient.name,
+        preparation: ingredient.preparation,
+        notes: ingredient.notes,
+        quantity: result,
+      }),
+    );
+  }
+  function commitName(v: string) {
+    const name = v.trim();
+    if (!name) {
+      onRemove();
+      return;
+    }
+    if (isMeasured(ingredient)) {
+      onChange(
+        measured({
+          id: ingredient.id,
+          name,
+          preparation: ingredient.preparation,
+          notes: ingredient.notes,
+          quantity: ingredient.quantity,
+        }),
+      );
+    } else {
+      onChange(
+        vague({
+          id: ingredient.id,
+          name,
+          preparation: ingredient.preparation,
+          notes: ingredient.notes,
+          description: ingredient.description,
+        }),
+      );
+    }
+  }
+  function commitPrep(v: string) {
+    const preparation = v.trim() || undefined;
+    if (isMeasured(ingredient)) {
+      onChange(
+        measured({
+          id: ingredient.id,
+          name: ingredient.name,
+          preparation,
+          notes: ingredient.notes,
+          quantity: ingredient.quantity,
+        }),
+      );
+    } else {
+      onChange(
+        vague({
+          id: ingredient.id,
+          name: ingredient.name,
+          preparation,
+          notes: ingredient.notes,
+          description: ingredient.description,
+        }),
+      );
+    }
+  }
+
+  const qtyText = isMeasured(ingredient) ? formatQuantity(ingredient.quantity) : '';
+  return (
+    <li className="group flex items-baseline gap-2 text-sm leading-relaxed text-stone-800">
+      <EditableText
+        value={qtyText}
+        placeholder="(no qty)"
+        onCommit={commitQuantity}
+        className="inline-block min-w-[3rem] rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700"
+      />
+      <EditableText
+        value={ingredient.name}
+        placeholder="(ingredient)"
+        onCommit={commitName}
+        className="font-medium"
+      />
+      <span className="text-stone-300">·</span>
+      <EditableText
+        value={ingredient.preparation ?? ''}
+        placeholder="(prep)"
+        onCommit={commitPrep}
+        className="text-stone-500"
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove ingredient"
+        className="ml-auto rounded px-1 text-xs text-stone-300 opacity-0 hover:bg-stone-100 hover:text-stone-900 group-hover:opacity-100"
+      >
+        ×
+      </button>
+    </li>
+  );
+}
+
+function InstructionRow({
+  step,
+  index,
+  availableIngredients,
+  onChange,
+  onRemove,
+}: {
+  step: Instruction;
+  index: number;
+  availableIngredients: readonly Ingredient[];
+  onChange: (next: Instruction) => void;
+  onRemove: () => void;
+}) {
+  const refIds = new Set(step.ingredientRefs.map((r) => r.ingredientId));
+  const refsById = new Map(availableIngredients.map((ing) => [ing.id, ing]));
+  const unlinked = availableIngredients.filter((ing) => !refIds.has(ing.id));
+
+  function commitText(v: string) {
+    const text = v.trim();
+    if (!text) {
+      onRemove();
+      return;
+    }
+    onChange(
+      instruction({
+        id: step.id,
+        stepNumber: step.stepNumber,
+        text,
+        ingredientRefs: [...step.ingredientRefs],
+        temperature: step.temperature,
+        subInstructions: step.subInstructions,
+        notes: step.notes,
+      }),
+    );
+  }
+  function toggleRef(ingredientId: string) {
+    const next = refIds.has(ingredientId)
+      ? step.ingredientRefs.filter((r) => r.ingredientId !== ingredientId)
+      : [...step.ingredientRefs, { ingredientId }];
+    onChange(
+      instruction({
+        id: step.id,
+        stepNumber: step.stepNumber,
+        text: step.text,
+        ingredientRefs: next,
+        temperature: step.temperature,
+        subInstructions: step.subInstructions,
+        notes: step.notes,
+      }),
+    );
+  }
+
+  return (
+    <li className="group flex gap-3 text-sm leading-relaxed text-stone-800">
+      <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
+        {index + 1}.
+      </span>
+      <div className="flex-1 space-y-1.5">
+        <EditableText
+          multiline
+          value={step.text}
+          placeholder="(click to edit; leave blank to remove)"
+          onCommit={commitText}
+          className="block w-full"
+        />
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          {step.ingredientRefs.map((ref) => {
+            const ing = refsById.get(ref.ingredientId);
+            return (
+              <button
+                key={ref.ingredientId}
+                type="button"
+                onClick={() => toggleRef(ref.ingredientId)}
+                title="Click to remove"
+                className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-700 hover:bg-red-50 hover:text-red-700"
+              >
+                <span>{ing?.name ?? '(missing)'}</span>
+                <span className="text-stone-400">×</span>
+              </button>
+            );
+          })}
+          {unlinked.length > 0 && (
+            <AddRefMenu
+              options={unlinked}
+              onPick={(id) => toggleRef(id)}
+            />
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove step"
+        className="self-start rounded px-1 pt-1 text-xs text-stone-300 opacity-0 hover:bg-stone-100 hover:text-stone-900 group-hover:opacity-100"
+      >
+        ×
+      </button>
+    </li>
+  );
+}
+
+function AddRefMenu({
+  options,
+  onPick,
+}: {
+  options: readonly Ingredient[];
+  onPick: (id: string) => void;
+}) {
+  return (
+    <select
+      value=""
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v) onPick(v);
+        e.target.value = '';
+      }}
+      className="rounded-full border border-dashed border-stone-300 bg-white px-2 py-0.5 text-xs text-stone-500 hover:border-stone-500 hover:text-stone-900"
+    >
+      <option value="">+ link</option>
+      {options.map((ing) => (
+        <option key={ing.id} value={ing.id}>
+          {ing.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function EquipmentRow({
+  equipment,
+  onChange,
+}: {
+  equipment: readonly string[] | undefined;
+  onChange: (next: string[]) => void;
+}) {
+  const items = equipment ?? [];
+  function add(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (items.some((e) => e.toLowerCase() === trimmed.toLowerCase())) return;
+    onChange([...items, trimmed]);
+  }
+  function remove(idx: number) {
+    onChange(items.filter((_, i) => i !== idx));
+  }
+  function update(idx: number, value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      remove(idx);
+      return;
+    }
+    onChange(items.map((e, i) => (i === idx ? trimmed : e)));
+  }
+
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+        Equipment
+      </h3>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {items.length === 0 && (
+          <span className="text-xs text-stone-400">
+            (none — add what the recipe needs)
+          </span>
+        )}
+        {items.map((item, i) => (
+          <span
+            key={`${item}-${i}`}
+            className="group inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-700"
+          >
+            <EditableText
+              value={item}
+              placeholder="(equipment)"
+              onCommit={(v) => update(i, v)}
+              className="inline"
+            />
+            <button
+              type="button"
+              onClick={() => remove(i)}
+              aria-label="Remove equipment"
+              className="text-stone-400 hover:text-red-700"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <EditableText
+          value=""
+          placeholder="+ add"
+          onCommit={add}
+          className="rounded-full border border-dashed border-stone-300 px-2 py-0.5 text-xs text-stone-500 hover:border-stone-500 hover:text-stone-900"
+        />
+      </div>
+    </section>
   );
 }
 
