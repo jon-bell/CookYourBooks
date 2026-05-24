@@ -111,6 +111,97 @@ export const SCHEMA_STATEMENTS: string[] = [
   `create index if not exists iir_instruction_idx on instruction_ingredient_refs(instruction_id)`,
   `create index if not exists iir_ingredient_idx on instruction_ingredient_refs(ingredient_id)`,
 
+  // ---------- Bulk OCR import tables ----------
+  // The Edge Function worker is the canonical writer for most of these
+  // columns — the client only touches its own annotation fields
+  // (assignments, status transitions to REVIEWED/DISCARDED, etc).
+
+  `create table if not exists import_batches (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    name text not null default '',
+    source_kind text not null default 'IMAGES',
+    target_collection_id text,
+    default_model text not null default '',
+    default_provider text not null default 'gemini',
+    fallback_model text,
+    fallback_provider text,
+    recitation_policy text not null default 'ASK',
+    status text not null default 'OPEN',
+    total_items integer not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+
+  `create index if not exists import_batches_owner_idx on import_batches(owner_id)`,
+
+  `create table if not exists import_items (
+    id text primary key not null default '',
+    batch_id text not null default '',
+    owner_id text not null default '',
+    page_index integer not null default 0,
+    storage_path text not null default '',
+    thumb_path text,
+    source_pdf_path text,
+    source_pdf_page integer,
+    assigned_collection_id text,
+    assigned_page_number integer,
+    is_toc integer not null default 0,
+    status text not null default 'PENDING',
+    claim_expires_at integer not null default 0,
+    attempts integer not null default 0,
+    last_error text,
+    parsed_drafts_json text,
+    model_used text,
+    prompt_tokens integer not null default 0,
+    completion_tokens integer not null default 0,
+    cost_usd_micros integer not null default 0,
+    created_recipe_ids text not null default '[]',
+    needs_fallback integer not null default 0,
+    extra_storage_paths text not null default '[]',
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+
+  `create index if not exists import_items_batch_idx on import_items(batch_id, page_index)`,
+  `create index if not exists import_items_status_idx on import_items(owner_id, status)`,
+
+  `create table if not exists import_item_attempts (
+    id text primary key not null default '',
+    item_id text not null default '',
+    owner_id text not null default '',
+    attempt_no integer not null default 1,
+    provider text not null default '',
+    model text not null default '',
+    raw_response_path text,
+    error_kind text,
+    error_message text,
+    prompt_tokens integer not null default 0,
+    completion_tokens integer not null default 0,
+    cost_usd_micros integer not null default 0,
+    latency_ms integer not null default 0,
+    started_at integer not null default 0,
+    finished_at integer,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+
+  `create index if not exists import_item_attempts_item_idx on import_item_attempts(item_id, attempt_no)`,
+
+  `create table if not exists import_toc_entries (
+    id text primary key not null default '',
+    batch_id text not null default '',
+    item_id text not null default '',
+    owner_id text not null default '',
+    title text not null default '',
+    page_number integer,
+    confidence real not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+
+  `create index if not exists import_toc_entries_batch_idx on import_toc_entries(batch_id, title)`,
+
   // Sync metadata — a singleton row per logical topic holding the
   // latest-seen remote `updated_at` (ms since epoch). Local-only, not CRR.
   `create table if not exists sync_state (
@@ -138,6 +229,10 @@ export const CRR_TABLES = [
   'ingredients',
   'instructions',
   'instruction_ingredient_refs',
+  'import_batches',
+  'import_items',
+  'import_item_attempts',
+  'import_toc_entries',
 ];
 
 // Idempotent post-schema migrations. Appended to over time as columns
@@ -170,4 +265,86 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table instruction_ingredient_refs add column consumed_quantity_min real`,
   `alter table instruction_ingredient_refs add column consumed_quantity_max real`,
   `alter table instruction_ingredient_refs add column consumed_quantity_unit text`,
+  // Bulk OCR import tables. Idempotent for fresh DBs (table already
+  // exists at this point) and additive for older DBs (added on first
+  // upgrade boot). `create index if not exists` is safe to re-run.
+  `create table if not exists import_batches (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    name text not null default '',
+    source_kind text not null default 'IMAGES',
+    target_collection_id text,
+    default_model text not null default '',
+    default_provider text not null default 'gemini',
+    fallback_model text,
+    fallback_provider text,
+    recitation_policy text not null default 'ASK',
+    status text not null default 'OPEN',
+    total_items integer not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists import_batches_owner_idx on import_batches(owner_id)`,
+  `create table if not exists import_items (
+    id text primary key not null default '',
+    batch_id text not null default '',
+    owner_id text not null default '',
+    page_index integer not null default 0,
+    storage_path text not null default '',
+    thumb_path text,
+    source_pdf_path text,
+    source_pdf_page integer,
+    assigned_collection_id text,
+    assigned_page_number integer,
+    is_toc integer not null default 0,
+    status text not null default 'PENDING',
+    claim_expires_at integer not null default 0,
+    attempts integer not null default 0,
+    last_error text,
+    parsed_drafts_json text,
+    model_used text,
+    prompt_tokens integer not null default 0,
+    completion_tokens integer not null default 0,
+    cost_usd_micros integer not null default 0,
+    created_recipe_ids text not null default '[]',
+    needs_fallback integer not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `alter table import_items add column needs_fallback integer not null default 0`,
+  `alter table import_items add column extra_storage_paths text not null default '[]'`,
+  `create index if not exists import_items_batch_idx on import_items(batch_id, page_index)`,
+  `create index if not exists import_items_status_idx on import_items(owner_id, status)`,
+  `create table if not exists import_item_attempts (
+    id text primary key not null default '',
+    item_id text not null default '',
+    owner_id text not null default '',
+    attempt_no integer not null default 1,
+    provider text not null default '',
+    model text not null default '',
+    raw_response_path text,
+    error_kind text,
+    error_message text,
+    prompt_tokens integer not null default 0,
+    completion_tokens integer not null default 0,
+    cost_usd_micros integer not null default 0,
+    latency_ms integer not null default 0,
+    started_at integer not null default 0,
+    finished_at integer,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists import_item_attempts_item_idx on import_item_attempts(item_id, attempt_no)`,
+  `create table if not exists import_toc_entries (
+    id text primary key not null default '',
+    batch_id text not null default '',
+    item_id text not null default '',
+    owner_id text not null default '',
+    title text not null default '',
+    page_number integer,
+    confidence real not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists import_toc_entries_batch_idx on import_toc_entries(batch_id, title)`,
 ];

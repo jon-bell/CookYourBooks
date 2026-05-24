@@ -328,8 +328,114 @@ export async function purgeRecipe(id: string): Promise<void> {
 
 // ------------- Domain-facing repositories -------------
 
+/** Lightweight row for cookbook pickers — no recipe hydration. */
+export interface CollectionPickerOption {
+  id: string;
+  title: string;
+  /** Cookbooks carry an author; personal + web collections don't. */
+  author: string | null;
+  sourceType: CollectionRow['source_type'];
+  /** Number of recipes already saved into this collection. Used to
+   *  disambiguate near-empty placeholders from established cookbooks
+   *  in the picker. */
+  recipeCount: number;
+}
+
+/** Library grid card — metadata + recipe count, no recipe hydration. */
+export interface LibraryCollectionSummary {
+  id: string;
+  title: string;
+  coverImagePath: string | null;
+  isPublic: boolean;
+  sourceType: CollectionRow['source_type'];
+  author: string | null;
+  siteName: string | null;
+  recipeCount: number;
+}
+
 export class LocalRecipeCollectionRepository implements RecipeCollectionRepository {
   constructor(private readonly ownerId: string) {}
+
+  /** Fast list for dropdowns; avoids hydrating every recipe in every collection. */
+  async listPickerOptions(): Promise<CollectionPickerOption[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      author: string | null;
+      source_type: CollectionRow['source_type'];
+      recipe_count: number;
+    }>(
+      `select c.id, c.title, c.author, c.source_type,
+              coalesce(rc.cnt, 0) as recipe_count
+         from recipe_collections c
+         left join (
+           select collection_id, count(*) as cnt
+             from recipes
+             where deleted = 0
+             group by collection_id
+         ) rc on rc.collection_id = c.id
+        where c.owner_id = ? and c.deleted = 0
+        order by coalesce(c.updated_at, 0) desc`,
+      [this.ownerId],
+    )) as Array<{
+      id: string;
+      title: string;
+      author: string | null;
+      source_type: CollectionRow['source_type'];
+      recipe_count: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      author: r.author,
+      sourceType: r.source_type,
+      recipeCount: r.recipe_count,
+    }));
+  }
+
+  /** Fast list for the library grid — one grouped query, no per-recipe hydration. */
+  async listLibrarySummaries(): Promise<LibraryCollectionSummary[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      is_public: number | boolean;
+      source_type: CollectionRow['source_type'];
+      author: string | null;
+      site_name: string | null;
+      recipe_count: number;
+    }>(
+      `select c.id, c.title, c.cover_image_path, c.is_public, c.source_type,
+              c.author, c.site_name, count(r.id) as recipe_count
+       from recipe_collections c
+       left join recipes r on r.collection_id = c.id and r.deleted = 0
+       where c.owner_id = ? and c.deleted = 0
+       group by c.id
+       order by coalesce(c.updated_at, 0) desc`,
+      [this.ownerId],
+    )) as {
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      is_public: number | boolean;
+      source_type: CollectionRow['source_type'];
+      author: string | null;
+      site_name: string | null;
+      recipe_count: number;
+    }[];
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      coverImagePath: row.cover_image_path,
+      isPublic: Boolean(row.is_public),
+      sourceType: row.source_type,
+      author: row.author,
+      siteName: row.site_name,
+      recipeCount: Number(row.recipe_count),
+    }));
+  }
 
   async list(): Promise<RecipeCollection[]> {
     const db = await getLocalDb();
@@ -443,7 +549,29 @@ export class LocalRecipeRepository implements RecipeRepository {
   }
 
   async save(recipe: Recipe): Promise<void> {
-    await saveLocalRecipe(this.collectionId, recipe, 0);
+    // sort_order pick:
+    // - If this id already exists in any collection, preserve its
+    //   current sort_order (the matched-existing fold-into-placeholder
+    //   flow must keep the placeholder's book-order position).
+    // - Otherwise append to the end of the target collection
+    //   (max(sort_order) + 1). Hard-coding 0 piled every imported
+    //   recipe into the same slot and made freshly-saved recipes hide
+    //   among the heap.
+    //
+    // Folded into one statement so the read and the decision happen in
+    // a single SQLite scheduling tick — no chance for a concurrent
+    // save in a sibling tab to land between the read and the write
+    // and skew the chosen value.
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ sort_order: number | null }>(
+      `select coalesce(
+         (select sort_order from recipes where id = ? and deleted = 0),
+         (select coalesce(max(sort_order), -1) + 1 from recipes where collection_id = ? and deleted = 0)
+       ) as sort_order`,
+      [recipe.id, this.collectionId],
+    )) as Array<{ sort_order: number | null }>;
+    const sortOrder = rows[0]?.sort_order ?? 0;
+    await saveLocalRecipe(this.collectionId, recipe, sortOrder);
     await enqueue({
       kind: 'recipe_save',
       entity_id: recipe.id,

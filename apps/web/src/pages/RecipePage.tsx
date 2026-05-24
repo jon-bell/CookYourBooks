@@ -23,7 +23,6 @@ import {
 import { shareRecipe } from '../share/share.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { recipeShareUrl } from '../share/shareUrl.js';
-
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();

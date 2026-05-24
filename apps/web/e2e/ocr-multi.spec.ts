@@ -1,18 +1,14 @@
 import { test, expect } from './support/fixtures.js';
+import { waitForSynced } from './support/fixtures.js';
 
-// Stable UUIDs so the shim payload round-trips through the Postgres
-// sync layer (ingredients / instructions / refs all have uuid PKs).
 const ID = {
-  flour: '11111111-1111-1111-1111-111111111111',
-  salt: '22222222-2222-2222-2222-222222222222',
-  step1: '33333333-3333-3333-3333-333333333333',
-  ing2Flour: '44444444-4444-4444-4444-444444444444',
-  step2: '55555555-5555-5555-5555-555555555555',
+  flourA: '11111111-1111-1111-1111-111111111111',
+  saltA: '22222222-2222-2222-2222-222222222222',
+  stepA: '33333333-3333-3333-3333-333333333333',
+  flourB: '44444444-4444-4444-4444-444444444444',
+  stepB: '55555555-5555-5555-5555-555555555555',
 } as const;
 
-// Two-recipe shim payload — exercises the multi-recipe picker and the
-// rich-field path (per-step consumed quantity, temperature, book/page
-// provenance).
 const FAKE_DRAFTS = [
   {
     title: 'Chewy Cookies',
@@ -25,27 +21,18 @@ const FAKE_DRAFTS = [
     ingredients: [
       {
         type: 'MEASURED',
-        id: ID.flour,
+        id: ID.flourA,
         name: 'flour',
         quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
       },
-      { type: 'VAGUE', id: ID.salt, name: 'salt', description: 'to taste' },
+      { type: 'VAGUE', id: ID.saltA, name: 'salt', description: 'to taste' },
     ],
     instructions: [
       {
-        id: ID.step1,
+        id: ID.stepA,
         stepNumber: 1,
         text: 'Mix 2 cup flour with the salt.',
-        temperature: { value: 350, unit: 'FAHRENHEIT' },
-        subInstructions: ['Use cold butter.'],
-        notes: 'Do not overmix.',
-        ingredientRefs: [
-          {
-            ingredientId: ID.flour,
-            quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
-          },
-          { ingredientId: ID.salt },
-        ],
+        ingredientRefs: [],
       },
     ],
     leftover: [],
@@ -58,16 +45,16 @@ const FAKE_DRAFTS = [
     ingredients: [
       {
         type: 'MEASURED',
-        id: ID.ing2Flour,
+        id: ID.flourB,
         name: 'flour',
         quantity: { type: 'EXACT', amount: 1.5, unit: 'cup' },
       },
     ],
     instructions: [
       {
-        id: ID.step2,
+        id: ID.stepB,
         stepNumber: 1,
-        text: 'Roll thin.',
+        text: 'Roll thin and bake.',
         ingredientRefs: [],
       },
     ],
@@ -75,65 +62,92 @@ const FAKE_DRAFTS = [
   },
 ];
 
-test.describe('OCR multi-recipe + rich metadata', () => {
-  test('multi-recipe picker opens, pick lands on the editor, book/page + per-step quantity visible in cook mode', async ({
+async function installShim(
+  page: import('@playwright/test').Page,
+  drafts: typeof FAKE_DRAFTS,
+): Promise<void> {
+  await page.addInitScript((draftsJson: string) => {
+    const parsed = JSON.parse(draftsJson);
+    window.__cybOcrShim = async () => parsed;
+  }, JSON.stringify(drafts));
+  await page.reload();
+  await waitForSynced(page);
+}
+
+async function uploadAndOpenPicker(
+  page: import('@playwright/test').Page,
+  collectionTitle: string,
+): Promise<void> {
+  await page.getByRole('link', { name: 'New collection' }).click();
+  await page.getByLabel('Title').fill(collectionTitle);
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.getByRole('heading', { name: collectionTitle })).toBeVisible();
+
+  const fileChooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Upload image' }).click();
+  const chooser = await fileChooserPromise;
+  await chooser.setFiles({
+    name: 'spread.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+  });
+
+  const picker = page.getByTestId('ocr-recipe-picker');
+  await expect(picker).toBeVisible({ timeout: 15_000 });
+  await expect(picker.getByText('Found 2 recipes')).toBeVisible();
+}
+
+test.describe('OCR multi-recipe review editor', () => {
+  test('two drafts arrive as tabs; promoting both lands two recipes and moves the item to REVIEWED', async ({
     authedPage: page,
   }) => {
-    await page.addInitScript((draftsJson: string) => {
-      const drafts = JSON.parse(draftsJson);
-      window.__cybOcrShim = async () => drafts;
-    }, JSON.stringify(FAKE_DRAFTS));
-    await page.reload();
+    await installShim(page, FAKE_DRAFTS);
+    await uploadAndOpenPicker(page, 'Multi-Recipe Photo');
 
-    await page.getByRole('link', { name: 'New collection' }).click();
-    await page.getByLabel('Title').fill('Multi-Recipe Photo');
-    await page.getByRole('button', { name: 'Create' }).click();
-    await expect(page.getByRole('heading', { name: 'Multi-Recipe Photo' })).toBeVisible();
-
-    // Upload path (not camera) — opens the file picker without the
-    // `capture` hint.
-    const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Upload image' }).click();
-    const chooser = await fileChooserPromise;
-    await chooser.setFiles({
-      name: 'spread.jpg',
-      mimeType: 'image/jpeg',
-      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
-    });
-
-    // Picker appears with both recipes.
     const picker = page.getByTestId('ocr-recipe-picker');
-    await expect(picker).toBeVisible();
-    await expect(picker.getByText('Found 2 recipes')).toBeVisible();
-    await expect(picker.getByText('Chewy Cookies')).toBeVisible();
-    await expect(picker.getByText('Crispy Cookies')).toBeVisible();
-
-    // Pick the first. Editor seeds from that draft.
     await picker.getByText('Chewy Cookies').click();
-    await page.waitForURL(/\/recipes\/new$/);
-    await expect(page.locator('main input').first()).toHaveValue('Chewy Cookies');
+    await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
 
-    // Save the recipe so we can land on the detail page.
-    await page.getByRole('button', { name: 'Save recipe' }).click();
-    await expect(page.getByRole('heading', { name: 'Chewy Cookies' })).toBeVisible();
+    const tabs = page.getByTestId('draft-tabs');
+    await expect(tabs.getByRole('tab', { name: 'Chewy Cookies' })).toBeVisible();
+    await expect(tabs.getByRole('tab', { name: 'Crispy Cookies' })).toBeVisible();
 
-    // Book + page provenance surface on the detail page.
-    await expect(page.getByText(/Weekend Baking/)).toBeVisible();
-    await expect(page.getByText(/p\. 42/)).toBeVisible();
-    await expect(page.getByText(/⏲ 45 minutes/)).toBeVisible();
-    await expect(page.getByText('The chewy one.')).toBeVisible();
-    await expect(page.getByText('stand mixer')).toBeVisible();
+    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    // After saving the active draft, only the remaining one is left
+    // on this item — the tab strip collapses entirely (it only renders
+    // when drafts.length > 1).
+    await expect(tabs).toHaveCount(0);
 
-    // The step renders its temperature chip, sub-instruction, and notes.
-    await expect(page.getByText(/350°F/)).toBeVisible();
-    await expect(page.getByText('Use cold butter.')).toBeVisible();
-    await expect(page.getByText('Do not overmix.')).toBeVisible();
+    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    await page.waitForURL(/\/import\/[0-9a-f-]+$/);
+    await waitForSynced(page);
 
-    // Enter cook mode — the step should render the per-step consumed
-    // quantity, not a fallback "2 cup" total.
-    await page.getByRole('link', { name: 'Cook mode' }).click();
-    await expect(
-      page.getByLabel('Ingredients for this step').getByText(/2 cup flour/),
-    ).toBeVisible();
+    await page.getByRole('link', { name: 'Library' }).click();
+    await page.getByRole('link', { name: 'Multi-Recipe Photo' }).click();
+    await expect(page.getByText('Chewy Cookies')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Crispy Cookies')).toBeVisible();
+  });
+
+  test('discarding one draft and promoting the other still moves the item to REVIEWED', async ({
+    authedPage: page,
+  }) => {
+    await installShim(page, FAKE_DRAFTS);
+    await uploadAndOpenPicker(page, 'Discard-One Photo');
+
+    const picker = page.getByTestId('ocr-recipe-picker');
+    await picker.getByText('Chewy Cookies').click();
+    await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
+
+    await page.getByRole('button', { name: 'Discard this draft' }).click();
+    await expect(page.getByTestId('draft-tabs')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    await page.waitForURL(/\/import\/[0-9a-f-]+$/);
+    await waitForSynced(page);
+
+    await page.getByRole('link', { name: 'Library' }).click();
+    await page.getByRole('link', { name: 'Discard-One Photo' }).click();
+    await expect(page.getByText('Crispy Cookies')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Chewy Cookies')).toHaveCount(0);
   });
 });

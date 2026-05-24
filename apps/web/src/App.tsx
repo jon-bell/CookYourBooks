@@ -11,6 +11,10 @@ import { AdminPage } from './pages/AdminPage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
 import { LandingPage } from './pages/LandingPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
+import { ImportListPage } from './pages/ImportListPage.js';
+import { ImportNewPage } from './pages/ImportNewPage.js';
+import { ImportBatchPage } from './pages/ImportBatchPage.js';
+import { ImportItemPage } from './pages/ImportItemPage.js';
 import { SignInPage } from './auth/SignInPage.js';
 import { SignUpPage } from './auth/SignUpPage.js';
 import { RequireAuth } from './auth/RequireAuth.js';
@@ -48,6 +52,9 @@ export function App() {
             </Link>
             <Link to="/shopping" className="hover:text-stone-900 focus-visible:outline-offset-4">
               Shopping
+            </Link>
+            <Link to="/import" className="hover:text-stone-900 focus-visible:outline-offset-4">
+              Import
             </Link>
           </nav>
           <div className="ml-auto flex items-center gap-3">
@@ -132,6 +139,38 @@ export function App() {
             element={
               <RequireAuth>
                 <ShoppingListPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import"
+            element={
+              <RequireAuth>
+                <ImportListPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/new"
+            element={
+              <RequireAuth>
+                <ImportNewPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/:batchId"
+            element={
+              <RequireAuth>
+                <ImportBatchPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/:batchId/items/:itemId"
+            element={
+              <RequireAuth>
+                <ImportItemPage />
               </RequireAuth>
             }
           />

@@ -10,6 +10,8 @@ import {
   type OcrSettings,
 } from '../settings/ocrSettings.js';
 import { CliTokensSection } from '../settings/CliTokensSection.js';
+import { OcrKeysSection } from '../settings/OcrKeysSection.js';
+import { FallbackModelSection } from '../settings/FallbackModelSection.js';
 
 /**
  * Per-device settings page. The API key lives in localStorage only — it
@@ -64,6 +66,18 @@ export function SettingsPage() {
         <p className="mt-1 text-sm text-stone-600">
           Configure the large language model used for the "Import from photo" feature. Keys are
           stored locally on this device and never sent through Supabase.
+        </p>
+      </div>
+
+      <OcrKeysSection />
+      <FallbackModelSection />
+
+      <div className="space-y-1 rounded-md border border-stone-200 bg-stone-50 p-3 text-xs text-stone-600">
+        <div className="font-medium text-stone-700">Legacy OCR settings</div>
+        <p>
+          API keys now live server-side (see OCR keys above). The legacy in-browser key is no
+          longer used by the bulk import flow. The prompt below is still applied to the older
+          one-shot Import-from-photo entry point.
         </p>
       </div>
 

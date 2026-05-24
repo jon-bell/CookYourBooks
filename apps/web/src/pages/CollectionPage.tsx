@@ -11,7 +11,6 @@ import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
 import { SortableRecipeList } from '../components/SortableRecipeList.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
-
 export function CollectionPage() {
   const { collectionId } = useParams();
   const navigate = useNavigate();

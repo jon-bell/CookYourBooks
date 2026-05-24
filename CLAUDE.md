@@ -30,7 +30,7 @@ cookyourbooks/
 - **Domain purity:** `packages/domain` has zero framework dependencies — pure TypeScript types, conversion logic, recipe service, parsing, and export. Testable in isolation.
 - **Repository pattern:** `RecipeRepository` / `RecipeCollectionRepository` interfaces live in `packages/domain`. The Supabase-talking adapters in `packages/db` are used *only* by the sync engine; UI code never talks to them directly.
 - **Auth:** `apps/web/src/auth/AuthProvider.tsx` holds the session. Email/password + Google OAuth. `SyncProvider` boots the local DB and kicks off the first pull when a session appears.
-- **No Edge Functions:** All backend logic uses Supabase views (`public_collections`), RLS policies, and Postgres RPC functions (`fork_collection`). PostgREST handles queries directly. Forks are pulled into the local cache via `syncNow()` after the RPC returns.
+- **No Edge Functions, with one exception:** All backend logic uses Supabase views (`public_collections`), RLS policies, and Postgres RPC functions (`fork_collection`). PostgREST handles queries directly. Forks are pulled into the local cache via `syncNow()` after the RPC returns. The narrow exception is `import-worker`: the bulk OCR pipeline (see `supabase/migrations/20260522000000_imports.sql`) is a long async job that calls a third-party LLM with the user's key — running it from the browser would block, retry poorly, and leak the API key, so it's an Edge Function that reads keys from Vault under the service role.
 - **IDs:** Domain factories mint UUIDs via `crypto.randomUUID()` so they round-trip through Postgres `uuid` columns unchanged.
 - **OCR import:** `apps/web/src/import/ocr.ts` calls a multimodal LLM (Gemini or any OpenAI-compatible vision model) to convert a photo straight into JSON matching our domain shape. The validator in `apps/web/src/import/llm.ts` is tolerant — malformed ingredients fall into `leftover` instead of throwing. Settings (provider / key / model / prompt) live in `localStorage` under `cookyourbooks.ocr.v1` and never sync through Supabase. Tests override via `window.__cybOcrShim`.
 - **Mobile:** `apps/mobile` is a Capacitor shell over `apps/web/dist`. Native surfaces are camera (`@capacitor/camera`) and haptics (`@capacitor/haptics`). Both code paths live in `apps/web` and feature-detect Capacitor at runtime, so no code forks by platform.
@@ -127,3 +127,59 @@ Runner labels and bring-up steps are in `.github/RUNNERS.md`.
 The web app reads Supabase credentials from `apps/web/.env.local`. On `supabase
 start` the CLI prints the publishable key — update `.env.local` if it ever
 changes.
+
+## Setting up the OCR worker
+
+The bulk OCR pipeline (`/import`) relies on a Supabase Edge Function
+named `import-worker`. The database wakes it via the `ocr_kick` RPC
+(invoked both by `pg_cron` and directly by the UI after upload). If the
+worker isn't configured, `ocr_kick` raises a Postgres exception whose
+message starts with `OCR_WORKER_NOT_CONFIGURED:` and queued items
+sit in `PENDING` forever. The batch board surfaces a banner with a
+"Process now" button that re-raises this error verbatim to the user.
+
+### Local development
+
+```bash
+# 1. Start Supabase (Postgres + Storage + Studio + Realtime).
+./.bin/supabase start
+
+# 2. Serve the Edge Function. Leave this running in a separate terminal.
+#    --no-verify-jwt lets pg_net call it without minting a JWT.
+./.bin/supabase functions serve import-worker --no-verify-jwt
+
+# 3. Register the function URL + service-role key in Vault.
+#    Get the service role key from `./.bin/supabase status` (look for
+#    "service_role key"). Connect to the local DB and run:
+
+./.bin/supabase db psql <<'SQL'
+select vault.create_secret(
+  json_build_object(
+    -- pg_net runs inside the Postgres container, so the URL must be
+    -- reachable from there. On Docker Desktop use host.docker.internal;
+    -- on Linux either enable host-gateway or use the kong-routed URL
+    -- http://kong:8000/functions/v1/import-worker
+    'function_url', 'http://host.docker.internal:54321/functions/v1/import-worker',
+    'service_role_key', 'PASTE_FROM_supabase_status'
+  )::text,
+  'import_worker_config',
+  'OCR worker endpoint + creds'
+);
+SQL
+```
+
+After step 3, `pg_cron` will wake the worker every 30s and `ocr_kick`
+will fire immediately when a new batch is uploaded. To rotate the
+secret, `select vault.update_secret(<id>, '<new json>')`.
+
+### Production (Supabase hosted)
+
+```bash
+# 1. Deploy.
+./.bin/supabase functions deploy import-worker --project-ref <ref>
+
+# 2. Set the secret. The function URL in hosted Supabase is
+#    https://<ref>.functions.supabase.co/import-worker
+#    The service role key lives under Project Settings → API.
+#    Set via Studio's Vault UI, or via SQL with the production keys.
+```

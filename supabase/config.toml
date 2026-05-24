@@ -375,6 +375,16 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# import-worker is the bulk OCR worker. It's called by pg_net (from the
+# `ocr_kick` RPC + pg_cron) which signs with the service-role key. When
+# a project enforces "Verify JWT with legacy secret" at the gateway,
+# pg_net's tokens are rejected with 401 before the function can run.
+# We turn gateway verification off and enforce the same check ourselves
+# in the function: every caller must present `Bearer <SERVICE_ROLE>`.
+# See supabase/functions/import-worker/index.ts `authorized()`.
+[functions.import-worker]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427

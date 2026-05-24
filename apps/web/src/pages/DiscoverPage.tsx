@@ -37,6 +37,7 @@ export function DiscoverPage() {
       // navigating so the collection page has data to render immediately.
       await syncNow();
       qc.invalidateQueries({ queryKey: ['collections', user?.id] });
+      qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
       navigate(`/collections/${newId}`);
     },
   });
