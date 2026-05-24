@@ -33,6 +33,7 @@ export interface OcrCallParams {
   imageBase64: string;
   mimeType: string;
   signal?: AbortSignal;
+  log?: (message: string, extra?: Record<string, unknown>) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -102,6 +103,7 @@ async function callGemini(
     },
   };
 
+  p.log?.('gemini POST', { model: p.model, prompt_bytes: p.prompt.length, image_bytes_b64: p.imageBase64.length });
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -110,6 +112,7 @@ async function callGemini(
   });
   const rawText = await resp.text();
   const latencyMs = Date.now() - started;
+  p.log?.('gemini response', { status: resp.status, body_bytes: rawText.length, latency_ms: latencyMs });
 
   if (!resp.ok) {
     return {
@@ -214,6 +217,7 @@ async function callOpenAI(
     ],
   };
 
+  p.log?.('openai POST', { model: p.model, base_url: base, prompt_bytes: p.prompt.length, image_bytes_b64: p.imageBase64.length });
   const resp = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -225,6 +229,7 @@ async function callOpenAI(
   });
   const rawText = await resp.text();
   const latencyMs = Date.now() - started;
+  p.log?.('openai response', { status: resp.status, body_bytes: rawText.length, latency_ms: latencyMs });
 
   if (!resp.ok) {
     return {

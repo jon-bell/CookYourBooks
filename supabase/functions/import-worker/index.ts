@@ -77,6 +77,57 @@ function mustEnv(name: string): string {
   return v;
 }
 
+// ---------- structured logger ----------
+//
+// Every log line carries the worker id and (when available) the item +
+// batch id, so the Supabase log viewer can be filtered to one slice of
+// activity. The shape is intentionally flat (no nested objects) so the
+// JSON column in the log store is grep-able.
+
+type LogLevel = 'info' | 'warn' | 'error' | 'debug';
+
+interface LogContext {
+  worker?: string;
+  batch?: string;
+  item?: string;
+  step?: string;
+}
+
+function logLine(level: LogLevel, message: string, ctx: LogContext, extra?: Record<string, unknown>): void {
+  const payload = {
+    t: new Date().toISOString(),
+    lvl: level,
+    msg: message,
+    ...ctx,
+    ...(extra ?? {}),
+  };
+  const line = `[import-worker] ${JSON.stringify(payload)}`;
+  if (level === 'error') console.error(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
+}
+
+function makeLog(ctx: LogContext) {
+  return {
+    info: (m: string, extra?: Record<string, unknown>) => logLine('info', m, ctx, extra),
+    warn: (m: string, extra?: Record<string, unknown>) => logLine('warn', m, ctx, extra),
+    error: (m: string, extra?: Record<string, unknown>) => logLine('error', m, ctx, extra),
+    debug: (m: string, extra?: Record<string, unknown>) => logLine('debug', m, ctx, extra),
+    child: (next: LogContext) => makeLog({ ...ctx, ...next }),
+  };
+}
+
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
+}
+
+// Boot banner so a fresh function instance is obvious in the log.
+logLine('info', 'boot', {}, {
+  mock_mode: MOCK_MODE,
+  supabase_url: SUPABASE_URL,
+  service_role_present: SERVICE_ROLE.length > 0,
+});
+
 const supabase: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -106,6 +157,9 @@ Deno.serve(async (req) => {
     return json({ error: 'POST only' }, 405);
   }
   if (!authorized(req)) {
+    logLine('warn', 'unauthorized request', {}, {
+      auth_header_present: req.headers.has('authorization'),
+    });
     return json({ error: 'unauthorized' }, 401);
   }
   let body: { batch_id?: string | null } = {};
@@ -118,9 +172,13 @@ Deno.serve(async (req) => {
   const batchId = body.batch_id ?? null;
 
   const workerId = `edge:${crypto.randomUUID()}`;
-  const summary = await runLoop(workerId, batchId);
+  const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
+  wLog.info('invocation start');
+  const summary = await runLoop(workerId, batchId, wLog);
+  wLog.info('invocation end', { ...summary });
 
   if (summary.remaining > 0) {
+    wLog.info('self-invoke (queue not drained)', { remaining: summary.remaining });
     fireSelfInvoke(batchId);
   }
 
@@ -136,7 +194,11 @@ interface LoopSummary {
   remaining: number;
 }
 
-async function runLoop(workerId: string, batchId: string | null): Promise<LoopSummary> {
+async function runLoop(
+  workerId: string,
+  batchId: string | null,
+  log: ReturnType<typeof makeLog>,
+): Promise<LoopSummary> {
   const startedAt = Date.now();
   let processed = 0;
   let failed = 0;
@@ -144,31 +206,44 @@ async function runLoop(workerId: string, batchId: string | null): Promise<LoopSu
   let emptyTicks = 0;
 
   while (Date.now() - startedAt < LOOP_BUDGET_MS) {
-    const items = await claimBatch(workerId, batchId);
+    const items = await claimBatch(workerId, batchId, log);
     if (items.length === 0) {
       emptyTicks++;
+      log.info('empty claim', { empty_ticks: emptyTicks });
       if (emptyTicks >= 2) break;
       continue;
     }
     emptyTicks = 0;
+    log.info('claimed items', { count: items.length, ids: items.map((i) => shortId(i.id)) });
 
     for (let i = 0; i < items.length; i += PARALLEL) {
       const chunk = items.slice(i, i + PARALLEL);
-      const results = await Promise.all(chunk.map((it) => processItem(it, workerId)));
+      const results = await Promise.all(
+        chunk.map((it) =>
+          processItem(it, workerId, log.child({ item: shortId(it.id), batch: shortId(it.batch_id) })),
+        ),
+      );
       for (const r of results) {
         if (r === 'OCR_DONE') processed++;
         else if (r === 'NEEDS_FALLBACK') parked++;
         else failed++;
       }
-      if (Date.now() - startedAt >= LOOP_BUDGET_MS) break;
+      if (Date.now() - startedAt >= LOOP_BUDGET_MS) {
+        log.info('loop budget hit, draining current chunk only');
+        break;
+      }
     }
   }
 
-  const remaining = await countPending(batchId);
+  const remaining = await countPending(batchId, log);
   return { processed, failed, parked, remaining };
 }
 
-async function claimBatch(workerId: string, batchId: string | null): Promise<ImportItem[]> {
+async function claimBatch(
+  workerId: string,
+  batchId: string | null,
+  log: ReturnType<typeof makeLog>,
+): Promise<ImportItem[]> {
   const { data, error } = await supabase.rpc('import_claim_next', {
     p_worker_id: workerId,
     p_batch_id: batchId,
@@ -176,13 +251,13 @@ async function claimBatch(workerId: string, batchId: string | null): Promise<Imp
     p_limit: CLAIM_BATCH,
   });
   if (error) {
-    console.error('import_claim_next failed', error);
+    log.error('import_claim_next failed', { code: error.code, message: error.message });
     return [];
   }
   return (data ?? []) as ImportItem[];
 }
 
-async function countPending(batchId: string | null): Promise<number> {
+async function countPending(batchId: string | null, log: ReturnType<typeof makeLog>): Promise<number> {
   let q = supabase
     .from('import_items')
     .select('id', { count: 'exact', head: true })
@@ -190,7 +265,7 @@ async function countPending(batchId: string | null): Promise<number> {
   if (batchId) q = q.eq('batch_id', batchId);
   const { count, error } = await q;
   if (error) {
-    console.error('countPending failed', error);
+    log.error('countPending failed', { code: error.code, message: error.message });
     return 0;
   }
   return count ?? 0;
@@ -200,23 +275,39 @@ async function countPending(batchId: string | null): Promise<number> {
 
 type ItemOutcome = 'OCR_DONE' | 'PENDING' | 'NEEDS_FALLBACK' | 'OCR_FAILED';
 
-async function processItem(item: ImportItem, workerId: string): Promise<ItemOutcome> {
+async function processItem(
+  item: ImportItem,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<ItemOutcome> {
   const claimToken = workerId;
+  log.info('process start', {
+    is_toc: item.is_toc,
+    attempts: item.attempts,
+    status: item.status,
+    needs_fallback: item.needs_fallback,
+    storage_path: item.storage_path,
+  });
 
-  const batch = await loadBatch(item.batch_id);
+  const batch = await loadBatch(item.batch_id, log);
   if (!batch) {
-    await failItem(item, claimToken, {
-      provider: '',
-      model: '',
-      errorKind: 'OTHER',
-      errorMessage: 'Batch missing.',
-      rawResponse: '',
-      promptTokens: 0,
-      completionTokens: 0,
-      latencyMs: 0,
-    }, 'OCR_FAILED');
+    log.error('batch missing — terminal');
+    await failItem(
+      item,
+      claimToken,
+      mkAttempt('', '', 'OTHER', 'Batch missing.', '', 0, 0, 0),
+      'OCR_FAILED',
+      log,
+    );
     return 'OCR_FAILED';
   }
+  log.info('batch loaded', {
+    default_provider: batch.default_provider,
+    default_model: batch.default_model,
+    fallback_provider: batch.fallback_provider,
+    fallback_model: batch.fallback_model,
+    recitation_policy: batch.recitation_policy,
+  });
 
   // `needs_fallback` is the server's hint that a previous attempt
   // tripped the recitation guardrail and the user (or the batch policy)
@@ -226,7 +317,9 @@ async function processItem(item: ImportItem, workerId: string): Promise<ItemOutc
   // before the worker reclaims it.
   const useFallback = item.needs_fallback === true || item.status === 'NEEDS_FALLBACK';
   if (useFallback) {
+    log.info('using fallback model');
     if (!batch.fallback_provider || !batch.fallback_model) {
+      log.error('fallback requested but not configured');
       await failItem(
         item,
         claimToken,
@@ -241,6 +334,7 @@ async function processItem(item: ImportItem, workerId: string): Promise<ItemOutc
           0,
         ),
         'OCR_FAILED',
+        log,
       );
       return 'OCR_FAILED';
     }
@@ -248,35 +342,41 @@ async function processItem(item: ImportItem, workerId: string): Promise<ItemOutc
   const provider = useFallback ? batch.fallback_provider! : batch.default_provider;
   const model = useFallback ? batch.fallback_model! : batch.default_model;
   if (!model) {
-    await failItem(item, claimToken, mkAttempt(provider, model, 'OTHER', 'No model configured on batch.', '', 0, 0, 0), 'OCR_FAILED');
+    log.error('no model configured on batch');
+    await failItem(item, claimToken, mkAttempt(provider, model, 'OTHER', 'No model configured on batch.', '', 0, 0, 0), 'OCR_FAILED', log);
     return 'OCR_FAILED';
   }
+  log.info('resolved provider/model', { provider, model });
 
   // Key lookup.
   let key: UserKey | null = null;
   try {
-    key = await loadUserKey(item.owner_id, provider);
+    key = await loadUserKey(item.owner_id, provider, log);
   } catch (err) {
-    console.error('loadUserKey threw', err);
+    log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
   }
   if (!key && !MOCK_MODE) {
     const message = useFallback
       ? 'Fallback model not configured (set one in Settings)'
       : `No API key configured for ${provider}. Add it in Settings.`;
+    log.error('no key configured', { provider });
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, 'AUTH', message, '', 0, 0, 0),
       'OCR_FAILED',
+      log,
     );
     return 'OCR_FAILED';
   }
+  if (key) log.info('key resolved', { has_base_url: !!key.baseUrl });
 
   // Image fetch (with up to 2 retries on transient).
   let imageBytes: Uint8Array | null = null;
   let imageMime = 'image/jpeg';
   let fetchAttempt = 0;
   let fetchError: string | undefined;
+  const fetchStart = Date.now();
   while (fetchAttempt <= MAX_NETWORK_FETCH_RETRIES) {
     try {
       const fetched = await fetchImage(item.owner_id, item.storage_path);
@@ -285,22 +385,31 @@ async function processItem(item: ImportItem, workerId: string): Promise<ItemOutc
       break;
     } catch (err) {
       fetchError = err instanceof Error ? err.message : String(err);
+      log.warn('image fetch error', { attempt: fetchAttempt, error: fetchError });
       fetchAttempt++;
     }
   }
   if (!imageBytes) {
     const nextState: 'PENDING' | 'OCR_FAILED' =
       item.attempts < MAX_NETWORK_FETCH_RETRIES ? 'PENDING' : 'OCR_FAILED';
+    log.error('image fetch exhausted retries', { next_state: nextState, error: fetchError });
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, 'NETWORK', `Image fetch failed: ${fetchError ?? 'unknown'}`, '', 0, 0, 0),
       nextState,
+      log,
     );
     return nextState as ItemOutcome;
   }
+  log.info('image fetched', {
+    bytes: imageBytes.length,
+    mime: imageMime,
+    latency_ms: Date.now() - fetchStart,
+  });
 
   // OCR call (with possible in-invocation FALLBACK on recitation).
+  log.info('llm call start', { provider, model, is_toc: item.is_toc });
   const result = await runOrMock({
     item,
     provider,
@@ -310,39 +419,53 @@ async function processItem(item: ImportItem, workerId: string): Promise<ItemOutc
     prompt: item.is_toc ? TOC_PROMPT : RECIPE_PROMPT,
     imageBase64: bytesToBase64(imageBytes),
     mimeType: imageMime,
+    log,
+  });
+  log.info('llm call end', {
+    error_kind: result.errorKind,
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    latency_ms: result.latencyMs,
+    response_chars: result.rawResponse?.length ?? 0,
+    error_message: result.errorMessage,
   });
 
   // Recitation routing.
   if (result.errorKind === 'RECITATION') {
-    return await handleRecitation(item, batch, claimToken, provider, model, imageBytes, imageMime, result);
+    log.warn('recitation', { policy: batch.recitation_policy });
+    return await handleRecitation(item, batch, claimToken, provider, model, imageBytes, imageMime, result, log);
   }
 
   // Transient errors.
   if (result.errorKind === 'RATE_LIMIT' || result.errorKind === 'NETWORK' || result.errorKind === 'TIMEOUT') {
-    const rawPath = await uploadRaw(item, result.rawResponse);
+    const rawPath = await uploadRaw(item, result.rawResponse, log);
     const nextState = item.attempts < MAX_TRANSIENT_RETRIES ? 'PENDING' : 'OCR_FAILED';
+    log.warn('transient llm error', { kind: result.errorKind, message: result.errorMessage, next_state: nextState });
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, result.errorKind, result.errorMessage ?? result.errorKind, rawPath, result.promptTokens, result.completionTokens, result.latencyMs),
       nextState,
+      log,
     );
     return nextState as ItemOutcome;
   }
 
   if (result.errorKind === 'AUTH' || result.errorKind === 'OTHER') {
-    const rawPath = await uploadRaw(item, result.rawResponse);
+    const rawPath = await uploadRaw(item, result.rawResponse, log);
+    log.error('terminal llm error', { kind: result.errorKind, message: result.errorMessage });
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, result.errorKind, result.errorMessage ?? result.errorKind, rawPath, result.promptTokens, result.completionTokens, result.latencyMs),
       'OCR_FAILED',
+      log,
     );
     return 'OCR_FAILED';
   }
 
   // Parse + persist.
-  return await parseAndComplete(item, batch, claimToken, provider, model, result);
+  return await parseAndComplete(item, batch, claimToken, provider, model, result, log);
 }
 
 async function handleRecitation(
@@ -354,25 +477,30 @@ async function handleRecitation(
   imageBytes: Uint8Array,
   imageMime: string,
   result: Awaited<ReturnType<typeof runOrMock>>,
+  log: ReturnType<typeof makeLog>,
 ): Promise<ItemOutcome> {
-  const rawPath = await uploadRaw(item, result.rawResponse);
+  const rawPath = await uploadRaw(item, result.rawResponse, log);
 
   if (batch.recitation_policy === 'ASK') {
+    log.info('parking for user decision', { policy: 'ASK' });
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, 'RECITATION', result.errorMessage ?? 'Model declined due to recitation guardrail.', rawPath, result.promptTokens, result.completionTokens, result.latencyMs),
       'NEEDS_FALLBACK',
+      log,
     );
     return 'NEEDS_FALLBACK';
   }
 
   if (batch.recitation_policy === 'FAIL') {
+    log.warn('recitation policy=FAIL — terminal');
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, 'RECITATION', result.errorMessage ?? 'Recitation; policy=FAIL.', rawPath, result.promptTokens, result.completionTokens, result.latencyMs),
       'OCR_FAILED',
+      log,
     );
     return 'OCR_FAILED';
   }
@@ -381,21 +509,26 @@ async function handleRecitation(
   const fbProvider = batch.fallback_provider;
   const fbModel = batch.fallback_model;
   if (!fbProvider || !fbModel) {
+    log.error('FALLBACK policy but no fallback configured');
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, 'RECITATION', 'Recitation; no fallback configured.', rawPath, result.promptTokens, result.completionTokens, result.latencyMs),
       'OCR_FAILED',
+      log,
     );
     return 'OCR_FAILED';
   }
-  const fbKey = await loadUserKey(item.owner_id, fbProvider);
+  log.info('retrying inline with fallback', { fb_provider: fbProvider, fb_model: fbModel });
+  const fbKey = await loadUserKey(item.owner_id, fbProvider, log);
   if (!fbKey && !MOCK_MODE) {
+    log.error('no key for fallback provider', { fb_provider: fbProvider });
     await failItem(
       item,
       claimToken,
       mkAttempt(fbProvider, fbModel, 'AUTH', `No API key configured for fallback provider ${fbProvider}.`, rawPath, 0, 0, 0),
       'OCR_FAILED',
+      log,
     );
     return 'OCR_FAILED';
   }
@@ -409,27 +542,38 @@ async function handleRecitation(
     prompt: item.is_toc ? TOC_PROMPT : RECIPE_PROMPT,
     imageBase64: bytesToBase64(imageBytes),
     mimeType: imageMime,
+    log,
   });
-  const fbRawPath = await uploadRaw(item, fbResult.rawResponse);
+  log.info('fallback llm call end', {
+    error_kind: fbResult.errorKind,
+    prompt_tokens: fbResult.promptTokens,
+    completion_tokens: fbResult.completionTokens,
+    latency_ms: fbResult.latencyMs,
+  });
+  const fbRawPath = await uploadRaw(item, fbResult.rawResponse, log);
 
   if (fbResult.errorKind === 'OK') {
-    return await parseAndComplete(item, batch, claimToken, fbProvider, fbModel, { ...fbResult, rawResponsePath: fbRawPath });
+    return await parseAndComplete(item, batch, claimToken, fbProvider, fbModel, { ...fbResult, rawResponsePath: fbRawPath }, log);
   }
   if (fbResult.errorKind === 'RECITATION') {
+    log.warn('fallback also recitated — terminal');
     await failItem(
       item,
       claimToken,
       mkAttempt(fbProvider, fbModel, 'RECITATION', 'Fallback also tripped recitation.', fbRawPath, fbResult.promptTokens, fbResult.completionTokens, fbResult.latencyMs),
       'OCR_FAILED',
+      log,
     );
     return 'OCR_FAILED';
   }
   // Other errors on fallback: terminal.
+  log.error('fallback llm errored — terminal', { kind: fbResult.errorKind, message: fbResult.errorMessage });
   await failItem(
     item,
     claimToken,
     mkAttempt(fbProvider, fbModel, fbResult.errorKind, fbResult.errorMessage ?? fbResult.errorKind, fbRawPath, fbResult.promptTokens, fbResult.completionTokens, fbResult.latencyMs),
     'OCR_FAILED',
+    log,
   );
   return 'OCR_FAILED';
 }
@@ -441,8 +585,9 @@ async function parseAndComplete(
   provider: Provider,
   model: string,
   result: Awaited<ReturnType<typeof runOrMock>> & { rawResponsePath?: string },
+  log: ReturnType<typeof makeLog>,
 ): Promise<ItemOutcome> {
-  const rawPath = result.rawResponsePath ?? (await uploadRaw(item, result.rawResponse));
+  const rawPath = result.rawResponsePath ?? (await uploadRaw(item, result.rawResponse, log));
   const text = result.text ?? '';
 
   let drafts: ParsedRecipeDraft[] = [];
@@ -453,15 +598,18 @@ async function parseAndComplete(
     } else {
       drafts = parseLlmJson(text);
     }
+    log.info('parse ok', { drafts: drafts.length, toc_entries: tocEntries.length });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const nextState: 'PENDING' | 'OCR_FAILED' =
       item.attempts < MAX_PARSE_RETRIES ? 'PENDING' : 'OCR_FAILED';
+    log.warn('parse error', { message: msg, next_state: nextState, text_preview: text.slice(0, 200) });
     await failItem(
       item,
       claimToken,
       mkAttempt(provider, model, 'PARSE', msg, rawPath, result.promptTokens, result.completionTokens, result.latencyMs),
       nextState,
+      log,
     );
     return nextState as ItemOutcome;
   }
@@ -488,7 +636,7 @@ async function parseAndComplete(
     }));
     if (rows.length > 0) {
       const { error } = await supabase.from('import_toc_entries').insert(rows);
-      if (error) console.error('toc_entries insert', error);
+      if (error) log.error('toc_entries insert', { code: error.code, message: error.message });
     }
   }
 
@@ -499,11 +647,13 @@ async function parseAndComplete(
     p_parsed_drafts: drafts,
   });
   if (error) {
-    console.error('import_complete error', error);
+    log.error('import_complete error', { code: error.code, message: error.message });
     return 'OCR_FAILED';
   }
   if (!ok) {
-    console.warn('import_complete returned false (lease lost)', item.id);
+    log.warn('import_complete returned false (lease lost)');
+  } else {
+    log.info('import_complete ok', { cost_usd_micros: cost });
   }
   return 'OCR_DONE';
 }
@@ -551,7 +701,13 @@ async function failItem(
   claimToken: string,
   attempt: AttemptShape,
   nextState: 'PENDING' | 'NEEDS_FALLBACK' | 'OCR_FAILED',
+  log: ReturnType<typeof makeLog>,
 ): Promise<void> {
+  log.info('fail item', {
+    next_state: nextState,
+    error_kind: attempt.error_kind,
+    error_message: attempt.error_message,
+  });
   const { data: ok, error } = await supabase.rpc('import_fail', {
     p_item_id: item.id,
     p_claim_token: claimToken,
@@ -559,26 +715,30 @@ async function failItem(
     p_next_state: nextState,
   });
   if (error) {
-    console.error('import_fail error', error);
+    log.error('import_fail rpc error', { code: error.code, message: error.message });
     return;
   }
-  if (!ok) console.warn('import_fail returned false (lease lost)', item.id);
+  if (!ok) log.warn('import_fail returned false (lease lost)');
 }
 
-async function loadBatch(batchId: string): Promise<ImportBatch | null> {
+async function loadBatch(batchId: string, log: ReturnType<typeof makeLog>): Promise<ImportBatch | null> {
   const { data, error } = await supabase
     .from('import_batches')
     .select('id, owner_id, default_model, default_provider, fallback_model, fallback_provider, recitation_policy')
     .eq('id', batchId)
     .maybeSingle();
   if (error) {
-    console.error('loadBatch', error);
+    log.error('loadBatch failed', { code: error.code, message: error.message });
     return null;
   }
   return (data as ImportBatch | null) ?? null;
 }
 
-async function loadUserKey(ownerId: string, provider: Provider): Promise<UserKey | null> {
+async function loadUserKey(
+  ownerId: string,
+  provider: Provider,
+  log: ReturnType<typeof makeLog>,
+): Promise<UserKey | null> {
   // The vault schema isn't exposed through PostgREST, so we tunnel the
   // decrypt through a security-definer RPC that lives in `public`.
   const { data, error } = await supabase.rpc('ocr_resolve_key', {
@@ -586,11 +746,14 @@ async function loadUserKey(ownerId: string, provider: Provider): Promise<UserKey
     p_provider: provider,
   });
   if (error) {
-    console.error('ocr_resolve_key', error);
+    log.error('ocr_resolve_key', { code: error.code, message: error.message });
     return null;
   }
   const row = (data as Array<{ api_key: string; base_url: string | null }> | null)?.[0];
-  if (!row) return null;
+  if (!row) {
+    log.warn('no key row for owner+provider', { provider });
+    return null;
+  }
   return { apiKey: row.api_key, baseUrl: row.base_url };
 }
 
@@ -623,14 +786,18 @@ async function fetchImage(
   return { bytes, mime };
 }
 
-async function uploadRaw(item: ImportItem, body: string): Promise<string> {
+async function uploadRaw(
+  item: ImportItem,
+  body: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<string> {
   const attemptUuid = crypto.randomUUID();
   const path = `${item.owner_id}/${item.batch_id}/raw/${attemptUuid}.txt`;
   const { error } = await supabase.storage
     .from('imports')
     .upload(path, new Blob([body], { type: 'text/plain' }), { upsert: false });
   if (error) {
-    console.error('uploadRaw', error);
+    log.error('uploadRaw failed', { path, message: error.message });
     return '';
   }
   return path;
@@ -674,7 +841,7 @@ function fireSelfInvoke(batchId: string | null): void {
       Authorization: `Bearer ${SERVICE_ROLE}`,
     },
     body: JSON.stringify({ batch_id: batchId }),
-  }).catch((err) => console.warn('self-invoke failed', err));
+  }).catch((err) => logLine('warn', 'self-invoke failed', {}, { error: err instanceof Error ? err.message : String(err) }));
 }
 
 // ---------- mock mode ----------
@@ -698,6 +865,7 @@ async function runOrMock(p: {
   prompt: string;
   imageBase64: string;
   mimeType: string;
+  log?: ReturnType<typeof makeLog>;
 }): Promise<OcrCallLike> {
   if (!MOCK_MODE) {
     return await runOcr({
@@ -708,6 +876,9 @@ async function runOrMock(p: {
       prompt: p.prompt,
       imageBase64: p.imageBase64,
       mimeType: p.mimeType,
+      log: p.log
+        ? (m: string, extra?: Record<string, unknown>) => p.log!.info(m, extra)
+        : undefined,
     });
   }
 
@@ -723,7 +894,7 @@ async function runOrMock(p: {
       .eq('provider', probe)
       .maybeSingle();
     if (error) {
-      console.error('ocr_test_fixtures lookup', error);
+      logLine('error', 'ocr_test_fixtures lookup', { item: shortId(p.item.id) }, { code: error.code, message: error.message, probe });
       continue;
     }
     if (data) {
