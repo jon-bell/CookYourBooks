@@ -100,16 +100,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build web + cap sync
+        # `cap sync` runs `pod install` against the committed ios/ project.
         run: pnpm --filter @cookyourbooks/mobile sync
-
-      - name: Scaffold iOS project if missing
-        # `cap add ios` is a one-time op — check if the directory exists
-        # first. On runners that persist between jobs this is a fast no-op
-        # after the first run.
-        run: |
-          if [ ! -d apps/mobile/ios ]; then
-            pnpm --filter @cookyourbooks/mobile exec cap add ios
-          fi
 
       - name: Regenerate icons + splashes
         run: pnpm --filter @cookyourbooks/mobile assets || true
@@ -117,7 +109,8 @@ jobs:
       - name: Build via xcodebuild
         working-directory: apps/mobile/ios/App
         # Archive the Debug config for smoke-only validation. Real release
-        # archives should use fastlane with signing configured on the runner.
+        # archives go through `fastlane beta` / `fastlane release` from
+        # apps/mobile/ios/ — see apps/mobile/README.md.
         run: |
           xcodebuild \
             -workspace App.xcworkspace \

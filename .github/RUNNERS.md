@@ -32,15 +32,33 @@ the runner label and ignores the legacy `self-hosted` match rules.
 
 ### macOS (iOS) — *when provisioned*
 
-- Xcode 15+, CocoaPods (`sudo gem install cocoapods`).
-- The workflow runs an unsigned Debug build; real release archives will
-  need a signing identity + `fastlane` setup.
+- Xcode 15+ with the iOS platform downloaded (`xcodebuild
+  -downloadPlatform iOS`, ~10GB).
+- Xcode license accepted (`sudo xcodebuild -license accept`) and first
+  launch run (`sudo xcodebuild -runFirstLaunch`).
+- Homebrew (`brew install cocoapods fastlane`) — avoid the system Ruby
+  2.6 gem path, it can't build modern CocoaPods' ffi dependency.
+- An SSH deploy key with read access to
+  `git@github.com:jon-bell/cookyourbooks-certs.git` so `fastlane match
+  appstore --readonly` can pull signing material.
+- The PR-time job (`workflow_dispatch` → `ios`) runs an unsigned Debug
+  build. Real release archives run `fastlane beta` / `fastlane release`
+  from `apps/mobile/ios/` and need the secrets below.
 
 ## Secrets
 
 None required by `ci.yml` — the Supabase stack is started locally inside
-the job. Mobile release builds will want Apple signing / Google Play
-service-account secrets when those paths get fleshed out.
+the job. Mobile **release** builds (not the PR smoke build) need:
+
+| Secret | Where used | Notes |
+|---|---|---|
+| `MATCH_PASSWORD` | `fastlane match` | Symmetric password used to encrypt the certs repo. Same value on every machine. |
+| `CYB_ASC_KEY_ID` | `fastlane pilot`, `fastlane deliver` | 10-char key ID from the ASC API key. |
+| `CYB_ASC_ISSUER_ID` | same | UUID issuer ID for the ASC team. |
+| `CYB_ASC_KEY_P8_BASE64` | same | The `.p8` private key, base64-encoded. The job decodes it into a file at start and points `CYB_ASC_KEY_PATH` at it. The `CYB_` prefix avoids fastlane's auto-detection of `APP_STORE_CONNECT_API_KEY_*` — see `apps/mobile/ios/fastlane/.env.example`. |
+
+Android release builds (when Android lands) will additionally want a
+Google Play service-account JSON.
 
 ## Debugging a failed CI run
 

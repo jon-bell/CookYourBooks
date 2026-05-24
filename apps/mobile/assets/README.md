@@ -6,22 +6,28 @@ projects.
 
 | File | Purpose |
 | ---- | ------- |
-| `icon-only.png` | 1024×1024 square icon. Used as the home-screen icon on iOS and as the adaptive-icon foreground on Android. The background tint is taken from `capacitor.config.ts -> plugins.SplashScreen.backgroundColor`. |
-| `splash.png` | 2732×2732 canvas. Centre of the image is shown; the rest is cropped to match the device's aspect ratio. |
-| `splash-dark.png` | Dark variant for devices in dark mode. |
+| `icon-only.png` | 1024×1024 square icon. Used as the home-screen icon on iOS and as the adaptive-icon foreground on Android. Must be opaque (no alpha) — iOS rejects transparent icons. |
+| `splash.png` | 2732×2732 canvas. Centre is shown; the rest is cropped to match each device's aspect ratio. |
+| `splash-dark.png` | Dark-mode variant. |
 
-The files in this directory are **placeholder** artwork — plain
-stone/amber branding. Replace them with finished artwork at the same
-filenames and dimensions before shipping, then re-run
-`pnpm --filter @cookyourbooks/mobile assets`.
+The master source artwork lives at `../../cyb-master.png` (2152×2152,
+opaque black background). The current `icon-only.png` / `splash.png` /
+`splash-dark.png` were derived from it with `sips`:
 
-## Generating
+```bash
+# From repo root
+sips -z 1024 1024 cyb-master.png --out apps/mobile/assets/icon-only.png
+sips -z 2732 2732 -p 2732 2732 --padColor 000000 \
+  cyb-master.png --out apps/mobile/assets/splash.png
+cp apps/mobile/assets/splash.png apps/mobile/assets/splash-dark.png
+```
+
+After editing any of these, regenerate the per-platform sizes:
 
 ```bash
 pnpm --filter @cookyourbooks/mobile assets
-# shorthand for: cap-assets generate --assetPath=assets
 ```
 
-The command inspects both `ios/` and `android/` projects (created via
-`cap add ios` / `cap add android`) and writes platform-specific sizes
-into each. It has no effect if a native project is missing.
+The command inspects `ios/` (and `android/` when present) and writes
+platform-specific sizes into each. It has no effect if a native project
+is missing.

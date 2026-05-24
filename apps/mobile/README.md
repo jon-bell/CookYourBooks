@@ -1,48 +1,78 @@
 # @cookyourbooks/mobile
 
-Capacitor wrapper around the web app in `apps/web`. Produces iOS and
-Android projects from the same React codebase.
+Capacitor wrapper around the web app in `apps/web`. Produces an iOS
+native project (and eventually Android) from the same React codebase.
 
 ## Layout
 
-- `capacitor.config.ts` — app id, name, and `webDir` (`../web/dist`).
-- Native projects are generated under `ios/` and `android/` by the
-  Capacitor CLI — **run `pnpm add:ios` / `pnpm add:android` once** to
-  create them (they're not checked in by default to keep the monorepo
-  small).
-- Plugins used: `@capacitor/camera` (OCR capture), `@capacitor/haptics`
-  (cook mode feedback).
+- `capacitor.config.ts` — app id (`app.cookyourbooks`), name
+  (`CookYourBooks`), and `webDir` (`../web/dist`).
+- `assets/` — master icon (`icon-only.png`) and splash sources.
+  `pnpm assets` fans these out into the per-platform sizes.
+- `ios/` — native Xcode project (committed). Build artifacts (`Pods/`,
+  `build/`, `DerivedData/`, generated `capacitor.config.json`) are
+  ignored by the platform-level `.gitignore` that `cap add` wrote.
+- `ios/fastlane/` — release automation. Lanes documented below.
 
-## Running
+Plugins in use: `@capacitor/camera` (OCR capture), `@capacitor/haptics`
+(cook-mode feedback), `@capacitor/share` (export sheet).
+
+## One-time machine setup
+
+CookYourBooks uses Node 20+ and pnpm via corepack. CocoaPods + fastlane
+come from Homebrew so we don't fight macOS's system Ruby 2.6.
 
 ```bash
-# From the repo root
-pnpm --filter @cookyourbooks/mobile add:ios         # one-time scaffold
-pnpm --filter @cookyourbooks/mobile add:android     # one-time scaffold
+# Node 20 (via nvm — adjust if you use volta/asdf/etc.)
+nvm install 20 && nvm use 20
+corepack enable && corepack prepare pnpm@10.33.0 --activate
 
-# Every time you make web changes:
-pnpm --filter @cookyourbooks/mobile sync            # build web + cap sync
+# Xcode 15+ (App Store from Apple's site). After install:
+sudo xcodebuild -license accept
+sudo xcodebuild -runFirstLaunch
 
-# Open in Xcode / Android Studio:
+# iOS platform components — multi-GB, only needed once per Xcode upgrade.
+xcodebuild -downloadPlatform iOS
+
+# CocoaPods + fastlane
+brew install cocoapods fastlane
+```
+
+If RVM is in your shell init, it pollutes `GEM_PATH` and breaks the
+brew-installed `pod` / `fastlane` binaries. Run them in a clean
+sub-shell or unset RVM vars per session:
+
+```bash
+unset GEM_PATH GEM_HOME RUBY_VERSION MY_RUBY_HOME IRBRC rvm_path
+```
+
+## Day-to-day
+
+```bash
+# Build web + cap sync (run after every change in apps/web/src)
+pnpm --filter @cookyourbooks/mobile sync
+
+# Open the Xcode workspace (NOT the .xcodeproj — Pods needs the workspace)
 pnpm --filter @cookyourbooks/mobile open:ios
-pnpm --filter @cookyourbooks/mobile open:android
+
+# Regenerate icons / splashes after editing assets/icon-only.png etc.
+pnpm --filter @cookyourbooks/mobile assets
 ```
 
 ## Backend configuration
 
-The mobile app reads the same `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
-that were baked into the web build at `apps/web/dist`. For device testing
-against local Supabase you need to:
+The mobile app reads the same `VITE_SUPABASE_URL` /
+`VITE_SUPABASE_ANON_KEY` that were baked into the web build at
+`apps/web/dist`. For device testing against local Supabase you need to:
 
 1. Replace `127.0.0.1` with your machine's LAN IP in
-   `apps/web/.env.local` (Android and iOS simulators can't reach
-   `127.0.0.1` on the host — iOS can use `localhost`, Android
-   cannot).
+   `apps/web/.env.local` (the iOS simulator can reach `localhost` but a
+   real device on Wi-Fi cannot).
 2. Rebuild: `pnpm --filter @cookyourbooks/mobile sync`.
 
-For App Store / Play Store builds, point the env at a deployed Supabase
-instance and flip `allowMixedContent` / ATS settings off in
-`capacitor.config.ts` accordingly.
+For App Store builds, point the env at the deployed Supabase project
+and remove the `allowMixedContent` / ATS-permissive settings in
+`capacitor.config.ts` (cleartext should not ship to production).
 
 ## Native integrations in the web code
 
@@ -54,3 +84,123 @@ feature detection — both paths live in `apps/web/src/`:
 - `pages/CookModePage.tsx` — `Haptics.impact()` on native, no-op on web.
 
 No platform-specific fork of the UI is needed.
+
+---
+
+## Publishing to TestFlight / App Store
+
+### Prerequisites (one-time, per Apple Developer account)
+
+1. **Apple Developer Program membership** — `$99/yr`. Team ID for this
+   app is `YNDYJ3A9CQ`.
+2. **App Store Connect record** for `app.cookyourbooks`. Create
+   at <https://appstoreconnect.apple.com/apps> → `+` → New App → iOS.
+   You'll need a unique SKU (anything, e.g. `cookyourbooks-001`) and a
+   primary language.
+3. **App Store Connect API key** — generate at <https://appstoreconnect.apple.com/access/integrations/api>
+   with the "App Manager" role. Download the `.p8` file once
+   (Apple does not let you re-download it). Stash it somewhere like
+   `~/.appstoreconnect/AuthKey_XXXXXX.p8`. Note the Key ID + Issuer ID.
+4. **Signing certs repo** — already created at
+   `git@github.com:jon-bell/cookyourbooks-certs.git`. Anyone with push
+   access can sign as you, so keep its membership tight.
+5. **Local fastlane env**:
+   ```bash
+   cp ios/fastlane/.env.example ios/fastlane/.env
+   # Fill in the four values: KEY_ID, ISSUER_ID, KEY_PATH, MATCH_PASSWORD.
+   ```
+
+### Bootstrap signing (one time)
+
+The first time anyone runs the release pipeline, generate fresh
+distribution + development certs and push them to the certs repo
+encrypted with `MATCH_PASSWORD`:
+
+```bash
+cd apps/mobile/ios
+fastlane bootstrap_signing
+```
+
+After this runs once successfully, every other dev machine (and CI) can
+pull the same signing material with `fastlane certs` — no need to
+juggle `.p12` files by hand.
+
+### Ship a TestFlight build
+
+```bash
+cd apps/mobile/ios
+fastlane beta
+```
+
+What `beta` does:
+
+1. `match(type: "appstore", readonly: true)` — pulls the distribution
+   cert + provisioning profile from the certs repo.
+2. `bump_build` — sets `CURRENT_PROJECT_VERSION` to one above whatever
+   build number is currently on TestFlight. Avoids the "build number
+   already used" upload rejection.
+3. `gym` — builds a signed Release archive (`.ipa`) into `build/`.
+4. `pilot` — uploads the IPA to TestFlight via the ASC API key.
+
+The build is then visible at <https://appstoreconnect.apple.com/apps> →
+CookYourBooks → TestFlight. Add it to a test group (internal testing
+needs no review and ships in ~10 minutes).
+
+### Submit for App Store review
+
+```bash
+cd apps/mobile/ios
+fastlane release
+```
+
+This runs `beta` then `deliver --submit-for-review`. Screenshots and
+store metadata stay manual for now — manage them in App Store Connect's
+web UI until we automate them.
+
+### Common pitfalls
+
+- **Export compliance:** Already set — `ITSAppUsesNonExemptEncryption=false`
+  is in `ios/App/App/Info.plist` so TestFlight uploads don't prompt.
+- **App icon transparency:** iOS rejects icons with alpha. Our
+  `cyb-master.png` master has a solid black background so this is fine,
+  but if you ever swap it, flatten the PNG first.
+- **ATS / cleartext:** Production should not ship with
+  `allowMixedContent`. Strip it from `capacitor.config.ts` before
+  running `fastlane release`.
+- **Bundle ID drift:** Bundle ID must stay `app.cookyourbooks` in
+  `capacitor.config.ts`, the Xcode project, the Matchfile, and the App
+  Store Connect record. Changing one without the others breaks match.
+- **Xcode 26+ + RVM:** The `pod` / `fastlane` binaries from Homebrew
+  fail with "Could not find 'mutex_m'" when RVM env vars are set. Run
+  in a sub-shell with RVM vars unset (see "One-time machine setup").
+- **Keychain locked during match:** If you see "Could not find the newly
+  generated certificate installed", your login keychain re-locked and
+  match's `security import` of the .p12 silently failed. Fix:
+  `security unlock-keychain ~/Library/Keychains/login.keychain-db` then
+  `security set-keychain-settings -l ~/Library/Keychains/login.keychain-db`
+  to disable the idle auto-lock for the session, then retry.
+- **"Reached the maximum number of available Distribution certificates":**
+  Apple caps each account at 2 active "Apple Distribution" certs. Every
+  failed match attempt that got past API auth but failed at local import
+  leaves an orphan cert. Use `fastlane list_certs` to see all certs on
+  the account, then `fastlane revoke_certs ids:abc,def` to clean up
+  orphans. Only certs whose `.p12` is in the certs repo are useful —
+  everything else is safe to revoke.
+- **Match defaults to `master` branch, not `main`:** Our Matchfile sets
+  `git_branch("main")` explicitly. If you ever swap to a different certs
+  repo, set this on day one or match will silently push to `master` on a
+  repo that defaults to `main`.
+
+### CI
+
+`mobile.yml` has an iOS job that runs an unsigned simulator build on
+push/PR (via manual `workflow_dispatch`). Real release archives should
+run from a macOS runner with:
+
+- `MATCH_PASSWORD` available as a secret.
+- `CYB_ASC_KEY_ID`, `CYB_ASC_ISSUER_ID`, and the `.p8` content
+  (base64-encoded into a secret, decoded into a file at job start,
+  pointed at by `CYB_ASC_KEY_PATH`).
+- SSH access to the certs repo (deploy key or PAT in a secret).
+
+See `.github/RUNNERS.md` for runner provisioning notes.
