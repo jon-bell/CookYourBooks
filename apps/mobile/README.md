@@ -57,7 +57,20 @@ pnpm --filter @cookyourbooks/mobile open:ios
 
 # Regenerate icons / splashes after editing assets/icon-only.png etc.
 pnpm --filter @cookyourbooks/mobile assets
+
+# Fast iteration loop: build + install + launch on the iOS Simulator.
+# Defaults to iPhone 17 Pro; override with SIM env var.
+scripts/run-ios-sim.sh
+# SIM="iPhone 17e" scripts/run-ios-sim.sh
 ```
+
+### Debugging the WebView
+
+While the simulator is running, open Safari on macOS → Develop →
+Simulator → CookYourBooks. You get the full Web Inspector (DOM,
+console, network, sources) against the running app — same flow as
+debugging a regular web page, plus a `device` (the WKWebView) target.
+This is the fastest way to diagnose a white screen or a sync hang.
 
 ## Backend configuration
 
