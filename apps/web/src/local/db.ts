@@ -11,6 +11,16 @@ export function getLocalDb(): Promise<LocalDb> {
   return initPromise;
 }
 
+// Bump when the CRR trigger shape has drifted from what older builds
+// promoted. Each boot at a higher version runs a one-time
+// `crsql_begin_alter` / `crsql_commit_alter` cycle on every CRR table
+// to force cr-sqlite to re-emit per-column triggers against the
+// current schema. Without this, users whose DBs were upgraded by
+// earlier builds (before we bracketed ALTERs with begin/commit_alter)
+// keep stale triggers and INSERTs blow up with "expected N values,
+// got M".
+const CRR_TRIGGER_HEAL_VERSION = 1;
+
 async function initialize(): Promise<LocalDb> {
   const sqlite = await initWasm(() => wasmUrl);
   const db = await sqlite.open('cookyourbooks.db');
@@ -35,7 +45,44 @@ async function initialize(): Promise<LocalDb> {
     await db.exec(`select crsql_as_crr('${table}')`);
   }
 
+  // One-time heal for users whose previous boots added columns without
+  // bracketing the ALTER. Those triggers describe an older column list
+  // and any subsequent INSERT fails. Forcing a begin/commit_alter
+  // cycle on each CRR table rebuilds the triggers against the current
+  // schema. Gated on a stored marker so we don't churn metadata on
+  // every load once a given user has been healed.
+  await maybeHealCrrTriggers(db);
+
   return db;
+}
+
+async function maybeHealCrrTriggers(db: LocalDb): Promise<void> {
+  // `crsql_master` is cr-sqlite's own key/value store and exists for
+  // every initialised DB; piggy-backing on it avoids us provisioning
+  // a custom marker table just for this.
+  const rows = await db.execA<[string | number]>(
+    `select value from crsql_master where key = 'cyb_crr_trigger_heal'`,
+  );
+  const stored = Number(rows[0]?.[0] ?? 0);
+  if (stored >= CRR_TRIGGER_HEAL_VERSION) return;
+
+  for (const table of CRR_TABLES) {
+    try {
+      await db.exec(`select crsql_begin_alter('${table}')`);
+    } catch {
+      // Not a CRR (shouldn't happen — we just promoted above). Skip.
+      continue;
+    }
+    // The no-op alter cycle is enough — commit re-emits triggers. If
+    // commit itself throws, the table is left mid-alter; surface so we
+    // hear about it rather than silently leaving the DB wedged.
+    await db.exec(`select crsql_commit_alter('${table}')`);
+  }
+
+  await db.exec(
+    `insert or replace into crsql_master (key, value) values (?, ?)`,
+    ['cyb_crr_trigger_heal', CRR_TRIGGER_HEAL_VERSION],
+  );
 }
 
 const ADD_COLUMN_RE = /^\s*alter\s+table\s+([a-z_][a-z0-9_]*)\s+add\s+column\s+([a-z_][a-z0-9_]*)\b/i;
