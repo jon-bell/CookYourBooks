@@ -685,11 +685,18 @@ export function ImportItemPage() {
               </div>
 
               {drafts.length > 1 && (
-                <div className="flex gap-1 border-b border-stone-200">
+                <div
+                  data-testid="draft-tabs"
+                  role="tablist"
+                  aria-label="Recipe drafts on this page"
+                  className="flex gap-1 border-b border-stone-200"
+                >
                   {drafts.map((d, i) => (
                     <button
                       key={i}
                       type="button"
+                      role="tab"
+                      aria-selected={activeDraft === i}
                       onClick={() => setActiveDraft(i)}
                       className={`-mb-px border-b-2 px-3 py-1.5 text-xs ${
                         activeDraft === i

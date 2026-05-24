@@ -94,7 +94,11 @@ test.describe('bulk OCR imports', () => {
     });
 
     await page.getByRole('button', { name: 'Save as recipe' }).click();
-    await page.waitForURL(new RegExp(`/import/${batchId}$`));
+    // Save auto-advances: if more reviewable items remain in the batch
+    // the page navigates to the next one; only when the batch is fully
+    // reviewed does it fall back to the batch board. Both URLs are
+    // valid post-save targets.
+    await page.waitForURL(new RegExp(`/import/${batchId}(?:$|/items/)`));
     await waitForSynced(page);
 
     await page.getByRole('link', { name: 'Library' }).click();

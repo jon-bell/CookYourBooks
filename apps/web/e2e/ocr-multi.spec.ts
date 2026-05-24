@@ -108,12 +108,15 @@ test.describe('OCR multi-recipe review editor', () => {
     await picker.getByText('Chewy Cookies').click();
     await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
 
-    await expect(page.getByRole('button', { name: 'Chewy Cookies' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Crispy Cookies' })).toBeVisible();
+    const tabs = page.getByTestId('draft-tabs');
+    await expect(tabs.getByRole('tab', { name: 'Chewy Cookies' })).toBeVisible();
+    await expect(tabs.getByRole('tab', { name: 'Crispy Cookies' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Save as recipe' }).click();
-    await expect(page.getByRole('button', { name: 'Chewy Cookies' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Crispy Cookies' })).toHaveCount(0);
+    // After saving the active draft, only the remaining one is left
+    // on this item — the tab strip collapses entirely (it only renders
+    // when drafts.length > 1).
+    await expect(tabs).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Save as recipe' }).click();
     await page.waitForURL(/\/import\/[0-9a-f-]+$/);
@@ -136,7 +139,7 @@ test.describe('OCR multi-recipe review editor', () => {
     await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
 
     await page.getByRole('button', { name: 'Discard this draft' }).click();
-    await expect(page.getByRole('button', { name: 'Chewy Cookies' })).toHaveCount(0);
+    await expect(page.getByTestId('draft-tabs')).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Save as recipe' }).click();
     await page.waitForURL(/\/import\/[0-9a-f-]+$/);

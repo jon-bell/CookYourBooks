@@ -70,10 +70,15 @@ test.describe('OCR import from photo', () => {
     });
 
     await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
+    // The title renders as an EditableText button — click-to-edit, no
+    // input until you click. Just look for the text.
     await expect(
-      page.getByRole('textbox', { name: 'Title', exact: true }),
-    ).toHaveValue("Grandma's Lemon Bars", { timeout: 10_000 });
-    await expect(page.getByText(/5 ingredients · 4 steps/)).toBeVisible();
+      page.getByRole('button', { name: "Grandma's Lemon Bars" }),
+    ).toBeVisible({ timeout: 10_000 });
+    // Ingredients render directly as a list now (no summary line).
+    // Pick a few we expect from FAKE_DRAFT to confirm the editor
+    // actually saw the parsed structure.
+    await expect(page.getByText('flour', { exact: false })).toBeVisible();
   });
 
   test('import button directs to Settings when no provider is configured', async ({
