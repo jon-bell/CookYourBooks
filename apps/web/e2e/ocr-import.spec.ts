@@ -69,22 +69,11 @@ test.describe('OCR import from photo', () => {
       buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     });
 
-    await page.waitForURL(/\/recipes\/new$/);
-    await expect(page.locator('main input').first()).toHaveValue("Grandma's Lemon Bars");
-    await expect(page.getByLabel('Servings')).toHaveValue('12');
-
-    await expect(page.locator('input[placeholder="ingredient name"]')).toHaveCount(5);
-    const names = page.locator('input[placeholder="ingredient name"]');
-    await expect(names.nth(0)).toHaveValue('flour');
-    await expect(names.nth(1)).toHaveValue('powdered sugar');
-    await expect(names.nth(2)).toHaveValue('butter');
-    await expect(names.nth(3)).toHaveValue('eggs');
-    await expect(names.nth(4)).toHaveValue('salt');
-
-    const steps = page.locator('ol textarea');
-    await expect(steps).toHaveCount(4);
-    await expect(steps.nth(0)).toHaveValue('Press crust into the pan.');
-    await expect(steps.nth(3)).toHaveValue('Bake 25 more minutes, then cool.');
+    await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
+    await expect(
+      page.getByRole('textbox', { name: 'Title', exact: true }),
+    ).toHaveValue("Grandma's Lemon Bars", { timeout: 10_000 });
+    await expect(page.getByText(/5 ingredients · 4 steps/)).toBeVisible();
   });
 
   test('import button directs to Settings when no provider is configured', async ({
@@ -107,7 +96,7 @@ test.describe('OCR import from photo', () => {
       buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     });
 
-    await expect(page.getByText(/OCR is not configured/)).toBeVisible();
+    await expect(page.getByText(/OCR not configured/)).toBeVisible();
     await page.getByRole('link', { name: /Open settings/ }).click();
     await page.waitForURL(/\/settings$/);
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();

@@ -14,6 +14,8 @@ const executablePath =
 
 export default defineConfig({
   testDir: './e2e',
+  globalSetup: './e2e/support/global-setup.ts',
+  globalTeardown: './e2e/support/global-teardown.ts',
   timeout: 30_000,
   expect: { timeout: 5_000 },
   // Parallel workers contend for a single local Supabase and (especially)

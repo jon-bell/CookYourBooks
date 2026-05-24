@@ -1,0 +1,553 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { createRecipe } from '@cookyourbooks/domain';
+import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
+import { useCollections, useSaveRecipe } from '../data/queries.js';
+import {
+  useImportBatch,
+  useImportItem,
+  useImportItemAttempts,
+  useImportTocEntries,
+  useUpdateImportItem,
+} from '../import/queries.js';
+import { kickOcr } from '../import/api.js';
+import { useSync } from '../local/SyncProvider.js';
+import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
+import { suggestTocMatches } from '../import/tocMatch.js';
+
+export function ImportItemPage() {
+  const { batchId, itemId } = useParams();
+  const { data: batch } = useImportBatch(batchId);
+  const { data: item } = useImportItem(itemId);
+  const { data: attempts = [] } = useImportItemAttempts(itemId);
+  const { data: tocEntries = [] } = useImportTocEntries(batchId);
+  const { data: collections = [] } = useCollections();
+  const updateItem = useUpdateImportItem();
+  const { syncNow } = useSync();
+  const navigate = useNavigate();
+
+  const [activeDraft, setActiveDraft] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [imgUrl, setImgUrl] = useState<string | undefined>();
+  const [assignedCollectionId, setAssignedCollectionId] = useState<string>('');
+  const [pageNumberStr, setPageNumberStr] = useState('');
+  const [showTocSuggestions, setShowTocSuggestions] = useState(false);
+  const [draftPatches, setDraftPatches] = useState<Record<number, ParsedRecipeDraft>>({});
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  useEffect(() => {
+    if (!item) return;
+    setAssignedCollectionId(
+      item.assignedCollectionId ?? batch?.targetCollectionId ?? '',
+    );
+    setPageNumberStr(
+      item.assignedPageNumber != null ? String(item.assignedPageNumber) : '',
+    );
+  }, [item, batch?.targetCollectionId]);
+
+  useEffect(() => {
+    if (!item?.storagePath) return;
+    let cancelled = false;
+    void getSignedImportUrl(item.storagePath)
+      .then((u) => {
+        if (!cancelled) setImgUrl(u);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [item?.storagePath]);
+
+  const saveRecipe = useSaveRecipe(assignedCollectionId || batch?.targetCollectionId || '');
+
+  const drafts = useMemo<ParsedRecipeDraft[]>(() => item?.parsedDrafts ?? [], [item]);
+  const currentDraft: ParsedRecipeDraft | undefined =
+    draftPatches[activeDraft] ?? drafts[activeDraft];
+
+  const tocSuggestions = useMemo(
+    () =>
+      currentDraft?.title
+        ? suggestTocMatches(currentDraft.title, tocEntries, { limit: 5 })
+        : [],
+    [currentDraft?.title, tocEntries],
+  );
+
+  function onWheel(e: React.WheelEvent) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const next = Math.max(0.5, Math.min(4, zoom + (e.deltaY < 0 ? 0.15 : -0.15)));
+    setZoom(next);
+  }
+
+  function onMouseDown(e: React.MouseEvent) {
+    drag.current = {
+      active: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: pan.x,
+      origY: pan.y,
+    };
+  }
+  function onMouseMove(e: React.MouseEvent) {
+    if (!drag.current?.active) return;
+    setPan({
+      x: drag.current.origX + (e.clientX - drag.current.startX),
+      y: drag.current.origY + (e.clientY - drag.current.startY),
+    });
+  }
+  function onMouseUp() {
+    if (drag.current) drag.current.active = false;
+  }
+
+  if (!batch || !item) return <p className="text-stone-500">Loading…</p>;
+
+  const targetCollectionId =
+    assignedCollectionId || batch.targetCollectionId || '';
+
+  async function toggleIsToc() {
+    if (!item) return;
+    const next = !item.isToc;
+    await updateItem.mutateAsync({
+      id: item.id,
+      patch: {
+        isToc: next,
+        status: next ? 'PENDING' : item.status,
+        // Drop drafts when promoting to ToC so the worker re-OCRs.
+        parsedDrafts: next ? [] : item.parsedDrafts,
+      },
+    });
+    if (next) {
+      try {
+        await kickOcr(batch!.id);
+      } catch {
+        // pg_cron will pick up the slack.
+      }
+    }
+  }
+
+  function patchDraft(patch: Partial<ParsedRecipeDraft>) {
+    const base = draftPatches[activeDraft] ?? drafts[activeDraft];
+    if (!base) return;
+    setDraftPatches((cur) => ({ ...cur, [activeDraft]: { ...base, ...patch } }));
+  }
+
+  async function saveAsRecipe() {
+    if (!currentDraft || !targetCollectionId) return;
+    const pageNum = pageNumberStr ? Number(pageNumberStr) : undefined;
+    const pageNumbers =
+      pageNum && Number.isFinite(pageNum)
+        ? [pageNum]
+        : currentDraft.pageNumbers
+          ? [...currentDraft.pageNumbers]
+          : undefined;
+    const recipe = createRecipe({
+      title: currentDraft.title?.trim() || 'Untitled',
+      servings: currentDraft.servings,
+      ingredients: currentDraft.ingredients,
+      instructions: currentDraft.instructions,
+      description: currentDraft.description,
+      timeEstimate: currentDraft.timeEstimate,
+      equipment: currentDraft.equipment,
+      bookTitle: currentDraft.bookTitle,
+      pageNumbers,
+      sourceImageText: currentDraft.sourceImageText,
+    });
+    await saveRecipe.mutateAsync(recipe);
+    const nextDrafts = drafts.filter((_, i) => i !== activeDraft);
+    const createdIds = [...(item?.createdRecipeIds ?? []), recipe.id];
+    const remaining = nextDrafts.length;
+    await updateItem.mutateAsync({
+      id: item!.id,
+      patch: {
+        parsedDrafts: nextDrafts,
+        createdRecipeIds: createdIds,
+        assignedCollectionId: targetCollectionId,
+        assignedPageNumber: pageNum && Number.isFinite(pageNum) ? pageNum : null,
+        status: remaining === 0 ? 'REVIEWED' : item!.status,
+      },
+    });
+    await syncNow();
+    if (remaining === 0) {
+      navigate(`/import/${batch!.id}`);
+    } else {
+      setActiveDraft(0);
+      setDraftPatches({});
+    }
+  }
+
+  async function discardThisDraft() {
+    if (!item || !currentDraft) return;
+    const nextDrafts = drafts.filter((_, i) => i !== activeDraft);
+    await updateItem.mutateAsync({
+      id: item.id,
+      patch: {
+        parsedDrafts: nextDrafts,
+        status: nextDrafts.length === 0 ? 'REVIEWED' : item.status,
+      },
+    });
+    if (nextDrafts.length === 0) navigate(`/import/${batch!.id}`);
+    else {
+      setActiveDraft(0);
+      setDraftPatches({});
+    }
+  }
+
+  async function reOcrWithFallback() {
+    if (!item) return;
+    await updateItem.mutateAsync({
+      id: item.id,
+      patch: { parsedDrafts: [], status: 'PENDING' },
+    });
+    try {
+      await kickOcr(batch!.id);
+    } catch {
+      // pg_cron will retry.
+    }
+  }
+
+  async function discardItem() {
+    if (!item) return;
+    if (!confirm('Discard this entire item? It will be hidden from the batch.')) return;
+    await updateItem.mutateAsync({ id: item.id, patch: { status: 'DISCARDED' } });
+    navigate(`/import/${batch!.id}`);
+  }
+
+  return (
+    <div className="space-y-4 pb-12">
+      <div className="flex items-center gap-2 text-sm text-stone-600">
+        <Link to={`/import/${batch.id}`} className="underline">
+          ← {batch.name}
+        </Link>
+        <span>·</span>
+        <span>Page {item.pageIndex + 1}</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="space-y-3">
+          <div
+            ref={viewerRef}
+            onWheel={onWheel}
+            onMouseDown={onMouseDown}
+            onMouseMove={onMouseMove}
+            onMouseUp={onMouseUp}
+            onMouseLeave={onMouseUp}
+            className="relative aspect-[3/4] cursor-grab overflow-hidden rounded-lg border border-stone-200 bg-stone-100"
+          >
+            {imgUrl ? (
+              <img
+                src={imgUrl}
+                alt={`Page ${item.pageIndex + 1}`}
+                className="absolute left-1/2 top-1/2 max-w-none select-none"
+                draggable={false}
+                style={{
+                  transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transformOrigin: 'center',
+                }}
+              />
+            ) : (
+              <ImportThumb path={item.storagePath} className="h-full w-full object-contain" />
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-stone-600">
+            <button
+              type="button"
+              onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}
+              className="rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+            >
+              −
+            </button>
+            <span>{Math.round(zoom * 100)}%</span>
+            <button
+              type="button"
+              onClick={() => setZoom((z) => Math.min(4, z + 0.25))}
+              className="rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setZoom(1);
+                setPan({ x: 0, y: 0 });
+              }}
+              className="ml-2 rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+            >
+              Reset
+            </button>
+            <span className="ml-auto text-stone-500">Ctrl/⌘+scroll to zoom · drag to pan</span>
+          </div>
+
+          <details className="rounded-md border border-stone-200 bg-white">
+            <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+              Attempt history ({attempts.length})
+            </summary>
+            <ul className="divide-y divide-stone-200 px-3 pb-2 text-xs text-stone-700">
+              {attempts.length === 0 && <li className="py-2 text-stone-500">No attempts yet.</li>}
+              {attempts.map((a) => (
+                <li key={a.id} className="space-y-0.5 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">#{a.attemptNo}</span>
+                    <span>{a.provider}</span>
+                    <code className="rounded bg-stone-100 px-1">{a.model}</code>
+                    <span
+                      className={
+                        a.errorKind && a.errorKind !== 'OK'
+                          ? 'text-red-700'
+                          : 'text-emerald-700'
+                      }
+                    >
+                      {a.errorKind ?? 'OK'}
+                    </span>
+                    <span className="ml-auto text-stone-500">
+                      {a.latencyMs}ms · ${(a.costUsdMicros / 1_000_000).toFixed(4)}
+                    </span>
+                  </div>
+                  {a.errorMessage && (
+                    <div className="text-stone-600">{a.errorMessage}</div>
+                  )}
+                  {a.rawResponsePath && (
+                    <ViewRawLink path={a.rawResponsePath} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </div>
+
+        <div className="space-y-3">
+          <div className="rounded-md border border-stone-200 bg-white p-3 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={item.isToc}
+                onChange={() => void toggleIsToc()}
+              />
+              <span>This is a Table of Contents page</span>
+            </label>
+          </div>
+
+          {!item.isToc && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Cookbook">
+                  <select
+                    value={assignedCollectionId}
+                    onChange={(e) => setAssignedCollectionId(e.target.value)}
+                    className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+                  >
+                    <option value="">(unassigned)</option>
+                    {collections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Page number">
+                  <div className="relative">
+                    <input
+                      value={pageNumberStr}
+                      onChange={(e) => setPageNumberStr(e.target.value)}
+                      onFocus={() => setShowTocSuggestions(true)}
+                      onBlur={() => setTimeout(() => setShowTocSuggestions(false), 150)}
+                      className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+                      placeholder="e.g. 42"
+                    />
+                    {showTocSuggestions && tocSuggestions.length > 0 && (
+                      <div className="absolute z-20 mt-1 w-full rounded-md border border-stone-200 bg-white shadow-md">
+                        <ul className="max-h-48 overflow-auto py-1 text-xs">
+                          {tocSuggestions.map((s) => (
+                            <li key={s.entry.id}>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  if (s.entry.pageNumber != null) {
+                                    setPageNumberStr(String(s.entry.pageNumber));
+                                  }
+                                  setShowTocSuggestions(false);
+                                }}
+                                className="block w-full px-3 py-1.5 text-left hover:bg-stone-100"
+                              >
+                                <span className="font-medium">{s.entry.title}</span>
+                                {s.entry.pageNumber != null && (
+                                  <span className="ml-2 text-stone-500">
+                                    p. {s.entry.pageNumber}
+                                  </span>
+                                )}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </Field>
+              </div>
+
+              {drafts.length > 1 && (
+                <div className="flex gap-1 border-b border-stone-200">
+                  {drafts.map((d, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setActiveDraft(i)}
+                      className={`-mb-px border-b-2 px-3 py-1.5 text-xs ${
+                        activeDraft === i
+                          ? 'border-stone-900 font-medium text-stone-900'
+                          : 'border-transparent text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      {d.title || `Recipe ${i + 1}`}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {currentDraft ? (
+                <DraftEditor draft={currentDraft} onPatch={patchDraft} />
+              ) : (
+                <p className="text-sm text-stone-600">No drafts yet. Waiting for OCR…</p>
+              )}
+
+              <div className="flex flex-wrap gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => void saveAsRecipe()}
+                  disabled={!currentDraft || !targetCollectionId || saveRecipe.isPending}
+                  className="rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                >
+                  {saveRecipe.isPending ? 'Saving…' : 'Save as recipe'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void discardThisDraft()}
+                  disabled={!currentDraft}
+                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-50"
+                >
+                  Discard this draft
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void reOcrWithFallback()}
+                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+                >
+                  Re-OCR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void discardItem()}
+                  className="rounded-md px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+                >
+                  Discard entire item
+                </button>
+              </div>
+
+              {saveRecipe.isError && (
+                <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {(saveRecipe.error as Error).message}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DraftEditor({
+  draft,
+  onPatch,
+}: {
+  draft: ParsedRecipeDraft;
+  onPatch: (p: Partial<ParsedRecipeDraft>) => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-md border border-stone-200 bg-white p-3">
+      <Field label="Title">
+        <input
+          value={draft.title ?? ''}
+          onChange={(e) => onPatch({ title: e.target.value })}
+          className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Book title">
+          <input
+            value={draft.bookTitle ?? ''}
+            onChange={(e) => onPatch({ bookTitle: e.target.value || undefined })}
+            className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+          />
+        </Field>
+        <Field label="Time estimate">
+          <input
+            value={draft.timeEstimate ?? ''}
+            onChange={(e) => onPatch({ timeEstimate: e.target.value || undefined })}
+            className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+          />
+        </Field>
+      </div>
+      <div>
+        <div className="mb-1 text-sm font-medium text-stone-700">
+          {draft.ingredients.length} ingredients · {draft.instructions.length} steps
+        </div>
+        <p className="text-xs text-stone-500">
+          Full ingredient/step editing happens after promoting to a recipe. Save to open
+          the recipe editor with these drafts pre-filled.
+        </p>
+      </div>
+      {draft.description && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-stone-600">Description</summary>
+          <p className="mt-1 whitespace-pre-wrap text-stone-700">{draft.description}</p>
+        </details>
+      )}
+      {draft.sourceImageText && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-stone-600">Raw OCR text</summary>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-stone-50 p-2 text-stone-700">
+            {draft.sourceImageText}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function ViewRawLink({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | undefined>();
+  useEffect(() => {
+    let cancelled = false;
+    void getSignedImportUrl(path)
+      .then((u) => {
+        if (!cancelled) setUrl(u);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="text-xs text-stone-700 underline hover:text-stone-900"
+    >
+      View raw response →
+    </a>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-medium text-stone-700">{label}</span>
+      {children}
+    </label>
+  );
+}

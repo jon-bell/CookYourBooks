@@ -7,7 +7,14 @@ export type OutboxKind =
   | 'recipe_delete'
   // Fires when the user drags a recipe to a new position. Push reads the
   // local sort_order and pushes only that column — no child rewrite.
-  | 'recipe_reorder';
+  | 'recipe_reorder'
+  // Bulk OCR import: the worker owns most columns on these rows. The
+  // client only pushes user-editable annotations (assignments, status
+  // moves to REVIEWED / DISCARDED, batch settings, etc).
+  | 'import_batch_insert'
+  | 'import_batch_update'
+  | 'import_item_insert'
+  | 'import_item_update';
 
 export interface OutboxEntry {
   id: number;

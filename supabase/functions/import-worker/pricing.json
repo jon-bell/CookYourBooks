@@ -1,0 +1,38 @@
+{
+  "entries": [
+    {
+      "provider": "gemini",
+      "model": "gemini-2.5-flash",
+      "input_usd_per_mtok": 0.075,
+      "output_usd_per_mtok": 0.30
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-2.5-pro",
+      "input_usd_per_mtok": 1.25,
+      "output_usd_per_mtok": 5.00
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3-pro-image-preview",
+      "input_usd_per_mtok": 1.25,
+      "output_usd_per_mtok": 5.00
+    },
+    {
+      "provider": "openai-compatible",
+      "model": "gpt-4o",
+      "input_usd_per_mtok": 2.50,
+      "output_usd_per_mtok": 10.00
+    },
+    {
+      "provider": "openai-compatible",
+      "model": "gpt-4o-mini",
+      "input_usd_per_mtok": 0.15,
+      "output_usd_per_mtok": 0.60
+    }
+  ],
+  "fallback": {
+    "input_usd_per_mtok": 0,
+    "output_usd_per_mtok": 0
+  }
+}
