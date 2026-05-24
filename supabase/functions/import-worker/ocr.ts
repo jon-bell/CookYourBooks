@@ -24,14 +24,21 @@ export interface OcrCallResult {
   latencyMs: number;
 }
 
+export interface OcrImage {
+  base64: string;
+  mimeType: string;
+}
+
 export interface OcrCallParams {
   provider: Provider;
   model: string;
   apiKey: string;
   baseUrl?: string;
   prompt: string;
-  imageBase64: string;
-  mimeType: string;
+  /** One entry for a normal scan; multiple when the user merged
+   *  additional pages onto the primary item — sent to the LLM in the
+   *  same call so the recipe survives mid-recipe page breaks. */
+  images: readonly OcrImage[];
   signal?: AbortSignal;
   log?: (message: string, extra?: Record<string, unknown>) => void;
 }
@@ -93,7 +100,9 @@ async function callGemini(
         role: 'user',
         parts: [
           { text: p.prompt },
-          { inline_data: { mime_type: p.mimeType, data: p.imageBase64 } },
+          ...p.images.map((img) => ({
+            inline_data: { mime_type: img.mimeType, data: img.base64 },
+          })),
         ],
       },
     ],
@@ -103,7 +112,12 @@ async function callGemini(
     },
   };
 
-  p.log?.('gemini POST', { model: p.model, prompt_bytes: p.prompt.length, image_bytes_b64: p.imageBase64.length });
+  p.log?.('gemini POST', {
+    model: p.model,
+    prompt_bytes: p.prompt.length,
+    images: p.images.length,
+    image_bytes_b64: p.images.reduce((acc, i) => acc + i.base64.length, 0),
+  });
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -208,16 +222,22 @@ async function callOpenAI(
         role: 'user',
         content: [
           { type: 'text', text: p.prompt },
-          {
-            type: 'image_url',
-            image_url: { url: `data:${p.mimeType};base64,${p.imageBase64}` },
-          },
+          ...p.images.map((img) => ({
+            type: 'image_url' as const,
+            image_url: { url: `data:${img.mimeType};base64,${img.base64}` },
+          })),
         ],
       },
     ],
   };
 
-  p.log?.('openai POST', { model: p.model, base_url: base, prompt_bytes: p.prompt.length, image_bytes_b64: p.imageBase64.length });
+  p.log?.('openai POST', {
+    model: p.model,
+    base_url: base,
+    prompt_bytes: p.prompt.length,
+    images: p.images.length,
+    image_bytes_b64: p.images.reduce((acc, i) => acc + i.base64.length, 0),
+  });
   const resp = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: {

@@ -52,6 +52,10 @@ export interface ImportItem {
   completionTokens: number;
   costUsdMicros: number;
   createdRecipeIds: string[];
+  /** Storage paths of additional scanned pages folded into this item
+   *  via the merge action. The worker sends primary + extras to the
+   *  LLM together so the recipe survives mid-recipe page breaks. */
+  extraStoragePaths: string[];
   updatedAt: number;
 }
 

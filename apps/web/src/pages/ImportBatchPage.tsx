@@ -7,7 +7,7 @@ import {
   useUpdateImportBatch,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr, OcrWorkerNotConfiguredError, setRecitationPolicy } from '../import/api.js';
+import { kickOcr, mergeImportItems, OcrWorkerNotConfiguredError, setRecitationPolicy } from '../import/api.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { ImportThumb } from '../import/ImportThumb.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
@@ -429,6 +429,45 @@ export function ImportBatchPage() {
             Discard
           </button>
           <ReassignBulkButton onApply={(collectionId) => applyBulk({ assignedCollectionId: collectionId })} />
+          {selected.size >= 2 && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!batch) return;
+                // Use the lowest page_index as the primary so the
+                // result lands on the earlier scan; absorb the rest.
+                const chosen = items
+                  .filter((i) => selected.has(i.id))
+                  .sort((a, b) => a.pageIndex - b.pageIndex);
+                const primary = chosen[0];
+                if (!primary || chosen.length < 2) return;
+                const absorb = chosen.slice(1).map((i) => i.id);
+                const plural = absorb.length === 1 ? 'page' : 'pages';
+                if (
+                  !confirm(
+                    `Merge ${absorb.length} extra ${plural} onto page ${primary.pageIndex + 1} and re-run OCR with all images together?`,
+                  )
+                ) {
+                  return;
+                }
+                try {
+                  await mergeImportItems(primary.id, absorb);
+                  try {
+                    await kickOcr(batch.id);
+                  } catch {
+                    /* cron will pick it up */
+                  }
+                  setSelected(new Set());
+                } catch (e) {
+                  alert(`Merge failed: ${(e as Error).message}`);
+                }
+              }}
+              className="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs hover:bg-stone-100"
+              title="Combine selected scans into one item and re-OCR with all images at once"
+            >
+              Merge into one item
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setSelected(new Set())}
@@ -465,7 +504,17 @@ export function ImportBatchPage() {
                 />
                 <div className="space-y-1 p-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-stone-500">#{item.pageIndex + 1}</span>
+                    <span className="text-xs text-stone-500">
+                      #{item.pageIndex + 1}
+                      {item.extraStoragePaths.length > 0 && (
+                        <span
+                          className="ml-1 rounded-full bg-stone-200 px-1.5 text-[10px] font-medium text-stone-700"
+                          title={`Merged with ${item.extraStoragePaths.length} more page(s)`}
+                        >
+                          +{item.extraStoragePaths.length}
+                        </span>
+                      )}
+                    </span>
                     <ItemStatusPill status={item.status} />
                   </div>
                   {queueLabel && (

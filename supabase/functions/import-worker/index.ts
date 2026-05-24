@@ -25,6 +25,9 @@ interface ImportItem {
   owner_id: string;
   page_index: number;
   storage_path: string;
+  /** Additional scanned pages folded into this item via the merge
+   *  action. Sent to the LLM together with the primary in one call. */
+  extra_storage_paths: string[] | null;
   is_toc: boolean;
   status: string;
   claim_token: string | null;
@@ -371,28 +374,39 @@ async function processItem(
   }
   if (key) log.info('key resolved', { has_base_url: !!key.baseUrl });
 
-  // Image fetch (with up to 2 retries on transient).
-  let imageBytes: Uint8Array | null = null;
-  let imageMime = 'image/jpeg';
-  let fetchAttempt = 0;
+  // Image fetch (with up to 2 retries on transient). The merge action
+  // can fold extra pages onto an item; we pull them all here and send
+  // them to the LLM together so a recipe that spans a page break gets
+  // OCR'd as one.
+  const allPaths = [item.storage_path, ...(item.extra_storage_paths ?? [])];
+  const images: { bytes: Uint8Array; mime: string }[] = [];
   let fetchError: string | undefined;
   const fetchStart = Date.now();
-  while (fetchAttempt <= MAX_NETWORK_FETCH_RETRIES) {
-    try {
-      const fetched = await fetchImage(item.owner_id, item.storage_path);
-      imageBytes = fetched.bytes;
-      imageMime = fetched.mime;
-      break;
-    } catch (err) {
-      fetchError = err instanceof Error ? err.message : String(err);
-      log.warn('image fetch error', { attempt: fetchAttempt, error: fetchError });
-      fetchAttempt++;
+  for (const path of allPaths) {
+    let attempt = 0;
+    let got: { bytes: Uint8Array; mime: string } | undefined;
+    while (attempt <= MAX_NETWORK_FETCH_RETRIES) {
+      try {
+        got = await fetchImage(item.owner_id, path);
+        break;
+      } catch (err) {
+        fetchError = err instanceof Error ? err.message : String(err);
+        log.warn('image fetch error', { attempt, path, error: fetchError });
+        attempt++;
+      }
     }
+    if (!got) break;
+    images.push(got);
   }
-  if (!imageBytes) {
+  if (images.length !== allPaths.length) {
     const nextState: 'PENDING' | 'OCR_FAILED' =
       item.attempts < MAX_NETWORK_FETCH_RETRIES ? 'PENDING' : 'OCR_FAILED';
-    log.error('image fetch exhausted retries', { next_state: nextState, error: fetchError });
+    log.error('image fetch exhausted retries', {
+      got: images.length,
+      expected: allPaths.length,
+      next_state: nextState,
+      error: fetchError,
+    });
     await failItem(
       item,
       claimToken,
@@ -402,14 +416,21 @@ async function processItem(
     );
     return nextState as ItemOutcome;
   }
-  log.info('image fetched', {
-    bytes: imageBytes.length,
-    mime: imageMime,
+  const imageBytes = images[0]!.bytes;
+  const imageMime = images[0]!.mime;
+  log.info('images fetched', {
+    count: images.length,
+    total_bytes: images.reduce((acc, i) => acc + i.bytes.length, 0),
     latency_ms: Date.now() - fetchStart,
   });
 
   // OCR call (with possible in-invocation FALLBACK on recitation).
-  log.info('llm call start', { provider, model, is_toc: item.is_toc });
+  log.info('llm call start', {
+    provider,
+    model,
+    is_toc: item.is_toc,
+    images: images.length,
+  });
   const result = await runOrMock({
     item,
     provider,
@@ -417,8 +438,7 @@ async function processItem(
     apiKey: key?.apiKey ?? '',
     baseUrl: key?.baseUrl ?? undefined,
     prompt: item.is_toc ? TOC_PROMPT : RECIPE_PROMPT,
-    imageBase64: bytesToBase64(imageBytes),
-    mimeType: imageMime,
+    images: images.map((i) => ({ base64: bytesToBase64(i.bytes), mimeType: i.mime })),
     log,
   });
   log.info('llm call end', {
@@ -433,7 +453,7 @@ async function processItem(
   // Recitation routing.
   if (result.errorKind === 'RECITATION') {
     log.warn('recitation', { policy: batch.recitation_policy });
-    return await handleRecitation(item, batch, claimToken, provider, model, imageBytes, imageMime, result, log);
+    return await handleRecitation(item, batch, claimToken, provider, model, images, result, log);
   }
 
   // Transient errors.
@@ -474,8 +494,7 @@ async function handleRecitation(
   claimToken: string,
   provider: Provider,
   model: string,
-  imageBytes: Uint8Array,
-  imageMime: string,
+  images: ReadonlyArray<{ bytes: Uint8Array; mime: string }>,
   result: Awaited<ReturnType<typeof runOrMock>>,
   log: ReturnType<typeof makeLog>,
 ): Promise<ItemOutcome> {
@@ -540,8 +559,7 @@ async function handleRecitation(
     apiKey: fbKey?.apiKey ?? '',
     baseUrl: fbKey?.baseUrl ?? undefined,
     prompt: item.is_toc ? TOC_PROMPT : RECIPE_PROMPT,
-    imageBase64: bytesToBase64(imageBytes),
-    mimeType: imageMime,
+    images: images.map((i) => ({ base64: bytesToBase64(i.bytes), mimeType: i.mime })),
     log,
   });
   log.info('fallback llm call end', {
@@ -863,8 +881,7 @@ async function runOrMock(p: {
   apiKey: string;
   baseUrl?: string;
   prompt: string;
-  imageBase64: string;
-  mimeType: string;
+  images: ReadonlyArray<{ base64: string; mimeType: string }>;
   log?: ReturnType<typeof makeLog>;
 }): Promise<OcrCallLike> {
   if (!MOCK_MODE) {
@@ -874,8 +891,7 @@ async function runOrMock(p: {
       apiKey: p.apiKey,
       baseUrl: p.baseUrl,
       prompt: p.prompt,
-      imageBase64: p.imageBase64,
-      mimeType: p.mimeType,
+      images: p.images,
       log: p.log
         ? (m: string, extra?: Record<string, unknown>) => p.log!.info(m, extra)
         : undefined,

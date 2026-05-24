@@ -143,6 +143,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       completionTokens: 0,
       costUsdMicros: 0,
       createdRecipeIds: [],
+      extraStoragePaths: [],
       updatedAt: now,
     });
     if (drafts.length === 1) {

@@ -158,6 +158,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     cost_usd_micros integer not null default 0,
     created_recipe_ids text not null default '[]',
     needs_fallback integer not null default 0,
+    extra_storage_paths text not null default '[]',
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -311,6 +312,7 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     deleted integer not null default 0
   )`,
   `alter table import_items add column needs_fallback integer not null default 0`,
+  `alter table import_items add column extra_storage_paths text not null default '[]'`,
   `create index if not exists import_items_batch_idx on import_items(batch_id, page_index)`,
   `create index if not exists import_items_status_idx on import_items(owner_id, status)`,
   `create table if not exists import_item_attempts (

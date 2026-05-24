@@ -134,8 +134,9 @@ export async function uploadBatch(
           assigned_collection_id, assigned_page_number, is_toc, status,
           claim_expires_at, attempts, last_error, parsed_drafts_json,
           model_used, prompt_tokens, completion_tokens, cost_usd_micros,
-          created_recipe_ids, needs_fallback, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+          created_recipe_ids, needs_fallback, extra_storage_paths,
+          updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
       [
         it.id,
         batchId,
@@ -159,6 +160,7 @@ export async function uploadBatch(
         0,
         '[]',
         0,
+        '[]',
         now,
       ],
     );

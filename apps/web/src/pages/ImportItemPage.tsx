@@ -488,6 +488,19 @@ export function ImportItemPage() {
             <span className="ml-auto text-stone-500">Ctrl/⌘+scroll to zoom · drag to pan · f for fullscreen · ← / → to navigate</span>
           </div>
 
+          {item.extraStoragePaths.length > 0 && (
+            <MergedPagesStrip
+              primaryPath={item.storagePath}
+              extras={item.extraStoragePaths}
+              activeUrl={imgUrl}
+              onPick={(p) => {
+                void getSignedImportUrl(p).then((u) => setImgUrl(u));
+                setZoom(1);
+                setPan({ x: 0, y: 0 });
+              }}
+            />
+          )}
+
           <details className="rounded-md border border-stone-200 bg-white">
             <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
               Attempt history ({attempts.length})
@@ -970,6 +983,52 @@ function quantityAmountText(q: Quantity): string {
     case 'RANGE':
       return `${q.min}-${q.max}`;
   }
+}
+
+function MergedPagesStrip({
+  primaryPath,
+  extras,
+  activeUrl,
+  onPick,
+}: {
+  primaryPath: string;
+  extras: readonly string[];
+  activeUrl: string | undefined;
+  onPick: (path: string) => void;
+}) {
+  const all = [primaryPath, ...extras];
+  return (
+    <div className="rounded-md border border-stone-200 bg-white p-2">
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="font-medium text-stone-700">
+          Merged scans ({all.length})
+        </span>
+        <span className="text-stone-500">
+          All sent to the LLM together. Click a thumb to inspect.
+        </span>
+      </div>
+      <div className="flex gap-2 overflow-x-auto">
+        {all.map((p, i) => (
+          <button
+            type="button"
+            key={p}
+            onClick={() => onPick(p)}
+            className={`relative shrink-0 overflow-hidden rounded border ${
+              activeUrl?.includes(p.split('/').pop() ?? '__none__')
+                ? 'border-stone-900 ring-2 ring-stone-900'
+                : 'border-stone-200 hover:border-stone-400'
+            }`}
+            title={i === 0 ? 'Primary' : `Merged page ${i}`}
+          >
+            <ImportThumb path={p} className="h-20 w-16 object-cover" />
+            <span className="absolute bottom-0 left-0 rounded-tr bg-stone-900/80 px-1 text-[10px] text-white">
+              {i === 0 ? 'primary' : `+${i}`}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function ToastBanner({ message }: { message: string }) {

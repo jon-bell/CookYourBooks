@@ -48,6 +48,7 @@ interface ImportItemSqlRow {
   completion_tokens: number;
   cost_usd_micros: number;
   created_recipe_ids: string;
+  extra_storage_paths: string;
   updated_at: number;
   deleted: number;
 }
@@ -133,6 +134,17 @@ function rowToItem(row: ImportItemSqlRow): ImportItem {
       createdRecipeIds = [];
     }
   }
+  let extraStoragePaths: string[] = [];
+  if (row.extra_storage_paths) {
+    try {
+      const parsed: unknown = JSON.parse(row.extra_storage_paths);
+      if (Array.isArray(parsed)) {
+        extraStoragePaths = parsed.filter((v): v is string => typeof v === 'string');
+      }
+    } catch {
+      extraStoragePaths = [];
+    }
+  }
   return {
     id: row.id,
     batchId: row.batch_id,
@@ -155,6 +167,7 @@ function rowToItem(row: ImportItemSqlRow): ImportItem {
     completionTokens: row.completion_tokens,
     costUsdMicros: row.cost_usd_micros,
     createdRecipeIds,
+    extraStoragePaths,
     updatedAt: row.updated_at,
   };
 }
@@ -357,8 +370,9 @@ export class LocalImportItemRepository {
          assigned_collection_id, assigned_page_number, is_toc, status,
          claim_expires_at, attempts, last_error, parsed_drafts_json,
          model_used, prompt_tokens, completion_tokens, cost_usd_micros,
-         created_recipe_ids, needs_fallback, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+         created_recipe_ids, needs_fallback, extra_storage_paths,
+         updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
       [
         item.id,
         item.batchId,
@@ -382,6 +396,7 @@ export class LocalImportItemRepository {
         item.costUsdMicros,
         JSON.stringify(item.createdRecipeIds),
         0,
+        JSON.stringify(item.extraStoragePaths ?? []),
         item.updatedAt,
       ],
     );

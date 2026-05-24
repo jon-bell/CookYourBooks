@@ -118,6 +118,7 @@ interface ImportItemRow {
   cost_usd_micros: number;
   created_recipe_ids: string[];
   needs_fallback: boolean;
+  extra_storage_paths: string[];
   created_at: string;
   updated_at: string;
 }
@@ -425,6 +426,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
     ? null
     : JSON.stringify(row.parsed_drafts_json);
   const createdIdsText = JSON.stringify(row.created_recipe_ids ?? []);
+  const extrasText = JSON.stringify(row.extra_storage_paths ?? []);
   await db.exec(
     `insert into import_items
        (id, batch_id, owner_id, page_index, storage_path, thumb_path,
@@ -432,8 +434,9 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
         assigned_collection_id, assigned_page_number, is_toc, status,
         claim_expires_at, attempts, last_error, parsed_drafts_json,
         model_used, prompt_tokens, completion_tokens, cost_usd_micros,
-        created_recipe_ids, needs_fallback, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+        created_recipe_ids, needs_fallback, extra_storage_paths,
+        updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        batch_id=excluded.batch_id,
        owner_id=excluded.owner_id,
@@ -456,6 +459,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
        cost_usd_micros=excluded.cost_usd_micros,
        created_recipe_ids=excluded.created_recipe_ids,
        needs_fallback=excluded.needs_fallback,
+       extra_storage_paths=excluded.extra_storage_paths,
        updated_at=excluded.updated_at,
        deleted=0
      where excluded.updated_at >= import_items.updated_at`,
@@ -482,6 +486,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
       row.cost_usd_micros,
       createdIdsText,
       row.needs_fallback ? 1 : 0,
+      extrasText,
       ts,
     ],
   );

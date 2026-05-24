@@ -310,6 +310,7 @@ export type Database = {
           cost_usd_micros: number
           created_at: string
           created_recipe_ids: string[]
+          extra_storage_paths: string[]
           id: string
           is_toc: boolean
           last_error: string | null
@@ -337,6 +338,7 @@ export type Database = {
           cost_usd_micros?: number
           created_at?: string
           created_recipe_ids?: string[]
+          extra_storage_paths?: string[]
           id?: string
           is_toc?: boolean
           last_error?: string | null
@@ -364,6 +366,7 @@ export type Database = {
           cost_usd_micros?: number
           created_at?: string
           created_recipe_ids?: string[]
+          extra_storage_paths?: string[]
           id?: string
           is_toc?: boolean
           last_error?: string | null
@@ -1129,6 +1132,7 @@ export type Database = {
           cost_usd_micros: number
           created_at: string
           created_recipe_ids: string[]
+          extra_storage_paths: string[]
           id: string
           is_toc: boolean
           last_error: string | null
@@ -1171,6 +1175,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      import_merge_items: {
+        Args: { p_absorb_ids: string[]; p_primary_id: string }
+        Returns: undefined
+      }
       import_set_recitation_policy: {
         Args: { p_batch_id: string; p_policy: string }
         Returns: undefined
@@ -1210,6 +1218,13 @@ export type Database = {
         Returns: undefined
       }
       ocr_kick: { Args: { p_batch_id?: string }; Returns: undefined }
+      ocr_resolve_key: {
+        Args: { p_owner_id: string; p_provider: string }
+        Returns: {
+          api_key: string
+          base_url: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
