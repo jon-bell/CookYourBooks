@@ -10,12 +10,18 @@ import {
   type Ingredient,
   type Instruction,
   type ParsedRecipeDraft,
+  type Quantity,
   type RecipeCollection,
 } from '@cookyourbooks/domain';
-import { useCollections, useSaveCollection, useSaveRecipe } from '../data/queries.js';
+import {
+  useCollectionPickerOptions,
+  useSaveCollection,
+  useSaveRecipe,
+} from '../data/queries.js';
 import {
   useImportBatch,
   useImportItem,
+  useImportItems,
   useImportItemAttempts,
   useImportTocEntries,
   useUpdateImportItem,
@@ -29,9 +35,10 @@ export function ImportItemPage() {
   const { batchId, itemId } = useParams();
   const { data: batch, isLoading: batchLoading } = useImportBatch(batchId);
   const { data: item, isLoading: itemLoading } = useImportItem(itemId);
+  const { data: batchItems = [] } = useImportItems(batchId);
   const { data: attempts = [] } = useImportItemAttempts(itemId);
   const { data: tocEntries = [] } = useImportTocEntries(batchId);
-  const { data: collections = [], isLoading: collectionsLoading } = useCollections();
+  const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
   const saveCollection = useSaveCollection();
   const updateItem = useUpdateImportItem();
   const { syncNow, status: syncStatus, isLocalReady } = useSync();
@@ -215,9 +222,22 @@ export function ImportItemPage() {
         },
       });
       await syncNow();
-      // Drop the user into the recipe editor for the freshly-saved
-      // recipe so they can refine fields the OCR draft didn't carry.
-      navigate(`/collections/${targetCollectionId}/recipes/${recipe.id}/edit`);
+      // Stay in the import workflow. If there are more drafts on this
+      // image, advance to the next one. If this was the last draft on
+      // this item, hop to the next reviewable item in the batch so the
+      // user can keep moving through their stack. Fall back to the
+      // batch board if nothing else needs attention.
+      if (remaining > 0) {
+        setActiveDraft(0);
+        setDraftPatches({});
+        return;
+      }
+      const nextItem = findNextReviewable(batchItems, item.id);
+      if (nextItem) {
+        navigate(`/import/${batch.id}/items/${nextItem.id}`);
+      } else {
+        navigate(`/import/${batch.id}`);
+      }
     } catch (e) {
       setActionError(`Save failed: ${(e as Error).message}`);
     }
@@ -236,10 +256,16 @@ export function ImportItemPage() {
         },
       });
       await syncNow();
-      if (nextDrafts.length === 0) navigate(`/import/${batch.id}`);
-      else {
+      if (nextDrafts.length > 0) {
         setActiveDraft(0);
         setDraftPatches({});
+        return;
+      }
+      const nextItem = findNextReviewable(batchItems, item.id);
+      if (nextItem) {
+        navigate(`/import/${batch.id}/items/${nextItem.id}`);
+      } else {
+        navigate(`/import/${batch.id}`);
       }
     } catch (e) {
       setActionError(`Discard failed: ${(e as Error).message}`);
@@ -452,17 +478,17 @@ export function ImportItemPage() {
                         className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
                       >
                         <option value="">(unassigned)</option>
-                        {collections.map((c) => (
+                        {pickerOptions.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.title}
                           </option>
                         ))}
                         <option value="__new__">+ Create new cookbook…</option>
                       </select>
-                      {collectionsLoading && (
+                      {pickerLoading && (
                         <p className="mt-1 text-xs text-stone-500">Loading cookbooks…</p>
                       )}
-                      {!collectionsLoading && collections.length === 0 && (
+                      {!pickerLoading && pickerOptions.length === 0 && (
                         <p className="mt-1 text-xs text-stone-500">
                           No cookbooks yet — create one to save this recipe.
                         </p>
@@ -583,6 +609,43 @@ export function ImportItemPage() {
   );
 }
 
+function quantityText(q: Quantity | undefined): string {
+  if (!q) return '';
+  switch (q.type) {
+    case 'EXACT':
+      return `${q.amount}${q.unit ? ' ' + q.unit : ''}`;
+    case 'FRACTIONAL': {
+      const w = q.whole ? `${q.whole} ` : '';
+      return `${w}${q.numerator}/${q.denominator}${q.unit ? ' ' + q.unit : ''}`;
+    }
+    case 'RANGE':
+      return `${q.min}–${q.max}${q.unit ? ' ' + q.unit : ''}`;
+  }
+}
+
+/**
+ * Walk the batch in page order and find the next item that still has
+ * something to do (OCR_DONE with drafts, NEEDS_FALLBACK, or anything
+ * non-terminal). Skip the current item. Used to chain the import
+ * workflow so the user can keep moving without bouncing back to the
+ * batch board after each save.
+ */
+function findNextReviewable(
+  items: Array<{ id: string; status: string; pageIndex: number }>,
+  currentId: string,
+): { id: string } | undefined {
+  const sorted = [...items].sort((a, b) => a.pageIndex - b.pageIndex);
+  const idx = sorted.findIndex((i) => i.id === currentId);
+  const ring = idx >= 0 ? [...sorted.slice(idx + 1), ...sorted.slice(0, idx)] : sorted;
+  return ring.find(
+    (i) =>
+      i.status === 'OCR_DONE' ||
+      i.status === 'NEEDS_FALLBACK' ||
+      i.status === 'PENDING' ||
+      i.status === 'CLAIMED',
+  );
+}
+
 /**
  * Clone a draft's ingredients + instructions with fresh ids and remap
  * step→ingredient refs through the id map. Without this, promoting a
@@ -639,6 +702,51 @@ function DraftEditor({
   draft: ParsedRecipeDraft;
   onPatch: (p: Partial<ParsedRecipeDraft>) => void;
 }) {
+  function updateIngredient(idx: number, name: string) {
+    const next = draft.ingredients.map((ing, i) => {
+      if (i !== idx) return ing;
+      if (isMeasured(ing)) {
+        return measured({ id: ing.id, name, preparation: ing.preparation, notes: ing.notes, quantity: ing.quantity });
+      }
+      return vague({ id: ing.id, name, preparation: ing.preparation, notes: ing.notes, description: ing.description });
+    });
+    onPatch({ ingredients: next });
+  }
+  function removeIngredient(idx: number) {
+    onPatch({ ingredients: draft.ingredients.filter((_, i) => i !== idx) });
+  }
+  function addIngredient() {
+    onPatch({ ingredients: [...draft.ingredients, vague({ name: '' })] });
+  }
+  function updateInstruction(idx: number, text: string) {
+    const next = draft.instructions.map((s, i) =>
+      i === idx
+        ? instruction({
+            id: s.id,
+            stepNumber: s.stepNumber,
+            text,
+            ingredientRefs: [...s.ingredientRefs],
+            temperature: s.temperature,
+            subInstructions: s.subInstructions,
+            notes: s.notes,
+          })
+        : s,
+    );
+    onPatch({ instructions: next });
+  }
+  function removeInstruction(idx: number) {
+    onPatch({ instructions: draft.instructions.filter((_, i) => i !== idx) });
+  }
+  function addInstruction() {
+    const stepNumber = draft.instructions.length + 1;
+    onPatch({
+      instructions: [
+        ...draft.instructions,
+        instruction({ stepNumber, text: '', ingredientRefs: [] }),
+      ],
+    });
+  }
+
   return (
     <div className="space-y-3 rounded-md border border-stone-200 bg-white p-3">
       <Field label="Title">
@@ -664,15 +772,78 @@ function DraftEditor({
           />
         </Field>
       </div>
+
       <div>
         <div className="mb-1 text-sm font-medium text-stone-700">
-          {draft.ingredients.length} ingredients · {draft.instructions.length} steps
+          Ingredients ({draft.ingredients.length})
         </div>
-        <p className="text-xs text-stone-500">
-          Full ingredient/step editing happens after promoting to a recipe. Save to open
-          the recipe editor with these drafts pre-filled.
-        </p>
+        <ul className="space-y-1.5">
+          {draft.ingredients.map((ing, i) => (
+            <li key={ing.id} className="flex items-center gap-1.5">
+              <span className="w-24 shrink-0 truncate text-right text-xs text-stone-500">
+                {isMeasured(ing) ? quantityText(ing.quantity) : '—'}
+              </span>
+              <input
+                value={ing.name}
+                onChange={(e) => updateIngredient(i, e.target.value)}
+                className="flex-1 rounded border border-stone-300 px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => removeIngredient(i)}
+                aria-label="Remove ingredient"
+                className="rounded px-1.5 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-900"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          onClick={addIngredient}
+          className="mt-1 text-xs text-stone-600 hover:text-stone-900"
+        >
+          + Add ingredient
+        </button>
       </div>
+
+      <div>
+        <div className="mb-1 text-sm font-medium text-stone-700">
+          Instructions ({draft.instructions.length})
+        </div>
+        <ol className="space-y-1.5">
+          {draft.instructions.map((step, i) => (
+            <li key={step.id} className="flex gap-1.5">
+              <span className="w-6 shrink-0 pt-1.5 text-right text-xs text-stone-500">
+                {i + 1}.
+              </span>
+              <textarea
+                value={step.text}
+                onChange={(e) => updateInstruction(i, e.target.value)}
+                rows={Math.max(2, Math.ceil(step.text.length / 60))}
+                className="flex-1 rounded border border-stone-300 px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => removeInstruction(i)}
+                aria-label="Remove step"
+                className="self-start rounded px-1.5 pt-1 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-900"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ol>
+        <button
+          type="button"
+          onClick={addInstruction}
+          className="mt-1 text-xs text-stone-600 hover:text-stone-900"
+        >
+          + Add step
+        </button>
+      </div>
+
       {draft.description && (
         <details className="text-xs">
           <summary className="cursor-pointer text-stone-600">Description</summary>
