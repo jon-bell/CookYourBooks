@@ -83,9 +83,30 @@ const supabase: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE, {
 
 // ---------- HTTP entry ----------
 
+// The function runs with `verify_jwt = false` so pg_net (which signs
+// with the project's service-role JWT and is rejected by the gateway
+// when the project enforces legacy-secret JWTs) can reach us. We do
+// our own bearer check here: every caller must present the same
+// service-role key the function itself holds. Anonymous traffic, anon
+// keys, and stale tokens all get a 401 from us.
+function authorized(req: Request): boolean {
+  const header = req.headers.get('authorization') ?? '';
+  const expected = `Bearer ${SERVICE_ROLE}`;
+  if (header.length !== expected.length) return false;
+  // Constant-time compare to keep this honest.
+  let diff = 0;
+  for (let i = 0; i < header.length; i += 1) {
+    diff |= header.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return json({ error: 'POST only' }, 405);
+  }
+  if (!authorized(req)) {
+    return json({ error: 'unauthorized' }, 401);
   }
   let body: { batch_id?: string | null } = {};
   try {
@@ -558,32 +579,19 @@ async function loadBatch(batchId: string): Promise<ImportBatch | null> {
 }
 
 async function loadUserKey(ownerId: string, provider: Provider): Promise<UserKey | null> {
-  // user_ocr_keys has the vault_secret_id; vault.decrypted_secrets has
-  // the raw key. Service role can read both directly.
-  const { data: keyRow, error: keyErr } = await supabase
-    .schema('public')
-    .from('user_ocr_keys')
-    .select('vault_secret_id, base_url')
-    .eq('owner_id', ownerId)
-    .eq('provider', provider)
-    .maybeSingle();
-  if (keyErr || !keyRow) {
-    if (keyErr) console.error('user_ocr_keys read', keyErr);
+  // The vault schema isn't exposed through PostgREST, so we tunnel the
+  // decrypt through a security-definer RPC that lives in `public`.
+  const { data, error } = await supabase.rpc('ocr_resolve_key', {
+    p_owner_id: ownerId,
+    p_provider: provider,
+  });
+  if (error) {
+    console.error('ocr_resolve_key', error);
     return null;
   }
-  const row = keyRow as { vault_secret_id: string; base_url: string | null };
-  const { data: secret, error: secretErr } = await supabase
-    .schema('vault' as never)
-    .from('decrypted_secrets')
-    .select('decrypted_secret')
-    .eq('id', row.vault_secret_id)
-    .maybeSingle();
-  if (secretErr || !secret) {
-    console.error('decrypt secret', secretErr);
-    return null;
-  }
-  const decrypted = (secret as { decrypted_secret: string }).decrypted_secret;
-  return { apiKey: decrypted, baseUrl: row.base_url };
+  const row = (data as Array<{ api_key: string; base_url: string | null }> | null)?.[0];
+  if (!row) return null;
+  return { apiKey: row.api_key, baseUrl: row.base_url };
 }
 
 async function fetchImage(
