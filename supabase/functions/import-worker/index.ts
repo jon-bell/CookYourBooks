@@ -62,13 +62,25 @@ interface PricingCard {
 }
 const PRICING = pricingCard as PricingCard;
 
-const LOOP_BUDGET_MS = 60_000;
-const CLAIM_BATCH = 8;
-const PARALLEL = 3;
-const LEASE_SECONDS = 300;
+// Per-invocation wall clock. Has to be larger than the longest per-
+// item OCR call (see ocrTimeoutForImages in ocr.ts) so an in-flight
+// merged-pages call gets a chance to finish before the loop exits.
+// Sub the platform ceiling (150s free / 400s pro on hosted Supabase)
+// so we never hit a hard kill from the runtime.
+const LOOP_BUDGET_MS = parseIntEnvOr('OCR_LOOP_BUDGET_MS', 300_000);
+const CLAIM_BATCH = parseIntEnvOr('OCR_CLAIM_BATCH', 8);
+const PARALLEL = parseIntEnvOr('OCR_PARALLEL', 3);
+const LEASE_SECONDS = parseIntEnvOr('OCR_LEASE_SECONDS', 600);
 const MAX_TRANSIENT_RETRIES = 3;
 const MAX_PARSE_RETRIES = 2;
 const MAX_NETWORK_FETCH_RETRIES = 2;
+
+function parseIntEnvOr(name: string, fallback: number): number {
+  const raw = Deno.env.get(name);
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 const SUPABASE_URL = mustEnv('SUPABASE_URL');
 const SERVICE_ROLE = mustEnv('SUPABASE_SERVICE_ROLE_KEY');
@@ -129,6 +141,10 @@ logLine('info', 'boot', {}, {
   mock_mode: MOCK_MODE,
   supabase_url: SUPABASE_URL,
   service_role_present: SERVICE_ROLE.length > 0,
+  loop_budget_ms: LOOP_BUDGET_MS,
+  claim_batch: CLAIM_BATCH,
+  parallel: PARALLEL,
+  lease_seconds: LEASE_SECONDS,
 });
 
 const supabase: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE, {

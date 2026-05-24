@@ -43,13 +43,40 @@ export interface OcrCallParams {
   log?: (message: string, extra?: Record<string, unknown>) => void;
 }
 
-const DEFAULT_TIMEOUT_MS = 90_000;
+// Per-call LLM timeout, in ms. Scales with image count so a merged
+// multi-page item gets enough headroom: Gemini's response time grows
+// roughly linearly with input bytes, and a 3-page recipe extraction
+// can easily exceed 90s on the default model.
+//
+// Tunable via env so users on Supabase Pro+ (400s function ceiling)
+// can raise the budgets without a redeploy of this file:
+//   OCR_TIMEOUT_BASE_MS   — first-image budget. Default 90s.
+//   OCR_TIMEOUT_PER_IMG_MS — extra per additional image. Default 45s.
+//   OCR_TIMEOUT_CAP_MS    — absolute cap. Default 270s (sub-platform
+//                            ceiling for hosted Edge Functions).
+const TIMEOUT_BASE_MS = parseIntEnv('OCR_TIMEOUT_BASE_MS', 90_000);
+const TIMEOUT_PER_IMG_MS = parseIntEnv('OCR_TIMEOUT_PER_IMG_MS', 45_000);
+const TIMEOUT_CAP_MS = parseIntEnv('OCR_TIMEOUT_CAP_MS', 270_000);
+
+function parseIntEnv(name: string, fallback: number): number {
+  const raw = (globalThis as { Deno?: { env: { get(name: string): string | undefined } } }).Deno?.env?.get(name);
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function ocrTimeoutForImages(count: number): number {
+  const extras = Math.max(0, count - 1);
+  return Math.min(TIMEOUT_CAP_MS, TIMEOUT_BASE_MS + extras * TIMEOUT_PER_IMG_MS);
+}
 
 export async function runOcr(p: OcrCallParams): Promise<OcrCallResult> {
   const started = Date.now();
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+  const budget = ocrTimeoutForImages(p.images.length);
+  const timer = setTimeout(() => ctrl.abort(), budget);
   const signal = p.signal ?? ctrl.signal;
+  p.log?.('ocr call begin', { provider: p.provider, model: p.model, images: p.images.length, budget_ms: budget });
   try {
     if (p.provider === 'gemini') return await callGemini(p, signal, started);
     return await callOpenAI(p, signal, started);
@@ -57,12 +84,17 @@ export async function runOcr(p: OcrCallParams): Promise<OcrCallResult> {
     const elapsed = Date.now() - started;
     const message = err instanceof Error ? err.message : String(err);
     const aborted = err instanceof Error && (err.name === 'AbortError' || /abort/i.test(message));
+    if (aborted) {
+      p.log?.('ocr call aborted (timeout)', { budget_ms: budget, elapsed_ms: elapsed, images: p.images.length });
+    }
     return {
       errorKind: aborted ? 'TIMEOUT' : 'NETWORK',
       rawResponse: message,
       promptTokens: 0,
       completionTokens: 0,
-      errorMessage: message,
+      errorMessage: aborted
+        ? `OCR timed out after ${elapsed}ms (budget ${budget}ms for ${p.images.length} image(s)).`
+        : message,
       latencyMs: elapsed,
     };
   } finally {
