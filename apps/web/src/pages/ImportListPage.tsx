@@ -163,13 +163,19 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
       placeholder: '[screenshot: split editor]',
     },
     {
-      title: '4. Save and move on',
+      title: '4. Merge stitched-wrong pages',
+      body:
+        'When a recipe spans a page break, the worker can parse each page in isolation and split it into two items. On the batch board, tick the checkboxes for the related pages and click "Merge into one item" — the worker re-runs OCR with all images attached at once and the result lands on the earliest page. Absorbed pages move to Discarded automatically.',
+      placeholder: '[screenshot: bulk select + merge]',
+    },
+    {
+      title: '5. Save and move on',
       body:
         'Save commits the recipe to the target cookbook (matching ToC titles get updated in place) and jumps you to the next reviewable page. Discard, Re-OCR, and Restore original are always one click away.',
       placeholder: '[screenshot: save toast + jump]',
     },
     {
-      title: '5. Keyboard',
+      title: '6. Keyboard',
       body:
         '← / k previous · → / j next · f fullscreen · esc to close · ? for this list. Edits inside fields keep their usual keys.',
       placeholder: '[screenshot: kbd cheatsheet]',

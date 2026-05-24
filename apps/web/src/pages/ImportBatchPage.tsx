@@ -462,10 +462,10 @@ export function ImportBatchPage() {
                   alert(`Merge failed: ${(e as Error).message}`);
                 }
               }}
-              className="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs hover:bg-stone-100"
-              title="Combine selected scans into one item and re-OCR with all images at once"
+              className="rounded-md border border-emerald-400 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-900 hover:bg-emerald-100"
+              title="Combine selected scans into one item and re-OCR with all images at once. Useful when a recipe spans a page break and the worker split it into two items."
             >
-              Merge into one item
+              Merge {selected.size} pages into one item
             </button>
           )}
           <button
@@ -478,6 +478,15 @@ export function ImportBatchPage() {
         </div>
       )}
 
+      {selected.size === 0 && filtered.length > 1 && (
+        <p className="text-xs text-stone-500">
+          Tip: tick the checkboxes on two or more pages to merge them
+          into a single item (re-OCR's them together — useful when a
+          recipe spans a page break), reassign cookbook, or discard in
+          bulk.
+        </p>
+      )}
+
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {filtered.map((item) => {
           const draftTitle = item.parsedDrafts[0]?.title;
@@ -487,7 +496,27 @@ export function ImportBatchPage() {
             : null;
           const queueLabel = queueInfo ? compactOcrQueueLabel(queueInfo) : null;
           return (
-            <li key={item.id}>
+            <li key={item.id} className="relative">
+              <label
+                className="absolute left-1.5 top-1.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-stone-300 bg-white/95 shadow-sm hover:border-stone-500"
+                title="Select for bulk action"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => {
+                    setSelected((cur) => {
+                      const next = new Set(cur);
+                      if (next.has(item.id)) next.delete(item.id);
+                      else next.add(item.id);
+                      return next;
+                    });
+                  }}
+                  className="h-3.5 w-3.5 cursor-pointer"
+                  aria-label={`Select page ${item.pageIndex + 1}`}
+                />
+              </label>
               <Link
                 to={`/import/${batch.id}/items/${item.id}`}
                 onClick={(e) => toggleSelect(item.id, e)}
