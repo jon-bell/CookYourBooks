@@ -549,33 +549,28 @@ export class LocalRecipeRepository implements RecipeRepository {
   }
 
   async save(recipe: Recipe): Promise<void> {
-    // Pick a sort_order that puts the recipe somewhere discoverable:
-    // - On update (the recipe id already exists), preserve whatever
-    //   sort_order the placeholder ToC entry had. The matched-existing
-    //   save flow relies on this — folding the OCR result into a
-    //   placeholder must keep the placeholder's book-order position.
-    // - On insert (fresh recipe), append to the end of the collection
-    //   (max + 1). The old behavior hard-coded 0, so every imported
-    //   recipe piled onto the same slot and got shuffled by UUID,
-    //   making freshly-saved recipes invisible in cookbooks that
-    //   already had any sort_order=0 entries.
+    // sort_order pick:
+    // - If this id already exists in any collection, preserve its
+    //   current sort_order (the matched-existing fold-into-placeholder
+    //   flow must keep the placeholder's book-order position).
+    // - Otherwise append to the end of the target collection
+    //   (max(sort_order) + 1). Hard-coding 0 piled every imported
+    //   recipe into the same slot and made freshly-saved recipes hide
+    //   among the heap.
+    //
+    // Folded into one statement so the read and the decision happen in
+    // a single SQLite scheduling tick — no chance for a concurrent
+    // save in a sibling tab to land between the read and the write
+    // and skew the chosen value.
     const db = await getLocalDb();
-    const existingHere = (await db.execO<{ sort_order: number }>(
-      `select sort_order from recipes where id = ? and deleted = 0`,
-      [recipe.id],
-    )) as Array<{ sort_order: number }>;
-    let sortOrder: number;
-    if (existingHere[0]) {
-      sortOrder = existingHere[0].sort_order;
-    } else {
-      const tail = (await db.execO<{ max_so: number | null }>(
-        `select max(sort_order) as max_so
-           from recipes
-          where collection_id = ? and deleted = 0`,
-        [this.collectionId],
-      )) as Array<{ max_so: number | null }>;
-      sortOrder = (tail[0]?.max_so ?? -1) + 1;
-    }
+    const rows = (await db.execO<{ sort_order: number | null }>(
+      `select coalesce(
+         (select sort_order from recipes where id = ? and deleted = 0),
+         (select coalesce(max(sort_order), -1) + 1 from recipes where collection_id = ? and deleted = 0)
+       ) as sort_order`,
+      [recipe.id, this.collectionId],
+    )) as Array<{ sort_order: number | null }>;
+    const sortOrder = rows[0]?.sort_order ?? 0;
     await saveLocalRecipe(this.collectionId, recipe, sortOrder);
     await enqueue({
       kind: 'recipe_save',
