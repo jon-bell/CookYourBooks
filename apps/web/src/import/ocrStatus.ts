@@ -7,9 +7,16 @@ export function isOcrInProgress(status: ImportItemStatus): boolean {
   return status === 'PENDING' || status === 'CLAIMED';
 }
 
-/** Re-OCR is only allowed once the worker has finished or given up. */
+/**
+ * Re-OCR (now: server-side reset) is allowed from any non-DISCARDED
+ * state. Previously this gated PENDING + CLAIMED out, but those are
+ * exactly the states a stuck item lives in — the user needs a way to
+ * force-reset when the worker is sick or a CLAIMED lease hasn't
+ * expired yet. The new `import_reset_item` RPC handles the reset
+ * server-side in one statement.
+ */
 export function canReOcr(status: ImportItemStatus): boolean {
-  return !isOcrInProgress(status) && status !== 'DISCARDED';
+  return status !== 'DISCARDED';
 }
 
 export interface OcrQueueInfo {

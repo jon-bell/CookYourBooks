@@ -1179,6 +1179,7 @@ export type Database = {
         Args: { p_absorb_ids: string[]; p_primary_id: string }
         Returns: undefined
       }
+      import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
       import_set_recitation_policy: {
         Args: { p_batch_id: string; p_policy: string }
         Returns: undefined

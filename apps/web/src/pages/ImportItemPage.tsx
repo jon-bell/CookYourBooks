@@ -31,7 +31,7 @@ import {
   useImportTocEntries,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr } from '../import/api.js';
+import { kickOcr, resetImportItem } from '../import/api.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
 import { canReOcr } from '../import/ocrStatus.js';
@@ -401,15 +401,25 @@ export function ImportItemPage() {
   }
 
   async function reOcrWithFallback() {
-    if (!item) return;
-    await updateItem.mutateAsync({
-      id: item.id,
-      patch: { parsedDrafts: [], status: 'PENDING' },
-    });
+    if (!item || !batch) return;
+    setActionError(undefined);
     try {
-      await kickOcr(batch!.id);
-    } catch {
-      // pg_cron will retry.
+      // Server-side reset: clears status / claim / attempts / drafts
+      // in one statement. Local UI updates through the realtime
+      // subscription. Doing it via the client outbox doesn't work
+      // because the push handler refuses any status that isn't
+      // REVIEWED or DISCARDED (server-owned), so an in-place flip
+      // here never reached the worker.
+      await resetImportItem(item.id);
+      await syncNow();
+      try {
+        await kickOcr(batch.id);
+      } catch {
+        // pg_cron / next user kick will retry.
+      }
+      showToast(setToast, 'Reset for re-OCR — worker will pick it up shortly');
+    } catch (e) {
+      setActionError(`Re-OCR failed: ${(e as Error).message}`);
     }
   }
 

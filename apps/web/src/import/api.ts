@@ -32,6 +32,11 @@ export async function deleteOcrKey(provider: OcrProvider): Promise<void> {
   if (error) throw error;
 }
 
+export async function resetImportItem(itemId: string): Promise<void> {
+  const { error } = await supabase.rpc('import_reset_item', { p_item_id: itemId });
+  if (error) throw error;
+}
+
 export async function mergeImportItems(
   primaryId: string,
   absorbIds: readonly string[],
