@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useCollections } from '../data/queries.js';
 import { useImportBatches, useOcrKeys } from '../import/queries.js';
@@ -53,6 +53,16 @@ export function ImportListPage() {
   );
 
   const hasOcrKey = ocrKeys.length > 0;
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.localStorage.getItem('cookyourbooks.import.onboarded.v1')) return;
+    setShowOnboarding(true);
+  }, []);
+  function dismissOnboarding() {
+    window.localStorage.setItem('cookyourbooks.import.onboarded.v1', '1');
+    setShowOnboarding(false);
+  }
 
   if (isLoading) {
     return <p className="text-stone-500">Loading…</p>;
@@ -60,8 +70,19 @@ export function ImportListPage() {
 
   return (
     <div className="space-y-6">
+      {showOnboarding && <OnboardingModal onDismiss={dismissOnboarding} />}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Import OCR</h1>
+        <button
+          type="button"
+          onClick={() => {
+            window.localStorage.removeItem('cookyourbooks.import.onboarded.v1');
+            setShowOnboarding(true);
+          }}
+          className="ml-auto mr-2 text-xs text-stone-500 underline hover:text-stone-900"
+        >
+          How it works
+        </button>
         <Link
           to="/import/new"
           className="inline-flex items-center rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800"
@@ -117,6 +138,85 @@ export function ImportListPage() {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
+  const steps: Array<{ title: string; body: string; placeholder: string }> = [
+    {
+      title: '1. Upload pages',
+      body:
+        'Drag in a stack of cookbook photos, or upload a PDF. We split PDFs page-by-page automatically. 100+ pages at a time is fine — uploads stream.',
+      placeholder: '[screenshot: drag-drop wizard]',
+    },
+    {
+      title: '2. Worker OCRs in the background',
+      body:
+        'Pages move from Pending → Processing → Needs review as Gemini reads them. Close the tab and come back later — work continues server-side.',
+      placeholder: '[screenshot: batch board with progress + cost]',
+    },
+    {
+      title: '3. Review with scan on the left',
+      body:
+        'Each page opens with the source image alongside the parsed recipe. Click any field — title, ingredient, step — to edit in place. Quantity has a structured editor with the real unit list.',
+      placeholder: '[screenshot: split editor]',
+    },
+    {
+      title: '4. Save and move on',
+      body:
+        'Save commits the recipe to the target cookbook (matching ToC titles get updated in place) and jumps you to the next reviewable page. Discard, Re-OCR, and Restore original are always one click away.',
+      placeholder: '[screenshot: save toast + jump]',
+    },
+    {
+      title: '5. Keyboard',
+      body:
+        '← / k previous · → / j next · f fullscreen · esc to close · ? for this list. Edits inside fields keep their usual keys.',
+      placeholder: '[screenshot: kbd cheatsheet]',
+    },
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-stone-900/70 p-6">
+      <div className="my-12 w-full max-w-2xl rounded-lg bg-white p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold">How bulk import works</h2>
+            <p className="mt-1 text-sm text-stone-600">
+              Five steps. Most of the time you just upload, glance, and click Save.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Close"
+            className="rounded p-1 text-stone-500 hover:bg-stone-100"
+          >
+            ×
+          </button>
+        </div>
+        <ol className="mt-5 space-y-5">
+          {steps.map((step) => (
+            <li key={step.title} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+              <div>
+                <h3 className="text-sm font-semibold text-stone-900">{step.title}</h3>
+                <p className="mt-1 text-sm text-stone-700">{step.body}</p>
+              </div>
+              <div className="flex h-20 w-40 items-center justify-center rounded-md border border-dashed border-stone-300 bg-stone-50 text-[10px] text-stone-400">
+                {step.placeholder}
+              </div>
+            </li>
+          ))}
+        </ol>
+        <div className="mt-6 flex justify-end">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+          >
+            Got it — let's import
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

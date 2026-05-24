@@ -3,10 +3,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   createRecipe,
   createCookbook,
+  exact,
   formatQuantity,
   isMeasured,
   measured,
   parseIngredientLine,
+  Units,
   vague,
   instruction,
   type Ingredient,
@@ -16,6 +18,7 @@ import {
   type RecipeCollection,
 } from '@cookyourbooks/domain';
 import {
+  useCollection,
   useCollectionPickerOptions,
   useSaveCollection,
   useSaveRecipe,
@@ -33,7 +36,7 @@ import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
 import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
-import { suggestTocMatches } from '../import/tocMatch.js';
+import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -43,10 +46,18 @@ export function ImportItemPage() {
   const { data: attempts = [] } = useImportItemAttempts(itemId);
   const { data: tocEntries = [] } = useImportTocEntries(batchId);
   const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
+  // Eager target-cookbook fetch so the save flow can fuzzy-match the
+  // draft title against existing recipes (placeholder ToC entries)
+  // and update that recipe in place rather than always creating new.
+  const resolvedTargetId =
+    item?.assignedCollectionId ?? batch?.targetCollectionId ?? '';
+  const { data: targetCollection } = useCollection(resolvedTargetId);
   const saveCollection = useSaveCollection();
   const updateItem = useUpdateImportItem();
   const { syncNow, status: syncStatus, localReady, hydrated } = useSync();
   const navigate = useNavigate();
+  const [toast, setToast] = useState<string | undefined>();
+  const [fullscreen, setFullscreen] = useState(false);
 
   const [activeDraft, setActiveDraft] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -93,6 +104,75 @@ export function ImportItemPage() {
   const currentDraft: ParsedRecipeDraft | undefined =
     draftPatches[activeDraft] ?? drafts[activeDraft];
 
+  // Prev / next reviewable items in the batch, computed once per
+  // dependency change so the keyboard shortcuts + nav banner agree.
+  const prevItem = useMemo(
+    () => (item ? findReviewable(batchItems, item.id, 'prev') : undefined),
+    [batchItems, item],
+  );
+  const nextReviewable = useMemo(
+    () => (item ? findReviewable(batchItems, item.id, 'next') : undefined),
+    [batchItems, item],
+  );
+  const pageNumberInBatch = useMemo(() => {
+    if (!item) return undefined;
+    const sorted = [...batchItems].sort((a, b) => a.pageIndex - b.pageIndex);
+    const idx = sorted.findIndex((i) => i.id === item.id);
+    return idx >= 0
+      ? { current: idx + 1, total: sorted.length }
+      : undefined;
+  }, [batchItems, item]);
+
+  // Keyboard shortcuts. Skip while a text input or contenteditable is
+  // focused so the editor's own typing isn't hijacked.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) {
+          return;
+        }
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      switch (e.key) {
+        case 'ArrowRight':
+        case 'j':
+          if (batch && nextReviewable) {
+            e.preventDefault();
+            navigate(`/import/${batch.id}/items/${nextReviewable.id}`);
+          }
+          break;
+        case 'ArrowLeft':
+        case 'k':
+          if (batch && prevItem) {
+            e.preventDefault();
+            navigate(`/import/${batch.id}/items/${prevItem.id}`);
+          }
+          break;
+        case 'f':
+          e.preventDefault();
+          setFullscreen((cur) => !cur);
+          break;
+        case 'Escape':
+          if (fullscreen) {
+            e.preventDefault();
+            setFullscreen(false);
+          }
+          break;
+        case '?':
+          e.preventDefault();
+          showToast(
+            setToast,
+            'Shortcuts: ← / k prev · → / j next · f fullscreen · esc exit',
+          );
+          break;
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [batch, nextReviewable, prevItem, fullscreen, navigate]);
+
   const tocSuggestions = useMemo(
     () =>
       currentDraft?.title
@@ -100,6 +180,21 @@ export function ImportItemPage() {
         : [],
     [currentDraft?.title, tocEntries],
   );
+
+  // Look for an existing recipe in the target cookbook whose title
+  // matches the draft. Used to merge into placeholder ToC entries
+  // rather than create duplicates.
+  const matchedExisting = useMemo(() => {
+    if (!targetCollection || !currentDraft?.title) return undefined;
+    let best: { id: string; title: string; score: number } | undefined;
+    for (const r of targetCollection.recipes ?? []) {
+      const score = scoreTocMatch(currentDraft.title, r.title);
+      if (score >= 0.7 && (!best || score > best.score)) {
+        best = { id: r.id, title: r.title, score };
+      }
+    }
+    return best;
+  }, [targetCollection, currentDraft?.title]);
 
   function onWheel(e: React.WheelEvent) {
     if (!e.ctrlKey && !e.metaKey) return;
@@ -200,15 +295,33 @@ export function ImportItemPage() {
     // happening to share an id) never trips the global UNIQUE on
     // ingredients.id / instructions.id.
     const { ingredients, instructions } = withFreshIds(currentDraft);
+    // bookTitle: if the batch has a target cookbook, that wins —
+    // OCR-extracted bookTitle is just a hint and the user has
+    // explicitly chosen where this recipe belongs.
+    const bookTitle = targetCollection?.title ?? currentDraft.bookTitle;
+    const recipeId = matchedExisting?.id; // undefined -> mint new
+    const remainingAfter = drafts.length - 1; // local count of drafts still left on this item
+    const nextItem = remainingAfter === 0 ? findReviewable(batchItems, item.id, 'next') : undefined;
+    // Toast immediately so the user has feedback before the network
+    // round-trip finishes. The actual save still runs in the
+    // background; if it fails we surface that via actionError below.
+    if (remainingAfter > 0) {
+      showToast(setToast, 'Saving recipe…');
+    } else if (nextItem) {
+      showToast(setToast, 'Saving recipe and continuing to next…');
+    } else {
+      showToast(setToast, 'Saving recipe — batch complete!');
+    }
     const recipe = createRecipe({
-      title: currentDraft.title?.trim() || 'Untitled',
+      id: recipeId,
+      title: currentDraft.title?.trim() || matchedExisting?.title || 'Untitled',
       servings: currentDraft.servings,
       ingredients,
       instructions,
       description: currentDraft.description,
       timeEstimate: currentDraft.timeEstimate,
       equipment: currentDraft.equipment,
-      bookTitle: currentDraft.bookTitle,
+      bookTitle,
       pageNumbers,
       sourceImageText: currentDraft.sourceImageText,
     });
@@ -238,7 +351,6 @@ export function ImportItemPage() {
         setDraftPatches({});
         return;
       }
-      const nextItem = findNextReviewable(batchItems, item.id);
       if (nextItem) {
         navigate(`/import/${batch.id}/items/${nextItem.id}`);
       } else {
@@ -267,7 +379,7 @@ export function ImportItemPage() {
         setDraftPatches({});
         return;
       }
-      const nextItem = findNextReviewable(batchItems, item.id);
+      const nextItem = findReviewable(batchItems, item.id, 'next');
       if (nextItem) {
         navigate(`/import/${batch.id}/items/${nextItem.id}`);
       } else {
@@ -300,13 +412,18 @@ export function ImportItemPage() {
 
   return (
     <div className="space-y-4 pb-12">
-      <div className="flex items-center gap-2 text-sm text-stone-600">
-        <Link to={`/import/${batch.id}`} className="underline">
-          ← {batch.name}
-        </Link>
-        <span>·</span>
-        <span>Page {item.pageIndex + 1}</span>
-      </div>
+      {toast && <ToastBanner message={toast} />}
+      {fullscreen && imgUrl && (
+        <FullscreenImage src={imgUrl} alt={`Page ${item.pageIndex + 1}`} onClose={() => setFullscreen(false)} />
+      )}
+      <NavBanner
+        batchName={batch.name}
+        batchId={batch.id}
+        prevId={prevItem?.id}
+        nextId={nextReviewable?.id}
+        position={pageNumberInBatch}
+        currentPageIndex={item.pageIndex + 1}
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="space-y-3">
@@ -323,10 +440,10 @@ export function ImportItemPage() {
               <img
                 src={imgUrl}
                 alt={`Page ${item.pageIndex + 1}`}
-                className="absolute left-1/2 top-1/2 max-w-none select-none"
+                className="absolute inset-0 h-full w-full select-none object-contain"
                 draggable={false}
                 style={{
-                  transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                   transformOrigin: 'center',
                 }}
               />
@@ -358,9 +475,17 @@ export function ImportItemPage() {
               }}
               className="ml-2 rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
             >
-              Reset
+              Fit
             </button>
-            <span className="ml-auto text-stone-500">Ctrl/⌘+scroll to zoom · drag to pan</span>
+            <button
+              type="button"
+              onClick={() => setFullscreen(true)}
+              className="rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+              title="Fullscreen (f)"
+            >
+              ⛶ Fullscreen
+            </button>
+            <span className="ml-auto text-stone-500">Ctrl/⌘+scroll to zoom · drag to pan · f for fullscreen · ← / → to navigate</span>
           </div>
 
           <details className="rounded-md border border-stone-200 bg-white">
@@ -576,6 +701,16 @@ export function ImportItemPage() {
                 <p className="text-sm text-stone-600">No drafts yet — OCR results will appear here.</p>
               )}
 
+              {matchedExisting && targetCollection && (
+                <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  <strong>Matches existing recipe:</strong>{' '}
+                  <span className="font-medium">{matchedExisting.title}</span> in{' '}
+                  <em>{targetCollection.title}</em>. Save will update that
+                  entry in place (preserving its page order + any earlier
+                  edits).
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-2 pt-2">
                 <button
                   type="button"
@@ -583,7 +718,27 @@ export function ImportItemPage() {
                   disabled={!currentDraft || !targetCollectionId || saveRecipe.isPending}
                   className="rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
                 >
-                  {saveRecipe.isPending ? 'Saving…' : 'Save as recipe'}
+                  {saveRecipe.isPending
+                    ? 'Saving…'
+                    : matchedExisting
+                      ? `Update "${matchedExisting.title}"`
+                      : 'Save as recipe'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraftPatches((cur) => {
+                      const next = { ...cur };
+                      delete next[activeDraft];
+                      return next;
+                    });
+                    showToast(setToast, 'Restored to original OCR result');
+                  }}
+                  disabled={!draftPatches[activeDraft]}
+                  title="Discard your edits to this draft and show the original OCR output"
+                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-50"
+                >
+                  Restore original
                 </button>
                 <button
                   type="button"
@@ -641,20 +796,301 @@ function parseQuantityInput(input: string): Quantity | undefined | 'CLEAR' {
   return parsed && isMeasured(parsed) ? parsed.quantity : undefined;
 }
 
+/** Build the grouped unit catalog once. Used by QuantityEditor's
+ *  unit dropdown so users see what we actually understand and don't
+ *  guess at abbreviations. */
+const UNIT_GROUPS: ReadonlyArray<{ label: string; units: readonly { name: string; abbr: string }[] }> = (() => {
+  const groups = new Map<string, { label: string; units: { name: string; abbr: string }[] }>();
+  function pushUnit(group: string, label: string, name: string, abbr: string) {
+    if (!groups.has(group)) groups.set(group, { label, units: [] });
+    groups.get(group)!.units.push({ name, abbr });
+  }
+  for (const u of Object.values(Units)) {
+    const labelMap: Record<string, string> = {
+      'VOLUME-METRIC': 'Volume · metric',
+      'VOLUME-IMPERIAL': 'Volume · imperial',
+      'WEIGHT-METRIC': 'Weight · metric',
+      'WEIGHT-IMPERIAL': 'Weight · imperial',
+      'COUNT-WHOLE': 'Count',
+      'TASTE-SPECIAL': 'Taste / loose',
+    };
+    const key = `${u.dimension}-${u.system}`;
+    pushUnit(key, labelMap[key] ?? key, u.name, u.abbreviations[0] ?? '');
+  }
+  return Array.from(groups.values());
+})();
+
+function QuantityEditor({
+  quantity,
+  onChange,
+  onClear,
+}: {
+  quantity: Quantity | undefined;
+  onChange: (next: Quantity) => void;
+  onClear: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [unit, setUnit] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
+
+  function open() {
+    setAmount(quantity ? quantityAmountText(quantity) : '');
+    setUnit(quantity?.unit ?? '');
+    setEditing(true);
+  }
+  function close() {
+    setEditing(false);
+    setShowHelp(false);
+  }
+  function commit() {
+    const a = amount.trim();
+    if (!a) {
+      onClear();
+      close();
+      return;
+    }
+    const parsed = parseQuantityInput(`${a} ${unit || 'piece'}`);
+    if (parsed && parsed !== 'CLEAR') {
+      // Honor the dropdown unit even when the user only typed a number
+      // (parseQuantityInput needs SOME unit to land on EXACT; we fix
+      // it up to the user's chosen unit here).
+      onChange(unit ? { ...parsed, unit } as Quantity : parsed);
+    } else if (!unit) {
+      // No unit + unparsable amount: treat as count.
+      const n = Number(a);
+      if (Number.isFinite(n) && n > 0) onChange(exact(n, 'piece'));
+    }
+    close();
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={open}
+        className="inline-block min-w-[3rem] rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700 hover:bg-stone-200"
+        title="Click to edit quantity"
+      >
+        {quantity ? formatQuantity(quantity) : '(no qty)'}
+      </button>
+    );
+  }
+
+  return (
+    <span className="relative inline-flex items-baseline gap-1 rounded-md border border-stone-300 bg-white p-1">
+      <input
+        autoFocus
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') close();
+        }}
+        placeholder="1 1/2"
+        className="w-14 rounded border border-stone-200 px-1 py-0.5 text-xs"
+      />
+      <select
+        value={unit}
+        onChange={(e) => setUnit(e.target.value)}
+        className="rounded border border-stone-200 px-1 py-0.5 text-xs"
+      >
+        <option value="">(no unit)</option>
+        {UNIT_GROUPS.map((g) => (
+          <optgroup key={g.label} label={g.label}>
+            {g.units.map((u) => (
+              <option key={u.name} value={u.name}>
+                {u.name}
+                {u.abbr ? ` (${u.abbr})` : ''}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setShowHelp((v) => !v)}
+        aria-label="Help"
+        className="rounded px-1 text-xs text-stone-400 hover:text-stone-900"
+      >
+        ?
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={commit}
+        className="rounded bg-stone-900 px-1.5 py-0.5 text-xs text-white"
+      >
+        ✓
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => {
+          onClear();
+          close();
+        }}
+        className="rounded px-1.5 py-0.5 text-xs text-stone-500 hover:text-stone-900"
+      >
+        clear
+      </button>
+      {showHelp && (
+        <span
+          role="tooltip"
+          className="absolute left-0 top-full z-30 mt-1 w-72 rounded-md border border-stone-200 bg-white p-3 text-xs leading-relaxed text-stone-700 shadow-md"
+        >
+          <strong className="block text-stone-900">Units</strong>
+          Pick a standard unit from the list. Amount accepts decimals
+          (<code>1.5</code>), mixed numbers (<code>1 1/2</code>), or
+          plain integers.
+          <br />
+          <br />
+          <strong className="block text-stone-900">House units</strong>
+          A "house unit" is your own measure — "a dollop", "one Bell
+          mug" — defined as a conversion to a standard unit (e.g.
+          <code> 1 dollop = 1 tbsp</code>). They'll show up here once
+          you add them in <em>Settings → Conversions</em>. Until then,
+          pick the closest standard unit and you can scale later in
+          the recipe view.
+        </span>
+      )}
+    </span>
+  );
+}
+
+function quantityAmountText(q: Quantity): string {
+  switch (q.type) {
+    case 'EXACT':
+      return String(q.amount);
+    case 'FRACTIONAL':
+      return q.whole > 0
+        ? `${q.whole} ${q.numerator}/${q.denominator}`
+        : `${q.numerator}/${q.denominator}`;
+    case 'RANGE':
+      return `${q.min}-${q.max}`;
+  }
+}
+
+function ToastBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed left-1/2 top-4 z-40 -translate-x-1/2 rounded-full bg-stone-900 px-4 py-2 text-sm font-medium text-white shadow-lg"
+    >
+      {message}
+    </div>
+  );
+}
+
+function NavBanner({
+  batchName,
+  batchId,
+  prevId,
+  nextId,
+  position,
+  currentPageIndex,
+}: {
+  batchName: string;
+  batchId: string;
+  prevId: string | undefined;
+  nextId: string | undefined;
+  position: { current: number; total: number } | undefined;
+  currentPageIndex: number;
+}) {
+  return (
+    <div className="sticky top-0 z-20 -mx-4 flex items-center gap-3 border-b border-stone-200 bg-white/95 px-4 py-2 text-sm backdrop-blur">
+      <Link to={`/import/${batchId}`} className="truncate text-stone-700 hover:text-stone-900">
+        ← {batchName}
+      </Link>
+      <div className="ml-auto flex items-center gap-1">
+        {prevId ? (
+          <Link
+            to={`/import/${batchId}/items/${prevId}`}
+            className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+            title="Previous reviewable (← or k)"
+          >
+            ← Prev
+          </Link>
+        ) : (
+          <span className="rounded-md border border-stone-200 px-2 py-1 text-xs text-stone-400">
+            ← Prev
+          </span>
+        )}
+        <span className="px-2 text-xs text-stone-500">
+          {position
+            ? `${position.current} of ${position.total}`
+            : `Page ${currentPageIndex}`}
+        </span>
+        {nextId ? (
+          <Link
+            to={`/import/${batchId}/items/${nextId}`}
+            className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+            title="Next reviewable (→ or j)"
+          >
+            Next →
+          </Link>
+        ) : (
+          <span className="rounded-md border border-stone-200 px-2 py-1 text-xs text-stone-400">
+            Next →
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FullscreenImage({
+  src,
+  alt,
+  onClose,
+}: {
+  src: string;
+  alt: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-label={alt}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/95"
+      onClick={onClose}
+    >
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-screen max-w-screen-2xl object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1.5 text-sm font-medium text-stone-900 hover:bg-white"
+      >
+        Close (esc)
+      </button>
+    </div>
+  );
+}
+
 /**
- * Walk the batch in page order and find the next item that still has
- * something to do (OCR_DONE with drafts, NEEDS_FALLBACK, or anything
- * non-terminal). Skip the current item. Used to chain the import
- * workflow so the user can keep moving without bouncing back to the
- * batch board after each save.
+ * Walk the batch in page order. `next` walks forward and wraps around;
+ * `prev` walks backward. Returns the first reviewable item it finds
+ * (any non-terminal status), or undefined if none remain. Used both
+ * by the keyboard shortcuts and the prev/next nav banner.
  */
-function findNextReviewable(
-  items: Array<{ id: string; status: string; pageIndex: number }>,
+function findReviewable<T extends { id: string; status: string; pageIndex: number }>(
+  items: readonly T[],
   currentId: string,
-): { id: string } | undefined {
+  direction: 'next' | 'prev',
+): T | undefined {
   const sorted = [...items].sort((a, b) => a.pageIndex - b.pageIndex);
   const idx = sorted.findIndex((i) => i.id === currentId);
-  const ring = idx >= 0 ? [...sorted.slice(idx + 1), ...sorted.slice(0, idx)] : sorted;
+  if (idx < 0) return sorted[0];
+  const ring = direction === 'next'
+    ? [...sorted.slice(idx + 1), ...sorted.slice(0, idx)]
+    : [...sorted.slice(0, idx).reverse(), ...sorted.slice(idx + 1).reverse()];
   return ring.find(
     (i) =>
       i.status === 'OCR_DONE' ||
@@ -662,6 +1098,20 @@ function findNextReviewable(
       i.status === 'PENDING' ||
       i.status === 'CLAIMED',
   );
+}
+
+/**
+ * Show a transient toast. Auto-dismiss after `ms`. Caller owns the
+ * setter so the toast renders inside the page without needing a
+ * separate provider.
+ */
+function showToast(
+  setToast: (m: string | undefined) => void,
+  message: string,
+  ms = 3500,
+): void {
+  setToast(message);
+  window.setTimeout(() => setToast(undefined), ms);
 }
 
 /**
@@ -964,14 +1414,22 @@ function IngredientRow({
     }
   }
 
-  const qtyText = isMeasured(ingredient) ? formatQuantity(ingredient.quantity) : '';
   return (
     <li className="group flex items-baseline gap-2 text-sm leading-relaxed text-stone-800">
-      <EditableText
-        value={qtyText}
-        placeholder="(no qty)"
-        onCommit={commitQuantity}
-        className="inline-block min-w-[3rem] rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700"
+      <QuantityEditor
+        quantity={isMeasured(ingredient) ? ingredient.quantity : undefined}
+        onChange={(q) =>
+          onChange(
+            measured({
+              id: ingredient.id,
+              name: ingredient.name,
+              preparation: ingredient.preparation,
+              notes: ingredient.notes,
+              quantity: q,
+            }),
+          )
+        }
+        onClear={() => commitQuantity('')}
       />
       <EditableText
         value={ingredient.name}
