@@ -22,13 +22,19 @@ const batchItems = [
 ];
 
 describe('ocrStatus', () => {
-  it('blocks Re-OCR while queued or processing', () => {
+  it('allows Re-OCR from any status except DISCARDED', () => {
+    // isOcrInProgress remains a useful predicate elsewhere (queue
+    // display, status pills). canReOcr used to gate it out, but a
+    // stuck PENDING / CLAIMED item is exactly when the user needs
+    // to force-reset via the server-side import_reset_item RPC.
     expect(isOcrInProgress('PENDING')).toBe(true);
     expect(isOcrInProgress('CLAIMED')).toBe(true);
-    expect(canReOcr('PENDING')).toBe(false);
-    expect(canReOcr('CLAIMED')).toBe(false);
+    expect(canReOcr('PENDING')).toBe(true);
+    expect(canReOcr('CLAIMED')).toBe(true);
     expect(canReOcr('OCR_DONE')).toBe(true);
     expect(canReOcr('OCR_FAILED')).toBe(true);
+    expect(canReOcr('NEEDS_FALLBACK')).toBe(true);
+    expect(canReOcr('REVIEWED')).toBe(true);
     expect(canReOcr('DISCARDED')).toBe(false);
   });
 
