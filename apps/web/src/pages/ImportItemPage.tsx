@@ -104,14 +104,19 @@ export function ImportItemPage() {
   const currentDraft: ParsedRecipeDraft | undefined =
     draftPatches[activeDraft] ?? drafts[activeDraft];
 
-  // Prev / next reviewable items in the batch, computed once per
-  // dependency change so the keyboard shortcuts + nav banner agree.
+  // Prev / next neighbour in the batch by page_index — used by the
+  // keyboard shortcuts and the nav banner. Intentionally NOT filtered
+  // by status: the user wants strict sequential browsing, so ← from
+  // page 5 lands on page 4 even if page 4 is already REVIEWED. The
+  // save / discard handlers use findReviewable (a separate helper
+  // that skips done items) for "what's the next thing that needs
+  // attention" auto-advance.
   const prevItem = useMemo(
-    () => (item ? findReviewable(batchItems, item.id, 'prev') : undefined),
+    () => (item ? findAdjacent(batchItems, item.id, 'prev') : undefined),
     [batchItems, item],
   );
-  const nextReviewable = useMemo(
-    () => (item ? findReviewable(batchItems, item.id, 'next') : undefined),
+  const nextItem = useMemo(
+    () => (item ? findAdjacent(batchItems, item.id, 'next') : undefined),
     [batchItems, item],
   );
   const pageNumberInBatch = useMemo(() => {
@@ -138,9 +143,9 @@ export function ImportItemPage() {
       switch (e.key) {
         case 'ArrowRight':
         case 'j':
-          if (batch && nextReviewable) {
+          if (batch && nextItem) {
             e.preventDefault();
-            navigate(`/import/${batch.id}/items/${nextReviewable.id}`);
+            navigate(`/import/${batch.id}/items/${nextItem.id}`);
           }
           break;
         case 'ArrowLeft':
@@ -171,7 +176,7 @@ export function ImportItemPage() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [batch, nextReviewable, prevItem, fullscreen, navigate]);
+  }, [batch, nextItem, prevItem, fullscreen, navigate]);
 
   const tocSuggestions = useMemo(
     () =>
@@ -424,7 +429,7 @@ export function ImportItemPage() {
         batchName={batch.name}
         batchId={batch.id}
         prevId={prevItem?.id}
-        nextId={nextReviewable?.id}
+        nextId={nextItem?.id}
         position={pageNumberInBatch}
         currentPageIndex={item.pageIndex + 1}
       />
@@ -1145,10 +1150,30 @@ function FullscreenImage({
 }
 
 /**
+ * Strict page-index neighbour — the next or previous item in the
+ * batch by `pageIndex`, with no status filter. Used by the keyboard
+ * shortcuts and the prev/next nav banner so the user can step
+ * through their stack sequentially, REVIEWED pages and all.
+ */
+function findAdjacent<T extends { id: string; pageIndex: number }>(
+  items: readonly T[],
+  currentId: string,
+  direction: 'next' | 'prev',
+): T | undefined {
+  const sorted = [...items].sort((a, b) => a.pageIndex - b.pageIndex);
+  const idx = sorted.findIndex((i) => i.id === currentId);
+  if (idx < 0) return undefined;
+  const target = direction === 'next' ? idx + 1 : idx - 1;
+  return sorted[target];
+}
+
+/**
  * Walk the batch in page order. `next` walks forward and wraps around;
  * `prev` walks backward. Returns the first reviewable item it finds
- * (any non-terminal status), or undefined if none remain. Used both
- * by the keyboard shortcuts and the prev/next nav banner.
+ * (any non-terminal status), or undefined if none remain. Used by
+ * save / discard auto-advance — the "jump to the next thing that
+ * still needs attention" path. Distinct from findAdjacent which is
+ * for sequential browsing.
  */
 function findReviewable<T extends { id: string; status: string; pageIndex: number }>(
   items: readonly T[],
