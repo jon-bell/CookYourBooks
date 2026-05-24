@@ -944,12 +944,27 @@ async function pushImportItem(client: CookbooksClient, id: string): Promise<void
   // `needs_fallback` is server-owned (set by import_fail / cleared by
   // import_complete / flipped by import_set_recitation_policy). Never
   // include it in the outbox push payload.
+  //
+  // `parsed_drafts_json` IS pushed — once OCR_DONE, the user owns the
+  // draft list (promoting / discarding individual drafts). Without this
+  // line the next pull would restore the worker's original draft set
+  // and silently undo the user's edits.
+  const draftsRaw = local.parsed_drafts_json;
+  let parsedDrafts: unknown = null;
+  if (typeof draftsRaw === 'string' && draftsRaw.length > 0) {
+    try {
+      parsedDrafts = JSON.parse(draftsRaw);
+    } catch {
+      parsedDrafts = null;
+    }
+  }
   type ItemUpdate = Database['public']['Tables']['import_items']['Update'];
   const payload: ItemUpdate = {
     assigned_collection_id: (local.assigned_collection_id as string | null) ?? null,
     assigned_page_number: (local.assigned_page_number as number | null) ?? null,
     is_toc: local.is_toc === 1 || local.is_toc === true,
     created_recipe_ids: createdIds,
+    parsed_drafts_json: parsedDrafts as ItemUpdate['parsed_drafts_json'],
   };
   if (allowStatus) payload.status = status;
   const { error } = await client.from('import_items').update(payload).eq('id', id);

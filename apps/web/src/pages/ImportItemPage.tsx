@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { createRecipe } from '@cookyourbooks/domain';
-import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
-import { createCookbook, type RecipeCollection } from '@cookyourbooks/domain';
+import {
+  createRecipe,
+  createCookbook,
+  isMeasured,
+  measured,
+  vague,
+  instruction,
+  type Ingredient,
+  type Instruction,
+  type ParsedRecipeDraft,
+  type RecipeCollection,
+} from '@cookyourbooks/domain';
 import { useCollections, useSaveCollection, useSaveRecipe } from '../data/queries.js';
 import {
   useImportBatch,
@@ -18,14 +27,14 @@ import { suggestTocMatches } from '../import/tocMatch.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
-  const { data: batch, isFetching: batchFetching } = useImportBatch(batchId);
-  const { data: item, isFetching: itemFetching } = useImportItem(itemId);
+  const { data: batch, isLoading: batchLoading } = useImportBatch(batchId);
+  const { data: item, isLoading: itemLoading } = useImportItem(itemId);
   const { data: attempts = [] } = useImportItemAttempts(itemId);
   const { data: tocEntries = [] } = useImportTocEntries(batchId);
-  const { data: collections = [], isPending: collectionsPending } = useCollections();
+  const { data: collections = [], isLoading: collectionsLoading } = useCollections();
   const saveCollection = useSaveCollection();
   const updateItem = useUpdateImportItem();
-  const { syncNow, status: syncStatus } = useSync();
+  const { syncNow, status: syncStatus, isLocalReady } = useSync();
   const navigate = useNavigate();
 
   const [activeDraft, setActiveDraft] = useState(0);
@@ -40,6 +49,7 @@ export function ImportItemPage() {
   const [newCookbookTitle, setNewCookbookTitle] = useState('');
   const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
   const [cookbookError, setCookbookError] = useState<string | undefined>();
+  const [actionError, setActionError] = useState<string | undefined>();
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
 
@@ -107,13 +117,10 @@ export function ImportItemPage() {
     if (drag.current) drag.current.active = false;
   }
 
-  // Gate on `isFetching`, not `isPending`. A disabled query keeps
-  // isPending=true forever which was the source of the "stuck Loading"
-  // bug. `isFetching` is only true while there's actual work in flight.
-  if (syncStatus === 'initializing') {
+  if (!isLocalReady) {
     return <p className="text-stone-500">Initializing local cache…</p>;
   }
-  if ((batchFetching || itemFetching) && (!batch || !item)) {
+  if (batchLoading || itemLoading) {
     return <p className="text-stone-500">Loading…</p>;
   }
   if (!batch || !item) {
@@ -167,7 +174,8 @@ export function ImportItemPage() {
   }
 
   async function saveAsRecipe() {
-    if (!currentDraft || !targetCollectionId) return;
+    if (!currentDraft || !targetCollectionId || !item || !batch) return;
+    setActionError(undefined);
     const pageNum = pageNumberStr ? Number(pageNumberStr) : undefined;
     const pageNumbers =
       pageNum && Number.isFinite(pageNum)
@@ -175,11 +183,15 @@ export function ImportItemPage() {
         : currentDraft.pageNumbers
           ? [...currentDraft.pageNumbers]
           : undefined;
+    // Re-mint ingredient + instruction ids so a retry (or two drafts
+    // happening to share an id) never trips the global UNIQUE on
+    // ingredients.id / instructions.id.
+    const { ingredients, instructions } = withFreshIds(currentDraft);
     const recipe = createRecipe({
       title: currentDraft.title?.trim() || 'Untitled',
       servings: currentDraft.servings,
-      ingredients: currentDraft.ingredients,
-      instructions: currentDraft.instructions,
+      ingredients,
+      instructions,
       description: currentDraft.description,
       timeEstimate: currentDraft.timeEstimate,
       equipment: currentDraft.equipment,
@@ -187,43 +199,50 @@ export function ImportItemPage() {
       pageNumbers,
       sourceImageText: currentDraft.sourceImageText,
     });
-    await saveRecipe.mutateAsync(recipe);
-    const nextDrafts = drafts.filter((_, i) => i !== activeDraft);
-    const createdIds = [...(item?.createdRecipeIds ?? []), recipe.id];
-    const remaining = nextDrafts.length;
-    await updateItem.mutateAsync({
-      id: item!.id,
-      patch: {
-        parsedDrafts: nextDrafts,
-        createdRecipeIds: createdIds,
-        assignedCollectionId: targetCollectionId,
-        assignedPageNumber: pageNum && Number.isFinite(pageNum) ? pageNum : null,
-        status: remaining === 0 ? 'REVIEWED' : item!.status,
-      },
-    });
-    await syncNow();
-    if (remaining === 0) {
-      navigate(`/import/${batch!.id}`);
-    } else {
-      setActiveDraft(0);
-      setDraftPatches({});
+    try {
+      await saveRecipe.mutateAsync(recipe);
+      const nextDrafts = drafts.filter((_, i) => i !== activeDraft);
+      const createdIds = [...(item.createdRecipeIds ?? []), recipe.id];
+      const remaining = nextDrafts.length;
+      await updateItem.mutateAsync({
+        id: item.id,
+        patch: {
+          parsedDrafts: nextDrafts,
+          createdRecipeIds: createdIds,
+          assignedCollectionId: targetCollectionId,
+          assignedPageNumber: pageNum && Number.isFinite(pageNum) ? pageNum : null,
+          status: remaining === 0 ? 'REVIEWED' : item.status,
+        },
+      });
+      await syncNow();
+      // Drop the user into the recipe editor for the freshly-saved
+      // recipe so they can refine fields the OCR draft didn't carry.
+      navigate(`/collections/${targetCollectionId}/recipes/${recipe.id}/edit`);
+    } catch (e) {
+      setActionError(`Save failed: ${(e as Error).message}`);
     }
   }
 
   async function discardThisDraft() {
-    if (!item || !currentDraft) return;
+    if (!item || !currentDraft || !batch) return;
+    setActionError(undefined);
     const nextDrafts = drafts.filter((_, i) => i !== activeDraft);
-    await updateItem.mutateAsync({
-      id: item.id,
-      patch: {
-        parsedDrafts: nextDrafts,
-        status: nextDrafts.length === 0 ? 'REVIEWED' : item.status,
-      },
-    });
-    if (nextDrafts.length === 0) navigate(`/import/${batch!.id}`);
-    else {
-      setActiveDraft(0);
-      setDraftPatches({});
+    try {
+      await updateItem.mutateAsync({
+        id: item.id,
+        patch: {
+          parsedDrafts: nextDrafts,
+          status: nextDrafts.length === 0 ? 'REVIEWED' : item.status,
+        },
+      });
+      await syncNow();
+      if (nextDrafts.length === 0) navigate(`/import/${batch.id}`);
+      else {
+        setActiveDraft(0);
+        setDraftPatches({});
+      }
+    } catch (e) {
+      setActionError(`Discard failed: ${(e as Error).message}`);
     }
   }
 
@@ -440,10 +459,10 @@ export function ImportItemPage() {
                         ))}
                         <option value="__new__">+ Create new cookbook…</option>
                       </select>
-                      {collectionsPending && (
+                      {collectionsLoading && (
                         <p className="mt-1 text-xs text-stone-500">Loading cookbooks…</p>
                       )}
-                      {!collectionsPending && collections.length === 0 && (
+                      {!collectionsLoading && collections.length === 0 && (
                         <p className="mt-1 text-xs text-stone-500">
                           No cookbooks yet — create one to save this recipe.
                         </p>
@@ -551,9 +570,9 @@ export function ImportItemPage() {
                 </button>
               </div>
 
-              {saveRecipe.isError && (
+              {(actionError || saveRecipe.isError) && (
                 <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                  {(saveRecipe.error as Error).message}
+                  {actionError ?? (saveRecipe.error as Error).message}
                 </div>
               )}
             </>
@@ -562,6 +581,55 @@ export function ImportItemPage() {
       </div>
     </div>
   );
+}
+
+/**
+ * Clone a draft's ingredients + instructions with fresh ids and remap
+ * step→ingredient refs through the id map. Without this, promoting a
+ * draft to a real recipe collides on the global UNIQUE(ingredients.id)
+ * any time the user retries a save, or two drafts on the same image
+ * happened to share an id.
+ */
+function withFreshIds(draft: ParsedRecipeDraft): { ingredients: Ingredient[]; instructions: Instruction[] } {
+  const idMap = new Map<string, string>();
+  const ingredients: Ingredient[] = draft.ingredients.map((ing) => {
+    const newId = crypto.randomUUID();
+    idMap.set(ing.id, newId);
+    if (isMeasured(ing)) {
+      return measured({
+        id: newId,
+        name: ing.name,
+        preparation: ing.preparation,
+        notes: ing.notes,
+        quantity: ing.quantity,
+      });
+    }
+    return vague({
+      id: newId,
+      name: ing.name,
+      preparation: ing.preparation,
+      notes: ing.notes,
+      description: ing.description,
+    });
+  });
+  const instructions: Instruction[] = draft.instructions.map((step, i) =>
+    instruction({
+      id: crypto.randomUUID(),
+      stepNumber: i + 1,
+      text: step.text,
+      ingredientRefs: step.ingredientRefs
+        .map((ref) => {
+          const nextId = idMap.get(ref.ingredientId);
+          if (!nextId) return undefined;
+          return { ingredientId: nextId, quantity: ref.quantity };
+        })
+        .filter((r): r is { ingredientId: string; quantity: typeof step.ingredientRefs[number]['quantity'] } => r !== undefined),
+      temperature: step.temperature,
+      subInstructions: step.subInstructions,
+      notes: step.notes,
+    }),
+  );
+  return { ingredients, instructions };
 }
 
 function DraftEditor({
