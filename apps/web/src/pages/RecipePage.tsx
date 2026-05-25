@@ -78,6 +78,22 @@ export function RecipePage() {
           ← {collection.title}
         </Link>
         <h1 className="mt-1 text-3xl font-semibold">{recipe.title}</h1>
+        {collection.sourceType === 'PUBLISHED_BOOK' && collection.author && (
+          <p className="mt-1 text-base text-stone-600 dark:text-stone-400">
+            by{' '}
+            <span className="font-medium text-stone-900 dark:text-stone-100">
+              {collection.author}
+            </span>
+          </p>
+        )}
+        {collection.sourceType === 'WEBSITE' && collection.siteName && (
+          <p className="mt-1 text-base text-stone-600 dark:text-stone-400">
+            from{' '}
+            <span className="font-medium text-stone-900 dark:text-stone-100">
+              {collection.siteName}
+            </span>
+          </p>
+        )}
         {(recipe.bookTitle || (recipe.pageNumbers && recipe.pageNumbers.length > 0)) && (
           <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
             {recipe.bookTitle}
@@ -105,7 +121,21 @@ export function RecipePage() {
           <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">⏲ {recipe.timeEstimate}</p>
         )}
         {recipe.description && (
-          <p className="mt-3 whitespace-pre-wrap text-stone-700 dark:text-stone-300">{recipe.description}</p>
+          <figure className="mt-4 border-l-2 border-stone-300 dark:border-stone-600 pl-3">
+            {!parent && collection.sourceType === 'PUBLISHED_BOOK' && (
+              <figcaption className="text-[11px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                Headnote{collection.author ? ` from ${collection.author}` : ' from the original recipe'}
+              </figcaption>
+            )}
+            {!parent && collection.sourceType === 'WEBSITE' && (
+              <figcaption className="text-[11px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                From {collection.siteName ?? 'the original source'}
+              </figcaption>
+            )}
+            <blockquote className="whitespace-pre-wrap text-stone-700 dark:text-stone-300 italic">
+              {recipe.description}
+            </blockquote>
+          </figure>
         )}
         {recipe.equipment && recipe.equipment.length > 0 && (
           <ul className="mt-3 flex flex-wrap gap-1.5 text-xs">
