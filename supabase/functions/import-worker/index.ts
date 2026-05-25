@@ -17,7 +17,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import pricingCard from './pricing.json' with { type: 'json' };
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
-import { RECIPE_PROMPT, TOC_PROMPT } from './prompts.ts';
+import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
 
 interface ImportItem {
   id: string;
@@ -56,6 +56,25 @@ interface BakeoffVariant {
   prompt: string;
   base_url: string | null;
   attempts: number;
+}
+
+interface RewriteJob {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  provider: Provider;
+  model: string;
+  prompt: string;
+  attempts: number;
+}
+
+interface RecipeInstructionRow {
+  id: string;
+  step_number: number;
+  text: string;
+  temperature_value: number | null;
+  temperature_unit: string | null;
+  sub_instructions: unknown;
 }
 
 interface ImportVariantResult {
@@ -230,11 +249,17 @@ Deno.serve(async (req) => {
   // are per-user, so we don't filter by batch — the page that just
   // started the bakeoff kicks us, and we pull anything queued.
   const bakeoffSummary = await runBakeoffLoop(workerId, wLog);
+  // Drain pending instruction-rewrite jobs too. Same loop discipline:
+  // claim once per invocation, the next user kick or cron tick picks
+  // up the slack if anything is still queued.
+  const rewriteSummary = await runRewriteLoop(workerId, wLog);
   const importVariantSummary = await runImportVariantLoop(workerId, wLog);
   wLog.info('invocation end', {
     ...summary,
     bakeoff_processed: bakeoffSummary.processed,
     bakeoff_failed: bakeoffSummary.failed,
+    rewrite_processed: rewriteSummary.processed,
+    rewrite_failed: rewriteSummary.failed,
     import_variant_processed: importVariantSummary.processed,
     import_variant_failed: importVariantSummary.failed,
   });
@@ -799,10 +824,10 @@ async function processVariant(
   const claimToken = workerId;
   const started = Date.now();
 
-  // Look up the parent run so we know which image to load.
+  // Look up the parent run so we know what kind of bake-off this is.
   const { data: run, error: runErr } = await supabase
     .from('bakeoff_runs')
-    .select('id, owner_id, image_storage_path')
+    .select('id, owner_id, image_storage_path, task_kind, input_recipe_id')
     .eq('id', variant.run_id)
     .maybeSingle();
   if (runErr || !run) {
@@ -816,6 +841,18 @@ async function processVariant(
       log,
     );
     return 'FAILED';
+  }
+
+  // REWRITE variants don't load images — they feed the recipe's
+  // instruction list to the LLM as JSON and store the rewrite draft.
+  if ((run as { task_kind?: string }).task_kind === 'REWRITE') {
+    return await processRewriteVariant(
+      variant,
+      (run as { input_recipe_id?: string | null }).input_recipe_id ?? null,
+      claimToken,
+      started,
+      log,
+    );
   }
 
   // Resolve the API key. Bakeoff variants share the user's vault keys
@@ -941,6 +978,427 @@ async function failVariant(
   if (error) {
     log.error('bakeoff_fail rpc error', { code: error.code, message: error.message });
   }
+}
+
+async function processRewriteVariant(
+  variant: BakeoffVariant,
+  inputRecipeId: string | null,
+  claimToken: string,
+  startedAt: number,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  if (!inputRecipeId) {
+    await failVariant(variant, claimToken, 'OTHER', 'REWRITE run missing input_recipe_id.', Date.now() - startedAt, log);
+    return 'FAILED';
+  }
+  const instructions = await loadRecipeInstructions(inputRecipeId, log);
+  if (instructions.length === 0) {
+    await failVariant(variant, claimToken, 'OTHER', 'Input recipe has no instructions.', Date.now() - startedAt, log);
+    return 'FAILED';
+  }
+  let key: UserKey | null = null;
+  try {
+    key = await loadUserKey(variant.owner_id, variant.provider, log);
+  } catch (err) {
+    log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!key && !MOCK_MODE) {
+    await failVariant(
+      variant,
+      claimToken,
+      'AUTH',
+      `No API key configured for ${variant.provider}. Add it in Settings.`,
+      Date.now() - startedAt,
+      log,
+    );
+    return 'FAILED';
+  }
+  const prompt = buildRewriteUserPrompt(variant.prompt || REWRITE_PROMPT, instructions);
+  const result = await runOrMockRewrite({
+    recipeId: inputRecipeId,
+    provider: variant.provider,
+    model: variant.model,
+    apiKey: key?.apiKey ?? '',
+    baseUrl: key?.baseUrl ?? variant.base_url ?? undefined,
+    prompt,
+    log,
+  });
+  log.info('rewrite-variant llm end', {
+    error_kind: result.errorKind,
+    latency_ms: result.latencyMs,
+  });
+  if (result.errorKind !== 'OK') {
+    await failVariant(
+      variant,
+      claimToken,
+      result.errorKind,
+      result.errorMessage ?? result.errorKind,
+      result.latencyMs || Date.now() - startedAt,
+      log,
+    );
+    return 'FAILED';
+  }
+  const text = result.text ?? result.rawResponse;
+  let payload: { rewritten: Array<{ instructionId: string; simplifiedSteps: unknown[] }> };
+  try {
+    payload = parseRewriteJson(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await failVariant(variant, claimToken, 'PARSE', msg, result.latencyMs || Date.now() - startedAt, log);
+    return 'FAILED';
+  }
+  const cost = costUsdMicros(variant.provider, variant.model, result.promptTokens, result.completionTokens);
+  const finalPayload = {
+    drafts: payload,
+    raw_text: text,
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    cost_usd_micros: cost,
+    latency_ms: result.latencyMs || Date.now() - startedAt,
+  };
+  const { data: ok, error } = await supabase.rpc('bakeoff_complete', {
+    p_variant_id: variant.id,
+    p_claim_token: claimToken,
+    p_result: finalPayload,
+  });
+  if (error) {
+    log.error('bakeoff_complete (rewrite) error', { code: error.code, message: error.message });
+    return 'FAILED';
+  }
+  if (!ok) log.warn('bakeoff_complete returned false (lease lost)');
+  return 'DONE';
+}
+
+// ---------- instruction rewriting pipeline ----------
+//
+// Rewrite jobs are one-shot per recipe. We pull the recipe's
+// instruction rows, feed them as JSON to the LLM, and let the
+// `rewrite_complete` RPC fan the result back onto each
+// `instructions.simplified_steps` cell server-side. Bake-off REWRITE
+// variants take a separate code path (`processRewriteVariant`) so the
+// production-write path doesn't accidentally mutate when a user is
+// just shopping for prompts.
+
+async function runRewriteLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  const jobs = await claimRewriteBatch(workerId, log);
+  if (jobs.length === 0) return { processed, failed };
+  log.info('claimed rewrite jobs', { count: jobs.length });
+
+  for (let i = 0; i < jobs.length; i += PARALLEL) {
+    const chunk = jobs.slice(i, i + PARALLEL);
+    const results = await Promise.all(
+      chunk.map((j) => processRewriteJob(j, workerId, log.child({ item: shortId(j.id) }))),
+    );
+    for (const r of results) {
+      if (r === 'DONE') processed++;
+      else failed++;
+    }
+  }
+  return { processed, failed };
+}
+
+async function claimRewriteBatch(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<RewriteJob[]> {
+  const { data, error } = await supabase.rpc('rewrite_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+  });
+  if (error) {
+    log.error('rewrite_claim_next failed', { code: error.code, message: error.message });
+    return [];
+  }
+  return (data ?? []) as RewriteJob[];
+}
+
+async function loadRecipeInstructions(
+  recipeId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<RecipeInstructionRow[]> {
+  const { data, error } = await supabase
+    .from('instructions')
+    .select('id, step_number, text, temperature_value, temperature_unit, sub_instructions')
+    .eq('recipe_id', recipeId)
+    .order('step_number', { ascending: true });
+  if (error) {
+    log.error('load recipe instructions', { code: error.code, message: error.message });
+    return [];
+  }
+  return (data ?? []) as RecipeInstructionRow[];
+}
+
+function buildRewriteUserPrompt(
+  basePrompt: string,
+  instructions: ReadonlyArray<RecipeInstructionRow>,
+): string {
+  const stripped = instructions.map((s) => {
+    const out: Record<string, unknown> = {
+      id: s.id,
+      stepNumber: s.step_number,
+      text: s.text,
+    };
+    if (s.temperature_value != null && s.temperature_unit) {
+      out.temperature = { value: s.temperature_value, unit: s.temperature_unit };
+    }
+    if (Array.isArray(s.sub_instructions) && s.sub_instructions.length > 0) {
+      out.subInstructions = s.sub_instructions;
+    }
+    return out;
+  });
+  return `${basePrompt}\n\nInput:\n${JSON.stringify({ instructions: stripped }, null, 2)}`;
+}
+
+async function processRewriteJob(
+  job: RewriteJob,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  const claimToken = workerId;
+  const started = Date.now();
+  log.info('rewrite start', {
+    provider: job.provider,
+    model: job.model,
+    attempts: job.attempts,
+    recipe: shortId(job.recipe_id),
+  });
+
+  const instructions = await loadRecipeInstructions(job.recipe_id, log);
+  if (instructions.length === 0) {
+    await failRewrite(
+      job,
+      claimToken,
+      'OTHER',
+      'Recipe has no instructions to rewrite.',
+      Date.now() - started,
+      'FAILED',
+      log,
+    );
+    return 'FAILED';
+  }
+
+  let key: UserKey | null = null;
+  try {
+    key = await loadUserKey(job.owner_id, job.provider, log);
+  } catch (err) {
+    log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!key && !MOCK_MODE) {
+    await failRewrite(
+      job,
+      claimToken,
+      'AUTH',
+      `No API key configured for ${job.provider}. Add it in Settings.`,
+      Date.now() - started,
+      'FAILED',
+      log,
+    );
+    return 'FAILED';
+  }
+
+  const prompt = buildRewriteUserPrompt(job.prompt || REWRITE_PROMPT, instructions);
+  const result = await runOrMockRewrite({
+    recipeId: job.recipe_id,
+    provider: job.provider,
+    model: job.model,
+    apiKey: key?.apiKey ?? '',
+    baseUrl: key?.baseUrl ?? undefined,
+    prompt,
+    log,
+  });
+
+  log.info('rewrite llm end', {
+    error_kind: result.errorKind,
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    latency_ms: result.latencyMs,
+  });
+
+  if (result.errorKind === 'RATE_LIMIT' || result.errorKind === 'NETWORK' || result.errorKind === 'TIMEOUT') {
+    const nextState = job.attempts < MAX_TRANSIENT_RETRIES ? 'PENDING' : 'FAILED';
+    await failRewrite(job, claimToken, result.errorKind, result.errorMessage ?? result.errorKind, result.latencyMs, nextState, log);
+    return 'FAILED';
+  }
+  if (result.errorKind !== 'OK') {
+    await failRewrite(job, claimToken, result.errorKind, result.errorMessage ?? result.errorKind, result.latencyMs, 'FAILED', log);
+    return 'FAILED';
+  }
+
+  // Parse + validate.
+  const text = result.text ?? '';
+  let payload: { rewritten: Array<{ instructionId: string; simplifiedSteps: unknown[] }> };
+  try {
+    payload = parseRewriteJson(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const nextState = job.attempts < MAX_PARSE_RETRIES ? 'PENDING' : 'FAILED';
+    log.warn('rewrite parse error', { message: msg, next_state: nextState });
+    await failRewrite(job, claimToken, 'PARSE', msg, result.latencyMs, nextState, log);
+    return 'FAILED';
+  }
+
+  const validIds = new Set(instructions.map((s) => s.id));
+  const filtered = payload.rewritten
+    .filter((entry) => typeof entry.instructionId === 'string' && validIds.has(entry.instructionId))
+    .map((entry) => ({
+      instructionId: entry.instructionId,
+      simplifiedSteps: Array.isArray(entry.simplifiedSteps) ? entry.simplifiedSteps : [],
+    }));
+
+  if (filtered.length === 0) {
+    await failRewrite(job, claimToken, 'PARSE', 'No usable rewritten instructions in LLM response.', result.latencyMs, 'FAILED', log);
+    return 'FAILED';
+  }
+
+  const cost = costUsdMicros(job.provider, job.model, result.promptTokens, result.completionTokens);
+  const attemptPayload = {
+    provider: job.provider,
+    model: job.model,
+    error_kind: 'OK',
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    cost_usd_micros: cost,
+    latency_ms: result.latencyMs,
+  };
+  const { data: ok, error } = await supabase.rpc('rewrite_complete', {
+    p_job_id: job.id,
+    p_claim_token: claimToken,
+    p_attempt: attemptPayload,
+    p_result: { rewritten: filtered },
+  });
+  if (error) {
+    log.error('rewrite_complete error', { code: error.code, message: error.message });
+    return 'FAILED';
+  }
+  if (!ok) log.warn('rewrite_complete returned false (lease lost)');
+  return 'DONE';
+}
+
+async function failRewrite(
+  job: RewriteJob,
+  claimToken: string,
+  errorKind: ErrorKind,
+  errorMessage: string,
+  latencyMs: number,
+  nextState: 'PENDING' | 'FAILED',
+  log: ReturnType<typeof makeLog>,
+): Promise<void> {
+  const { error } = await supabase.rpc('rewrite_fail', {
+    p_job_id: job.id,
+    p_claim_token: claimToken,
+    p_attempt: {
+      provider: job.provider,
+      model: job.model,
+      error_kind: errorKind,
+      error_message: errorMessage,
+      latency_ms: latencyMs,
+    },
+    p_next_state: nextState,
+  });
+  if (error) {
+    log.error('rewrite_fail rpc error', { code: error.code, message: error.message });
+  }
+}
+
+function parseRewriteJson(text: string): { rewritten: Array<{ instructionId: string; simplifiedSteps: unknown[] }> } {
+  // Strip markdown fences first (mirrors parseLlmJson tolerance).
+  let cleaned = text.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  }
+  const parsed = JSON.parse(cleaned);
+  const rewritten = (parsed as { rewritten?: unknown }).rewritten;
+  if (!Array.isArray(rewritten)) {
+    throw new Error('Response missing rewritten[] array.');
+  }
+  return { rewritten: rewritten as Array<{ instructionId: string; simplifiedSteps: unknown[] }> };
+}
+
+// runOrMockRewrite — same fixture-lookup discipline as runOrMock but
+// keyed by recipe id (the rewrite input isn't a storage path).
+async function runOrMockRewrite(p: {
+  recipeId: string;
+  provider: Provider;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+  prompt: string;
+  log?: ReturnType<typeof makeLog>;
+}): Promise<OcrCallLike> {
+  if (!MOCK_MODE) {
+    return await runOcr({
+      provider: p.provider,
+      model: p.model,
+      apiKey: p.apiKey,
+      baseUrl: p.baseUrl,
+      prompt: p.prompt,
+      images: [],
+      log: p.log
+        ? (m: string, extra?: Record<string, unknown>) => p.log!.info(m, extra)
+        : undefined,
+    });
+  }
+  // Lookup precedence: most-specific first.
+  const probes: Array<{ recipe_id: string; provider: string; model: string }> = [
+    { recipe_id: p.recipeId, provider: p.provider, model: p.model },
+    { recipe_id: p.recipeId, provider: p.provider, model: '' },
+    { recipe_id: '*', provider: p.provider, model: p.model },
+    { recipe_id: '*', provider: p.provider, model: '' },
+  ];
+  let row: { response_json: unknown; error_kind: ErrorKind | null; latency_ms: number | null } | null = null;
+  for (const probe of probes) {
+    const { data, error } = await supabase
+      .from('rewrite_test_fixtures')
+      .select('response_json, error_kind, latency_ms')
+      .eq('recipe_id', probe.recipe_id)
+      .eq('provider', probe.provider)
+      .eq('model', probe.model)
+      .maybeSingle();
+    if (error) {
+      logLine('error', 'rewrite_test_fixtures lookup', {}, { code: error.code, message: error.message, ...probe });
+      continue;
+    }
+    if (data) {
+      row = data as { response_json: unknown; error_kind: ErrorKind | null; latency_ms: number | null };
+      break;
+    }
+  }
+  if (!row) {
+    return {
+      errorKind: 'OTHER',
+      rawResponse: 'no fixture',
+      promptTokens: 0,
+      completionTokens: 0,
+      errorMessage: `REWRITE_MOCK_MODE: no fixture for recipe ${p.recipeId} (provider=${p.provider}, model=${p.model})`,
+      latencyMs: 0,
+    };
+  }
+  const latencyMs = row.latency_ms ?? 0;
+  if (row.error_kind && row.error_kind !== 'OK') {
+    return {
+      errorKind: row.error_kind,
+      rawResponse: JSON.stringify(row.response_json ?? {}),
+      promptTokens: 0,
+      completionTokens: 0,
+      errorMessage: `REWRITE_MOCK_MODE: forced ${row.error_kind}`,
+      latencyMs,
+    };
+  }
+  const responseText = JSON.stringify(row.response_json ?? {});
+  return {
+    errorKind: 'OK',
+    rawResponse: responseText,
+    text: responseText,
+    promptTokens: 0,
+    completionTokens: 0,
+    latencyMs,
+  };
 }
 
 // ---------- import-batch bakeoff variant pipeline ----------

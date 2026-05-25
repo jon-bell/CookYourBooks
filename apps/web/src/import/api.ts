@@ -70,21 +70,26 @@ export interface BakeoffVariantRow {
 
 export interface BakeoffRunRow {
   id: string;
-  image_storage_path: string;
+  image_storage_path: string | null;
   status: 'OPEN' | 'CLOSED';
+  task_kind: 'OCR' | 'REWRITE';
+  input_recipe_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export async function startBakeoff(
-  imageStoragePath: string,
+  imageStoragePath: string | null,
   variants: ReadonlyArray<BakeoffVariantInput>,
+  opts: { taskKind?: 'OCR' | 'REWRITE'; inputRecipeId?: string | null } = {},
 ): Promise<string> {
   const { data, error } = await supabase.rpc('bakeoff_start', {
     p_image_storage_path: imageStoragePath,
     // PostgREST's typed Json parameter accepts arrays-of-objects fine at
     // runtime, but the generated type alias is too narrow for it.
     p_variants: variants as unknown as never,
+    p_task_kind: opts.taskKind ?? 'OCR',
+    p_input_recipe_id: opts.inputRecipeId ?? null,
   });
   if (error) throw error;
   return data as string;
@@ -100,7 +105,7 @@ export async function getBakeoffRun(runId: string): Promise<{
   const [runQ, vQ] = await Promise.all([
     supabase
       .from('bakeoff_runs')
-      .select('id, image_storage_path, status, created_at, updated_at')
+      .select('id, image_storage_path, status, task_kind, input_recipe_id, created_at, updated_at')
       .eq('id', runId)
       .maybeSingle(),
     supabase
@@ -319,4 +324,70 @@ export async function listOcrKeys(): Promise<OcrKeySummary[]> {
     .select('provider, key_fingerprint, base_url, rotated_at');
   if (error) throw error;
   return (data ?? []) as OcrKeySummary[];
+}
+
+// ---------- instruction rewrites ----------
+
+export interface UserRewritePrefs {
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+  updated_at: string;
+}
+
+export async function getUserRewritePrefs(): Promise<UserRewritePrefs | null> {
+  const { data, error } = await supabase
+    .from('user_rewrite_prefs')
+    .select('provider, model, prompt, updated_at')
+    .maybeSingle();
+  if (error) throw error;
+  return (data as UserRewritePrefs | null) ?? null;
+}
+
+export async function setUserRewritePrefs(prefs: {
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc('user_rewrite_prefs_set', {
+    p_provider: prefs.provider,
+    p_model: prefs.model,
+    p_prompt: prefs.prompt,
+  });
+  if (error) throw error;
+}
+
+export async function startRewrite(input: {
+  recipeId: string;
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('rewrite_start', {
+    p_recipe_id: input.recipeId,
+    p_provider: input.provider,
+    p_model: input.model,
+    p_prompt: input.prompt,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function cancelRewrite(jobId: string): Promise<void> {
+  const { error } = await supabase.rpc('rewrite_cancel', { p_job_id: jobId });
+  if (error) throw error;
+}
+
+export async function kickRewrite(recipeId?: string): Promise<void> {
+  const { error } = await supabase.rpc('rewrite_kick', {
+    p_recipe_id: recipeId ?? null,
+  });
+  if (error) {
+    // Same error class as kickOcr — the underlying vault secret is shared,
+    // so the configuration-missing case looks identical.
+    if (error.message?.startsWith('OCR_WORKER_NOT_CONFIGURED')) {
+      throw new OcrWorkerNotConfiguredError(error.message);
+    }
+    throw error;
+  }
 }

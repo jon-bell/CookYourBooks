@@ -74,25 +74,31 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          image_storage_path: string
+          image_storage_path: string | null
+          input_recipe_id: string | null
           owner_id: string
           status: string
+          task_kind: string
           updated_at: string
         }
         Insert: {
           created_at?: string
           id?: string
-          image_storage_path: string
+          image_storage_path?: string | null
+          input_recipe_id?: string | null
           owner_id: string
           status?: string
+          task_kind?: string
           updated_at?: string
         }
         Update: {
           created_at?: string
           id?: string
-          image_storage_path?: string
+          image_storage_path?: string | null
+          input_recipe_id?: string | null
           owner_id?: string
           status?: string
+          task_kind?: string
           updated_at?: string
         }
         Relationships: []
@@ -999,6 +1005,7 @@ export type Database = {
           id: string
           notes: string | null
           recipe_id: string
+          simplified_steps: Json | null
           step_number: number
           sub_instructions: Json | null
           temperature_unit: string | null
@@ -1009,6 +1016,7 @@ export type Database = {
           id?: string
           notes?: string | null
           recipe_id: string
+          simplified_steps?: Json | null
           step_number: number
           sub_instructions?: Json | null
           temperature_unit?: string | null
@@ -1019,6 +1027,7 @@ export type Database = {
           id?: string
           notes?: string | null
           recipe_id?: string
+          simplified_steps?: Json | null
           step_number?: number
           sub_instructions?: Json | null
           temperature_unit?: string | null
@@ -1484,6 +1493,138 @@ export type Database = {
         }
         Relationships: []
       }
+      rewrite_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          id: string
+          last_error: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number
+          provider: string
+          recipe_id: string
+          result_json: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id?: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id?: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rewrite_jobs_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rewrite_jobs_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_rewrite_prefs: {
+        Row: {
+          model: string
+          owner_id: string
+          prompt: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          model?: string
+          owner_id: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          model?: string
+          owner_id?: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      rewrite_test_fixtures: {
+        Row: {
+          created_at: string
+          error_kind: string | null
+          latency_ms: number
+          model: string
+          provider: string
+          recipe_id: string
+          response_json: Json
+        }
+        Insert: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Update: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Relationships: []
+      }
     }
     Views: {
       admin_global_toc_import_candidates: {
@@ -1610,8 +1751,28 @@ export type Database = {
       }
       bakeoff_promote: { Args: { p_variant_id: string }; Returns: undefined }
       bakeoff_start: {
-        Args: { p_image_storage_path: string; p_variants: Json }
+        Args: {
+          p_image_storage_path: string | null
+          p_variants: Json
+          p_task_kind?: string
+          p_input_recipe_id?: string | null
+        }
         Returns: string
+      }
+      rewrite_start: {
+        Args: {
+          p_recipe_id: string
+          p_provider: string
+          p_model: string
+          p_prompt: string
+        }
+        Returns: string
+      }
+      rewrite_cancel: { Args: { p_job_id: string }; Returns: boolean }
+      rewrite_kick: { Args: { p_recipe_id?: string | null }; Returns: undefined }
+      user_rewrite_prefs_set: {
+        Args: { p_provider: string; p_model: string; p_prompt: string }
+        Returns: undefined
       }
       cli_add_shopping: {
         Args: {

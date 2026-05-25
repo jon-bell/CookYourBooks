@@ -184,4 +184,24 @@ describe('Rich recipe metadata', () => {
     const v = vague({ name: 'salt', description: 'to taste' });
     expect(v.description).toBe('to taste');
   });
+
+  it('instruction factory carries LLM-rewritten simplified steps', () => {
+    const s = instruction({
+      stepNumber: 1,
+      text: 'Heat the pan, add seeds, toast for 2 minutes.',
+      simplifiedSteps: [
+        { text: 'Heat a large pan over medium-high heat' },
+        { text: 'Add the seeds to the pan' },
+        { text: 'Toast the seeds, shaking the pan', durationSec: 120 },
+      ],
+    });
+    expect(s.simplifiedSteps).toHaveLength(3);
+    expect(s.simplifiedSteps?.[2]?.durationSec).toBe(120);
+    // Factory copies defensively — mutating the source array doesn't
+    // mutate the stored steps.
+    const src = [{ text: 'A' }, { text: 'B' }];
+    const s2 = instruction({ stepNumber: 1, text: 't', simplifiedSteps: src });
+    src.push({ text: 'C' });
+    expect(s2.simplifiedSteps).toHaveLength(2);
+  });
 });

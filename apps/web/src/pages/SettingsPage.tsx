@@ -9,6 +9,7 @@ import { CliTokensSection } from '../settings/CliTokensSection.js';
 import { OcrKeysSection } from '../settings/OcrKeysSection.js';
 import { FallbackModelSection } from '../settings/FallbackModelSection.js';
 import { ConversionsSection } from '../settings/ConversionsSection.js';
+import { RewriteSettingsSection } from '../settings/RewriteSettingsSection.js';
 import { getUserOcrPrefs, setUserOcrPrefs } from '../import/api.js';
 
 /**
@@ -172,6 +173,8 @@ export function SettingsPage() {
           {saved && <span className="text-sm text-emerald-700">Saved.</span>}
         </div>
       </form>
+
+      <RewriteSettingsSection />
 
       <CliTokensSection />
     </div>

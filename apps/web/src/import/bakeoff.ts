@@ -58,6 +58,50 @@ export function summarizeDraftForDiff(draft: ParsedRecipeDraft): string {
   return lines.join('\n');
 }
 
+// ---------- rewrite bake-off summaries ----------
+
+interface RewriteVariantStep {
+  text?: unknown;
+  durationSec?: unknown;
+}
+interface RewriteVariantEntry {
+  instructionId?: unknown;
+  simplifiedSteps?: unknown;
+}
+interface RewriteVariantPayload {
+  rewritten?: unknown;
+}
+
+/**
+ * Render a rewrite bake-off draft as canonical text for the diff view.
+ * The worker stores REWRITE variant results as `{ rewritten: [{
+ * instructionId, simplifiedSteps }] }` in `bakeoff_variants.drafts`.
+ */
+export function summarizeRewriteForDiff(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '(empty)';
+  const arr = (payload as RewriteVariantPayload).rewritten;
+  if (!Array.isArray(arr)) return '(empty)';
+  const lines: string[] = [];
+  for (const entry of arr as RewriteVariantEntry[]) {
+    const id = typeof entry.instructionId === 'string' ? entry.instructionId : '?';
+    lines.push(`# instruction ${id.slice(0, 8)}`);
+    const steps = Array.isArray(entry.simplifiedSteps)
+      ? (entry.simplifiedSteps as RewriteVariantStep[])
+      : [];
+    if (steps.length === 0) {
+      lines.push('  (no simplified steps)');
+      continue;
+    }
+    steps.forEach((s, i) => {
+      const text = typeof s.text === 'string' ? s.text : '(no text)';
+      const dur = typeof s.durationSec === 'number' && s.durationSec > 0 ? ` [${s.durationSec}s]` : '';
+      lines.push(`  ${i + 1}. ${text}${dur}`);
+    });
+    lines.push('');
+  }
+  return lines.join('\n').trim();
+}
+
 /** Per-line diff hunk used by the comparison view. */
 export interface DiffLine {
   kind: 'same' | 'add' | 'del';

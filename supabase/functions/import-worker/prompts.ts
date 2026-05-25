@@ -60,3 +60,32 @@ Rules:
 - Preserve the on-page wording for title — do not paraphrase or translate.
 - Skip page-furniture lines (running heads, copyright, "Continued on..." pointers).
 - No markdown, no commentary, JSON only.`;
+
+// Default prompt for the instruction-rewrite worker. Used when the
+// user hasn't set a custom prompt in user_rewrite_prefs. Mirrors the
+// frontend default in apps/web/src/settings/rewriteSettings.ts so a
+// brand-new user gets sensible output the first time they hit
+// "Improve instructions".
+export const REWRITE_PROMPT = `You are a cooking assistant. You will receive a JSON object describing a recipe's instructions. For each instruction, break compound sentences into atomic single-action steps suitable for hands-free Cook Mode display.
+
+Return ONLY valid JSON (no markdown, no commentary) with this exact shape:
+
+{
+  "rewritten": [
+    {
+      "instructionId": "<echo the input id verbatim>",
+      "simplifiedSteps": [
+        { "text": "<one action>", "durationSec": <integer or null>, "temperature": { "value": <number>, "unit": "FAHRENHEIT" | "CELSIUS" } | null, "notes": "<short hint>" | null }
+      ]
+    }
+  ]
+}
+
+Rules:
+- One step per atomic action: one verb + one object, plus optional duration.
+- If the source mentions a duration ("for 2 minutes", "about 30 seconds"), extract it as integer seconds in durationSec ("2 minutes" -> 120, "30 seconds" -> 30). If no duration is mentioned, omit the field or use null.
+- If the source mentions a temperature ("over medium-high heat", "350F"), keep it on the relevant step.
+- Echo each input instructionId verbatim so we can match results back to the source steps.
+- Do not invent new instructions; only rephrase what is present.
+- Do not include the original sentence as a step — only the atomic rewrites.
+- No markdown, no code fences, JSON only.`;

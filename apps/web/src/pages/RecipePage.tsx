@@ -29,6 +29,18 @@ import {
 import { shareRecipe } from '../share/share.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { recipeShareUrl } from '../share/shareUrl.js';
+import { useRewriteJob } from '../recipe/useRewriteJob.js';
+import {
+  cancelRewrite,
+  getUserRewritePrefs,
+  kickRewrite,
+  OcrWorkerNotConfiguredError,
+  startRewrite,
+} from '../import/api.js';
+import {
+  DEFAULT_REWRITE_MODEL_BY_PROVIDER,
+  DEFAULT_REWRITE_PROMPT,
+} from '../settings/rewriteSettings.js';
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
@@ -42,6 +54,46 @@ export function RecipePage() {
 
   const [scale, setScale] = useState(1);
   const [targetUnit, setTargetUnit] = useState<string>('');
+  const [rewriteError, setRewriteError] = useState<string | undefined>();
+  const { job: rewriteJob, refresh: refreshRewriteJob } = useRewriteJob(recipeId);
+
+  async function startImprove() {
+    setRewriteError(undefined);
+    if (!recipe) return;
+    try {
+      const prefs = await getUserRewritePrefs().catch(() => null);
+      const provider = prefs?.provider ?? 'gemini';
+      await startRewrite({
+        recipeId: recipe.id,
+        provider,
+        model: prefs?.model || DEFAULT_REWRITE_MODEL_BY_PROVIDER[provider],
+        prompt: prefs?.prompt || DEFAULT_REWRITE_PROMPT,
+      });
+      // Best-effort kick — the cron tick also drains the queue within 30s.
+      try {
+        await kickRewrite(recipe.id);
+      } catch (err) {
+        if (err instanceof OcrWorkerNotConfiguredError) {
+          setRewriteError(err.message);
+        } else {
+          // Non-fatal: the job is queued, cron will pick it up.
+        }
+      }
+      await refreshRewriteJob();
+    } catch (err) {
+      setRewriteError((err as Error).message);
+    }
+  }
+
+  async function cancelImprove() {
+    if (!rewriteJob) return;
+    try {
+      await cancelRewrite(rewriteJob.id);
+      await refreshRewriteJob();
+    } catch (err) {
+      setRewriteError((err as Error).message);
+    }
+  }
 
   const { data: houseRules = [] } = useHouseConversionRules();
   const { data: globalRules = [] } = useGlobalConversionRules();
@@ -215,6 +267,11 @@ export function RecipePage() {
           >
             Cook mode
           </Link>
+          <ImproveInstructionsButton
+            job={rewriteJob}
+            onStart={startImprove}
+            onCancel={cancelImprove}
+          />
           <Link
             to={`/collections/${collection.id}/recipes/${recipe.id}/edit`}
             className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
@@ -250,6 +307,15 @@ export function RecipePage() {
           </button>
         </div>
       </div>
+
+      {rewriteError && (
+        <div
+          role="alert"
+          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200"
+        >
+          {rewriteError}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <section className="md:col-span-1 space-y-2">
@@ -304,6 +370,25 @@ export function RecipePage() {
                       ))}
                     </ul>
                   )}
+                  {step.simplifiedSteps && step.simplifiedSteps.length > 0 && (
+                    <details className="mt-2" data-testid="simplified-preview">
+                      <summary className="cursor-pointer text-xs text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200">
+                        Simplified steps for Cook Mode
+                      </summary>
+                      <ul className="mt-1 ml-4 list-decimal space-y-0.5 text-sm text-stone-600 dark:text-stone-400">
+                        {step.simplifiedSteps.map((ss, i) => (
+                          <li key={i}>
+                            {ss.text}
+                            {ss.durationSec != null && (
+                              <span className="ml-2 rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+                                {formatDuration(ss.durationSec)}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   {step.notes && (
                     <p className="mt-1 text-xs italic text-stone-500 dark:text-stone-400">{step.notes}</p>
                   )}
@@ -342,6 +427,62 @@ export function RecipePage() {
       )}
     </div>
   );
+}
+
+function ImproveInstructionsButton(props: {
+  job: ReturnType<typeof useRewriteJob>['job'];
+  onStart: () => Promise<void>;
+  onCancel: () => Promise<void>;
+}) {
+  const { job, onStart, onCancel } = props;
+  // While the local-DB query is still loading, fall back to the
+  // start-state to keep the toolbar from flickering.
+  const inFlight = job?.status === 'PENDING' || job?.status === 'CLAIMED';
+  const failed = job?.status === 'FAILED' && (job.lastError ?? '') !== 'CANCELLED';
+
+  if (inFlight) {
+    return (
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
+        data-testid="rewrite-status"
+        title="Cancel rewrite"
+      >
+        Rewriting…
+      </button>
+    );
+  }
+  if (failed) {
+    return (
+      <button
+        type="button"
+        onClick={onStart}
+        className="rounded-md border border-amber-400 px-3 py-1.5 text-sm text-amber-800 hover:bg-amber-50 dark:border-amber-500/60 dark:text-amber-200 dark:hover:bg-amber-950/40"
+        data-testid="rewrite-retry"
+        title={job?.lastError ?? 'Rewrite failed'}
+      >
+        Retry rewrite
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onStart}
+      className="rounded-md px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
+      data-testid="improve-instructions"
+    >
+      Improve instructions
+    </button>
+  );
+}
+
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
 function quantityValue(q: Quantity): number {
