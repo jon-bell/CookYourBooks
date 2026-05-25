@@ -97,6 +97,10 @@ function SortableRow({
     opacity: isDragging ? 0.7 : undefined,
     background: isDragging ? '#fafaf9' : undefined,
   };
+  // A "placeholder" recipe is a ToC entry seeded from the catalog
+  // that the user hasn't imported / hand-entered yet. Render it
+  // muted so the imported ones above pop visually.
+  const isPlaceholder = recipe.ingredients.length === 0 && recipe.instructions.length === 0;
   return (
     <li ref={setNodeRef} style={style} className="flex items-center gap-2">
       <button
@@ -110,11 +114,22 @@ function SortableRow({
       </button>
       <Link
         to={`/collections/${collectionId}/recipes/${recipe.id}`}
-        className="flex flex-1 items-center justify-between py-3 pr-4 hover:bg-stone-50 dark:hover:bg-stone-900"
+        className={`flex flex-1 items-center justify-between py-3 pr-4 hover:bg-stone-50 dark:hover:bg-stone-900 ${
+          isPlaceholder ? 'text-stone-500 dark:text-stone-500' : ''
+        }`}
       >
-        <span className="font-medium">{recipe.title}</span>
-        <span className="text-sm text-stone-500 dark:text-stone-400">
-          {recipe.ingredients.length} ing · {recipe.instructions.length} steps
+        <span className="flex items-center gap-2 min-w-0">
+          <span className={`truncate ${isPlaceholder ? '' : 'font-medium'}`}>{recipe.title}</span>
+          {isPlaceholder && (
+            <span className="shrink-0 rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+              Not imported
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-sm text-stone-500 dark:text-stone-400">
+          {isPlaceholder
+            ? '—'
+            : `${recipe.ingredients.length} ing · ${recipe.instructions.length} steps`}
         </span>
       </Link>
     </li>

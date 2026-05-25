@@ -8,6 +8,7 @@ import {
 import { CliTokensSection } from '../settings/CliTokensSection.js';
 import { OcrKeysSection } from '../settings/OcrKeysSection.js';
 import { FallbackModelSection } from '../settings/FallbackModelSection.js';
+import { ConversionsSection } from '../settings/ConversionsSection.js';
 import { getUserOcrPrefs, setUserOcrPrefs } from '../import/api.js';
 
 /**
@@ -84,6 +85,7 @@ export function SettingsPage() {
 
       <OcrKeysSection />
       <FallbackModelSection />
+      <ConversionsSection />
 
       {error && (
         <div

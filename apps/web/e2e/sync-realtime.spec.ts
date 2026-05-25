@@ -23,6 +23,10 @@ test.describe('Local-first: realtime propagates across sessions', () => {
     // deliver to tab B. (There is no in-UI rename yet — using the public
     // toggle keeps this test focused on sync propagation.)
     await page.getByRole('button', { name: 'Make public' }).click();
+    await page
+      .getByRole('dialog', { name: /Publish .* to Discover\?/ })
+      .getByRole('button', { name: 'I understand, publish' })
+      .click();
 
     // The second tab should see the collection flip to public without manual
     // refresh. Allow generous time for realtime delivery.

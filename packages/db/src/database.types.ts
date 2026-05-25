@@ -119,6 +119,7 @@ export type Database = {
           provider: string
           raw_text: string | null
           run_id: string
+          sort_index: number
           status: string
           updated_at: string
         }
@@ -143,6 +144,7 @@ export type Database = {
           provider: string
           raw_text?: string | null
           run_id: string
+          sort_index?: number
           status?: string
           updated_at?: string
         }
@@ -167,6 +169,7 @@ export type Database = {
           provider?: string
           raw_text?: string | null
           run_id?: string
+          sort_index?: number
           status?: string
           updated_at?: string
         }
@@ -220,6 +223,7 @@ export type Database = {
       }
       conversion_rules: {
         Row: {
+          created_at: string
           factor: number
           from_unit: string
           id: string
@@ -228,8 +232,10 @@ export type Database = {
           priority: string
           recipe_id: string | null
           to_unit: string
+          updated_at: string
         }
         Insert: {
+          created_at?: string
           factor: number
           from_unit: string
           id?: string
@@ -238,8 +244,10 @@ export type Database = {
           priority: string
           recipe_id?: string | null
           to_unit: string
+          updated_at?: string
         }
         Update: {
+          created_at?: string
           factor?: number
           from_unit?: string
           id?: string
@@ -248,6 +256,7 @@ export type Database = {
           priority?: string
           recipe_id?: string | null
           to_unit?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -262,6 +271,162 @@ export type Database = {
             columns: ["recipe_id"]
             isOneToOne: false
             referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      global_conversions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          factor: number
+          from_unit: string
+          id: string
+          ingredient_name: string | null
+          notes: string | null
+          to_unit: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          factor: number
+          from_unit: string
+          id?: string
+          ingredient_name?: string | null
+          notes?: string | null
+          to_unit: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          factor?: number
+          from_unit?: string
+          id?: string
+          ingredient_name?: string | null
+          notes?: string | null
+          to_unit?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "global_conversions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "global_conversions_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      global_cookbooks: {
+        Row: {
+          author: string | null
+          cover_image_path: string | null
+          created_at: string
+          id: string
+          isbn: string | null
+          notes: string | null
+          publication_year: number | null
+          publisher: string | null
+          shared_from_collection_id: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          author?: string | null
+          cover_image_path?: string | null
+          created_at?: string
+          id?: string
+          isbn?: string | null
+          notes?: string | null
+          publication_year?: number | null
+          publisher?: string | null
+          shared_from_collection_id?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          author?: string | null
+          cover_image_path?: string | null
+          created_at?: string
+          id?: string
+          isbn?: string | null
+          notes?: string | null
+          publication_year?: number | null
+          publisher?: string | null
+          shared_from_collection_id?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "global_cookbooks_shared_from_collection_id_fkey"
+            columns: ["shared_from_collection_id"]
+            isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
+          },
+          {
+            foreignKeyName: "global_cookbooks_shared_from_collection_id_fkey"
+            columns: ["shared_from_collection_id"]
+            isOneToOne: false
+            referencedRelation: "public_collections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "global_cookbooks_shared_from_collection_id_fkey"
+            columns: ["shared_from_collection_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_collections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      global_toc_entries: {
+        Row: {
+          cookbook_id: string
+          created_at: string
+          id: string
+          page_number: number | null
+          sort_order: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          cookbook_id: string
+          created_at?: string
+          id?: string
+          page_number?: number | null
+          sort_order?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          cookbook_id?: string
+          created_at?: string
+          id?: string
+          page_number?: number | null
+          sort_order?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "global_toc_entries_cookbook_id_fkey"
+            columns: ["cookbook_id"]
+            isOneToOne: false
+            referencedRelation: "global_cookbooks"
             referencedColumns: ["id"]
           },
         ]
@@ -325,6 +490,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_batches_target_collection_id_fkey"
+            columns: ["target_collection_id"]
+            isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
           },
           {
             foreignKeyName: "import_batches_target_collection_id_fkey"
@@ -497,6 +669,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "import_items_assigned_collection_id_fkey"
+            columns: ["assigned_collection_id"]
+            isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
+          },
           {
             foreignKeyName: "import_items_assigned_collection_id_fkey"
             columns: ["assigned_collection_id"]
@@ -912,6 +1091,13 @@ export type Database = {
             foreignKeyName: "recipe_collections_forked_from_fkey"
             columns: ["forked_from"]
             isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
+          },
+          {
+            foreignKeyName: "recipe_collections_forked_from_fkey"
+            columns: ["forked_from"]
+            isOneToOne: false
             referencedRelation: "public_collections"
             referencedColumns: ["id"]
           },
@@ -990,6 +1176,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "recipes_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
+          },
           {
             foreignKeyName: "recipes_collection_id_fkey"
             columns: ["collection_id"]
@@ -1182,6 +1375,31 @@ export type Database = {
       }
     }
     Views: {
+      admin_global_toc_import_candidates: {
+        Row: {
+          author: string | null
+          collection_id: string | null
+          cover_image_path: string | null
+          created_at: string | null
+          isbn: string | null
+          owner_id: string | null
+          owner_name: string | null
+          publication_year: number | null
+          publisher: string | null
+          raw_isbn: string | null
+          recipe_count: number | null
+          title: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_collections_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       public_collections: {
         Row: {
           author: string | null
@@ -1223,6 +1441,7 @@ export type Database = {
           provider: string
           raw_text: string | null
           run_id: string
+          sort_index: number
           status: string
           updated_at: string
         }[]
@@ -1308,6 +1527,41 @@ export type Database = {
       cli_verify_token: { Args: { raw_token: string }; Returns: string }
       fork_collection: {
         Args: { source_collection_id: string }
+        Returns: string
+      }
+      global_conversion_delete: { Args: { p_id: string }; Returns: undefined }
+      global_conversion_upsert: {
+        Args: {
+          p_factor: number
+          p_from_unit: string
+          p_id: string | null
+          p_ingredient_name: string | null
+          p_notes: string | null
+          p_to_unit: string
+        }
+        Returns: string
+      }
+      global_toc_admin_import: {
+        Args: { source_collection_id: string }
+        Returns: string
+      }
+      global_toc_replace_entries_from_collection: {
+        Args: { source_collection_id: string; target_cookbook_id: string }
+        Returns: undefined
+      }
+      global_toc_share_collection: {
+        Args: { source_collection_id: string }
+        Returns: string
+      }
+      house_conversion_delete: { Args: { p_id: string }; Returns: undefined }
+      house_conversion_upsert: {
+        Args: {
+          p_factor: number
+          p_from_unit: string
+          p_id: string
+          p_ingredient_name: string | null
+          p_to_unit: string
+        }
         Returns: string
       }
       import_claim_next: {
@@ -1421,6 +1675,7 @@ export type Database = {
         Args: { reason: string; target_collection_id: string }
         Returns: undefined
       }
+      normalize_isbn: { Args: { raw: string }; Returns: string }
       ocr_key_delete: { Args: { p_provider: string }; Returns: undefined }
       ocr_key_set: {
         Args: { p_base_url?: string; p_provider: string; p_raw_key: string }

@@ -339,6 +339,11 @@ export interface CollectionPickerOption {
    *  disambiguate near-empty placeholders from established cookbooks
    *  in the picker. */
   recipeCount: number;
+  /** Subset of recipeCount that have at least one ingredient or one
+   *  instruction. Anything else is a ToC placeholder waiting for OCR
+   *  or hand-entry. Pickers / library cards lead with cookbooks that
+   *  have a non-zero value here. */
+  filledRecipeCount: number;
 }
 
 /** Library grid card — metadata + recipe count, no recipe hydration. */
@@ -351,6 +356,7 @@ export interface LibraryCollectionSummary {
   author: string | null;
   siteName: string | null;
   recipeCount: number;
+  filledRecipeCount: number;
 }
 
 export class LocalRecipeCollectionRepository implements RecipeCollectionRepository {
@@ -365,9 +371,11 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       author: string | null;
       source_type: CollectionRow['source_type'];
       recipe_count: number;
+      filled_count: number;
     }>(
       `select c.id, c.title, c.author, c.source_type,
-              coalesce(rc.cnt, 0) as recipe_count
+              coalesce(rc.cnt, 0) as recipe_count,
+              coalesce(fc.cnt, 0) as filled_count
          from recipe_collections c
          left join (
            select collection_id, count(*) as cnt
@@ -375,8 +383,16 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
              where deleted = 0
              group by collection_id
          ) rc on rc.collection_id = c.id
+         left join (
+           select r.collection_id, count(*) as cnt
+             from recipes r
+             where r.deleted = 0
+               and (exists (select 1 from ingredients where recipe_id = r.id)
+                    or exists (select 1 from instructions where recipe_id = r.id))
+             group by r.collection_id
+         ) fc on fc.collection_id = c.id
         where c.owner_id = ? and c.deleted = 0
-        order by lower(c.title) asc`,
+        order by (filled_count > 0) desc, lower(c.title) asc`,
       [this.ownerId],
     )) as Array<{
       id: string;
@@ -384,6 +400,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       author: string | null;
       source_type: CollectionRow['source_type'];
       recipe_count: number;
+      filled_count: number;
     }>;
     return rows.map((r) => ({
       id: r.id,
@@ -391,12 +408,19 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       author: r.author,
       sourceType: r.source_type,
       recipeCount: r.recipe_count,
+      filledRecipeCount: r.filled_count,
     }));
   }
 
   /** Fast list for the library grid — one grouped query, no per-recipe hydration. */
   async listLibrarySummaries(): Promise<LibraryCollectionSummary[]> {
     const db = await getLocalDb();
+    // filled_count counts recipes that have at least one ingredient or
+    // one instruction — i.e. the user has imported or written real
+    // content. Anything else is a placeholder seeded from the global
+    // cookbook catalog. Ordering by (filled_count > 0) desc keeps the
+    // library "populated" cookbooks on top, regardless of when the
+    // skeleton was created.
     const rows = (await db.execO<{
       id: string;
       title: string;
@@ -406,14 +430,29 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       author: string | null;
       site_name: string | null;
       recipe_count: number;
+      filled_count: number;
     }>(
       `select c.id, c.title, c.cover_image_path, c.is_public, c.source_type,
-              c.author, c.site_name, count(r.id) as recipe_count
+              c.author, c.site_name,
+              coalesce(rc.cnt, 0) as recipe_count,
+              coalesce(fc.cnt, 0) as filled_count
        from recipe_collections c
-       left join recipes r on r.collection_id = c.id and r.deleted = 0
+       left join (
+         select collection_id, count(*) as cnt
+           from recipes
+           where deleted = 0
+           group by collection_id
+       ) rc on rc.collection_id = c.id
+       left join (
+         select r.collection_id, count(*) as cnt
+           from recipes r
+           where r.deleted = 0
+             and (exists (select 1 from ingredients where recipe_id = r.id)
+                  or exists (select 1 from instructions where recipe_id = r.id))
+           group by r.collection_id
+       ) fc on fc.collection_id = c.id
        where c.owner_id = ? and c.deleted = 0
-       group by c.id
-       order by coalesce(c.updated_at, 0) desc`,
+       order by (filled_count > 0) desc, coalesce(c.updated_at, 0) desc`,
       [this.ownerId],
     )) as {
       id: string;
@@ -424,6 +463,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       author: string | null;
       site_name: string | null;
       recipe_count: number;
+      filled_count: number;
     }[];
     return rows.map((row) => ({
       id: row.id,
@@ -434,6 +474,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       author: row.author,
       siteName: row.site_name,
       recipeCount: Number(row.recipe_count),
+      filledRecipeCount: Number(row.filled_count),
     }));
   }
 

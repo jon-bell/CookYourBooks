@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CollectionPickerOption } from '../local/repositories.js';
 
+function pickerCountLabel(opt: CollectionPickerOption): string {
+  const total = opt.recipeCount;
+  const filled = opt.filledRecipeCount;
+  if (total === 0) return '0 recipes';
+  if (filled === total) return `${total} ${total === 1 ? 'recipe' : 'recipes'}`;
+  return `${filled} of ${total} imported`;
+}
+
 interface Props {
   options: readonly CollectionPickerOption[];
   /** Currently-selected cookbook id. Empty string means unassigned. */
@@ -205,7 +213,7 @@ export function CookbookCombobox({
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
                       <span>
-                        {opt.recipeCount} {opt.recipeCount === 1 ? 'recipe' : 'recipes'}
+                        {pickerCountLabel(opt)}
                       </span>
                       {isCurrent && <span className="text-stone-400">·  current</span>}
                     </span>

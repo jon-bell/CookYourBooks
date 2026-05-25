@@ -14,7 +14,8 @@ import {
   type ReportStatus,
 } from '../moderation/api.js';
 import { ReasonDialog } from '../moderation/ReasonDialog.js';
-import { useIsAdmin } from '../moderation/useIsAdmin.js';
+import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
+import { GlobalConversionsAdmin } from '../moderation/GlobalConversionsAdmin.js';
 
 type PendingAction =
   | { kind: 'unpublish'; collectionId: string }
@@ -24,7 +25,7 @@ type PendingAction =
   | { kind: 'unban'; userId: string }
   | { kind: 'republish'; collectionId: string };
 
-type Tab = 'queue' | 'resolved' | 'log';
+type Tab = 'queue' | 'resolved' | 'log' | 'conversions';
 
 /**
  * Admin-only moderation console. Renders a forbidden message for non-admins
@@ -33,40 +34,34 @@ type Tab = 'queue' | 'resolved' | 'log';
  * not look like a routing bug.
  */
 export function AdminPage() {
-  const { isAdmin, isLoading } = useIsAdmin();
   const [tab, setTab] = useState<Tab>('queue');
 
-  if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
-  if (!isAdmin) {
-    return (
-      <div className="space-y-3">
-        <h1 className="text-2xl font-semibold">Admin</h1>
-        <p className="text-stone-600 dark:text-stone-400">
-          This surface is restricted to administrators. If you think you should have access,
-          ask another admin to grant it.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Moderation</h1>
-      <div className="flex gap-2 border-b border-stone-200 dark:border-stone-700 text-sm">
-        <TabBtn active={tab === 'queue'} onClick={() => setTab('queue')}>
-          Open reports
-        </TabBtn>
-        <TabBtn active={tab === 'resolved'} onClick={() => setTab('resolved')}>
-          Resolved reports
-        </TabBtn>
-        <TabBtn active={tab === 'log'} onClick={() => setTab('log')}>
-          Moderation log
-        </TabBtn>
+    <RequireAdmin>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold">Admin</h1>
+        <AdminTabs />
+        <h2 className="text-lg font-semibold text-stone-700 dark:text-stone-300">Moderation</h2>
+        <div className="flex gap-2 border-b border-stone-200 dark:border-stone-700 text-sm">
+          <TabBtn active={tab === 'queue'} onClick={() => setTab('queue')}>
+            Open reports
+          </TabBtn>
+          <TabBtn active={tab === 'resolved'} onClick={() => setTab('resolved')}>
+            Resolved reports
+          </TabBtn>
+          <TabBtn active={tab === 'log'} onClick={() => setTab('log')}>
+            Moderation log
+          </TabBtn>
+          <TabBtn active={tab === 'conversions'} onClick={() => setTab('conversions')}>
+            Global conversions
+          </TabBtn>
+        </div>
+        {tab === 'queue' && <ReportList status="OPEN" />}
+        {tab === 'resolved' && <ReportList status="ACTIONED" showDismissed />}
+        {tab === 'log' && <ModerationLog />}
+        {tab === 'conversions' && <GlobalConversionsAdmin />}
       </div>
-      {tab === 'queue' && <ReportList status="OPEN" />}
-      {tab === 'resolved' && <ReportList status="ACTIONED" showDismissed />}
-      {tab === 'log' && <ModerationLog />}
-    </div>
+    </RequireAdmin>
   );
 }
 
