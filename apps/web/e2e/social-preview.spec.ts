@@ -39,8 +39,12 @@ test.describe('Sharing + social preview', () => {
     // Private by default — the Copy link button shouldn't render yet.
     await expect(page.getByTestId('copy-link-button')).toHaveCount(0);
 
-    // Flip it public.
+    // Flip it public — first-time publish goes through the DMCA dialog.
     await page.getByRole('button', { name: 'Make public' }).click();
+    await page
+      .getByRole('dialog', { name: /Publish .* to Discover\?/ })
+      .getByRole('button', { name: 'I understand, publish' })
+      .click();
     await expect(page.getByRole('button', { name: 'Make private' })).toBeVisible();
 
     const copyBtn = page.getByTestId('copy-link-button');

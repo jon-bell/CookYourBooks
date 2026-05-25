@@ -8,6 +8,7 @@ import { ShoppingListPage } from './pages/ShoppingListPage.js';
 import { NewCollectionPage } from './pages/NewCollectionPage.js';
 import { CookModePage } from './pages/CookModePage.js';
 import { AdminPage } from './pages/AdminPage.js';
+import { AdminGlobalTocPage } from './pages/AdminGlobalTocPage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
 import { LandingPage } from './pages/LandingPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
@@ -198,6 +199,30 @@ export function App() {
             element={
               <RequireAuth>
                 <AdminPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/global-toc"
+            element={
+              <RequireAuth>
+                <AdminGlobalTocPage mode="list" />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/global-toc/import"
+            element={
+              <RequireAuth>
+                <AdminGlobalTocPage mode="import" />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/global-toc/:cookbookId"
+            element={
+              <RequireAuth>
+                <AdminGlobalTocPage mode="editor" />
               </RequireAuth>
             }
           />
