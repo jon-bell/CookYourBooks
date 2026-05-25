@@ -1,6 +1,7 @@
 import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
 
 export type ImportItemStatus =
+  | 'AWAITING_GROUPING'
   | 'PENDING'
   | 'CLAIMED'
   | 'OCR_DONE'

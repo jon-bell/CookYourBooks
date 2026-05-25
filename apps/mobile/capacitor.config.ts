@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'net.jonbell.cookyourbooks',
+  appId: 'app.cookyourbooks',
   appName: 'CookYourBooks',
   // The web app is built into ../web/dist; Capacitor copies that into the
   // native project on `cap sync`.

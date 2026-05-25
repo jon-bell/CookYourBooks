@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from './App.js';
 import { AuthProvider } from './auth/AuthProvider.js';
 import { SyncProvider } from './local/SyncProvider.js';
+import { ThemeProvider } from './theme/ThemeProvider.js';
 import './styles.css';
 
 const queryClient = new QueryClient({
@@ -19,13 +20,15 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <SyncProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </SyncProvider>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <SyncProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </SyncProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 );

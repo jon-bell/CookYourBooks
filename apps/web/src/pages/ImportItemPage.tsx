@@ -38,6 +38,7 @@ import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
+import { PinchPanImage } from '../components/PinchPanImage.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -75,6 +76,14 @@ export function ImportItemPage() {
   const [actionError, setActionError] = useState<string | undefined>();
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const pinch = useRef<{
+    startDist: number;
+    startMidX: number;
+    startMidY: number;
+    startZoom: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!item) return;
@@ -233,25 +242,93 @@ export function ImportItemPage() {
     if (drag.current) drag.current.active = false;
   }
 
+  // Touch handlers — one finger pans (mirrors mouse drag), two fingers pinch
+  // zoom. iOS WKWebView's default page-level pinch is suppressed via
+  // `touchAction: 'none'` on the viewer div below, so the gesture stays
+  // scoped to this image instead of zooming the surrounding page.
+  function onTouchStart(e: React.TouchEvent) {
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    if (e.touches.length === 1 && t0) {
+      drag.current = {
+        active: true,
+        startX: t0.clientX,
+        startY: t0.clientY,
+        origX: pan.x,
+        origY: pan.y,
+      };
+      pinch.current = null;
+    } else if (e.touches.length === 2 && t0 && t1) {
+      drag.current = null;
+      pinch.current = {
+        startDist: Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY),
+        startMidX: (t0.clientX + t1.clientX) / 2,
+        startMidY: (t0.clientY + t1.clientY) / 2,
+        startZoom: zoom,
+        origX: pan.x,
+        origY: pan.y,
+      };
+    }
+  }
+  function onTouchMove(e: React.TouchEvent) {
+    e.preventDefault();
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    if (e.touches.length === 1 && t0 && drag.current?.active) {
+      setPan({
+        x: drag.current.origX + (t0.clientX - drag.current.startX),
+        y: drag.current.origY + (t0.clientY - drag.current.startY),
+      });
+    } else if (e.touches.length === 2 && t0 && t1 && pinch.current) {
+      const newDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+      const ratio = newDist / pinch.current.startDist;
+      const mx = (t0.clientX + t1.clientX) / 2;
+      const my = (t0.clientY + t1.clientY) / 2;
+      setZoom(Math.max(0.5, Math.min(4, pinch.current.startZoom * ratio)));
+      setPan({
+        x: pinch.current.origX + (mx - pinch.current.startMidX),
+        y: pinch.current.origY + (my - pinch.current.startMidY),
+      });
+    }
+  }
+  function onTouchEnd(e: React.TouchEvent) {
+    const remaining = e.touches[0];
+    if (e.touches.length === 0) {
+      drag.current = null;
+      pinch.current = null;
+    } else if (e.touches.length === 1 && remaining && pinch.current) {
+      // Pinch released to one-finger; seed a pan from current position so
+      // the image doesn't jump.
+      pinch.current = null;
+      drag.current = {
+        active: true,
+        startX: remaining.clientX,
+        startY: remaining.clientY,
+        origX: pan.x,
+        origY: pan.y,
+      };
+    }
+  }
+
   if (!localReady || batchLoading || itemLoading) {
-    return <p className="text-stone-500">Loading…</p>;
+    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
   }
   if ((!batch || !item) && !hydrated) {
-    return <p className="text-stone-500">Initializing local cache…</p>;
+    return <p className="text-stone-500 dark:text-stone-400">Initializing local cache…</p>;
   }
   if (!batch || !item) {
     return (
       <div className="space-y-3">
-        <p className="text-stone-700">
+        <p className="text-stone-700 dark:text-stone-300">
           {!batch ? 'Batch' : 'Item'} not found locally.
         </p>
-        <p className="text-sm text-stone-500">
+        <p className="text-sm text-stone-500 dark:text-stone-400">
           It may not have synced from the server yet ({syncStatus}).
         </p>
         <button
           type="button"
           onClick={() => void syncNow()}
-          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
         >
           Sync now
         </button>
@@ -454,7 +531,11 @@ export function ImportItemPage() {
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
             onMouseLeave={onMouseUp}
-            className="relative aspect-[3/4] cursor-grab overflow-hidden rounded-lg border border-stone-200 bg-stone-100"
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+            className="relative aspect-[3/4] cursor-grab overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-100 dark:bg-stone-800"
+            style={{ touchAction: 'none' }}
           >
             {imgUrl ? (
               <img
@@ -471,11 +552,11 @@ export function ImportItemPage() {
               <ImportThumb path={item.storagePath} className="h-full w-full object-contain" />
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs text-stone-600">
+          <div className="flex items-center gap-2 text-xs text-stone-600 dark:text-stone-400">
             <button
               type="button"
               onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}
-              className="rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+              className="rounded border border-stone-300 dark:border-stone-600 px-2 py-0.5 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               −
             </button>
@@ -483,7 +564,7 @@ export function ImportItemPage() {
             <button
               type="button"
               onClick={() => setZoom((z) => Math.min(4, z + 0.25))}
-              className="rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+              className="rounded border border-stone-300 dark:border-stone-600 px-2 py-0.5 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               +
             </button>
@@ -493,19 +574,19 @@ export function ImportItemPage() {
                 setZoom(1);
                 setPan({ x: 0, y: 0 });
               }}
-              className="ml-2 rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+              className="ml-2 rounded border border-stone-300 dark:border-stone-600 px-2 py-0.5 hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Fit
             </button>
             <button
               type="button"
               onClick={() => setFullscreen(true)}
-              className="rounded border border-stone-300 px-2 py-0.5 hover:bg-stone-100"
+              className="rounded border border-stone-300 dark:border-stone-600 px-2 py-0.5 hover:bg-stone-100 dark:hover:bg-stone-800"
               title="Fullscreen (f)"
             >
               ⛶ Fullscreen
             </button>
-            <span className="ml-auto text-stone-500">Ctrl/⌘+scroll to zoom · drag to pan · f for fullscreen · ← / → to navigate</span>
+            <span className="ml-auto text-stone-500 dark:text-stone-400">Ctrl/⌘+scroll to zoom · drag to pan · f for fullscreen · ← / → to navigate</span>
           </div>
 
           {item.extraStoragePaths.length > 0 && (
@@ -521,18 +602,18 @@ export function ImportItemPage() {
             />
           )}
 
-          <details className="rounded-md border border-stone-200 bg-white">
+          <details className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
             <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
               Attempt history ({attempts.length})
             </summary>
-            <ul className="divide-y divide-stone-200 px-3 pb-2 text-xs text-stone-700">
-              {attempts.length === 0 && <li className="py-2 text-stone-500">No attempts yet.</li>}
+            <ul className="divide-y divide-stone-200 dark:divide-stone-700 px-3 pb-2 text-xs text-stone-700 dark:text-stone-300">
+              {attempts.length === 0 && <li className="py-2 text-stone-500 dark:text-stone-400">No attempts yet.</li>}
               {attempts.map((a) => (
                 <li key={a.id} className="space-y-0.5 py-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">#{a.attemptNo}</span>
                     <span>{a.provider}</span>
-                    <code className="rounded bg-stone-100 px-1">{a.model}</code>
+                    <code className="rounded bg-stone-100 dark:bg-stone-800 px-1">{a.model}</code>
                     <span
                       className={
                         a.errorKind && a.errorKind !== 'OK'
@@ -542,12 +623,12 @@ export function ImportItemPage() {
                     >
                       {a.errorKind ?? 'OK'}
                     </span>
-                    <span className="ml-auto text-stone-500">
+                    <span className="ml-auto text-stone-500 dark:text-stone-400">
                       {a.latencyMs}ms · ${(a.costUsdMicros / 1_000_000).toFixed(4)}
                     </span>
                   </div>
                   {a.errorMessage && (
-                    <div className="text-stone-600">{a.errorMessage}</div>
+                    <div className="text-stone-600 dark:text-stone-400">{a.errorMessage}</div>
                   )}
                   {a.rawResponsePath && (
                     <ViewRawLink path={a.rawResponsePath} />
@@ -561,7 +642,7 @@ export function ImportItemPage() {
         <div className="space-y-3">
           <OcrStatusBanner item={item} batchItems={batchItems} />
 
-          <div className="rounded-md border border-stone-200 bg-white p-3 text-sm">
+          <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -577,19 +658,19 @@ export function ImportItemPage() {
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Cookbook">
                   {creatingCookbook ? (
-                    <div className="space-y-2 rounded border border-stone-300 bg-stone-50 p-2">
+                    <div className="space-y-2 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2">
                       <input
                         autoFocus
                         placeholder="Cookbook title"
                         value={newCookbookTitle}
                         onChange={(e) => setNewCookbookTitle(e.target.value)}
-                        className="w-full rounded border border-stone-300 px-2 py-1 text-sm"
+                        className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
                       />
                       <input
                         placeholder="Author (optional)"
                         value={newCookbookAuthor}
                         onChange={(e) => setNewCookbookAuthor(e.target.value)}
-                        className="w-full rounded border border-stone-300 px-2 py-1 text-sm"
+                        className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
                       />
                       <div className="flex gap-2">
                         <button
@@ -613,7 +694,7 @@ export function ImportItemPage() {
                             }
                           }}
                           disabled={!newCookbookTitle.trim() || saveCollection.isPending}
-                          className="rounded-md bg-stone-900 px-3 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                          className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
                         >
                           {saveCollection.isPending ? 'Creating…' : 'Create'}
                         </button>
@@ -624,13 +705,13 @@ export function ImportItemPage() {
                             setNewCookbookTitle('');
                             setNewCookbookAuthor('');
                           }}
-                          className="rounded-md px-3 py-1 text-xs text-stone-600 hover:text-stone-900"
+                          className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
                         >
                           Cancel
                         </button>
                       </div>
                       {cookbookError && (
-                        <p className="text-xs text-red-700">{cookbookError}</p>
+                        <p className="text-xs text-red-700 dark:text-red-300">{cookbookError}</p>
                       )}
                     </div>
                   ) : (
@@ -644,7 +725,7 @@ export function ImportItemPage() {
                         matchedExistingTitle={matchedExisting?.title}
                       />
                       {!pickerLoading && pickerOptions.length === 0 && (
-                        <p className="mt-1 text-xs text-stone-500">
+                        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                           No cookbooks yet — create one to save this recipe.
                         </p>
                       )}
@@ -658,11 +739,11 @@ export function ImportItemPage() {
                       onChange={(e) => setPageNumberStr(e.target.value)}
                       onFocus={() => setShowTocSuggestions(true)}
                       onBlur={() => setTimeout(() => setShowTocSuggestions(false), 150)}
-                      className="w-full rounded border border-stone-300 px-2 py-1.5 text-sm"
+                      className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1.5 text-sm"
                       placeholder="e.g. 42"
                     />
                     {showTocSuggestions && tocSuggestions.length > 0 && (
-                      <div className="absolute z-20 mt-1 w-full rounded-md border border-stone-200 bg-white shadow-md">
+                      <div className="absolute z-20 mt-1 w-full rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-md">
                         <ul className="max-h-48 overflow-auto py-1 text-xs">
                           {tocSuggestions.map((s) => (
                             <li key={s.entry.id}>
@@ -675,11 +756,11 @@ export function ImportItemPage() {
                                   }
                                   setShowTocSuggestions(false);
                                 }}
-                                className="block w-full px-3 py-1.5 text-left hover:bg-stone-100"
+                                className="block w-full px-3 py-1.5 text-left hover:bg-stone-100 dark:hover:bg-stone-800"
                               >
                                 <span className="font-medium">{s.entry.title}</span>
                                 {s.entry.pageNumber != null && (
-                                  <span className="ml-2 text-stone-500">
+                                  <span className="ml-2 text-stone-500 dark:text-stone-400">
                                     p. {s.entry.pageNumber}
                                   </span>
                                 )}
@@ -698,7 +779,7 @@ export function ImportItemPage() {
                   data-testid="draft-tabs"
                   role="tablist"
                   aria-label="Recipe drafts on this page"
-                  className="flex gap-1 border-b border-stone-200"
+                  className="flex gap-1 border-b border-stone-200 dark:border-stone-700"
                 >
                   {drafts.map((d, i) => (
                     <button
@@ -722,16 +803,16 @@ export function ImportItemPage() {
               {currentDraft ? (
                 <DraftEditor draft={currentDraft} onPatch={patchDraft} />
               ) : item.status === 'OCR_FAILED' ? (
-                <p className="text-sm text-red-700">
+                <p className="text-sm text-red-700 dark:text-red-300">
                   OCR failed{item.lastError ? `: ${item.lastError}` : '.'} Use Re-OCR to try
                   again.
                 </p>
               ) : (
-                <p className="text-sm text-stone-600">No drafts yet — OCR results will appear here.</p>
+                <p className="text-sm text-stone-600 dark:text-stone-400">No drafts yet — OCR results will appear here.</p>
               )}
 
               {matchedExisting && targetCollection && (
-                <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                <div className="rounded-md border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200">
                   <strong>Matches existing recipe:</strong>{' '}
                   <span className="font-medium">{matchedExisting.title}</span> in{' '}
                   <em>{targetCollection.title}</em>. Save will update that
@@ -745,7 +826,7 @@ export function ImportItemPage() {
                   type="button"
                   onClick={() => void saveAsRecipe()}
                   disabled={!currentDraft || !targetCollectionId || saveRecipe.isPending}
-                  className="rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+                  className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
                 >
                   {saveRecipe.isPending
                     ? 'Saving…'
@@ -765,7 +846,7 @@ export function ImportItemPage() {
                   }}
                   disabled={!draftPatches[activeDraft]}
                   title="Discard your edits to this draft and show the original OCR output"
-                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-50"
+                  className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
                 >
                   Restore original
                 </button>
@@ -773,7 +854,7 @@ export function ImportItemPage() {
                   type="button"
                   onClick={() => void discardThisDraft()}
                   disabled={!currentDraft}
-                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-50"
+                  className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
                 >
                   Discard this draft
                 </button>
@@ -786,21 +867,21 @@ export function ImportItemPage() {
                       ? 'Clear drafts and queue this page for OCR again'
                       : 'Wait until OCR finishes or fails before re-running'
                   }
-                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Re-OCR
                 </button>
                 <button
                   type="button"
                   onClick={() => void discardItem()}
-                  className="rounded-md px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+                  className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
                 >
                   Discard entire item
                 </button>
               </div>
 
               {(actionError || saveRecipe.isError) && (
-                <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
                   {actionError ?? (saveRecipe.error as Error).message}
                 </div>
               )}
@@ -898,7 +979,7 @@ function QuantityEditor({
       <button
         type="button"
         onClick={open}
-        className="inline-block min-w-[3rem] rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700 hover:bg-stone-200"
+        className="inline-block min-w-[3rem] rounded-md bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs font-medium text-stone-700 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-700"
         title="Click to edit quantity"
       >
         {quantity ? formatQuantity(quantity) : '(no qty)'}
@@ -907,7 +988,7 @@ function QuantityEditor({
   }
 
   return (
-    <span className="relative inline-flex items-baseline gap-1 rounded-md border border-stone-300 bg-white p-1">
+    <span className="relative inline-flex items-baseline gap-1 rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 p-1">
       <input
         autoFocus
         value={amount}
@@ -917,12 +998,12 @@ function QuantityEditor({
           if (e.key === 'Escape') close();
         }}
         placeholder="1 1/2"
-        className="w-14 rounded border border-stone-200 px-1 py-0.5 text-xs"
+        className="w-14 rounded border border-stone-200 dark:border-stone-700 px-1 py-0.5 text-xs"
       />
       <select
         value={unit}
         onChange={(e) => setUnit(e.target.value)}
-        className="rounded border border-stone-200 px-1 py-0.5 text-xs"
+        className="rounded border border-stone-200 dark:border-stone-700 px-1 py-0.5 text-xs"
       >
         <option value="">(no unit)</option>
         {UNIT_GROUPS.map((g) => (
@@ -941,7 +1022,7 @@ function QuantityEditor({
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setShowHelp((v) => !v)}
         aria-label="Help"
-        className="rounded px-1 text-xs text-stone-400 hover:text-stone-900"
+        className="rounded px-1 text-xs text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
       >
         ?
       </button>
@@ -949,7 +1030,7 @@ function QuantityEditor({
         type="button"
         onMouseDown={(e) => e.preventDefault()}
         onClick={commit}
-        className="rounded bg-stone-900 px-1.5 py-0.5 text-xs text-white"
+        className="rounded bg-stone-900 dark:bg-stone-100 px-1.5 py-0.5 text-xs text-white dark:text-stone-900"
       >
         ✓
       </button>
@@ -960,22 +1041,22 @@ function QuantityEditor({
           onClear();
           close();
         }}
-        className="rounded px-1.5 py-0.5 text-xs text-stone-500 hover:text-stone-900"
+        className="rounded px-1.5 py-0.5 text-xs text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
       >
         clear
       </button>
       {showHelp && (
         <span
           role="tooltip"
-          className="absolute left-0 top-full z-30 mt-1 w-72 rounded-md border border-stone-200 bg-white p-3 text-xs leading-relaxed text-stone-700 shadow-md"
+          className="absolute left-0 top-full z-30 mt-1 w-72 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-xs leading-relaxed text-stone-700 dark:text-stone-300 shadow-md"
         >
-          <strong className="block text-stone-900">Units</strong>
+          <strong className="block text-stone-900 dark:text-stone-100">Units</strong>
           Pick a standard unit from the list. Amount accepts decimals
           (<code>1.5</code>), mixed numbers (<code>1 1/2</code>), or
           plain integers.
           <br />
           <br />
-          <strong className="block text-stone-900">House units</strong>
+          <strong className="block text-stone-900 dark:text-stone-100">House units</strong>
           A "house unit" is your own measure — "a dollop", "one Bell
           mug" — defined as a conversion to a standard unit (e.g.
           <code> 1 dollop = 1 tbsp</code>). They'll show up here once
@@ -1014,12 +1095,12 @@ function MergedPagesStrip({
 }) {
   const all = [primaryPath, ...extras];
   return (
-    <div className="rounded-md border border-stone-200 bg-white p-2">
+    <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-2">
       <div className="mb-1 flex items-center justify-between text-xs">
-        <span className="font-medium text-stone-700">
+        <span className="font-medium text-stone-700 dark:text-stone-300">
           Merged scans ({all.length})
         </span>
-        <span className="text-stone-500">
+        <span className="text-stone-500 dark:text-stone-400">
           All sent to the LLM together. Click a thumb to inspect.
         </span>
       </div>
@@ -1052,7 +1133,7 @@ function ToastBanner({ message }: { message: string }) {
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed left-1/2 top-4 z-40 -translate-x-1/2 rounded-full bg-stone-900 px-4 py-2 text-sm font-medium text-white shadow-lg"
+      className="pointer-events-none fixed left-1/2 top-4 z-40 -translate-x-1/2 rounded-full bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 shadow-lg"
     >
       {message}
     </div>
@@ -1075,25 +1156,25 @@ function NavBanner({
   currentPageIndex: number;
 }) {
   return (
-    <div className="sticky top-0 z-20 -mx-4 flex items-center gap-3 border-b border-stone-200 bg-white/95 px-4 py-2 text-sm backdrop-blur">
-      <Link to={`/import/${batchId}`} className="truncate text-stone-700 hover:text-stone-900">
+    <div className="sticky top-0 z-20 -mx-4 flex items-center gap-3 border-b border-stone-200 dark:border-stone-700 bg-white/95 px-4 py-2 text-sm backdrop-blur">
+      <Link to={`/import/${batchId}`} className="truncate text-stone-700 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100">
         ← {batchName}
       </Link>
       <div className="ml-auto flex items-center gap-1">
         {prevId ? (
           <Link
             to={`/import/${batchId}/items/${prevId}`}
-            className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
             title="Previous reviewable (← or k)"
           >
             ← Prev
           </Link>
         ) : (
-          <span className="rounded-md border border-stone-200 px-2 py-1 text-xs text-stone-400">
+          <span className="rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400">
             ← Prev
           </span>
         )}
-        <span className="px-2 text-xs text-stone-500">
+        <span className="px-2 text-xs text-stone-500 dark:text-stone-400">
           {position
             ? `${position.current} of ${position.total}`
             : `Page ${currentPageIndex}`}
@@ -1101,13 +1182,13 @@ function NavBanner({
         {nextId ? (
           <Link
             to={`/import/${batchId}/items/${nextId}`}
-            className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
             title="Next reviewable (→ or j)"
           >
             Next →
           </Link>
         ) : (
-          <span className="rounded-md border border-stone-200 px-2 py-1 text-xs text-stone-400">
+          <span className="rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400">
             Next →
           </span>
         )}
@@ -1129,19 +1210,21 @@ function FullscreenImage({
     <div
       role="dialog"
       aria-label={alt}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/95"
+      className="fixed inset-0 z-50 bg-stone-900/95"
       onClick={onClose}
     >
-      <img
-        src={src}
-        alt={alt}
-        className="max-h-screen max-w-screen-2xl object-contain"
+      <div
+        className="absolute inset-0"
+        // The PinchPanImage hosts its own gesture handlers; stop the click
+        // from bubbling to the backdrop's onClick={onClose}.
         onClick={(e) => e.stopPropagation()}
-      />
+      >
+        <PinchPanImage src={src} alt={alt} className="relative h-full w-full" />
+      </div>
       <button
         type="button"
         onClick={onClose}
-        className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1.5 text-sm font-medium text-stone-900 hover:bg-white"
+        className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-10 rounded-full bg-white/90 px-3 py-1.5 text-sm font-medium text-stone-900 dark:text-stone-100 hover:bg-white dark:hover:bg-stone-800"
       >
         Close (esc)
       </button>
@@ -1313,15 +1396,15 @@ function DraftEditor({
   }
 
   return (
-    <article className="space-y-5 rounded-md border border-stone-200 bg-white p-5">
+    <article className="space-y-5 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
       <header className="space-y-2">
         <EditableText
           value={draft.title ?? ''}
           placeholder="(no title)"
           onCommit={(v) => onPatch({ title: v.trim() || undefined })}
-          className="block w-full text-2xl font-semibold leading-tight text-stone-900"
+          className="block w-full text-2xl font-semibold leading-tight text-stone-900 dark:text-stone-100"
         />
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
           {/* The recipe's bookTitle is sourced from the assigned
               cookbook on save (see saveAsRecipe). We don't render a
               separate editable "from" field here — it was redundant
@@ -1342,7 +1425,7 @@ function DraftEditor({
           value={draft.description ?? ''}
           placeholder="(no description — click to add)"
           onCommit={(v) => onPatch({ description: v.trim() || undefined })}
-          className="block w-full text-sm leading-relaxed text-stone-700"
+          className="block w-full text-sm leading-relaxed text-stone-700 dark:text-stone-300"
         />
       </section>
 
@@ -1352,7 +1435,7 @@ function DraftEditor({
       />
 
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
           Ingredients
         </h3>
         <ul className="space-y-1">
@@ -1368,7 +1451,7 @@ function DraftEditor({
             <button
               type="button"
               onClick={addIngredient}
-              className="text-xs text-stone-500 hover:text-stone-900"
+              className="text-xs text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
             >
               + Add ingredient
             </button>
@@ -1377,7 +1460,7 @@ function DraftEditor({
       </section>
 
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
           Instructions
         </h3>
         <ol className="space-y-4">
@@ -1408,8 +1491,8 @@ function DraftEditor({
 
       {draft.sourceImageText && (
         <details className="text-xs">
-          <summary className="cursor-pointer text-stone-500">Raw OCR text</summary>
-          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-stone-50 p-2 text-stone-700">
+          <summary className="cursor-pointer text-stone-500 dark:text-stone-400">Raw OCR text</summary>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-stone-50 dark:bg-stone-900 p-2 text-stone-700 dark:text-stone-300">
             {draft.sourceImageText}
           </pre>
         </details>
@@ -1506,7 +1589,7 @@ function IngredientRow({
   }
 
   return (
-    <li className="group flex items-baseline gap-2 text-sm leading-relaxed text-stone-800">
+    <li className="group flex items-baseline gap-2 text-sm leading-relaxed text-stone-800 dark:text-stone-200">
       <QuantityEditor
         quantity={isMeasured(ingredient) ? ingredient.quantity : undefined}
         onChange={(q) =>
@@ -1533,13 +1616,13 @@ function IngredientRow({
         value={ingredient.preparation ?? ''}
         placeholder="(prep)"
         onCommit={commitPrep}
-        className="text-stone-500"
+        className="text-stone-500 dark:text-stone-400"
       />
       <button
         type="button"
         onClick={onRemove}
         aria-label="Remove ingredient"
-        className="ml-auto rounded px-1 text-xs text-stone-300 opacity-0 hover:bg-stone-100 hover:text-stone-900 group-hover:opacity-100"
+        className="ml-auto rounded px-1 text-xs text-stone-300 opacity-0 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-stone-900 dark:hover:text-stone-100 group-hover:opacity-100"
       >
         ×
       </button>
@@ -1600,7 +1683,7 @@ function InstructionRow({
   }
 
   return (
-    <li className="group flex gap-3 text-sm leading-relaxed text-stone-800">
+    <li className="group flex gap-3 text-sm leading-relaxed text-stone-800 dark:text-stone-200">
       <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
         {index + 1}.
       </span>
@@ -1621,7 +1704,7 @@ function InstructionRow({
                 type="button"
                 onClick={() => toggleRef(ref.ingredientId)}
                 title="Click to remove"
-                className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-700 hover:bg-red-50 hover:text-red-700"
+                className="inline-flex items-center gap-1 rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-700 dark:text-stone-300 hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-700"
               >
                 <span>{ing?.name ?? '(missing)'}</span>
                 <span className="text-stone-400">×</span>
@@ -1640,7 +1723,7 @@ function InstructionRow({
         type="button"
         onClick={onRemove}
         aria-label="Remove step"
-        className="self-start rounded px-1 pt-1 text-xs text-stone-300 opacity-0 hover:bg-stone-100 hover:text-stone-900 group-hover:opacity-100"
+        className="self-start rounded px-1 pt-1 text-xs text-stone-300 opacity-0 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-stone-900 dark:hover:text-stone-100 group-hover:opacity-100"
       >
         ×
       </button>
@@ -1663,7 +1746,7 @@ function AddRefMenu({
         if (v) onPick(v);
         e.target.value = '';
       }}
-      className="rounded-full border border-dashed border-stone-300 bg-white px-2 py-0.5 text-xs text-stone-500 hover:border-stone-500 hover:text-stone-900"
+      className="rounded-full border border-dashed border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-0.5 text-xs text-stone-500 dark:text-stone-400 hover:border-stone-500 hover:text-stone-900 dark:hover:text-stone-100"
     >
       <option value="">+ link</option>
       {options.map((ing) => (
@@ -1703,7 +1786,7 @@ function EquipmentRow({
 
   return (
     <section>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
         Equipment
       </h3>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -1715,7 +1798,7 @@ function EquipmentRow({
         {items.map((item, i) => (
           <span
             key={`${item}-${i}`}
-            className="group inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-700"
+            className="group inline-flex items-center gap-1 rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-700 dark:text-stone-300"
           >
             <EditableText
               value={item}
@@ -1737,7 +1820,7 @@ function EquipmentRow({
           value=""
           placeholder="+ add"
           onCommit={add}
-          className="rounded-full border border-dashed border-stone-300 px-2 py-0.5 text-xs text-stone-500 hover:border-stone-500 hover:text-stone-900"
+          className="rounded-full border border-dashed border-stone-300 dark:border-stone-600 px-2 py-0.5 text-xs text-stone-500 dark:text-stone-400 hover:border-stone-500 hover:text-stone-900 dark:hover:text-stone-100"
         />
       </div>
     </section>
@@ -1862,7 +1945,7 @@ function ViewRawLink({ path }: { path: string }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="text-xs text-stone-700 underline hover:text-stone-900"
+      className="text-xs text-stone-700 dark:text-stone-300 underline hover:text-stone-900 dark:hover:text-stone-100"
     >
       View raw response →
     </a>
@@ -1872,7 +1955,7 @@ function ViewRawLink({ path }: { path: string }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-stone-700">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">{label}</span>
       {children}
     </label>
   );

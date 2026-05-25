@@ -79,7 +79,7 @@ export function NewCollectionPage() {
         <select
           value={kind}
           onChange={(e) => setKind(e.target.value as Kind)}
-          className="w-full rounded border border-stone-300 px-3 py-2"
+          className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
         >
           <option value="PERSONAL">Personal</option>
           <option value="PUBLISHED_BOOK">Cookbook</option>
@@ -102,7 +102,7 @@ export function NewCollectionPage() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           required
-          className="w-full rounded border border-stone-300 px-3 py-2"
+          className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
         />
       </Field>
       {kind === 'PUBLISHED_BOOK' && (
@@ -110,7 +110,7 @@ export function NewCollectionPage() {
           <input
             value={author}
             onChange={(e) => setAuthor(e.target.value)}
-            className="w-full rounded border border-stone-300 px-3 py-2"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
           />
         </Field>
       )}
@@ -134,7 +134,7 @@ export function NewCollectionPage() {
           <input
             value={sourceUrl}
             onChange={(e) => setSourceUrl(e.target.value)}
-            className="w-full rounded border border-stone-300 px-3 py-2"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
             placeholder="https://…"
           />
         </Field>
@@ -145,12 +145,12 @@ export function NewCollectionPage() {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            className="w-full rounded border border-stone-300 px-3 py-2"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
           />
         </Field>
       )}
       {save.isError && (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
           {(save.error as Error).message}
         </div>
       )}
@@ -158,14 +158,14 @@ export function NewCollectionPage() {
         <button
           type="submit"
           disabled={save.isPending}
-          className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+          className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
         >
           {save.isPending ? 'Creating…' : 'Create'}
         </button>
         <button
           type="button"
           onClick={() => navigate('/')}
-          className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900"
+          className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
         >
           Cancel
         </button>
@@ -177,7 +177,7 @@ export function NewCollectionPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">{label}</span>
       {children}
     </label>
   );

@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#1c1917" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="CookYourBooks" />
     <title>CookYourBooks</title>
@@ -30,7 +30,20 @@
     <meta name="twitter:description" content="Your cookbook library, with you everywhere." />
     <meta name="twitter:image" content="https://cookyourbooks.app/api/og-image?title=CookYourBooks&subtitle=Your+cookbook+library%2C+with+you+everywhere" />
   </head>
-  <body class="bg-stone-50 text-stone-900 antialiased">
+  <body class="bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+    <!-- Resolve the persisted theme before React mounts so the page
+         doesn't flash light then dark on every load. The ThemeProvider
+         keeps `cookyourbooks.theme.v1` in sync after hydration. -->
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('cookyourbooks.theme.v1');
+          var sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var dark = pref === 'dark' || ((pref === 'system' || !pref) && sysDark);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

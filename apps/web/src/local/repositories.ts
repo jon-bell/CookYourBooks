@@ -376,7 +376,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
              group by collection_id
          ) rc on rc.collection_id = c.id
         where c.owner_id = ? and c.deleted = 0
-        order by coalesce(c.updated_at, 0) desc`,
+        order by lower(c.title) asc`,
       [this.ownerId],
     )) as Array<{
       id: string;
@@ -593,8 +593,19 @@ export class LocalRecipeRepository implements RecipeRepository {
 
 async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> {
   const db = await getLocalDb();
+  // Recipes with at least one ingredient or instruction sort before
+  // empty skeletons. Within each group, sort_order is preserved so
+  // explicit user reordering still wins. Empty rows usually come from
+  // OCR imports that haven't been reviewed yet — keeping them at the
+  // bottom of the cookbook keeps the browse view feeling populated.
   const recipeRows = (await db.execO<RecipeRow>(
-    `select * from recipes where collection_id = ? and deleted = 0 order by sort_order asc`,
+    `select * from recipes
+       where collection_id = ? and deleted = 0
+       order by
+         case when exists (select 1 from ingredients where recipe_id = recipes.id)
+                or exists (select 1 from instructions where recipe_id = recipes.id)
+              then 0 else 1 end asc,
+         sort_order asc`,
     [row.id],
   )) as RecipeRow[];
   const recipes = await Promise.all(recipeRows.map(hydrateRecipe));

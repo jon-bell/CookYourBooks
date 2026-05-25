@@ -69,7 +69,7 @@ export function CookModePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [recipe]);
 
-  if (!collection || !recipe) return <p className="text-stone-600">Recipe not found.</p>;
+  if (!collection || !recipe) return <p className="text-stone-600 dark:text-stone-400">Recipe not found.</p>;
   const total = recipe.instructions.length;
   const step = recipe.instructions[idx];
   // Referenced ingredients for this step — the user's editor-time
@@ -91,16 +91,16 @@ export function CookModePage() {
       <div className="flex items-center justify-between">
         <Link
           to={`/collections/${collection.id}/recipes/${recipe.id}`}
-          className="text-sm text-stone-600 hover:underline"
+          className="text-sm text-stone-600 dark:text-stone-400 hover:underline"
         >
           ← {recipe.title}
         </Link>
-        <span className="text-sm text-stone-500">
+        <span className="text-sm text-stone-500 dark:text-stone-400">
           Step {idx + 1} of {total}
         </span>
       </div>
 
-      <div className="rounded-xl bg-white p-8 shadow-sm ring-1 ring-stone-200">
+      <div className="rounded-xl bg-white dark:bg-stone-900 p-8 shadow-sm ring-1 ring-stone-200">
         <div className="text-6xl font-light text-stone-300">{idx + 1}</div>
         {stepIngredients.length > 0 && (
           <ul
@@ -115,7 +115,7 @@ export function CookModePage() {
               return (
                 <li
                   key={ing.id}
-                  className="rounded-full bg-amber-50 px-3 py-1 text-amber-900 ring-1 ring-amber-200"
+                  className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-3 py-1 text-amber-900 dark:text-amber-200 ring-1 ring-amber-200"
                 >
                   {q ? (
                     <>
@@ -130,25 +130,25 @@ export function CookModePage() {
           </ul>
         )}
         {step?.temperature && (
-          <p className="mt-3 text-lg text-stone-600">
+          <p className="mt-3 text-lg text-stone-600 dark:text-stone-400">
             {step.temperature.value}°{step.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
           </p>
         )}
         <p className="mt-4 text-2xl leading-relaxed">{step?.text ?? ''}</p>
         {step?.subInstructions && step.subInstructions.length > 0 && (
-          <ul className="mt-3 ml-6 list-disc space-y-1 text-lg text-stone-700">
+          <ul className="mt-3 ml-6 list-disc space-y-1 text-lg text-stone-700 dark:text-stone-300">
             {step.subInstructions.map((sub, i) => (
               <li key={i}>{sub}</li>
             ))}
           </ul>
         )}
         {step?.notes && (
-          <p className="mt-3 text-base italic text-stone-500">{step.notes}</p>
+          <p className="mt-3 text-base italic text-stone-500 dark:text-stone-400">{step.notes}</p>
         )}
       </div>
 
-      <aside className="rounded-lg bg-white p-4 ring-1 ring-stone-200">
-        <h3 className="mb-2 text-sm font-semibold text-stone-700">Ingredients</h3>
+      <aside className="rounded-lg bg-white dark:bg-stone-900 p-4 ring-1 ring-stone-200">
+        <h3 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-300">Ingredients</h3>
         <ul className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-3">
           {recipe.ingredients.map((ing) => (
             <li key={ing.id}>
@@ -164,12 +164,12 @@ export function CookModePage() {
         </ul>
       </aside>
 
-      <div className="sticky bottom-0 flex items-stretch gap-3 pt-4">
+      <div className="sticky bottom-0 flex items-stretch gap-3 pt-4 pb-[env(safe-area-inset-bottom)]">
         <button
           onClick={() => retreat(setIdx)}
           disabled={idx === 0}
           aria-label="Previous step"
-          className="flex-1 rounded-md bg-stone-900 px-5 py-4 text-lg text-white disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+          className="flex-1 rounded-md bg-stone-900 dark:bg-stone-100 px-5 py-4 text-lg text-white dark:text-stone-900 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
         >
           ← Previous
         </button>
@@ -177,7 +177,7 @@ export function CookModePage() {
           onClick={() => advance(setIdx, total)}
           disabled={idx >= total - 1}
           aria-label="Next step"
-          className="flex-1 rounded-md bg-stone-900 px-5 py-4 text-lg text-white disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+          className="flex-1 rounded-md bg-stone-900 dark:bg-stone-100 px-5 py-4 text-lg text-white dark:text-stone-900 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
         >
           Next →
         </button>
