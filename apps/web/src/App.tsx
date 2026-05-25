@@ -16,6 +16,7 @@ import { ImportNewPage } from './pages/ImportNewPage.js';
 import { ImportBatchPage } from './pages/ImportBatchPage.js';
 import { ImportGroupingPage } from './pages/ImportGroupingPage.js';
 import { ImportItemPage } from './pages/ImportItemPage.js';
+import { BakeoffPage } from './pages/BakeoffPage.js';
 import { SignInPage } from './auth/SignInPage.js';
 import { SignUpPage } from './auth/SignUpPage.js';
 import { RequireAuth } from './auth/RequireAuth.js';
@@ -156,6 +157,14 @@ export function App() {
             element={
               <RequireAuth>
                 <ImportNewPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/bakeoff"
+            element={
+              <RequireAuth>
+                <BakeoffPage />
               </RequireAuth>
             }
           />

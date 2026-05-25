@@ -84,6 +84,12 @@ export function ImportListPage() {
           How it works
         </button>
         <Link
+          to="/import/bakeoff"
+          className="inline-flex items-center rounded-md border border-stone-300 px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-100"
+        >
+          Bakeoff
+        </Link>
+        <Link
           to="/import/new"
           className="inline-flex items-center rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800"
         >

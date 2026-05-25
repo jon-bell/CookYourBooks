@@ -19,6 +19,18 @@ import type { OcrSettings } from '../settings/ocrSettings.js';
 
 export type OcrProgress = { status: string };
 
+export interface LlmUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface LlmCallResult {
+  /** Raw text returned by the model, before JSON parsing. */
+  text: string;
+  /** Token counts reported by the provider; both default to 0 if absent. */
+  usage: LlmUsage;
+}
+
 /**
  * Send an image plus the user's pre-tuned prompt to the configured LLM
  * provider and parse the returned JSON into one or more
@@ -36,23 +48,44 @@ export async function ocrWithLlm(
   settings: OcrSettings,
   onProgress?: (p: OcrProgress) => void,
 ): Promise<ParsedRecipeDraft[]> {
+  const { drafts } = await ocrWithLlmDiagnostic(image, settings, onProgress);
+  return drafts;
+}
+
+export interface OcrDiagnosticResult {
+  drafts: ParsedRecipeDraft[];
+  rawText: string;
+  usage: LlmUsage;
+}
+
+/**
+ * Variant of {@link ocrWithLlm} that also returns the raw model text and
+ * reported token usage. Used by the bakeoff page where the user wants to
+ * compare cost and output between configurations; the regular import path
+ * still goes through `ocrWithLlm`.
+ */
+export async function ocrWithLlmDiagnostic(
+  image: Blob | File,
+  settings: OcrSettings,
+  onProgress?: (p: OcrProgress) => void,
+): Promise<OcrDiagnosticResult> {
   onProgress?.({ status: 'encoding image' });
   const b64 = await blobToBase64(image);
   const mime = image.type || 'image/jpeg';
 
   onProgress?.({ status: `asking ${settings.provider}` });
-  const raw =
+  const call =
     settings.provider === 'gemini'
       ? await callGemini(b64, mime, settings)
       : await callOpenAI(b64, mime, settings);
 
   onProgress?.({ status: 'parsing response' });
-  return parseLlmJson(raw);
+  return { drafts: parseLlmJson(call.text), rawText: call.text, usage: call.usage };
 }
 
 // ---------- Gemini ----------
 
-async function callGemini(b64: string, mime: string, settings: OcrSettings): Promise<string> {
+async function callGemini(b64: string, mime: string, settings: OcrSettings): Promise<LlmCallResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     settings.model,
   )}:generateContent?key=${encodeURIComponent(settings.apiKey)}`;
@@ -81,15 +114,25 @@ async function callGemini(b64: string, mime: string, settings: OcrSettings): Pro
   }
   const data = (await resp.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+    };
   };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error('Gemini returned no text part');
-  return text;
+  return {
+    text,
+    usage: {
+      promptTokens: data.usageMetadata?.promptTokenCount ?? 0,
+      completionTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    },
+  };
 }
 
 // ---------- OpenAI-compatible ----------
 
-async function callOpenAI(b64: string, mime: string, settings: OcrSettings): Promise<string> {
+async function callOpenAI(b64: string, mime: string, settings: OcrSettings): Promise<LlmCallResult> {
   const base = (settings.baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
   const body = {
     model: settings.model,
@@ -121,10 +164,17 @@ async function callOpenAI(b64: string, mime: string, settings: OcrSettings): Pro
   }
   const data = (await resp.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
   const text = data.choices?.[0]?.message?.content;
   if (!text) throw new Error('OpenAI-compatible response had no content');
-  return text;
+  return {
+    text,
+    usage: {
+      promptTokens: data.usage?.prompt_tokens ?? 0,
+      completionTokens: data.usage?.completion_tokens ?? 0,
+    },
+  };
 }
 
 // ---------- JSON → domain ----------
