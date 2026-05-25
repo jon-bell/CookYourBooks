@@ -94,9 +94,39 @@ export async function updateCookbook(
 }
 
 export async function deleteCookbook(id: string): Promise<void> {
-  // ToC entries cascade via the FK.
+  // ToC entries cascade via the FK. Storage doesn't cascade, so we
+  // best-effort sweep any leftover covers we uploaded for this cookbook.
+  await deleteCoversFor(id);
   const { error } = await supabase.from('global_cookbooks').delete().eq('id', id);
   if (error) throw error;
+}
+
+async function sweepOldCovers(cookbookId: string, keepPath: string): Promise<void> {
+  const { data } = await supabase.storage.from('covers').list('global', {
+    limit: 1000,
+    search: cookbookId,
+  });
+  const stale = (data ?? [])
+    .map((f) => `global/${f.name}`)
+    .filter((p) => p !== keepPath && p.startsWith(`global/${cookbookId}-`));
+  if (stale.length > 0) {
+    await supabase.storage.from('covers').remove(stale);
+  }
+}
+
+async function deleteCoversFor(cookbookId: string): Promise<void> {
+  const { data } = await supabase.storage.from('covers').list('global', {
+    limit: 1000,
+    search: cookbookId,
+  });
+  const paths = (data ?? [])
+    .map((f) => `global/${f.name}`)
+    .filter((p) => p.startsWith(`global/${cookbookId}-`) || p === `global/${cookbookId}.jpg`);
+  if (paths.length > 0) {
+    // Failure here shouldn't block the row delete — orphan storage is
+    // recoverable (rerun delete), an orphan row is not.
+    await supabase.storage.from('covers').remove(paths);
+  }
 }
 
 function normalizeDraft(draft: GlobalCookbookDraft): GlobalCookbookDraft {
@@ -180,10 +210,13 @@ export interface OpenLibraryResult {
 }
 
 // Looks up the ISBN, downloads the cover, uploads it to the `covers`
-// bucket under `global/<cookbookId>.jpg`, and returns the storage path
-// along with the parsed metadata. Callers merge the metadata into their
-// in-progress draft (no DB writes happen here — admin still has to hit
-// save).
+// bucket under `global/<cookbookId>-<ts>.jpg`, and returns the storage
+// path along with the parsed metadata. Callers merge the metadata into
+// their in-progress draft (no DB writes happen here — admin still has
+// to hit save). The timestamp in the path is a cheap cache-buster: the
+// public storage URL is content-addressable, so a refetch always
+// renders without admins having to hard-reload. Old objects linger
+// until the cookbook is deleted.
 export async function fetchFromOpenLibrary(
   isbn: string,
   cookbookId: string,
@@ -192,15 +225,18 @@ export async function fetchFromOpenLibrary(
   let coverPath: string | null = null;
 
   if (lookup.cover) {
-    const path = `global/${cookbookId}.jpg`;
+    const path = `global/${cookbookId}-${Date.now()}.jpg`;
     const { error } = await supabase.storage
       .from('covers')
       .upload(path, lookup.cover, {
         contentType: 'image/jpeg',
-        upsert: true,
+        upsert: false,
       });
     if (error) throw error;
     coverPath = path;
+    // Sweep older uploads for this cookbook so re-fetches don't pile
+    // up storage. Best-effort: failure leaves a tiny orphan, not a bug.
+    await sweepOldCovers(cookbookId, path);
   }
 
   return {

@@ -211,7 +211,7 @@ function CookbookForm({
         </Field>
       </div>
 
-      <Field label="Notes (admin-only)">
+      <Field label="Notes (publicly readable)">
         <textarea
           value={form.notes}
           onChange={(e) => setForm({ ...form, notes: e.target.value })}
