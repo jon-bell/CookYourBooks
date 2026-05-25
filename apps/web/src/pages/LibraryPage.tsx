@@ -30,30 +30,47 @@ export function LibraryPage() {
         </p>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {collections.map((c) => (
-            <li
-              key={c.id}
-              className="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 hover:border-stone-400"
-            >
-              <Link to={`/collections/${c.id}`} className="block">
-                <CoverImage path={c.coverImagePath ?? undefined} className="aspect-[3/2] w-full" />
-                <div className="p-4">
-                  <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                    {collectionSubtitle(c)}
+          {collections.map((c) => {
+            const isPlaceholder = c.filledRecipeCount === 0 && c.recipeCount > 0;
+            return (
+              <li
+                key={c.id}
+                className={`overflow-hidden rounded-lg border bg-white dark:bg-stone-900 hover:border-stone-400 ${
+                  isPlaceholder
+                    ? 'border-stone-200 dark:border-stone-800 opacity-60 hover:opacity-100'
+                    : 'border-stone-200 dark:border-stone-700'
+                }`}
+              >
+                <Link to={`/collections/${c.id}`} className="block">
+                  <CoverImage path={c.coverImagePath ?? undefined} className="aspect-[3/2] w-full" />
+                  <div className="p-4">
+                    <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                      {collectionSubtitle(c)}
+                    </div>
+                    <div className="mt-1 text-lg font-medium">{c.title}</div>
+                    <div className="mt-2 text-sm text-stone-600 dark:text-stone-400">
+                      {recipeCountLabel(c)}
+                      {c.isPublic && <span className="ml-2 text-emerald-700 dark:text-emerald-300">· Public</span>}
+                    </div>
                   </div>
-                  <div className="mt-1 text-lg font-medium">{c.title}</div>
-                  <div className="mt-2 text-sm text-stone-600 dark:text-stone-400">
-                    {c.recipeCount} {c.recipeCount === 1 ? 'recipe' : 'recipes'}
-                    {c.isPublic && <span className="ml-2 text-emerald-700 dark:text-emerald-300">· Public</span>}
-                  </div>
-                </div>
-              </Link>
-            </li>
-          ))}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
   );
+}
+
+function recipeCountLabel(c: LibraryCollectionSummary): string {
+  const total = c.recipeCount;
+  const filled = c.filledRecipeCount;
+  if (total === 0) return '0 recipes';
+  if (filled === total) return `${total} ${total === 1 ? 'recipe' : 'recipes'}`;
+  // Total includes ToC placeholders the user hasn't imported yet. Show
+  // the ratio so the user knows how much of the cookbook is "real".
+  return `${filled} of ${total} imported`;
 }
 
 function collectionSubtitle(c: LibraryCollectionSummary): string {
