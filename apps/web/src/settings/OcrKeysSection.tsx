@@ -108,10 +108,10 @@ export function OcrKeysSection() {
   );
 
   return (
-    <section className="space-y-4 rounded-lg border border-stone-200 bg-white p-5">
+    <section className="space-y-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
       <div>
         <h2 className="text-lg font-semibold">OCR keys (server-side)</h2>
-        <p className="mt-1 text-sm text-stone-600">
+        <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
           API keys for the bulk OCR worker. Stored in Supabase Vault — only the worker
           (running as the service role) can decrypt them. The browser never reads the key
           back. Set / rotate per provider.
@@ -119,7 +119,7 @@ export function OcrKeysSection() {
       </div>
 
       {showLegacyMigration && (
-        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="space-y-2 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">Move your legacy in-browser key to the server?</div>
           <div className="text-xs">
             You have a key stored locally for {LABELS[legacy!.provider]}. The new bulk
@@ -131,14 +131,14 @@ export function OcrKeysSection() {
               type="button"
               onClick={() => void migrateLegacy()}
               disabled={migrating}
-              className="rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
               {migrating ? 'Moving…' : 'Move to server'}
             </button>
             <button
               type="button"
               onClick={() => setLegacyDismissed(true)}
-              className="rounded-md px-3 py-1.5 text-xs text-amber-800 hover:bg-amber-100"
+              className="rounded-md px-3 py-1.5 text-xs text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
             >
               Dismiss
             </button>
@@ -147,7 +147,7 @@ export function OcrKeysSection() {
       )}
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
           {error}
         </div>
       )}
@@ -157,11 +157,11 @@ export function OcrKeysSection() {
           const current = keyByProvider.get(p);
           const entry = draft[p];
           return (
-            <li key={p} className="space-y-2 rounded-md border border-stone-200 p-3">
+            <li key={p} className="space-y-2 rounded-md border border-stone-200 dark:border-stone-700 p-3">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium">{LABELS[p]}</div>
-                  <div className="mt-0.5 text-xs text-stone-500">
+                  <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
                     {current ? (
                       <>
                         fingerprint <code className="font-mono">{current.key_fingerprint}</code>
@@ -177,7 +177,7 @@ export function OcrKeysSection() {
                   <button
                     type="button"
                     onClick={() => void remove(p)}
-                    className="rounded-md px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                    className="rounded-md px-3 py-1.5 text-xs text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
                   >
                     Delete
                   </button>
@@ -192,13 +192,13 @@ export function OcrKeysSection() {
                     setDraft((cur) => ({ ...cur, [p]: { ...cur[p], key: e.target.value } }))
                   }
                   placeholder={current ? 'Rotate: paste new key' : 'Paste API key'}
-                  className="w-full rounded border border-stone-300 px-3 py-2 font-mono text-xs"
+                  className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-xs"
                 />
                 <button
                   type="button"
                   onClick={() => void save(p)}
                   disabled={entry.busy || !entry.key.trim()}
-                  className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+                  className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
                 >
                   {entry.busy ? 'Saving…' : 'Save'}
                 </button>
@@ -210,7 +210,7 @@ export function OcrKeysSection() {
                     setDraft((cur) => ({ ...cur, [p]: { ...cur[p], baseUrl: e.target.value } }))
                   }
                   placeholder="Base URL (optional, defaults to https://api.openai.com/v1)"
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs"
+                  className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-xs"
                 />
               )}
             </li>
@@ -219,7 +219,7 @@ export function OcrKeysSection() {
       </ul>
 
       {legacy?.apiKey && (
-        <div className="flex items-center justify-between text-xs text-stone-500">
+        <div className="flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
           <span>
             Legacy in-browser key is still present. Once you've confirmed the server key
             works, you can clear it.
@@ -230,7 +230,7 @@ export function OcrKeysSection() {
               clearOcrSettings();
               setLegacyDismissed(true);
             }}
-            className="rounded-md px-2 py-1 text-stone-700 hover:bg-stone-100"
+            className="rounded-md px-2 py-1 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Clear local key
           </button>

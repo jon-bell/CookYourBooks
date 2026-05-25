@@ -14,6 +14,7 @@
     "assets": "capacitor-assets generate --assetPath=assets --ios --android"
   },
   "dependencies": {
+    "@capacitor-community/apple-sign-in": "^6.0.0",
     "@capacitor/android": "^6.2.0",
     "@capacitor/camera": "^6.1.2",
     "@capacitor/core": "^6.2.1",

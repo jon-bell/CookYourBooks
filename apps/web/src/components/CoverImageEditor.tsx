@@ -50,18 +50,18 @@ export function CoverImageEditor({
   }
 
   return (
-    <div className="rounded-lg border border-stone-200 bg-white p-4">
+    <div className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
       <div className="flex flex-wrap items-center gap-4">
         <CoverImage
           path={collection.coverImagePath}
-          className="h-24 w-36 rounded-md border border-stone-200"
+          className="h-24 w-36 rounded-md border border-stone-200 dark:border-stone-700"
         />
         <div className="space-y-2">
           <div className="flex gap-2">
             <button
               onClick={() => fileInput.current?.click()}
               disabled={uploading}
-              className="rounded-md bg-stone-900 px-3 py-1.5 text-sm text-white hover:bg-stone-800 disabled:opacity-50"
+              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
             >
               {uploading ? 'Uploading…' : collection.coverImagePath ? 'Replace cover' : 'Add cover'}
             </button>
@@ -69,7 +69,7 @@ export function CoverImageEditor({
               <button
                 onClick={remove}
                 disabled={uploading}
-                className="rounded-md px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50"
               >
                 Remove
               </button>
@@ -86,7 +86,7 @@ export function CoverImageEditor({
               e.target.value = '';
             }}
           />
-          {error && <p className="text-xs text-red-700">{error}</p>}
+          {error && <p className="text-xs text-red-700 dark:text-red-300">{error}</p>}
         </div>
       </div>
     </div>

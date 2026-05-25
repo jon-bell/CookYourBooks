@@ -118,17 +118,17 @@ export function CookbookCombobox({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex w-full items-center justify-between rounded-md border border-stone-300 bg-white px-3 py-1.5 text-left text-sm hover:border-stone-500"
+        className="flex w-full items-center justify-between rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-1.5 text-left text-sm hover:border-stone-500"
       >
         <span className="flex flex-col">
           <span className={selected ? 'font-medium text-stone-900' : 'text-stone-500'}>
             {summaryLabel}
           </span>
           {selected?.author && (
-            <span className="text-[11px] text-stone-500">{selected.author}</span>
+            <span className="text-[11px] text-stone-500 dark:text-stone-400">{selected.author}</span>
           )}
           {matchedExistingTitle && (
-            <span className="text-[11px] font-medium text-emerald-700">
+            <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
               → will update “{matchedExistingTitle}”
             </span>
           )}
@@ -141,7 +141,7 @@ export function CookbookCombobox({
       {open && (
         <div
           role="listbox"
-          className="absolute left-0 right-0 z-20 mt-1 max-h-72 overflow-y-auto rounded-md border border-stone-200 bg-white shadow-lg"
+          className="absolute left-0 right-0 z-20 mt-1 max-h-72 overflow-y-auto rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-lg"
         >
           <div className="border-b border-stone-100 p-2">
             <input
@@ -154,15 +154,15 @@ export function CookbookCombobox({
               }}
               onKeyDown={onKey}
               placeholder="Search cookbooks…"
-              className="w-full rounded border border-stone-200 px-2 py-1 text-sm outline-none focus:border-stone-500"
+              className="w-full rounded border border-stone-200 dark:border-stone-700 px-2 py-1 text-sm outline-none focus:border-stone-500"
             />
           </div>
           <ul className="py-1 text-sm">
             {loading && filtered.length === 0 && (
-              <li className="px-3 py-2 text-stone-500">Loading…</li>
+              <li className="px-3 py-2 text-stone-500 dark:text-stone-400">Loading…</li>
             )}
             {!loading && filtered.length === 0 && !showUnassigned && !onCreateNew && (
-              <li className="px-3 py-2 text-stone-500">No matches.</li>
+              <li className="px-3 py-2 text-stone-500 dark:text-stone-400">No matches.</li>
             )}
             {showUnassigned && (
               <li>
@@ -176,7 +176,7 @@ export function CookbookCombobox({
                     activeIdx === unassignedIdx ? 'bg-stone-100' : 'hover:bg-stone-50'
                   }`}
                 >
-                  <span className="italic text-stone-500">(unassigned)</span>
+                  <span className="italic text-stone-500 dark:text-stone-400">(unassigned)</span>
                   {value === '' && <span className="text-xs text-stone-400">current</span>}
                 </button>
               </li>
@@ -198,12 +198,12 @@ export function CookbookCombobox({
                     }`}
                   >
                     <span className="flex min-w-0 flex-col">
-                      <span className="truncate font-medium text-stone-900">{opt.title}</span>
+                      <span className="truncate font-medium text-stone-900 dark:text-stone-100">{opt.title}</span>
                       {opt.author && (
-                        <span className="truncate text-[11px] text-stone-500">{opt.author}</span>
+                        <span className="truncate text-[11px] text-stone-500 dark:text-stone-400">{opt.author}</span>
                       )}
                     </span>
-                    <span className="flex shrink-0 items-center gap-2 text-[11px] text-stone-500">
+                    <span className="flex shrink-0 items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
                       <span>
                         {opt.recipeCount} {opt.recipeCount === 1 ? 'recipe' : 'recipes'}
                       </span>

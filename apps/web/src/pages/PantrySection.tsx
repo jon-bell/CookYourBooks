@@ -97,7 +97,7 @@ export function PantrySection() {
       <div className="flex items-end justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Pantry</h2>
-          <p className="text-xs text-stone-500">
+          <p className="text-xs text-stone-500 dark:text-stone-400">
             Extras and ad-hoc items. Also what your AI assistant edits via the MCP tools.
           </p>
         </div>
@@ -109,7 +109,7 @@ export function PantrySection() {
                 .delete()
                 .eq('checked', true);
             }}
-            className="text-xs text-stone-500 hover:text-stone-900 hover:underline"
+            className="text-xs text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 hover:underline"
           >
             Clear checked
           </button>
@@ -128,26 +128,26 @@ export function PantrySection() {
           value={draftName}
           onChange={(e) => setDraftName(e.target.value)}
           placeholder="Add an item (e.g. whole milk)"
-          className="flex-1 min-w-[220px] rounded border border-stone-300 px-3 py-2 text-sm"
+          className="flex-1 min-w-[220px] rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
         />
         <input
           aria-label="Quantity"
           value={draftQuantity}
           onChange={(e) => setDraftQuantity(e.target.value)}
           placeholder="Quantity (optional)"
-          className="w-40 rounded border border-stone-300 px-3 py-2 text-sm"
+          className="w-40 rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
         />
         <button
           type="submit"
           disabled={!draftName.trim()}
-          className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+          className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
         >
           Add
         </button>
       </form>
 
       {items.length > 0 && (
-        <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
+        <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
           {items.map((item) => (
             <li key={item.id} className="flex items-center gap-3 px-4 py-2 text-sm">
               <input
@@ -164,13 +164,13 @@ export function PantrySection() {
                 )}
                 {item.name}
                 {item.note && (
-                  <span className="ml-2 text-xs text-stone-500">· {item.note}</span>
+                  <span className="ml-2 text-xs text-stone-500 dark:text-stone-400">· {item.note}</span>
                 )}
               </span>
               <button
                 onClick={() => void remove(item)}
                 aria-label={`Remove ${item.name}`}
-                className="text-xs text-stone-500 hover:text-red-700"
+                className="text-xs text-stone-500 dark:text-stone-400 hover:text-red-700"
               >
                 Remove
               </button>

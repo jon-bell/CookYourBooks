@@ -65,7 +65,7 @@ export function ImportListPage() {
   }
 
   if (isLoading) {
-    return <p className="text-stone-500">Loading…</p>;
+    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
   }
 
   return (
@@ -79,7 +79,7 @@ export function ImportListPage() {
             window.localStorage.removeItem('cookyourbooks.import.onboarded.v1');
             setShowOnboarding(true);
           }}
-          className="ml-auto mr-2 text-xs text-stone-500 underline hover:text-stone-900"
+          className="ml-auto mr-2 text-xs text-stone-500 dark:text-stone-400 underline hover:text-stone-900 dark:hover:text-stone-100"
         >
           How it works
         </button>
@@ -91,7 +91,7 @@ export function ImportListPage() {
         </Link>
         <Link
           to="/import/new"
-          className="inline-flex items-center rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800"
+          className="inline-flex items-center rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
         >
           New batch
         </Link>
@@ -100,7 +100,7 @@ export function ImportListPage() {
       {!hasOcrKey && (
         <div
           role="status"
-          className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-4 text-sm text-amber-900 dark:text-amber-200"
         >
           OCR not configured — items won't be processed.{' '}
           <Link to="/settings" className="font-medium underline">
@@ -111,26 +111,26 @@ export function ImportListPage() {
       )}
 
       {batches.length === 0 ? (
-        <p className="text-stone-600">
+        <p className="text-stone-600 dark:text-stone-400">
           No imports yet.{' '}
           <Link to="/import/new" className="underline">
             New batch →
           </Link>
         </p>
       ) : (
-        <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
+        <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
           {batches.map((b) => (
             <li key={b.id}>
               <Link
                 to={`/import/${b.id}`}
-                className="flex flex-col gap-2 px-4 py-3 hover:bg-stone-50 sm:flex-row sm:items-center"
+                className="flex flex-col gap-2 px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900 sm:flex-row sm:items-center"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <div className="font-medium">{b.name || '(untitled)'}</div>
                     <StatusBadge status={b.status} />
                   </div>
-                  <div className="mt-0.5 text-xs text-stone-500">
+                  <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
                     {b.targetCollectionId && collectionsById.has(b.targetCollectionId)
                       ? `→ ${collectionsById.get(b.targetCollectionId)!.title}`
                       : '→ (unassigned)'}
@@ -189,11 +189,11 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
   ];
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-stone-900/70 p-6">
-      <div className="my-12 w-full max-w-2xl rounded-lg bg-white p-6 shadow-xl">
+      <div className="my-12 w-full max-w-2xl rounded-lg bg-white dark:bg-stone-900 p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold">How bulk import works</h2>
-            <p className="mt-1 text-sm text-stone-600">
+            <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
               Five steps. Most of the time you just upload, glance, and click Save.
             </p>
           </div>
@@ -201,7 +201,7 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
             type="button"
             onClick={onDismiss}
             aria-label="Close"
-            className="rounded p-1 text-stone-500 hover:bg-stone-100"
+            className="rounded p-1 text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             ×
           </button>
@@ -210,10 +210,10 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
           {steps.map((step) => (
             <li key={step.title} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
               <div>
-                <h3 className="text-sm font-semibold text-stone-900">{step.title}</h3>
-                <p className="mt-1 text-sm text-stone-700">{step.body}</p>
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">{step.title}</h3>
+                <p className="mt-1 text-sm text-stone-700 dark:text-stone-300">{step.body}</p>
               </div>
-              <div className="flex h-20 w-40 items-center justify-center rounded-md border border-dashed border-stone-300 bg-stone-50 text-[10px] text-stone-400">
+              <div className="flex h-20 w-40 items-center justify-center rounded-md border border-dashed border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 text-[10px] text-stone-400">
                 {step.placeholder}
               </div>
             </li>
@@ -223,7 +223,7 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
           <button
             type="button"
             onClick={onDismiss}
-            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+            className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
           >
             Got it — let's import
           </button>
@@ -247,15 +247,15 @@ function BatchProgress({
   const cost = ((stats?.costUsdMicros ?? 0) / 1_000_000).toFixed(2);
   return (
     <div className="sm:w-64">
-      <div className="flex justify-between text-xs text-stone-600">
+      <div className="flex justify-between text-xs text-stone-600 dark:text-stone-400">
         <span>
           {done} done / {total} total
-          {failed > 0 && <span className="text-red-700"> / {failed} failed</span>}
+          {failed > 0 && <span className="text-red-700 dark:text-red-300"> / {failed} failed</span>}
         </span>
         <span>${cost}</span>
       </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-200">
-        <div className="h-full bg-stone-900" style={{ width: `${pct}%` }} />
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-700">
+        <div className="h-full bg-stone-900 dark:bg-stone-100" style={{ width: `${pct}%` }} />
       </div>
     </div>
   );

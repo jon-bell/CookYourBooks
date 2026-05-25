@@ -137,7 +137,7 @@ export function MultiShotCameraDialog({
         <button
           type="button"
           onClick={cancel}
-          className="rounded-md px-3 py-1.5 text-stone-200 hover:bg-stone-800"
+          className="rounded-md px-3 py-1.5 text-stone-200 hover:bg-stone-800 dark:hover:bg-stone-200"
         >
           Cancel
         </button>
@@ -172,15 +172,15 @@ export function MultiShotCameraDialog({
           type="button"
           onClick={fireShutter}
           disabled={busy || (!retakeId && remaining <= 0)}
-          className="block w-full rounded-full bg-white px-4 py-4 text-base font-semibold text-stone-950 shadow-lg disabled:opacity-40"
+          className="block w-full rounded-full bg-white dark:bg-stone-900 px-4 py-4 text-base font-semibold text-stone-950 shadow-lg disabled:opacity-40"
         >
           {shutterLabel}
         </button>
       </div>
 
-      <div className="border-t border-stone-800 bg-stone-900 px-3 py-3">
+      <div className="border-t border-stone-800 bg-stone-900 dark:bg-stone-100 px-3 py-3">
         {shots.length === 0 ? (
-          <p className="text-center text-xs text-stone-500">No photos yet.</p>
+          <p className="text-center text-xs text-stone-500 dark:text-stone-400">No photos yet.</p>
         ) : (
           <ol className="flex gap-2 overflow-x-auto pb-1">
             {shots.map((s, i) => {

@@ -109,16 +109,16 @@ export function ImportGroupingPage() {
   }
 
   if (!enabled || batchLoading || itemsLoading) {
-    return <p className="text-stone-500">Loading…</p>;
+    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
   }
   if (!batch) {
     return (
       <div className="space-y-2">
-        <p className="text-stone-700">Batch not found locally.</p>
+        <p className="text-stone-700 dark:text-stone-300">Batch not found locally.</p>
         <button
           type="button"
           onClick={() => void syncNow()}
-          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
         >
           Sync now
         </button>
@@ -130,13 +130,13 @@ export function ImportGroupingPage() {
     // batch was never group-first. Redirect home for the batch.
     return (
       <div className="space-y-3">
-        <p className="text-stone-700">
+        <p className="text-stone-700 dark:text-stone-300">
           Nothing left to group for this batch.
         </p>
         <button
           type="button"
           onClick={() => navigate(`/import/${batch.id}`)}
-          className="rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800"
+          className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
         >
           Go to batch
         </button>
@@ -151,11 +151,11 @@ export function ImportGroupingPage() {
   return (
     <div className="space-y-5">
       <div className="space-y-1">
-        <div className="text-xs uppercase tracking-wide text-stone-500">
+        <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
           {batch.name} · grouping
         </div>
         <h1 className="text-2xl font-semibold">Group pages into recipes</h1>
-        <p className="max-w-3xl text-sm text-stone-600">
+        <p className="max-w-3xl text-sm text-stone-600 dark:text-stone-400">
           Each page is its own recipe by default. Click the{' '}
           <span className="font-medium">split</span> between two pages to merge
           them — pages in the same colored band become one recipe and OCR will
@@ -163,13 +163,13 @@ export function ImportGroupingPage() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 px-3 py-2 text-sm">
         <span>
           <strong>{recipeCount}</strong>{' '}
           {recipeCount === 1 ? 'recipe' : 'recipes'} from{' '}
           <strong>{totalPages}</strong> pages
           {multiPageGroups > 0 && (
-            <span className="text-stone-500">
+            <span className="text-stone-500 dark:text-stone-400">
               {' '}
               · {multiPageGroups} multi-page
             </span>
@@ -179,14 +179,14 @@ export function ImportGroupingPage() {
           <button
             type="button"
             onClick={resetToAllSplit}
-            className="rounded-md border border-stone-300 bg-white px-2 py-1 hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             One recipe per page
           </button>
           <button
             type="button"
             onClick={mergeAll}
-            className="rounded-md border border-stone-300 bg-white px-2 py-1 hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Everything is one recipe
           </button>
@@ -200,14 +200,14 @@ export function ImportGroupingPage() {
         onToggleSplit={toggleSplit}
       />
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
+      {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
 
       <div className="flex gap-3">
         <button
           type="button"
           onClick={() => void confirm()}
           disabled={confirming || groupable.length === 0}
-          className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+          className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
         >
           {confirming
             ? 'Starting OCR…'
@@ -219,7 +219,7 @@ export function ImportGroupingPage() {
           type="button"
           onClick={() => navigate(`/import/${batch.id}`)}
           disabled={confirming}
-          className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900 disabled:opacity-50"
+          className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 disabled:opacity-50"
         >
           Cancel
         </button>
@@ -301,14 +301,14 @@ function Thumb({
 }) {
   return (
     <div className="flex w-32 flex-col items-center gap-1">
-      <div className="aspect-[3/4] w-full overflow-hidden rounded border border-stone-300 bg-white">
+      <div className="aspect-[3/4] w-full overflow-hidden rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900">
         <ImportThumb
           path={item.thumbPath ?? item.storagePath}
           alt={`Page ${item.pageIndex + 1}`}
           className="h-full w-full object-cover"
         />
       </div>
-      <div className="text-[11px] leading-tight text-stone-600">
+      <div className="text-[11px] leading-tight text-stone-600 dark:text-stone-400">
         Page {item.pageIndex + 1}
         {groupSize > 1 && (
           <span className="ml-1 text-stone-400">
@@ -356,7 +356,7 @@ function SplitGap({
       <span className="text-[10px] uppercase tracking-wide text-stone-400 group-hover:text-stone-700">
         split
       </span>
-      <span className="block h-12 w-px bg-stone-300 group-hover:bg-stone-700" />
+      <span className="block h-12 w-px bg-stone-300 dark:bg-stone-600 group-hover:bg-stone-700" />
       <span className="text-[10px] uppercase tracking-wide text-stone-400 group-hover:text-stone-700">
         merge?
       </span>

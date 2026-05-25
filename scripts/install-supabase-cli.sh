@@ -39,7 +39,12 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "Fetching $URL"
-curl -fsSL "$URL" -o "$TMP/supabase.tgz"
+# GitHub's release CDN occasionally 502s during traffic spikes. Retry
+# a handful of times before giving up so transient hiccups don't
+# wedge every CI run that lands during the bad window.
+curl --retry 5 --retry-delay 3 --retry-connrefused --retry-all-errors \
+  --max-time 120 \
+  -fsSL "$URL" -o "$TMP/supabase.tgz"
 tar -xzf "$TMP/supabase.tgz" -C "$TMP"
 
 # Recent releases (≥ v2.100) ship two co-located binaries: `supabase` is

@@ -39,6 +39,9 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@capacitor-community/apple-sign-in':
+        specifier: ^6.0.0
+        version: 6.0.0(@capacitor/core@6.2.1)
       '@capacitor/android':
         specifier: ^6.2.0
         version: 6.2.1(@capacitor/core@6.2.1)
@@ -67,6 +70,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@capacitor-community/apple-sign-in':
+        specifier: 6.0.0
+        version: 6.0.0(@capacitor/core@6.2.1)
       '@capacitor/camera':
         specifier: ^6.1.2
         version: 6.1.3(@capacitor/core@6.2.1)
@@ -266,6 +272,11 @@ packages:
   '@babel/types@7.29.0':
     resolution: {integrity: sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==}
     engines: {node: '>=6.9.0'}
+
+  '@capacitor-community/apple-sign-in@6.0.0':
+    resolution: {integrity: sha512-NDySxo/cn7SMezV3LiKaGrgxmYFsbrBFsRyVFXlew2E9fe9CmdeVdGkNFdpJJztVENe4DromWmL/rWpSh42FsA==}
+    peerDependencies:
+      '@capacitor/core': ^6.0.0
 
   '@capacitor/android@6.2.1':
     resolution: {integrity: sha512-8gd4CIiQO5LAIlPIfd5mCuodBRxMMdZZEdj8qG8m+dQ1sQ2xyemVpzHmRK8qSCHorsBUCg3D62j2cp6bEBAkdw==}
@@ -1381,6 +1392,9 @@ packages:
 
   '@types/react@19.2.14':
     resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
+
+  '@types/scriptjs@0.0.2':
+    resolution: {integrity: sha512-GFrUgzGYfNX3VWZwMyzr0JrBwzLv5Kes4BQBvo6hXdRy14/GBbpCiVwwB7v1o2xIEvFf+9GyznmYhuesQQjSag==}
 
   '@types/slice-ansi@4.0.0':
     resolution: {integrity: sha512-+OpjSaq85gvlZAYINyzKpLeiFkSC4EsC6IIiT6v6TLSU5k5U83fHGj9Lel8oKEXM0HqgrMVCjXPDPVICtxF7EQ==}
@@ -2905,6 +2919,9 @@ packages:
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
 
+  scriptjs@2.5.9:
+    resolution: {integrity: sha512-qGVDoreyYiP1pkQnbnFAUIS5AjenNwwQBdl7zeos9etl+hYKWahjRTfzAZZYBv5xNHx7vNKCmaLDQZ6Fr2AEXg==}
+
   semver@5.7.2:
     resolution: {integrity: sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g==}
     hasBin: true
@@ -3596,6 +3613,12 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
+
+  '@capacitor-community/apple-sign-in@6.0.0(@capacitor/core@6.2.1)':
+    dependencies:
+      '@capacitor/core': 6.2.1
+      '@types/scriptjs': 0.0.2
+      scriptjs: 2.5.9
 
   '@capacitor/android@6.2.1(@capacitor/core@6.2.1)':
     dependencies:
@@ -4492,6 +4515,8 @@ snapshots:
   '@types/react@19.2.14':
     dependencies:
       csstype: 3.2.3
+
+  '@types/scriptjs@0.0.2': {}
 
   '@types/slice-ansi@4.0.0': {}
 
@@ -6042,6 +6067,8 @@ snapshots:
   sax@1.6.0: {}
 
   scheduler@0.27.0: {}
+
+  scriptjs@2.5.9: {}
 
   semver@5.7.2: {}
 

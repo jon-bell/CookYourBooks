@@ -52,11 +52,9 @@ async function createCookbook(
   await waitForSynced(page);
 }
 
-/**
- * Pick a cookbook in the import form's combobox. Replaces the old
- * `selectOption` call — the picker is no longer a native `<select>`; it's
- * a button that opens a listbox with a search input.
- */
+/** Drives the CookbookCombobox on /import/new. Replaces native
+ * `selectOption` — the trigger is a button that opens a listbox with
+ * a search input. */
 async function pickTargetCookbook(
   page: import('@playwright/test').Page,
   title: string,

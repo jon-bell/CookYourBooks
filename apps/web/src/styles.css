@@ -7,3 +7,28 @@ body,
 #root {
   height: 100%;
 }
+
+/* Form fields inherit the browser default (white) in both modes. The
+   per-component classNames flip borders for dark mode but leave the
+   field's interior alone, which leads to white-on-white once the
+   user starts typing. Apply a dark surface across the text-input
+   family centrally rather than hand-editing every input. checkbox /
+   radio / color / file are excluded so their native styling is left
+   alone. */
+.dark input[type='text'],
+.dark input[type='email'],
+.dark input[type='password'],
+.dark input[type='search'],
+.dark input[type='number'],
+.dark input[type='url'],
+.dark input[type='tel'],
+.dark input:not([type]),
+.dark textarea,
+.dark select {
+  @apply bg-stone-900 text-stone-100;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  @apply text-stone-500;
+}

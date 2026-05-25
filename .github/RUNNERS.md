@@ -85,6 +85,75 @@ simulator build (no secrets needed). Push to `main` triggers
 `workflow_dispatch=ios-release` triggers `fastlane release`
 (beta + submit for App Store review).
 
+#### Resilience: keychain auto-unlock LaunchAgent (one-time)
+
+The runner's signing identity lives in the user's login keychain, which
+re-locks on idle and refuses to release the private key to non-interactive
+processes. Without intervention, the first CI job after a reboot / long
+idle hangs at codesign. Fix: a LaunchAgent that runs `security
+unlock-keychain` at login and every 30 minutes thereafter, reading the
+login password from a keychain entry that only `/usr/bin/security` can
+access.
+
+```bash
+scripts/runner/install-launch-agents.sh
+# Prompts ONCE for your Mac login password. Stores it under service
+# 'cyb-mac-runner-keychain-unlock' in your user keychain, granted only to
+# /usr/bin/security. Reload-safe — re-running just reloads the agent.
+```
+
+After install, every CI job's pre-flight step verifies the Apple
+Distribution identity is visible via `security find-identity`; if not,
+it emits a workflow warning pointing at this script.
+
+#### Pre-job cleanup
+
+`mobile.yml` runs a `Pre-job cleanup` step that:
+- Deletes Xcode DerivedData directories untouched for >2 days
+- Deletes stale fastlane build/ output
+- Prints `df -h` so disk pressure shows up in the job log
+- Verifies the signing identity is reachable
+
+This keeps a single-tenant Mac from filling up between manual cleanups.
+
+#### Recovery: if this Mac dies / gets stolen
+
+Everything that makes this runner work is reproducible. To stand up a
+replacement Mac:
+
+1. Install Xcode 15+ → `xcodebuild -downloadPlatform iOS` →
+   `sudo xcodebuild -license accept` → `sudo xcodebuild -runFirstLaunch`.
+2. `brew install cocoapods fastlane gh` and the Node toolchain (nvm +
+   Node 20 + `corepack enable`).
+3. `gh auth login` as `jon-bell` (or whoever owns the repo).
+4. Clone the repo, `cd CookYourBooks`, `pnpm install`.
+5. `cp apps/mobile/ios/fastlane/.env.example apps/mobile/ios/fastlane/.env`
+   and refill the `CYB_ASC_*` + `MATCH_PASSWORD` values (the `.p8` itself
+   lives in the App Store Connect API keys page → if you lost it, mint a
+   new ASC API key and update the GitHub secret too).
+6. `cd apps/mobile/ios && fastlane certs` — pulls the existing signing
+   cert + provisioning profile from `cookyourbooks-certs` into the new
+   Mac's login keychain. Run `security set-key-partition-list -S
+   apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`
+   so codesign can use it non-interactively.
+7. `scripts/runner/install-launch-agents.sh` — installs the
+   keychain-unlock LaunchAgent.
+8. Register the actions runner per
+   [Registering the runner](#registering-the-runner-one-time), reusing
+   the `cyb-mac` label so workflows pick it up automatically.
+
+If the **signing key itself** is unrecoverable (lost the keychain AND
+the certs repo), `fastlane bootstrap_signing` will regenerate it —
+revoke the old cert in the developer portal first to free up the
+2-cert-per-account cap.
+
+#### When this single Mac isn't enough
+
+For a real fallback (e.g. this Mac is offline during a release window),
+add a GitHub-hosted `macos-latest` runner option to `mobile.yml` and
+move the secrets into a workflow-level env. Costs $0.08/min vs $0 on the
+self-hosted runner, but it gets you over the hump. Not wired today.
+
 ## Secrets
 
 None required by `ci.yml` — the Supabase stack is started locally inside
