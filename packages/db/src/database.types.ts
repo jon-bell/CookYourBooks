@@ -156,6 +156,83 @@ export type Database = {
           },
         ]
       }
+      global_cookbooks: {
+        Row: {
+          author: string | null
+          cover_image_path: string | null
+          created_at: string
+          id: string
+          isbn: string | null
+          notes: string | null
+          publication_year: number | null
+          publisher: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          author?: string | null
+          cover_image_path?: string | null
+          created_at?: string
+          id?: string
+          isbn?: string | null
+          notes?: string | null
+          publication_year?: number | null
+          publisher?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          author?: string | null
+          cover_image_path?: string | null
+          created_at?: string
+          id?: string
+          isbn?: string | null
+          notes?: string | null
+          publication_year?: number | null
+          publisher?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      global_toc_entries: {
+        Row: {
+          cookbook_id: string
+          created_at: string
+          id: string
+          page_number: number | null
+          sort_order: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          cookbook_id: string
+          created_at?: string
+          id?: string
+          page_number?: number | null
+          sort_order?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          cookbook_id?: string
+          created_at?: string
+          id?: string
+          page_number?: number | null
+          sort_order?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "global_toc_entries_cookbook_id_fkey"
+            columns: ["cookbook_id"]
+            isOneToOne: false
+            referencedRelation: "global_cookbooks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       import_batches: {
         Row: {
           created_at: string

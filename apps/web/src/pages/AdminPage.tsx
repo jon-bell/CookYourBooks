@@ -14,7 +14,7 @@ import {
   type ReportStatus,
 } from '../moderation/api.js';
 import { ReasonDialog } from '../moderation/ReasonDialog.js';
-import { useIsAdmin } from '../moderation/useIsAdmin.js';
+import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
 
 type PendingAction =
   | { kind: 'unpublish'; collectionId: string }
@@ -33,40 +33,30 @@ type Tab = 'queue' | 'resolved' | 'log';
  * not look like a routing bug.
  */
 export function AdminPage() {
-  const { isAdmin, isLoading } = useIsAdmin();
   const [tab, setTab] = useState<Tab>('queue');
 
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
-  if (!isAdmin) {
-    return (
-      <div className="space-y-3">
-        <h1 className="text-2xl font-semibold">Admin</h1>
-        <p className="text-stone-600">
-          This surface is restricted to administrators. If you think you should have access,
-          ask another admin to grant it.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Moderation</h1>
-      <div className="flex gap-2 border-b border-stone-200 text-sm">
-        <TabBtn active={tab === 'queue'} onClick={() => setTab('queue')}>
-          Open reports
-        </TabBtn>
-        <TabBtn active={tab === 'resolved'} onClick={() => setTab('resolved')}>
-          Resolved reports
-        </TabBtn>
-        <TabBtn active={tab === 'log'} onClick={() => setTab('log')}>
-          Moderation log
-        </TabBtn>
+    <RequireAdmin>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold">Admin</h1>
+        <AdminTabs />
+        <h2 className="text-lg font-semibold text-stone-700">Moderation</h2>
+        <div className="flex gap-2 border-b border-stone-200 text-sm">
+          <TabBtn active={tab === 'queue'} onClick={() => setTab('queue')}>
+            Open reports
+          </TabBtn>
+          <TabBtn active={tab === 'resolved'} onClick={() => setTab('resolved')}>
+            Resolved reports
+          </TabBtn>
+          <TabBtn active={tab === 'log'} onClick={() => setTab('log')}>
+            Moderation log
+          </TabBtn>
+        </div>
+        {tab === 'queue' && <ReportList status="OPEN" />}
+        {tab === 'resolved' && <ReportList status="ACTIONED" showDismissed />}
+        {tab === 'log' && <ModerationLog />}
       </div>
-      {tab === 'queue' && <ReportList status="OPEN" />}
-      {tab === 'resolved' && <ReportList status="ACTIONED" showDismissed />}
-      {tab === 'log' && <ModerationLog />}
-    </div>
+    </RequireAdmin>
   );
 }
 
