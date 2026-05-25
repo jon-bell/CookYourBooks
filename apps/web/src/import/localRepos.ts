@@ -13,6 +13,7 @@ interface ImportBatchSqlRow {
   id: string;
   owner_id: string;
   name: string;
+  batch_kind: string;
   source_kind: string;
   target_collection_id: string | null;
   default_model: string;
@@ -48,6 +49,7 @@ interface ImportItemSqlRow {
   completion_tokens: number;
   cost_usd_micros: number;
   created_recipe_ids: string;
+  selected_variant_id: string | null;
   extra_storage_paths: string;
   updated_at: number;
   deleted: number;
@@ -87,6 +89,7 @@ function rowToBatch(row: ImportBatchSqlRow): ImportBatch {
     id: row.id,
     ownerId: row.owner_id,
     name: row.name,
+    batchKind: (row.batch_kind ?? 'STANDARD') === 'BAKEOFF' ? 'BAKEOFF' : 'STANDARD',
     sourceKind: row.source_kind === 'PDF' ? 'PDF' : 'IMAGES',
     targetCollectionId: row.target_collection_id,
     defaultModel: row.default_model,
@@ -167,6 +170,7 @@ function rowToItem(row: ImportItemSqlRow): ImportItem {
     completionTokens: row.completion_tokens,
     costUsdMicros: row.cost_usd_micros,
     createdRecipeIds,
+    selectedVariantId: row.selected_variant_id ?? null,
     extraStoragePaths,
     updatedAt: row.updated_at,
   };
@@ -411,14 +415,15 @@ export async function insertLocalBatch(batch: ImportBatch): Promise<void> {
   const db = await getLocalDb();
   await db.exec(
     `insert into import_batches
-       (id, owner_id, name, source_kind, target_collection_id,
+       (id, owner_id, name, batch_kind, source_kind, target_collection_id,
         default_model, default_provider, fallback_model, fallback_provider,
         recitation_policy, status, total_items, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
     [
       batch.id,
       batch.ownerId,
       batch.name,
+      batch.batchKind,
       batch.sourceKind,
       batch.targetCollectionId,
       batch.defaultModel,

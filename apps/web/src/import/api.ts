@@ -121,8 +121,79 @@ export async function getBakeoffRun(runId: string): Promise<{
 }
 
 export async function promoteBakeoffVariant(variantId: string): Promise<void> {
-  const { error } = await supabase.rpc('bakeoff_promote', { p_variant_id: variantId });
+  const { error } = await supabase.rpc('import_bakeoff_promote', { p_variant_id: variantId });
+  if (error) {
+    const legacy = await supabase.rpc('bakeoff_promote', { p_variant_id: variantId });
+    if (legacy.error) throw legacy.error;
+    return;
+  }
+}
+
+export async function seedBakeoffBatch(
+  batchId: string,
+  variants: ReadonlyArray<BakeoffVariantInput>,
+): Promise<void> {
+  const { error } = await supabase.rpc('import_bakeoff_seed', {
+    p_batch_id: batchId,
+    p_variants: variants as unknown as never,
+  });
   if (error) throw error;
+}
+
+export async function selectBakeoffWinner(itemId: string, variantId: string): Promise<void> {
+  const { error } = await supabase.rpc('import_bakeoff_select_winner', {
+    p_item_id: itemId,
+    p_variant_id: variantId,
+  });
+  if (error) throw error;
+}
+
+export interface ImportBatchVariantRow {
+  id: string;
+  batch_id: string;
+  sort_index: number;
+  name: string;
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+  base_url: string | null;
+}
+
+export interface ImportItemVariantResultRow {
+  id: string;
+  item_id: string;
+  variant_id: string;
+  status: 'PENDING' | 'CLAIMED' | 'DONE' | 'FAILED';
+  drafts: unknown[] | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cost_usd_micros: number | null;
+  latency_ms: number | null;
+  error_kind: string | null;
+  error_message: string | null;
+}
+
+export async function getBatchVariants(batchId: string): Promise<ImportBatchVariantRow[]> {
+  const { data, error } = await supabase
+    .from('import_batch_variants')
+    .select('id, batch_id, sort_index, name, provider, model, prompt, base_url')
+    .eq('batch_id', batchId)
+    .order('sort_index', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as ImportBatchVariantRow[];
+}
+
+export async function getItemVariantResults(
+  itemId: string,
+): Promise<ImportItemVariantResultRow[]> {
+  const { data, error } = await supabase
+    .from('import_item_variant_results')
+    .select(
+      'id, item_id, variant_id, status, drafts, prompt_tokens, completion_tokens, cost_usd_micros, latency_ms, error_kind, error_message',
+    )
+    .eq('item_id', itemId);
+  if (error) throw error;
+  return (data ?? []) as ImportItemVariantResultRow[];
 }
 
 // ---------- user OCR prefs (server-side) ----------

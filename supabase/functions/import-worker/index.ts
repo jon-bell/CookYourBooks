@@ -58,6 +58,25 @@ interface BakeoffVariant {
   attempts: number;
 }
 
+interface ImportVariantResult {
+  id: string;
+  item_id: string;
+  variant_id: string;
+  owner_id: string;
+  attempts: number;
+}
+
+interface ImportBatchVariant {
+  id: string;
+  batch_id: string;
+  owner_id: string;
+  name: string;
+  provider: Provider;
+  model: string;
+  prompt: string;
+  base_url: string | null;
+}
+
 interface UserKey {
   apiKey: string;
   baseUrl: string | null;
@@ -211,10 +230,13 @@ Deno.serve(async (req) => {
   // are per-user, so we don't filter by batch — the page that just
   // started the bakeoff kicks us, and we pull anything queued.
   const bakeoffSummary = await runBakeoffLoop(workerId, wLog);
+  const importVariantSummary = await runImportVariantLoop(workerId, wLog);
   wLog.info('invocation end', {
     ...summary,
     bakeoff_processed: bakeoffSummary.processed,
     bakeoff_failed: bakeoffSummary.failed,
+    import_variant_processed: importVariantSummary.processed,
+    import_variant_failed: importVariantSummary.failed,
   });
 
   if (summary.remaining > 0) {
@@ -918,6 +940,193 @@ async function failVariant(
   });
   if (error) {
     log.error('bakeoff_fail rpc error', { code: error.code, message: error.message });
+  }
+}
+
+// ---------- import-batch bakeoff variant pipeline ----------
+//
+// BAKEOFF import batches run each page (or merged group) through every
+// variant in import_batch_variants. Results land in
+// import_item_variant_results; the user picks a winner per item.
+
+async function runImportVariantLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  const results = await claimImportVariantBatch(workerId, log);
+  if (results.length === 0) return { processed, failed };
+  log.info('claimed import variant results', { count: results.length });
+
+  for (let i = 0; i < results.length; i += PARALLEL) {
+    const chunk = results.slice(i, i + PARALLEL);
+    const outcomes = await Promise.all(
+      chunk.map((r) =>
+        processImportVariantResult(r, workerId, log.child({ item: shortId(r.item_id) })),
+      ),
+    );
+    for (const o of outcomes) {
+      if (o === 'DONE') processed++;
+      else failed++;
+    }
+  }
+  return { processed, failed };
+}
+
+async function claimImportVariantBatch(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<ImportVariantResult[]> {
+  const { data, error } = await supabase.rpc('import_variant_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+  });
+  if (error) {
+    log.error('import_variant_claim_next failed', { code: error.code, message: error.message });
+    return [];
+  }
+  return (data ?? []) as ImportVariantResult[];
+}
+
+async function processImportVariantResult(
+  result: ImportVariantResult,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  const claimToken = workerId;
+  const started = Date.now();
+
+  const { data: item, error: itemErr } = await supabase
+    .from('import_items')
+    .select('id, batch_id, owner_id, storage_path, extra_storage_paths')
+    .eq('id', result.item_id)
+    .maybeSingle();
+  if (itemErr || !item) {
+    log.error('import item missing', { item_id: result.item_id, error: itemErr?.message });
+    await failImportVariantResult(result, claimToken, 'OTHER', 'Import item not found.', Date.now() - started, log);
+    return 'FAILED';
+  }
+
+  const { data: variant, error: varErr } = await supabase
+    .from('import_batch_variants')
+    .select('id, batch_id, owner_id, name, provider, model, prompt, base_url')
+    .eq('id', result.variant_id)
+    .maybeSingle();
+  if (varErr || !variant) {
+    log.error('batch variant missing', { variant_id: result.variant_id, error: varErr?.message });
+    await failImportVariantResult(result, claimToken, 'OTHER', 'Variant config not found.', Date.now() - started, log);
+    return 'FAILED';
+  }
+  const v = variant as ImportBatchVariant;
+  log.info('import variant start', { provider: v.provider, model: v.model, name: v.name });
+
+  let key: UserKey | null = null;
+  try {
+    key = await loadUserKey(v.owner_id, v.provider, log);
+  } catch (err) {
+    log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!key && !MOCK_MODE) {
+    await failImportVariantResult(
+      result,
+      claimToken,
+      'AUTH',
+      `No API key configured for ${v.provider}. Add it in Settings.`,
+      Date.now() - started,
+      log,
+    );
+    return 'FAILED';
+  }
+
+  const allPaths = [item.storage_path as string, ...((item.extra_storage_paths as string[] | null) ?? [])];
+  const images: { base64: string; mimeType: string }[] = [];
+  for (const path of allPaths) {
+    try {
+      const img = await fetchImage(item.owner_id as string, path);
+      images.push({ base64: bytesToBase64(img.bytes), mimeType: img.mime });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error('image fetch failed', { path, error: msg });
+      await failImportVariantResult(result, claimToken, 'NETWORK', msg, Date.now() - started, log);
+      return 'FAILED';
+    }
+  }
+
+  const ocrResult = await runOrMock({
+    item: { id: result.item_id, storage_path: item.storage_path as string },
+    provider: v.provider,
+    model: v.model,
+    apiKey: key?.apiKey ?? '',
+    baseUrl: key?.baseUrl ?? v.base_url ?? undefined,
+    prompt: v.prompt,
+    images,
+    bakeoff: true,
+    log,
+  });
+
+  if (ocrResult.errorKind !== 'OK') {
+    await failImportVariantResult(
+      result,
+      claimToken,
+      ocrResult.errorKind,
+      ocrResult.errorMessage ?? ocrResult.errorKind,
+      ocrResult.latencyMs || Date.now() - started,
+      log,
+    );
+    return 'FAILED';
+  }
+
+  const text = ocrResult.text ?? ocrResult.rawResponse;
+  let drafts: ParsedRecipeDraft[];
+  try {
+    drafts = parseLlmJson(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await failImportVariantResult(result, claimToken, 'PARSE', msg, ocrResult.latencyMs || Date.now() - started, log);
+    return 'FAILED';
+  }
+
+  const cost = costUsdMicros(v.provider, v.model, ocrResult.promptTokens, ocrResult.completionTokens);
+  const payload = {
+    drafts,
+    raw_text: text,
+    prompt_tokens: ocrResult.promptTokens,
+    completion_tokens: ocrResult.completionTokens,
+    cost_usd_micros: cost,
+    latency_ms: ocrResult.latencyMs || Date.now() - started,
+  };
+  const { data: ok, error } = await supabase.rpc('import_variant_complete', {
+    p_result_id: result.id,
+    p_claim_token: claimToken,
+    p_payload: payload,
+  });
+  if (error) {
+    log.error('import_variant_complete error', { code: error.code, message: error.message });
+    return 'FAILED';
+  }
+  if (!ok) log.warn('import_variant_complete returned false (lease lost)');
+  return 'DONE';
+}
+
+async function failImportVariantResult(
+  result: ImportVariantResult,
+  claimToken: string,
+  errorKind: ErrorKind,
+  errorMessage: string,
+  latencyMs: number,
+  log: ReturnType<typeof makeLog>,
+): Promise<void> {
+  const { error } = await supabase.rpc('import_variant_fail', {
+    p_result_id: result.id,
+    p_claim_token: claimToken,
+    p_error_kind: errorKind,
+    p_error_message: errorMessage,
+    p_latency_ms: latencyMs,
+  });
+  if (error) {
+    log.error('import_variant_fail rpc error', { code: error.code, message: error.message });
   }
 }
 

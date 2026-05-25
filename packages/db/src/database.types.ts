@@ -433,6 +433,7 @@ export type Database = {
       }
       import_batches: {
         Row: {
+          batch_kind: string
           created_at: string
           default_model: string
           default_prompt: string | null
@@ -450,6 +451,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          batch_kind?: string
           created_at?: string
           default_model?: string
           default_prompt?: string | null
@@ -467,6 +469,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          batch_kind?: string
           created_at?: string
           default_model?: string
           default_prompt?: string | null
@@ -513,6 +516,111 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      import_batch_variants: {
+        Row: {
+          base_url: string | null
+          batch_id: string
+          created_at: string
+          id: string
+          model: string
+          name: string
+          owner_id: string
+          prompt: string
+          provider: string
+          sort_index: number
+          updated_at: string
+        }
+        Insert: {
+          base_url?: string | null
+          batch_id: string
+          created_at?: string
+          id?: string
+          model: string
+          name?: string
+          owner_id: string
+          prompt: string
+          provider: string
+          sort_index?: number
+          updated_at?: string
+        }
+        Update: {
+          base_url?: string | null
+          batch_id?: string
+          created_at?: string
+          id?: string
+          model?: string
+          name?: string
+          owner_id?: string
+          prompt?: string
+          provider?: string
+          sort_index?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      import_item_variant_results: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string
+          drafts: Json | null
+          error_kind: string | null
+          error_message: string | null
+          id: string
+          item_id: string
+          latency_ms: number | null
+          owner_id: string
+          prompt_tokens: number | null
+          raw_text: string | null
+          status: string
+          updated_at: string
+          variant_id: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          item_id: string
+          latency_ms?: number | null
+          owner_id: string
+          prompt_tokens?: number | null
+          raw_text?: string | null
+          status?: string
+          updated_at?: string
+          variant_id: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          item_id?: string
+          latency_ms?: number | null
+          owner_id?: string
+          prompt_tokens?: number | null
+          raw_text?: string | null
+          status?: string
+          updated_at?: string
+          variant_id?: string
+        }
+        Relationships: []
       }
       import_item_attempts: {
         Row: {
@@ -605,6 +713,7 @@ export type Database = {
           page_index: number
           parsed_drafts_json: Json | null
           prompt_tokens: number
+          selected_variant_id: string | null
           source_pdf_page: number | null
           source_pdf_path: string | null
           status: string
@@ -633,6 +742,7 @@ export type Database = {
           page_index?: number
           parsed_drafts_json?: Json | null
           prompt_tokens?: number
+          selected_variant_id?: string | null
           source_pdf_page?: number | null
           source_pdf_path?: string | null
           status?: string
@@ -661,6 +771,7 @@ export type Database = {
           page_index?: number
           parsed_drafts_json?: Json | null
           prompt_tokens?: number
+          selected_variant_id?: string | null
           source_pdf_page?: number | null
           source_pdf_path?: string | null
           status?: string
@@ -1463,6 +1574,37 @@ export type Database = {
           p_error_message: string
           p_latency_ms: number
           p_variant_id: string
+        }
+        Returns: boolean
+      }
+      import_bakeoff_promote: { Args: { p_variant_id: string }; Returns: undefined }
+      import_bakeoff_seed: {
+        Args: { p_batch_id: string; p_variants: Json }
+        Returns: undefined
+      }
+      import_bakeoff_select_winner: {
+        Args: { p_item_id: string; p_variant_id: string }
+        Returns: undefined
+      }
+      import_variant_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: Json[]
+      }
+      import_variant_complete: {
+        Args: { p_claim_token: string; p_payload: Json; p_result_id: string }
+        Returns: boolean
+      }
+      import_variant_fail: {
+        Args: {
+          p_claim_token: string
+          p_error_kind: string
+          p_error_message: string
+          p_latency_ms: number
+          p_result_id: string
         }
         Returns: boolean
       }

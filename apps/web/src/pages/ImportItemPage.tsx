@@ -33,6 +33,7 @@ import {
 } from '../import/queries.js';
 import { kickOcr, resetImportItem } from '../import/api.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
 import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
 import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
@@ -800,7 +801,14 @@ export function ImportItemPage() {
                 </div>
               )}
 
-              {currentDraft ? (
+              {batch?.batchKind === 'BAKEOFF' &&
+              (item.status === 'BAKEOFF_READY' || item.status === 'BAKEOFF_PENDING') ? (
+                <BakeoffItemReview
+                  batchId={batch.id}
+                  itemId={item.id}
+                  onWinnerSelected={() => void syncNow()}
+                />
+              ) : currentDraft ? (
                 <DraftEditor draft={currentDraft} onPatch={patchDraft} />
               ) : item.status === 'OCR_FAILED' ? (
                 <p className="text-sm text-red-700 dark:text-red-300">

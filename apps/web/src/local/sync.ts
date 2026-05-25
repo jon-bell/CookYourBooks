@@ -128,6 +128,7 @@ interface ImportBatchRow {
   id: string;
   owner_id: string;
   name: string;
+  batch_kind: 'STANDARD' | 'BAKEOFF';
   source_kind: 'IMAGES' | 'PDF';
   target_collection_id: string | null;
   default_model: string;
@@ -155,6 +156,8 @@ interface ImportItemRow {
   is_toc: boolean;
   status:
     | 'AWAITING_GROUPING'
+    | 'BAKEOFF_PENDING'
+    | 'BAKEOFF_READY'
     | 'PENDING'
     | 'CLAIMED'
     | 'OCR_DONE'
@@ -162,6 +165,7 @@ interface ImportItemRow {
     | 'OCR_FAILED'
     | 'REVIEWED'
     | 'DISCARDED';
+  selected_variant_id: string | null;
   claim_expires_at: string;
   attempts: number;
   last_error: string | null;
@@ -513,13 +517,14 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
   const ts = toMs(row.updated_at);
   await db.exec(
     `insert into import_batches
-       (id, owner_id, name, source_kind, target_collection_id,
+       (id, owner_id, name, batch_kind, source_kind, target_collection_id,
         default_model, default_provider, fallback_model, fallback_provider,
         recitation_policy, status, total_items, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        name=excluded.name,
+       batch_kind=excluded.batch_kind,
        source_kind=excluded.source_kind,
        target_collection_id=excluded.target_collection_id,
        default_model=excluded.default_model,
@@ -536,6 +541,7 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
       row.id,
       row.owner_id,
       row.name,
+      row.batch_kind ?? 'STANDARD',
       row.source_kind,
       row.target_collection_id,
       row.default_model,
@@ -567,9 +573,9 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
         assigned_collection_id, assigned_page_number, is_toc, status,
         claim_expires_at, attempts, last_error, parsed_drafts_json,
         model_used, prompt_tokens, completion_tokens, cost_usd_micros,
-        created_recipe_ids, needs_fallback, extra_storage_paths,
+        created_recipe_ids, selected_variant_id, needs_fallback, extra_storage_paths,
         updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        batch_id=excluded.batch_id,
        owner_id=excluded.owner_id,
@@ -591,6 +597,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
        completion_tokens=excluded.completion_tokens,
        cost_usd_micros=excluded.cost_usd_micros,
        created_recipe_ids=excluded.created_recipe_ids,
+       selected_variant_id=excluded.selected_variant_id,
        needs_fallback=excluded.needs_fallback,
        extra_storage_paths=excluded.extra_storage_paths,
        updated_at=excluded.updated_at,
@@ -618,6 +625,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
       row.completion_tokens,
       row.cost_usd_micros,
       createdIdsText,
+      row.selected_variant_id ?? null,
       row.needs_fallback ? 1 : 0,
       extrasText,
       ts,
@@ -1050,10 +1058,11 @@ async function pushImportBatchInsert(
   const local = rows[0];
   if (!local) return;
   type BatchInsert = Database['public']['Tables']['import_batches']['Insert'];
-  const payload: BatchInsert = {
+  const payload = {
     id: local.id as string,
     owner_id: local.owner_id as string,
     name: local.name as string,
+    batch_kind: (local.batch_kind as string | undefined) ?? 'STANDARD',
     source_kind: local.source_kind as 'IMAGES' | 'PDF',
     target_collection_id: (local.target_collection_id as string | null) ?? null,
     default_model: local.default_model as string,
@@ -1062,7 +1071,7 @@ async function pushImportBatchInsert(
     fallback_provider:
       (local.fallback_provider as 'gemini' | 'openai-compatible' | null) ?? null,
     status: local.status as 'OPEN' | 'ARCHIVED',
-  };
+  } as BatchInsert;
   const { error } = await client
     .from('import_batches')
     .upsert(payload, { onConflict: 'id' });

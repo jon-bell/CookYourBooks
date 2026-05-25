@@ -102,7 +102,7 @@ export function SettingsPage() {
           <p className="mt-1 text-sm text-stone-600">
             Used as the starting values on the New import page. You can override per-batch when
             you start an import, or use the{' '}
-            <a href="/import/bakeoff" className="underline">
+            <a href="/import/new/bakeoff" className="underline">
               Bakeoff
             </a>{' '}
             to compare configurations and promote a winner in one click.

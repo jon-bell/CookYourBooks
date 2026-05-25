@@ -3,7 +3,8 @@ import { kickOcr } from './api.js';
 import { prepareImage, renderPdfToJpegs, type PreparedPage } from './imageProcessing.js';
 import { enqueue } from '../local/outbox.js';
 import { getLocalDb } from '../local/db.js';
-import type { OcrProvider, SourceKind } from './model.js';
+import type { OcrProvider, SourceKind, BatchKind } from './model.js';
+import type { BakeoffVariantInput } from './api.js';
 
 export interface UploadBatchInput {
   ownerId: string;
@@ -15,6 +16,9 @@ export interface UploadBatchInput {
   fallbackModel: string | null;
   sourceKind: SourceKind;
   files: File[];
+  batchKind?: BatchKind;
+  /** Required when batchKind is BAKEOFF. Seeded server-side after upload. */
+  bakeoffVariants?: readonly BakeoffVariantInput[];
   /** When true, items land in AWAITING_GROUPING and the worker is not
    *  kicked. Caller must drive the user through grouping and then call
    *  `import_finalize_grouping` to release items into PENDING. */
@@ -31,6 +35,7 @@ export interface UploadProgress {
 export interface UploadBatchResult {
   batchId: string;
   itemIds: string[];
+  batchKind: BatchKind;
 }
 
 async function uploadBlob(path: string, blob: Blob): Promise<void> {
@@ -121,14 +126,15 @@ export async function uploadBatch(
   const now = Date.now();
   await db.exec(
     `insert into import_batches
-       (id, owner_id, name, source_kind, target_collection_id,
+       (id, owner_id, name, batch_kind, source_kind, target_collection_id,
         default_model, default_provider, fallback_model, fallback_provider,
         recitation_policy, status, total_items, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
     [
       batchId,
       input.ownerId,
       input.name,
+      input.batchKind ?? 'STANDARD',
       input.sourceKind,
       input.targetCollectionId,
       input.defaultModel,
@@ -143,7 +149,12 @@ export async function uploadBatch(
   );
   await enqueue({ kind: 'import_batch_insert', entity_id: batchId });
 
-  const initialStatus = input.awaitGrouping ? 'AWAITING_GROUPING' : 'PENDING';
+  const isBakeoff = input.batchKind === 'BAKEOFF';
+  const initialStatus = input.awaitGrouping
+    ? 'AWAITING_GROUPING'
+    : isBakeoff
+      ? 'BAKEOFF_PENDING'
+      : 'PENDING';
   for (const it of items) {
     const storagePath = `${input.ownerId}/${batchId}/pages/${it.id}.jpg`;
     const thumbPath = `${input.ownerId}/${batchId}/thumbs/${it.id}.jpg`;
@@ -187,10 +198,9 @@ export async function uploadBatch(
     await enqueue({ kind: 'import_item_insert', entity_id: it.id });
   }
 
-  // Step 5: Nudge the worker — unless this batch is awaiting grouping,
-  // in which case the user still has to decide which pages go together
-  // and `import_finalize_grouping` will release rows into PENDING.
-  if (!input.awaitGrouping) {
+  // Step 5: Nudge the worker — bakeoff batches need variant seeding first;
+  // group-first batches need grouping before OCR starts.
+  if (!input.awaitGrouping && !isBakeoff) {
     try {
       await kickOcr(batchId);
     } catch {
@@ -198,5 +208,5 @@ export async function uploadBatch(
     }
   }
   onProgress?.({ phase: 'done', done: total, total });
-  return { batchId, itemIds: items.map((it) => it.id) };
+  return { batchId, itemIds: items.map((it) => it.id), batchKind: input.batchKind ?? 'STANDARD' };
 }

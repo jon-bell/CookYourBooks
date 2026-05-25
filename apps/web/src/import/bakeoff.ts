@@ -1,4 +1,26 @@
-import { formatQuantity, type ParsedRecipeDraft } from '@cookyourbooks/domain';
+import {
+  formatQuantity,
+  isMeasured,
+  type Ingredient,
+  type Instruction,
+  type ParsedRecipeDraft,
+} from '@cookyourbooks/domain';
+import type { BakeoffVariantRow } from './api.js';
+
+/** Human-readable bakeoff variant status (mirrors import queue labels). */
+export function formatBakeoffStatus(
+  status: BakeoffVariantRow['status'],
+  running: boolean,
+): string {
+  const labels: Record<BakeoffVariantRow['status'], string> = {
+    PENDING: 'Queued',
+    CLAIMED: 'Processing',
+    DONE: 'Done',
+    FAILED: 'Failed',
+  };
+  const label = labels[status];
+  return running && status !== 'DONE' && status !== 'FAILED' ? `${label}…` : label;
+}
 
 /**
  * Render a draft into a short canonical text blob suitable for a textual
@@ -40,6 +62,93 @@ export function summarizeDraftForDiff(draft: ParsedRecipeDraft): string {
 export interface DiffLine {
   kind: 'same' | 'add' | 'del';
   text: string;
+}
+
+export type DiffKind = 'same' | 'add' | 'del' | 'change';
+
+/** Per-field diff highlight kinds for one side of a comparison. */
+export interface DraftPreviewHighlights {
+  title: DiffKind;
+  description: DiffKind;
+  timeEstimate: DiffKind;
+  ingredients: readonly DiffKind[];
+  instructions: readonly DiffKind[];
+}
+
+function ingredientLine(ing: Ingredient): string {
+  if (isMeasured(ing)) return `${formatQuantity(ing.quantity)} ${ing.name}`;
+  return `${ing.name}${ing.description ? ` (${ing.description})` : ''}`;
+}
+
+function instructionLine(step: Instruction): string {
+  return step.text;
+}
+
+function scalarDiff(a: string | undefined, b: string | undefined): {
+  left: DiffKind;
+  right: DiffKind;
+} {
+  const aNorm = a ?? '';
+  const bNorm = b ?? '';
+  if (aNorm === bNorm) return { left: 'same', right: 'same' };
+  if (!aNorm && bNorm) return { left: 'same', right: 'add' };
+  if (aNorm && !bNorm) return { left: 'del', right: 'same' };
+  return { left: 'change', right: 'change' };
+}
+
+/** Map an LCS line diff back to per-side highlight arrays. */
+export function diffListHighlights(
+  leftLines: readonly string[],
+  rightLines: readonly string[],
+): { left: DiffKind[]; right: DiffKind[] } {
+  const unified = diffLines(leftLines.join('\n'), rightLines.join('\n'));
+  const left: DiffKind[] = [];
+  const right: DiffKind[] = [];
+  for (const line of unified) {
+    if (line.kind === 'same') {
+      left.push('same');
+      right.push('same');
+    } else if (line.kind === 'del') {
+      left.push('del');
+    } else {
+      right.push('add');
+    }
+  }
+  return { left, right };
+}
+
+/** Field-level highlights for side-by-side draft comparison. */
+export function computeDraftDiff(
+  left: ParsedRecipeDraft,
+  right: ParsedRecipeDraft,
+): { left: DraftPreviewHighlights; right: DraftPreviewHighlights } {
+  const title = scalarDiff(left.title, right.title);
+  const description = scalarDiff(left.description, right.description);
+  const timeEstimate = scalarDiff(left.timeEstimate, right.timeEstimate);
+  const ingredients = diffListHighlights(
+    left.ingredients.map(ingredientLine),
+    right.ingredients.map(ingredientLine),
+  );
+  const instructions = diffListHighlights(
+    left.instructions.map(instructionLine),
+    right.instructions.map(instructionLine),
+  );
+  return {
+    left: {
+      title: title.left,
+      description: description.left,
+      timeEstimate: timeEstimate.left,
+      ingredients: ingredients.left,
+      instructions: instructions.left,
+    },
+    right: {
+      title: title.right,
+      description: description.right,
+      timeEstimate: timeEstimate.right,
+      ingredients: ingredients.right,
+      instructions: instructions.right,
+    },
+  };
 }
 
 /**

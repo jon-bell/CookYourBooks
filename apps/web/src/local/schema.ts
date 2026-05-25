@@ -129,6 +129,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     recitation_policy text not null default 'ASK',
     status text not null default 'OPEN',
     total_items integer not null default 0,
+    batch_kind text not null default 'STANDARD',
+    batch_kind text not null default 'STANDARD',
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -157,6 +159,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     completion_tokens integer not null default 0,
     cost_usd_micros integer not null default 0,
     created_recipe_ids text not null default '[]',
+    selected_variant_id text,
     needs_fallback integer not null default 0,
     extra_storage_paths text not null default '[]',
     updated_at integer not null default 0,
@@ -300,6 +303,7 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     recitation_policy text not null default 'ASK',
     status text not null default 'OPEN',
     total_items integer not null default 0,
+    batch_kind text not null default 'STANDARD',
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -326,6 +330,7 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     completion_tokens integer not null default 0,
     cost_usd_micros integer not null default 0,
     created_recipe_ids text not null default '[]',
+    selected_variant_id text,
     needs_fallback integer not null default 0,
     updated_at integer not null default 0,
     deleted integer not null default 0
@@ -366,6 +371,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     deleted integer not null default 0
   )`,
   `create index if not exists import_toc_entries_batch_idx on import_toc_entries(batch_id, title)`,
+  `alter table import_batches add column batch_kind text not null default 'STANDARD'`,
+  `alter table import_items add column selected_variant_id text`,
   // Conversion rules (HOUSE-tier mirror of public.conversion_rules).
   `create table if not exists conversion_rules (
     id text primary key not null default '',
