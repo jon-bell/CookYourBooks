@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase.js';
+import { AppleLogo } from './AppleLogo.js';
 
 export function SignUpPage() {
   const navigate = useNavigate();
@@ -31,6 +32,15 @@ export function SignUpPage() {
     } else {
       setInfo('Check your email (Mailpit at http://127.0.0.1:54424) to confirm.');
     }
+  }
+
+  async function handleOAuth(provider: 'google' | 'apple') {
+    setError(null);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) setError(error.message);
   }
 
   return (
@@ -84,6 +94,27 @@ export function SignUpPage() {
           {submitting ? 'Creating…' : 'Create account'}
         </button>
       </form>
+      <div className="relative text-center">
+        <span className="bg-stone-50 dark:bg-stone-900 px-3 text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+          or
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => void handleOAuth('google')}
+        className="w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-4 py-2 text-sm font-medium hover:bg-stone-100 dark:hover:bg-stone-800"
+      >
+        Continue with Google
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleOAuth('apple')}
+        aria-label="Sign up with Apple"
+        className="flex w-full items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 dark:bg-white dark:text-black dark:hover:bg-stone-200"
+      >
+        <AppleLogo className="h-4 w-4" />
+        <span>Sign up with Apple</span>
+      </button>
       <p className="text-center text-sm text-stone-600 dark:text-stone-400">
         Already have one?{' '}
         <Link to="/sign-in" className="font-medium text-stone-900 dark:text-stone-100 underline">

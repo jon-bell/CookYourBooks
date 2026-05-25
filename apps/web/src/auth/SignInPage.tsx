@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { supabase } from '../supabase.js';
+import { AppleLogo } from './AppleLogo.js';
 
 export function SignInPage() {
   const navigate = useNavigate();
@@ -24,10 +25,10 @@ export function SignInPage() {
     navigate(redirectTo, { replace: true });
   }
 
-  async function handleGoogle() {
+  async function handleOAuth(provider: 'google' | 'apple') {
     setError(null);
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
+      provider,
       options: { redirectTo: window.location.origin },
     });
     if (error) setError(error.message);
@@ -81,10 +82,22 @@ export function SignInPage() {
         </span>
       </div>
       <button
-        onClick={handleGoogle}
+        type="button"
+        onClick={() => void handleOAuth('google')}
         className="w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-4 py-2 text-sm font-medium hover:bg-stone-100 dark:hover:bg-stone-800"
       >
         Continue with Google
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleOAuth('apple')}
+        aria-label="Sign in with Apple"
+        // Apple HIG: black-on-light, white-on-dark, with the canonical
+        // glyph on the leading side of the label.
+        className="flex w-full items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 dark:bg-white dark:text-black dark:hover:bg-stone-200"
+      >
+        <AppleLogo className="h-4 w-4" />
+        <span>Sign in with Apple</span>
       </button>
       <p className="text-center text-sm text-stone-600 dark:text-stone-400">
         No account?{' '}
