@@ -86,6 +86,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     temperature_value real,
     temperature_unit text,
     sub_instructions text,    -- JSON array of strings
+    simplified_steps text,    -- JSON array of {text,durationSec?,temperature?,notes?}
     notes text
   )`,
 
@@ -252,6 +253,7 @@ export const CRR_TABLES = [
   'import_item_attempts',
   'import_toc_entries',
   'conversion_rules',
+  'rewrite_jobs',
 ];
 
 // Idempotent post-schema migrations. Appended to over time as columns
@@ -380,4 +382,33 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     deleted integer not null default 0
   )`,
   `create index if not exists conversion_rules_owner_idx on conversion_rules(owner_id)`,
+  // ---------- Instruction rewriting (2026-06-04) ----------
+  // simplified_steps holds the LLM-rewritten atomic steps as JSON text.
+  // Nullable, so no default needed under the cr-sqlite rule (which only
+  // requires defaults on NOT NULL columns).
+  `alter table instructions add column simplified_steps text`,
+  // rewrite_jobs mirrors the import_items claim/lease pipeline but for
+  // per-recipe instruction rewrites. CRR-replicated so the queue state
+  // syncs across the user's devices.
+  `create table if not exists rewrite_jobs (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text not null default '',
+    status text not null default 'PENDING',
+    provider text not null default 'gemini',
+    model text not null default '',
+    prompt text not null default '',
+    claim_expires_at integer not null default 0,
+    attempts integer not null default 0,
+    last_error text,
+    result_json text,
+    prompt_tokens integer not null default 0,
+    completion_tokens integer not null default 0,
+    cost_usd_micros integer not null default 0,
+    latency_ms integer not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists rewrite_jobs_recipe_idx on rewrite_jobs(recipe_id)`,
+  `create index if not exists rewrite_jobs_owner_idx on rewrite_jobs(owner_id, status)`,
 ];

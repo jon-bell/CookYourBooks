@@ -120,6 +120,57 @@ export async function deleteOcrFixture(storagePath: string): Promise<void> {
   );
 }
 
+export interface RewriteFixtureSimplifiedStep {
+  text: string;
+  durationSec?: number;
+  temperature?: { value: number; unit: 'FAHRENHEIT' | 'CELSIUS' };
+  notes?: string;
+}
+
+export interface SeedRewriteFixtureArgs {
+  /** Recipe id the fixture is keyed against; `'*'` matches any recipe. */
+  recipeId: string;
+  /** `''` matches any provider for this recipe. */
+  provider?: 'gemini' | 'openai-compatible' | '';
+  /** `''` matches any model for this provider. */
+  model?: string;
+  rewritten?: Array<{
+    instructionId: string;
+    simplifiedSteps: RewriteFixtureSimplifiedStep[];
+  }>;
+  /** Force a worker error path instead of OK. */
+  errorKind?: 'RECITATION' | 'AUTH' | 'NETWORK' | 'PARSE' | 'TIMEOUT' | 'OTHER';
+  latencyMs?: number;
+  upsert?: boolean;
+}
+
+export async function seedRewriteFixture(args: SeedRewriteFixtureArgs): Promise<void> {
+  const responseJson = args.errorKind
+    ? {}
+    : { rewritten: args.rewritten ?? [] };
+  const row = {
+    recipe_id: args.recipeId,
+    provider: args.provider ?? '',
+    model: args.model ?? '',
+    response_json: responseJson,
+    error_kind: args.errorKind ?? 'OK',
+    latency_ms: args.latencyMs ?? 0,
+  };
+  const headers = adminHeaders({
+    Prefer: args.upsert ? 'resolution=merge-duplicates,return=minimal' : 'return=minimal',
+  });
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/rewrite_test_fixtures`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(row),
+  });
+  if (!resp.ok) {
+    throw new Error(
+      `seedRewriteFixture for ${args.recipeId} failed: ${resp.status} ${await resp.text()}`,
+    );
+  }
+}
+
 function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
   if (args.kind === 'recipe' || args.kind === 'recitation' || args.kind === 'auth-fail') {
     if (args.drafts && args.drafts.length > 1) {

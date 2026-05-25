@@ -102,6 +102,7 @@ export interface PullResult {
   importItemAttempts: number;
   importTocEntries: number;
   conversionRules: number;
+  rewriteJobs: number;
 }
 
 interface ConversionRuleRow {
@@ -207,11 +208,31 @@ interface ImportTocEntryRow {
   updated_at: string;
 }
 
+interface RewriteJobRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  status: 'PENDING' | 'CLAIMED' | 'DONE' | 'FAILED';
+  provider: 'gemini' | 'openai-compatible';
+  model: string;
+  prompt: string;
+  claim_expires_at: string;
+  attempts: number;
+  last_error: string | null;
+  result_json: unknown;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd_micros: number;
+  latency_ms: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // Bumped whenever a sync bug invalidates existing watermarks. On the
 // first pull after the user upgrades, every per-topic watermark is
 // reset to 0 so missed rows get a chance to flow in. Increment when
 // fixing a pull bug that could have stranded server rows.
-const SYNC_RESET_VERSION = 3;
+const SYNC_RESET_VERSION = 4;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
   const versionTopic = `sync_reset_version:${ownerId}`;
@@ -219,7 +240,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -228,6 +249,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `import_item_attempts:${ownerId}`,
       `import_toc_entries:${ownerId}`,
       `conversion_rules:${ownerId}`,
+      `rewrite_jobs:${ownerId}`,
     ],
   );
   await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
@@ -367,6 +389,7 @@ export async function pullAll(
 
   const importCounts = await pullImports(client, ownerId);
   const conversionRulesPulled = await pullConversionRules(client, ownerId);
+  const rewriteJobsPulled = await pullRewriteJobs(client, ownerId);
 
   return {
     collections: collections.length,
@@ -378,6 +401,7 @@ export async function pullAll(
     importItemAttempts: importCounts.attempts,
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
+    rewriteJobs: rewriteJobsPulled,
   };
 }
 
@@ -400,6 +424,31 @@ async function pullConversionRules(
   let max = await getWatermark(topic);
   for (const row of rows) {
     await upsertConversionRuleRow(row);
+    max = Math.max(max, toMs(row.updated_at));
+  }
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+async function pullRewriteJobs(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `rewrite_jobs:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<RewriteJobRow>((from, to) =>
+    client
+      .from('rewrite_jobs')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  let max = await getWatermark(topic);
+  for (const row of rows) {
+    await upsertRewriteJobRow(row);
     max = Math.max(max, toMs(row.updated_at));
   }
   if (max > 0) await bumpWatermark(topic, max);
@@ -704,6 +753,58 @@ async function upsertConversionRuleRow(row: ConversionRuleRow): Promise<void> {
   );
 }
 
+async function upsertRewriteJobRow(row: RewriteJobRow): Promise<void> {
+  const db = await getLocalDb();
+  const ts = toMs(row.updated_at);
+  const resultText = row.result_json === null || row.result_json === undefined
+    ? null
+    : JSON.stringify(row.result_json);
+  await db.exec(
+    `insert into rewrite_jobs
+       (id, owner_id, recipe_id, status, provider, model, prompt,
+        claim_expires_at, attempts, last_error, result_json,
+        prompt_tokens, completion_tokens, cost_usd_micros, latency_ms,
+        updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       status=excluded.status,
+       provider=excluded.provider,
+       model=excluded.model,
+       prompt=excluded.prompt,
+       claim_expires_at=excluded.claim_expires_at,
+       attempts=excluded.attempts,
+       last_error=excluded.last_error,
+       result_json=excluded.result_json,
+       prompt_tokens=excluded.prompt_tokens,
+       completion_tokens=excluded.completion_tokens,
+       cost_usd_micros=excluded.cost_usd_micros,
+       latency_ms=excluded.latency_ms,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= rewrite_jobs.updated_at`,
+    [
+      row.id,
+      row.owner_id,
+      row.recipe_id,
+      row.status,
+      row.provider,
+      row.model,
+      row.prompt,
+      toMs(row.claim_expires_at),
+      row.attempts,
+      row.last_error,
+      resultText,
+      row.prompt_tokens,
+      row.completion_tokens,
+      row.cost_usd_micros,
+      row.latency_ms,
+      ts,
+    ],
+  );
+}
+
 async function upsertImportTocEntryRow(row: ImportTocEntryRow): Promise<void> {
   const db = await getLocalDb();
   const ts = toMs(row.updated_at);
@@ -849,6 +950,19 @@ export function subscribeRealtime(
         onLocalUpdate();
       },
     )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'rewrite_jobs', filter: `owner_id=eq.${ownerId}` },
+      async (payload) => {
+        await handleRewriteJobEvent(payload);
+        // A DONE job means the worker just wrote `simplified_steps` to
+        // one or more instructions rows. Trigger a recipe refetch so the
+        // user sees the new steps without waiting for the next pull.
+        const evt = payload.new as { status?: string } | undefined;
+        if (evt?.status === 'DONE') onNeedsPull();
+        onLocalUpdate();
+      },
+    )
     .subscribe();
 
   return {
@@ -956,6 +1070,18 @@ async function handleConversionRuleEvent(payload: RealtimePayload): Promise<void
     return;
   }
   await upsertConversionRuleRow(payload.new as unknown as ConversionRuleRow);
+}
+
+async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { id?: string }).id;
+    if (id) {
+      const db = await getLocalDb();
+      await db.exec(`delete from rewrite_jobs where id = ?`, [id]);
+    }
+    return;
+  }
+  await upsertRewriteJobRow(payload.new as unknown as RewriteJobRow);
 }
 
 // ---------- push ----------

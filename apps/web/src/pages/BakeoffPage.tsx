@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   diffLines,
   summarizeDraftForDiff,
+  summarizeRewriteForDiff,
 } from '../import/bakeoff.js';
 import {
   DEFAULT_VARIANTS,
@@ -13,16 +14,44 @@ import {
 } from '../settings/bakeoffSettings.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import {
+  DEFAULT_REWRITE_MODEL_BY_PROVIDER,
+  DEFAULT_REWRITE_PROMPT,
+} from '../settings/rewriteSettings.js';
+import {
   getBakeoffRun,
   kickOcr,
+  kickRewrite,
   promoteBakeoffVariant,
   startBakeoff,
   type BakeoffVariantRow,
   type OcrProvider,
 } from '../import/api.js';
-import { uploadBakeoffImage } from '../import/uploadBatch.js';
+import { useCollectionPickerOptions } from '../data/queries.js';
+import { collectionRepo } from '../data/repos.js';
 import { useAuth } from '../auth/AuthProvider.js';
+import { uploadBakeoffImage } from '../import/uploadBatch.js';
 import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
+
+type TaskKind = 'OCR' | 'REWRITE';
+
+function defaultRewriteVariants(): LocalBakeoffVariant[] {
+  return [
+    {
+      id: 'seed-rewrite-flash',
+      name: 'Gemini Flash',
+      provider: 'gemini',
+      model: DEFAULT_REWRITE_MODEL_BY_PROVIDER.gemini,
+      prompt: DEFAULT_REWRITE_PROMPT,
+    },
+    {
+      id: 'seed-rewrite-pro',
+      name: 'Gemini Pro',
+      provider: 'gemini',
+      model: 'gemini-2.5-pro',
+      prompt: DEFAULT_REWRITE_PROMPT,
+    },
+  ];
+}
 
 /**
  * Side-by-side OCR shootout. The user uploads a single image, configures
@@ -35,12 +64,28 @@ import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
  */
 export function BakeoffPage() {
   const { user } = useAuth();
-  const [variants, setVariants] = useState<LocalBakeoffVariant[]>(() =>
+  const [searchParams, setSearchParams] = useSearchParams();
+  const taskKind: TaskKind = searchParams.get('task') === 'rewrite' ? 'REWRITE' : 'OCR';
+  // OCR variants persist to localStorage; rewrite variants reseed each
+  // visit from rewriteSettings defaults because the prompt is heavier
+  // and users tune it via the Settings page rather than the bakeoff form.
+  const [ocrVariants, setOcrVariants] = useState<LocalBakeoffVariant[]>(() =>
     loadBakeoffVariants(),
   );
+  const [rewriteVariants, setRewriteVariants] = useState<LocalBakeoffVariant[]>(() =>
+    defaultRewriteVariants(),
+  );
+  const variants = taskKind === 'REWRITE' ? rewriteVariants : ocrVariants;
+  const setVariants: (
+    next: LocalBakeoffVariant[] | ((cur: LocalBakeoffVariant[]) => LocalBakeoffVariant[]),
+  ) => void = taskKind === 'REWRITE' ? setRewriteVariants : setOcrVariants;
   const [file, setFile] = useState<File | undefined>();
   const [previewUrl, setPreviewUrl] = useState<string | undefined>();
+  const [recipePick, setRecipePick] = useState<{ collectionId: string; recipeId: string } | null>(
+    null,
+  );
   const [runId, setRunId] = useState<string | undefined>();
+  const [runTaskKind, setRunTaskKind] = useState<TaskKind>('OCR');
   const [serverVariants, setServerVariants] = useState<BakeoffVariantRow[]>([]);
   const [phase, setPhase] = useState<'idle' | 'uploading' | 'starting' | 'running' | 'done'>(
     'idle',
@@ -51,11 +96,24 @@ export function BakeoffPage() {
   const [rightId, setRightId] = useState<string | undefined>();
   const pollTimer = useRef<number | null>(null);
 
-  // Persist the variant *template* on every change so the form survives
-  // navigation. The run itself is server-owned.
+  function switchTask(next: TaskKind) {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'OCR') params.delete('task');
+    else params.set('task', 'rewrite');
+    setSearchParams(params, { replace: true });
+    // Don't carry over half-configured run state across tabs.
+    setRunId(undefined);
+    setServerVariants([]);
+    setPhase('idle');
+    setPromotedId(undefined);
+  }
+
+  // Persist the OCR variant *template* on every change so the form
+  // survives navigation. The run itself is server-owned. Rewrite
+  // variants are ephemeral — users tune the prompt in Settings.
   useEffect(() => {
-    saveBakeoffVariants(variants);
-  }, [variants]);
+    saveBakeoffVariants(ocrVariants);
+  }, [ocrVariants]);
 
   useEffect(() => {
     if (!file) {
@@ -126,14 +184,14 @@ export function BakeoffPage() {
 
   function resetToDefaults() {
     if (!confirm('Reset the variant list to defaults?')) return;
-    setVariants(DEFAULT_VARIANTS.map((v) => ({ ...v })));
+    if (taskKind === 'REWRITE') {
+      setVariants(defaultRewriteVariants());
+    } else {
+      setVariants(DEFAULT_VARIANTS.map((v) => ({ ...v })));
+    }
   }
 
   async function runAll() {
-    if (!file) {
-      setTopLevelError('Upload an image first.');
-      return;
-    }
     if (!user) {
       setTopLevelError('Not signed in.');
       return;
@@ -142,13 +200,24 @@ export function BakeoffPage() {
       setTopLevelError('Add at least one variant.');
       return;
     }
+    if (taskKind === 'OCR' && !file) {
+      setTopLevelError('Upload an image first.');
+      return;
+    }
+    if (taskKind === 'REWRITE' && !recipePick) {
+      setTopLevelError('Pick a recipe first.');
+      return;
+    }
     setTopLevelError(undefined);
     setRunId(undefined);
     setServerVariants([]);
     setPromotedId(undefined);
     try {
-      setPhase('uploading');
-      const storagePath = await uploadBakeoffImage(user.id, file);
+      let storagePath: string | null = null;
+      if (taskKind === 'OCR') {
+        setPhase('uploading');
+        storagePath = await uploadBakeoffImage(user.id, file!);
+      }
       setPhase('starting');
       const id = await startBakeoff(
         storagePath,
@@ -159,20 +228,23 @@ export function BakeoffPage() {
           prompt: v.prompt,
           base_url: v.baseUrl,
         })),
+        {
+          taskKind,
+          inputRecipeId: taskKind === 'REWRITE' ? recipePick!.recipeId : null,
+        },
       );
-      // Kick the worker so we don't wait for the next 30s cron tick.
-      // `ocr_kick(null)` is fine — the bakeoff loop scans all PENDING
-      // variants regardless of batch.
       try {
-        await kickOcr();
+        if (taskKind === 'REWRITE') await kickRewrite();
+        else await kickOcr();
       } catch (e) {
-        // Worker not configured is a common local-dev case. Surface it
-        // but don't block the page — the cron tick will eventually pick
-        // it up if the secret is set later.
+        // Worker not configured is a common local-dev case. Surface but
+        // don't block — the cron tick will eventually pick it up if the
+        // secret is set later.
         setTopLevelError(
           `Worker kick failed (${(e as Error).message}). Variants are queued; results will appear when the worker runs.`,
         );
       }
+      setRunTaskKind(taskKind);
       setRunId(id);
       setPhase('running');
     } catch (e) {
@@ -211,17 +283,50 @@ export function BakeoffPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">OCR bakeoff</h1>
+          <h1 className="text-2xl font-semibold">
+            {taskKind === 'REWRITE' ? 'Rewrite bakeoff' : 'OCR bakeoff'}
+          </h1>
           <p className="mt-1 text-sm text-stone-600">
-            Race multiple prompts and models against the same photo. Uses your existing
-            server-side OCR keys (Settings → OCR keys). Promote a winner to make it the
-            default for new imports.
+            {taskKind === 'REWRITE'
+              ? 'Race rewrite prompts + models against the same recipe. Promote a winner to make it the default for the Improve Instructions button.'
+              : 'Race multiple prompts and models against the same photo. Promote a winner to make it the default for new imports.'}
           </p>
         </div>
         <Link to="/import" className="text-sm underline text-stone-700">
           ← Back to imports
         </Link>
       </header>
+
+      <div className="flex gap-1 border-b border-stone-200 text-sm" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={taskKind === 'OCR'}
+          onClick={() => switchTask('OCR')}
+          className={
+            taskKind === 'OCR'
+              ? 'rounded-t border border-stone-200 border-b-white bg-white px-4 py-2 font-medium'
+              : 'rounded-t px-4 py-2 text-stone-600 hover:text-stone-900'
+          }
+          data-testid="bakeoff-tab-ocr"
+        >
+          OCR import
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={taskKind === 'REWRITE'}
+          onClick={() => switchTask('REWRITE')}
+          className={
+            taskKind === 'REWRITE'
+              ? 'rounded-t border border-stone-200 border-b-white bg-white px-4 py-2 font-medium'
+              : 'rounded-t px-4 py-2 text-stone-600 hover:text-stone-900'
+          }
+          data-testid="bakeoff-tab-rewrite"
+        >
+          Instruction rewrite
+        </button>
+      </div>
 
       {topLevelError && (
         <div
@@ -232,23 +337,40 @@ export function BakeoffPage() {
         </div>
       )}
 
-      <section className="rounded-lg border border-stone-200 bg-white p-5 space-y-3">
-        <h2 className="text-lg font-semibold">1. Pick a photo</h2>
-        <input
-          type="file"
-          accept="image/*"
-          data-testid="bakeoff-file-input"
-          onChange={(e) => setFile(e.target.files?.[0] ?? undefined)}
-          className="block text-sm"
-        />
-        {previewUrl && (
-          <img
-            src={previewUrl}
-            alt="Selected"
-            className="max-h-40 rounded border border-stone-200"
+      {taskKind === 'OCR' ? (
+        <section className="rounded-lg border border-stone-200 bg-white p-5 space-y-3">
+          <h2 className="text-lg font-semibold">1. Pick a photo</h2>
+          <input
+            type="file"
+            accept="image/*"
+            data-testid="bakeoff-file-input"
+            onChange={(e) => setFile(e.target.files?.[0] ?? undefined)}
+            className="block text-sm"
           />
-        )}
-      </section>
+          {previewUrl && (
+            <img
+              src={previewUrl}
+              alt="Selected"
+              className="max-h-40 rounded border border-stone-200"
+            />
+          )}
+        </section>
+      ) : (
+        <section
+          className="rounded-lg border border-stone-200 bg-white p-5 space-y-3"
+          data-testid="bakeoff-recipe-picker"
+        >
+          <h2 className="text-lg font-semibold">1. Pick a recipe</h2>
+          <p className="text-xs text-stone-500">
+            We send each variant the recipe's current instructions and compare the rewrite
+            quality. Your existing OCR API key is reused for the call.
+          </p>
+          <RecipePicker
+            value={recipePick}
+            onChange={setRecipePick}
+          />
+        </section>
+      )}
 
       <section className="rounded-lg border border-stone-200 bg-white p-5 space-y-3">
         <div className="flex items-center justify-between">
@@ -288,7 +410,11 @@ export function BakeoffPage() {
         <button
           type="button"
           onClick={() => void runAll()}
-          disabled={!file || phase === 'uploading' || phase === 'starting'}
+          disabled={
+            (taskKind === 'OCR' ? !file : !recipePick) ||
+            phase === 'uploading' ||
+            phase === 'starting'
+          }
           data-testid="bakeoff-run"
           className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-60"
         >
@@ -306,6 +432,7 @@ export function BakeoffPage() {
         <ResultsTable
           variants={serverVariants}
           running={phase === 'running'}
+          taskKind={runTaskKind}
           promotedId={promotedId}
           onPromote={(id) => void promote(id)}
         />
@@ -314,6 +441,7 @@ export function BakeoffPage() {
       {okResults.length >= 2 && leftId && rightId && (
         <DiffSection
           results={okResults}
+          taskKind={runTaskKind}
           leftId={leftId}
           rightId={rightId}
           onLeft={setLeftId}
@@ -423,11 +551,13 @@ function VariantRow({
 function ResultsTable({
   variants,
   running,
+  taskKind,
   promotedId,
   onPromote,
 }: {
   variants: readonly BakeoffVariantRow[];
   running: boolean;
+  taskKind: TaskKind;
   promotedId: string | undefined;
   onPromote: (id: string) => void;
 }) {
@@ -487,7 +617,11 @@ function ResultsTable({
                 </td>
                 <td className="py-2 pr-4 align-top">
                   {v.status === 'DONE' ? (
-                    <DraftSummary drafts={(v.drafts ?? []) as ParsedRecipeDraft[]} />
+                    taskKind === 'REWRITE' ? (
+                      <RewriteSummary drafts={v.drafts} />
+                    ) : (
+                      <DraftSummary drafts={(v.drafts ?? []) as ParsedRecipeDraft[]} />
+                    )
                   ) : v.status === 'FAILED' ? (
                     <span className="text-xs text-red-700">{v.error_message}</span>
                   ) : (
@@ -517,6 +651,26 @@ function ResultsTable({
   );
 }
 
+function RewriteSummary({ drafts }: { drafts: unknown }) {
+  // REWRITE variants write `{ rewritten: [{ instructionId, simplifiedSteps[] }] }`
+  // into bakeoff_variants.drafts. Show a short summary of how many
+  // instructions got expanded and total atomic steps.
+  const payload = drafts as { rewritten?: Array<{ simplifiedSteps?: unknown[] }> } | null;
+  const entries = payload?.rewritten ?? [];
+  const totalSteps = entries.reduce(
+    (acc, e) => acc + (Array.isArray(e.simplifiedSteps) ? e.simplifiedSteps.length : 0),
+    0,
+  );
+  return (
+    <div className="text-xs">
+      <div>
+        {entries.length} {entries.length === 1 ? 'instruction' : 'instructions'} →{' '}
+        {totalSteps} {totalSteps === 1 ? 'step' : 'steps'}
+      </div>
+    </div>
+  );
+}
+
 function DraftSummary({ drafts }: { drafts: ParsedRecipeDraft[] }) {
   const total = drafts.length;
   const first = drafts[0];
@@ -537,12 +691,14 @@ function DraftSummary({ drafts }: { drafts: ParsedRecipeDraft[] }) {
 
 function DiffSection({
   results,
+  taskKind,
   leftId,
   rightId,
   onLeft,
   onRight,
 }: {
   results: ReadonlyArray<BakeoffVariantRow>;
+  taskKind: TaskKind;
   leftId: string;
   rightId: string;
   onLeft: (id: string) => void;
@@ -553,12 +709,17 @@ function DiffSection({
 
   const diff = useMemo(() => {
     if (!left || !right) return [];
+    if (taskKind === 'REWRITE') {
+      const leftSummary = summarizeRewriteForDiff(left.drafts);
+      const rightSummary = summarizeRewriteForDiff(right.drafts);
+      return diffLines(leftSummary, rightSummary);
+    }
     const leftDrafts = (left.drafts ?? []) as ParsedRecipeDraft[];
     const rightDrafts = (right.drafts ?? []) as ParsedRecipeDraft[];
     const leftSummary = leftDrafts[0] ? summarizeDraftForDiff(leftDrafts[0]) : '';
     const rightSummary = rightDrafts[0] ? summarizeDraftForDiff(rightDrafts[0]) : '';
     return diffLines(leftSummary, rightSummary);
-  }, [left, right]);
+  }, [left, right, taskKind]);
 
   return (
     <section
@@ -630,4 +791,87 @@ function formatCost(costUsdMicros: number): string {
   const usd = costUsdMicros / 1_000_000;
   if (usd < 0.01) return `<$0.01`;
   return `$${usd.toFixed(4)}`;
+}
+
+interface RecipePickEntry {
+  collectionId: string;
+  collectionTitle: string;
+  recipeId: string;
+  recipeTitle: string;
+}
+
+function RecipePicker({
+  value,
+  onChange,
+}: {
+  value: { collectionId: string; recipeId: string } | null;
+  onChange: (next: { collectionId: string; recipeId: string } | null) => void;
+}) {
+  const { user } = useAuth();
+  const { data: collectionsOptions = [] } = useCollectionPickerOptions();
+  const [entries, setEntries] = useState<RecipePickEntry[]>([]);
+
+  // Load (title, id) pairs for every collection the user has. We don't
+  // hydrate full recipes — the bake-off only needs an id to start the
+  // run; the worker re-reads instructions from Postgres anyway.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    void (async () => {
+      const repo = collectionRepo(user.id);
+      const acc: RecipePickEntry[] = [];
+      for (const c of collectionsOptions) {
+        try {
+          const full = await repo.get(c.id);
+          if (!full) continue;
+          for (const r of full.recipes) {
+            acc.push({
+              collectionId: c.id,
+              collectionTitle: c.title,
+              recipeId: r.id,
+              recipeTitle: r.title,
+            });
+          }
+        } catch {
+          // skip — collection might be in flux during pull
+        }
+      }
+      if (!cancelled) setEntries(acc);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, collectionsOptions]);
+
+  if (entries.length === 0) {
+    return <p className="text-xs text-stone-500">No recipes available yet.</p>;
+  }
+
+  return (
+    <select
+      value={value ? `${value.collectionId}:${value.recipeId}` : ''}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (!v) {
+          onChange(null);
+          return;
+        }
+        const [collectionId, recipeId] = v.split(':');
+        if (!collectionId || !recipeId) return;
+        onChange({ collectionId, recipeId });
+      }}
+      data-testid="bakeoff-recipe-select"
+      className="w-full rounded border border-stone-300 px-2 py-1 text-sm"
+    >
+      <option value="">— pick a recipe —</option>
+      {entries.map((entry) => (
+        <option
+          key={`${entry.collectionId}:${entry.recipeId}`}
+          value={`${entry.collectionId}:${entry.recipeId}`}
+        >
+          {entry.collectionTitle} · {entry.recipeTitle}
+        </option>
+      ))}
+    </select>
+  );
 }

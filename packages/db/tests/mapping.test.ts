@@ -120,6 +120,85 @@ describe('recipe mapping', () => {
     expect(back.instructions[0]?.text).toBe('Mix.');
   });
 
+  it('round-trips instruction simplifiedSteps through jsonb', () => {
+    const step = instruction({
+      id: 's-1',
+      stepNumber: 1,
+      text: 'Heat pan, add seeds, toast 2 min.',
+      simplifiedSteps: [
+        { text: 'Heat pan over medium-high heat' },
+        { text: 'Add the seeds to the pan' },
+        {
+          text: 'Toast the seeds, shaking the pan',
+          durationSec: 120,
+          temperature: { value: 350, unit: 'FAHRENHEIT' },
+          notes: 'do not burn',
+        },
+      ],
+    });
+    const insert = instructionToInsert(step, 'r-1') as InstructionRow & {
+      simplified_steps?: unknown;
+    };
+    const row: InstructionRow = {
+      ...insert,
+      id: step.id,
+    } as InstructionRow;
+    const recipeRow = {
+      id: 'r-1',
+      collection_id: 'c',
+      title: 't',
+      servings_amount: null,
+      servings_description: null,
+      sort_order: 0,
+      notes: null,
+      parent_recipe_id: null,
+      created_at: '',
+      updated_at: '',
+    } as RecipeRow;
+    const back = rowsToRecipe(recipeRow, [], [row]);
+    const out = back.instructions[0];
+    expect(out?.simplifiedSteps).toHaveLength(3);
+    expect(out?.simplifiedSteps?.[2]?.durationSec).toBe(120);
+    expect(out?.simplifiedSteps?.[2]?.temperature).toEqual({ value: 350, unit: 'FAHRENHEIT' });
+    expect(out?.simplifiedSteps?.[2]?.notes).toBe('do not burn');
+  });
+
+  it('drops malformed simplified-step entries silently', () => {
+    const recipeRow = {
+      id: 'r-3',
+      collection_id: 'c',
+      title: 't',
+      servings_amount: null,
+      servings_description: null,
+      sort_order: 0,
+      notes: null,
+      parent_recipe_id: null,
+      created_at: '',
+      updated_at: '',
+    } as RecipeRow;
+    const badStep = {
+      id: 's-bad',
+      recipe_id: 'r-3',
+      step_number: 1,
+      text: 'has bad rewrite',
+      temperature_value: null,
+      temperature_unit: null,
+      sub_instructions: null,
+      simplified_steps: JSON.stringify([
+        { text: 'ok step' },
+        { text: '' }, // empty → dropped
+        { notText: 'no text field' }, // missing → dropped
+        { text: 'bad dur', durationSec: 'oops' }, // non-number dur retained, but invalid → discarded
+      ]),
+      notes: null,
+    } as unknown as InstructionRow;
+    const back = rowsToRecipe(recipeRow, [], [badStep]);
+    const steps = back.instructions[0]?.simplifiedSteps ?? [];
+    expect(steps.map((s) => s.text)).toEqual(['ok step', 'bad dur']);
+    // durationSec must be a positive finite number to be retained.
+    expect(steps[1]?.durationSec).toBeUndefined();
+  });
+
   it('treats malformed measured rows as vague (data integrity fallback)', () => {
     const recipeRow = {
       id: 'r-2',

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { formatQuantity, isMeasured } from '@cookyourbooks/domain';
 import { useCollection } from '../data/queries.js';
+import { TimerButton } from '../cook/TimerButton.js';
 
 // Fires a light haptic tap on platforms that support it. On web the
 // Capacitor plugin no-ops; on iOS/Android it triggers the native engine.
@@ -35,6 +36,13 @@ export function CookModePage() {
   const { data: collection } = useCollection(collectionId);
   const recipe = collection?.recipes.find((r) => r.id === recipeId);
   const [idx, setIdx] = useState(0);
+  // Ephemeral check-off state. Reset on every Cook Mode entry (the
+  // component remounts) — we intentionally don't persist across
+  // sessions because the most common signal is "I just walked away
+  // for ten minutes," not "I want to pick up where I left off three
+  // days later."
+  const [ingredientChecks, setIngredientChecks] = useState<Set<string>>(() => new Set());
+  const [substepChecks, setSubstepChecks] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     let wakeLock: WakeLockSentinel | null = null;
@@ -134,13 +142,71 @@ export function CookModePage() {
             {step.temperature.value}°{step.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
           </p>
         )}
-        <p className="mt-4 text-2xl leading-relaxed">{step?.text ?? ''}</p>
-        {step?.subInstructions && step.subInstructions.length > 0 && (
-          <ul className="mt-3 ml-6 list-disc space-y-1 text-lg text-stone-700 dark:text-stone-300">
-            {step.subInstructions.map((sub, i) => (
-              <li key={i}>{sub}</li>
-            ))}
-          </ul>
+        {step?.simplifiedSteps && step.simplifiedSteps.length > 0 ? (
+          <>
+            <p className="mt-4 text-base text-stone-500 dark:text-stone-400">{step.text}</p>
+            <ol className="mt-3 space-y-2" data-testid="simplified-list">
+              {step.simplifiedSteps.map((ss, i) => {
+                const key = `${step.id}:${i}`;
+                const checked = substepChecks.has(key);
+                return (
+                  <li key={key} className="flex items-start gap-3 text-2xl leading-snug">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        setSubstepChecks((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(key);
+                          else next.delete(key);
+                          return next;
+                        });
+                      }}
+                      className="mt-2 h-5 w-5 shrink-0 accent-stone-900 dark:accent-stone-100"
+                      aria-label={`Mark step ${i + 1} done`}
+                    />
+                    <span
+                      className={
+                        checked
+                          ? 'flex-1 text-stone-400 line-through dark:text-stone-500'
+                          : 'flex-1'
+                      }
+                    >
+                      {ss.text}
+                      {ss.temperature && (
+                        <span className="ml-2 align-middle text-base text-amber-700 dark:text-amber-300">
+                          {ss.temperature.value}°
+                          {ss.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
+                        </span>
+                      )}
+                      {ss.notes && (
+                        <span className="ml-2 align-middle text-base italic text-stone-500 dark:text-stone-400">
+                          {ss.notes}
+                        </span>
+                      )}
+                    </span>
+                    {ss.durationSec != null && ss.durationSec > 0 && (
+                      <TimerButton
+                        durationSec={ss.durationSec}
+                        persistKey={`cyb:timer:${recipe.id}:${key}`}
+                      />
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : (
+          <>
+            <p className="mt-4 text-2xl leading-relaxed">{step?.text ?? ''}</p>
+            {step?.subInstructions && step.subInstructions.length > 0 && (
+              <ul className="mt-3 ml-6 list-disc space-y-1 text-lg text-stone-700 dark:text-stone-300">
+                {step.subInstructions.map((sub, i) => (
+                  <li key={i}>{sub}</li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
         {step?.notes && (
           <p className="mt-3 text-base italic text-stone-500 dark:text-stone-400">{step.notes}</p>
@@ -149,18 +215,40 @@ export function CookModePage() {
 
       <aside className="rounded-lg bg-white dark:bg-stone-900 p-4 ring-1 ring-stone-200">
         <h3 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-300">Ingredients</h3>
-        <ul className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-3">
-          {recipe.ingredients.map((ing) => (
-            <li key={ing.id}>
-              {isMeasured(ing) ? (
-                <>
-                  <span className="font-medium">{formatQuantity(ing.quantity)}</span> {ing.name}
-                </>
-              ) : (
-                ing.name
-              )}
-            </li>
-          ))}
+        <ul
+          className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-3"
+          data-testid="cook-ingredients"
+        >
+          {recipe.ingredients.map((ing) => {
+            const checked = ingredientChecks.has(ing.id);
+            return (
+              <li key={ing.id} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => {
+                    setIngredientChecks((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) next.add(ing.id);
+                      else next.delete(ing.id);
+                      return next;
+                    });
+                  }}
+                  className="h-4 w-4 shrink-0 accent-stone-900 dark:accent-stone-100"
+                  aria-label={`Mark ${ing.name} ready`}
+                />
+                <span className={checked ? 'text-stone-400 line-through dark:text-stone-500' : ''}>
+                  {isMeasured(ing) ? (
+                    <>
+                      <span className="font-medium">{formatQuantity(ing.quantity)}</span> {ing.name}
+                    </>
+                  ) : (
+                    ing.name
+                  )}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       </aside>
 

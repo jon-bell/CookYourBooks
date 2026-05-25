@@ -7,6 +7,15 @@ export interface Temperature {
   readonly unit: TemperatureUnit;
 }
 
+export interface SimplifiedStep {
+  readonly text: string;
+  /** Auto-extracted duration ("toast for 2 minutes" → 120). Drives the
+   *  inline timer button in Cook Mode. */
+  readonly durationSec?: number;
+  readonly temperature?: Temperature;
+  readonly notes?: string;
+}
+
 export interface Instruction {
   readonly id: string;
   readonly stepNumber: number;
@@ -23,6 +32,12 @@ export interface Instruction {
    * has short clarifying lines ("A. Warm the milk. B. Add yeast.").
    */
   readonly subInstructions?: readonly string[];
+  /**
+   * LLM-rewritten atomic steps for cook-mode display. Optional — only
+   * present after the user has run "Improve instructions". An empty
+   * array means "user dismissed" so the UI hides the button.
+   */
+  readonly simplifiedSteps?: readonly SimplifiedStep[];
   /**
    * Free-form annotation on the step itself — warnings, alternatives,
    * "it should be shaggy, not smooth" hints.
@@ -41,6 +56,7 @@ export function instruction(params: {
   ingredientRefs?: readonly IngredientRef[];
   temperature?: Temperature;
   subInstructions?: readonly string[];
+  simplifiedSteps?: readonly SimplifiedStep[];
   notes?: string;
 }): Instruction {
   return {
@@ -50,6 +66,9 @@ export function instruction(params: {
     ingredientRefs: [...(params.ingredientRefs ?? [])],
     temperature: params.temperature,
     subInstructions: params.subInstructions ? [...params.subInstructions] : undefined,
+    simplifiedSteps: params.simplifiedSteps
+      ? params.simplifiedSteps.map((s) => ({ ...s }))
+      : undefined,
     notes: params.notes,
   };
 }
