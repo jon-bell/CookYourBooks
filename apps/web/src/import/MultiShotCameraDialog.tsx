@@ -133,7 +133,7 @@ export function MultiShotCameraDialog({
       data-testid="multi-shot-camera-dialog"
       className="fixed inset-0 z-50 flex flex-col bg-stone-950 text-white"
     >
-      <header className="flex items-center justify-between px-4 py-3 text-sm">
+      <header className="flex items-center justify-between px-4 py-3 text-sm pt-[max(0.75rem,env(safe-area-inset-top))]">
         <button
           type="button"
           onClick={cancel}
@@ -178,7 +178,7 @@ export function MultiShotCameraDialog({
         </button>
       </div>
 
-      <div className="border-t border-stone-800 bg-stone-900 dark:bg-stone-100 px-3 py-3">
+      <div className="border-t border-stone-800 bg-stone-900 dark:bg-stone-100 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         {shots.length === 0 ? (
           <p className="text-center text-xs text-stone-500 dark:text-stone-400">No photos yet.</p>
         ) : (
