@@ -4,13 +4,10 @@ import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
 import { capturePhoto, pickPhoto } from './camera.js';
-import { listOcrKeys } from './api.js';
-import {
-  LocalImportItemRepository,
-  insertLocalBatch,
-} from './localRepos.js';
+import { getUserOcrPrefs, listOcrKeys } from './api.js';
+import { LocalImportItemRepository } from './localRepos.js';
 import { uploadBatch } from './uploadBatch.js';
-import { loadOcrSettings, DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import { loadFallbackPrefs } from '../settings/FallbackModelSection.js';
 import type { ImportItem } from './model.js';
 
@@ -19,8 +16,7 @@ type Progress = { status: string };
 /**
  * Collection-page entry point: capture or upload a photo, kick the
  * server-side OCR pipeline as a 1-item batch, and hand the user to the
- * batch review UI once the worker reports back. E2E tests can short-
- * circuit via `window.__cybOcrShim`.
+ * batch review UI once the worker reports back.
  */
 export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
   const navigate = useNavigate();
@@ -90,80 +86,10 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
     });
   }
 
-  async function handleShimPath(
-    photo: { blob: Blob; name: string },
-    shim: NonNullable<Window['__cybOcrShim']>,
-  ): Promise<void> {
-    if (!user) return;
-    setProgress({ status: 'running shim' });
-    const file = new File([photo.blob], photo.name, { type: photo.blob.type || 'image/jpeg' });
-    const drafts = await shim(file, setProgress);
-    if (drafts.length === 0) {
-      setError('The shim returned no recipes.');
-      return;
-    }
-    // Synthesize a local-only batch + item so the new review editor can host the drafts.
-    const batchId = crypto.randomUUID();
-    const itemId = crypto.randomUUID();
-    const now = Date.now();
-    await insertLocalBatch({
-      id: batchId,
-      ownerId: user.id,
-      name: `Photo ${new Date().toLocaleString()}`,
-      sourceKind: 'IMAGES',
-      targetCollectionId: collectionId,
-      defaultModel: 'shim',
-      defaultProvider: 'gemini',
-      fallbackModel: null,
-      fallbackProvider: null,
-      recitationPolicy: 'ASK',
-      status: 'OPEN',
-      totalItems: 1,
-      updatedAt: now,
-    });
-    await new LocalImportItemRepository(user.id).insertLocal({
-      id: itemId,
-      batchId,
-      ownerId: user.id,
-      pageIndex: 0,
-      storagePath: '',
-      thumbPath: null,
-      sourcePdfPath: null,
-      sourcePdfPage: null,
-      assignedCollectionId: collectionId,
-      assignedPageNumber: null,
-      isToc: false,
-      status: 'OCR_DONE',
-      claimExpiresAt: 0,
-      attempts: 1,
-      lastError: null,
-      parsedDrafts: drafts,
-      modelUsed: 'shim',
-      promptTokens: 0,
-      completionTokens: 0,
-      costUsdMicros: 0,
-      createdRecipeIds: [],
-      extraStoragePaths: [],
-      updatedAt: now,
-    });
-    if (drafts.length === 1) {
-      navigate(`/import/${batchId}/items/${itemId}`);
-    } else {
-      setPending({ drafts, batchId, itemId });
-    }
-  }
-
   async function handlePhoto(photo: { blob: Blob; name: string } | undefined) {
     if (!photo || !user) return;
     setBusy(true);
     try {
-      // E2E shim short-circuits the server round trip — keep tests fast and
-      // independent of the worker.
-      const shim = typeof window !== 'undefined' ? window.__cybOcrShim : undefined;
-      if (shim) {
-        await handleShimPath(photo, shim);
-        return;
-      }
       if (hasKey === false) {
         setError(
           <>
@@ -180,17 +106,17 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       const file = new File([photo.blob], photo.name || 'photo.jpg', {
         type: photo.blob.type || 'image/jpeg',
       });
-      const settings = loadOcrSettings();
+      const prefs = await getUserOcrPrefs().catch(() => null);
       const fallback = loadFallbackPrefs();
       setProgress({ status: 'uploading' });
+      const defaultProvider = prefs?.provider ?? 'gemini';
       const { batchId, itemIds } = await uploadBatch(
         {
           ownerId: user.id,
           name: `Photo ${new Date().toLocaleString()}`,
           targetCollectionId: collectionId,
-          defaultProvider: settings?.provider ?? 'gemini',
-          defaultModel:
-            settings?.model ?? DEFAULT_MODEL_BY_PROVIDER[settings?.provider ?? 'gemini'],
+          defaultProvider,
+          defaultModel: prefs?.model || DEFAULT_MODEL_BY_PROVIDER[defaultProvider],
           fallbackProvider: fallback.provider || null,
           fallbackModel: fallback.provider ? fallback.model || null : null,
           sourceKind: 'IMAGES',

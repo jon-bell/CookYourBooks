@@ -1,24 +1,32 @@
-// User-tunable list of OCR bakeoff variants. Persisted to localStorage so
-// the user doesn't lose their carefully-tuned matrix between sessions.
-// Lives here (next to the legacy OCR settings) rather than in Supabase
-// because variants reference the same in-browser API key the regular OCR
-// path uses.
+// Form-state for the OCR bakeoff variant matrix. Persisted to
+// localStorage so the user's last-used set survives navigation, but
+// every actual run is server-owned and creates fresh bakeoff_variants
+// rows.
 
-import type { BakeoffVariant } from '../import/bakeoff.js';
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROMPT,
   type OcrProvider,
 } from './ocrSettings.js';
 
+/** UI-only variant template. Server-side variants live in
+ *  `bakeoff_variants` and have additional result columns. */
+export interface LocalBakeoffVariant {
+  id: string;
+  name: string;
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+  /** Only meaningful for `openai-compatible`. */
+  baseUrl?: string;
+}
+
 const KEY = 'cookyourbooks.bakeoff.v1';
 
-/**
- * Seed matrix the form shows on first visit. Two cheap-vs-rich Gemini
- * models is a sensible default — it's a clear apples-to-apples
- * comparison without forcing the user to know a second provider.
- */
-export const DEFAULT_VARIANTS: readonly BakeoffVariant[] = [
+/** Seed pair shown on first visit — same provider, two models so the
+ *  matrix is a clean apples-to-apples comparison without needing
+ *  multiple providers configured. */
+export const DEFAULT_VARIANTS: readonly LocalBakeoffVariant[] = [
   {
     id: 'seed-flash',
     name: 'Gemini Flash',
@@ -35,7 +43,7 @@ export const DEFAULT_VARIANTS: readonly BakeoffVariant[] = [
   },
 ];
 
-export function loadBakeoffVariants(): BakeoffVariant[] {
+export function loadBakeoffVariants(): LocalBakeoffVariant[] {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return DEFAULT_VARIANTS.map(clone);
@@ -49,11 +57,11 @@ export function loadBakeoffVariants(): BakeoffVariant[] {
   }
 }
 
-export function saveBakeoffVariants(variants: readonly BakeoffVariant[]): void {
+export function saveBakeoffVariants(variants: readonly LocalBakeoffVariant[]): void {
   localStorage.setItem(KEY, JSON.stringify(variants));
 }
 
-export function newVariant(seed?: Partial<BakeoffVariant>): BakeoffVariant {
+export function newVariant(seed?: Partial<LocalBakeoffVariant>): LocalBakeoffVariant {
   const provider: OcrProvider = seed?.provider ?? 'gemini';
   return {
     id: crypto.randomUUID(),
@@ -65,11 +73,11 @@ export function newVariant(seed?: Partial<BakeoffVariant>): BakeoffVariant {
   };
 }
 
-function clone(v: BakeoffVariant): BakeoffVariant {
+function clone(v: LocalBakeoffVariant): LocalBakeoffVariant {
   return { ...v };
 }
 
-function isVariant(v: unknown): v is BakeoffVariant {
+function isVariant(v: unknown): v is LocalBakeoffVariant {
   if (!v || typeof v !== 'object') return false;
   const o = v as Record<string, unknown>;
   return (

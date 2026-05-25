@@ -1,62 +1,75 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROMPT,
-  clearOcrSettings,
-  loadOcrSettings,
-  saveOcrSettings,
   type OcrProvider,
-  type OcrSettings,
 } from '../settings/ocrSettings.js';
 import { CliTokensSection } from '../settings/CliTokensSection.js';
 import { OcrKeysSection } from '../settings/OcrKeysSection.js';
 import { FallbackModelSection } from '../settings/FallbackModelSection.js';
+import { getUserOcrPrefs, setUserOcrPrefs } from '../import/api.js';
 
 /**
- * Per-device settings page. The API key lives in localStorage only — it
- * never syncs through Supabase, so losing the device (or signing out) drops
- * it. That's a deliberate choice to avoid a long-lived secret bouncing
- * around the server.
+ * Settings page. OCR API keys live server-side in Vault (handled by
+ * {@link OcrKeysSection}); the model/prompt the import worker uses by
+ * default live server-side in `user_ocr_prefs`. The bakeoff page can
+ * "promote" a winning variant into these prefs in one click.
  */
 export function SettingsPage() {
-  const existing = loadOcrSettings();
   const navigate = useNavigate();
-  const [provider, setProvider] = useState<OcrProvider>(existing?.provider ?? 'gemini');
-  const [apiKey, setApiKey] = useState(existing?.apiKey ?? '');
-  const [model, setModel] = useState(existing?.model ?? DEFAULT_MODEL_BY_PROVIDER[provider]);
-  const [baseUrl, setBaseUrl] = useState(existing?.baseUrl ?? '');
-  const [prompt, setPrompt] = useState(existing?.prompt ?? DEFAULT_PROMPT);
+  const [loaded, setLoaded] = useState(false);
+  const [provider, setProvider] = useState<OcrProvider>('gemini');
+  const [model, setModel] = useState(DEFAULT_MODEL_BY_PROVIDER.gemini);
+  const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    void getUserOcrPrefs()
+      .then((p) => {
+        if (cancelled || !p) {
+          setLoaded(true);
+          return;
+        }
+        setProvider(p.provider);
+        setModel(p.model || DEFAULT_MODEL_BY_PROVIDER[p.provider]);
+        setPrompt(p.prompt || DEFAULT_PROMPT);
+        setLoaded(true);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError((e as Error).message);
+          setLoaded(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function onProviderChange(next: OcrProvider) {
     setProvider(next);
-    // Only overwrite the model if the user is accepting the default for the
-    // previous provider — stops us from clobbering their custom entry.
     if (model === DEFAULT_MODEL_BY_PROVIDER[provider] || !model) {
       setModel(DEFAULT_MODEL_BY_PROVIDER[next]);
     }
     setSaved(false);
   }
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const next: OcrSettings = {
-      provider,
-      apiKey: apiKey.trim(),
-      model: model.trim(),
-      baseUrl: provider === 'openai-compatible' ? baseUrl.trim() || undefined : undefined,
-      prompt,
-    };
-    saveOcrSettings(next);
-    setSaved(true);
-  }
-
-  function onClear() {
-    clearOcrSettings();
-    setApiKey('');
-    setBaseUrl('');
-    setSaved(false);
+    setError(undefined);
+    try {
+      await setUserOcrPrefs({
+        provider,
+        model: model.trim(),
+        prompt,
+      });
+      setSaved(true);
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   return (
@@ -64,120 +77,97 @@ export function SettingsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Settings</h1>
         <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-          Configure the large language model used for the "Import from photo" feature. Keys are
-          stored locally on this device and never sent through Supabase.
+          OCR provider keys, default model, and prompt the bulk import flow uses. All values are
+          stored server-side; the keys live in Supabase Vault and never leave the worker.
         </p>
       </div>
 
       <OcrKeysSection />
       <FallbackModelSection />
 
-      <div className="space-y-1 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 p-3 text-xs text-stone-600 dark:text-stone-400">
-        <div className="font-medium text-stone-700 dark:text-stone-300">Legacy OCR settings</div>
-        <p>
-          API keys now live server-side (see OCR keys above). The legacy in-browser key is no
-          longer used by the bulk import flow. The prompt below is still applied to the older
-          one-shot Import-from-photo entry point.
-        </p>
-      </div>
+      {error && (
+        <div
+          role="alert"
+          className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
+        >
+          {error}
+        </div>
+      )}
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4 rounded-lg border border-stone-200 bg-white p-5">
+        <div>
+          <h2 className="text-lg font-semibold">Default model + prompt</h2>
+          <p className="mt-1 text-sm text-stone-600">
+            Used as the starting values on the New import page. You can override per-batch when
+            you start an import, or use the{' '}
+            <a href="/import/bakeoff" className="underline">
+              Bakeoff
+            </a>{' '}
+            to compare configurations and promote a winner in one click.
+          </p>
+        </div>
+
         <Field label="Provider">
           <select
             value={provider}
             onChange={(e) => onProviderChange(e.target.value as OcrProvider)}
+            disabled={!loaded}
             className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
           >
-            <option value="gemini">Google Gemini (direct)</option>
-            <option value="openai-compatible">OpenAI-compatible (OpenAI, Groq, OpenRouter, …)</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="openai-compatible">OpenAI-compatible</option>
           </select>
         </Field>
 
-        {provider === 'openai-compatible' && (
-          <Field label="API base URL">
-            <input
-              type="url"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.openai.com/v1"
-              className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
-            />
-            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-              Defaults to <code>https://api.openai.com/v1</code>. Point at Groq / Together /
-              OpenRouter / your own proxy as needed.
-            </p>
-          </Field>
-        )}
-
-        <Field label="Model">
+        <Field label="Default model">
           <input
             value={model}
             onChange={(e) => setModel(e.target.value)}
+            disabled={!loaded}
             className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-sm"
             spellCheck={false}
           />
           <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
             Must be multimodal (vision-capable). Examples: <code>gemini-3-pro-image-preview</code>,{' '}
-            <code>gpt-4o</code>, <code>gpt-4o-mini</code>, <code>llama-3.2-90b-vision-preview</code>.
+            <code>gpt-4o</code>, <code>gpt-4o-mini</code>.
           </p>
         </Field>
 
-        <Field label="API key">
-          <input
-            type="password"
-            autoComplete="off"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            required
-            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-sm"
-            spellCheck={false}
-          />
-        </Field>
-
-        <Field label="Prompt">
+        <Field label="Default prompt">
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            disabled={!loaded}
             required
             rows={12}
             className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-xs"
             spellCheck={false}
           />
-          <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-            The model is instructed to return JSON matching the app's domain shape. You can tune
-            this prompt freely.
-          </p>
         </Field>
 
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
-            className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
+            disabled={!loaded}
+            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-60"
           >
             Save settings
           </button>
           <button
             type="button"
             onClick={() => setPrompt(DEFAULT_PROMPT)}
-            className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
+            className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900"
           >
             Reset prompt
           </button>
           <button
             type="button"
-            onClick={onClear}
-            className="rounded-md px-4 py-2 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
-          >
-            Clear all
-          </button>
-          <button
-            type="button"
             onClick={() => navigate(-1)}
-            className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
+            className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900"
           >
             Back
           </button>
-          {saved && <span className="text-sm text-emerald-700 dark:text-emerald-300">Saved.</span>}
+          {saved && <span className="text-sm text-emerald-700">Saved.</span>}
         </div>
       </form>
 
@@ -189,7 +179,7 @@ export function SettingsPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-stone-700">{label}</span>
       {children}
     </label>
   );

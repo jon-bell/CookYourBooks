@@ -9,7 +9,9 @@ export async function signIn(page: Page, user: TestUser): Promise<void> {
   await page.goto('/sign-in');
   await page.getByLabel('Email').fill(user.email);
   await page.getByLabel('Password').fill(user.password);
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  // `exact: true` avoids ambiguity with the "Sign in with Apple" /
+  // "Sign in with Google" OAuth buttons that also live on this page.
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   // After login, the library page renders the heading. This also implicitly
   // waits for the SyncProvider's first pass to complete.
   await expect(page.getByRole('heading', { name: 'Your library' })).toBeVisible();

@@ -43,7 +43,7 @@ test.describe('Authentication', () => {
       await page.goto('/sign-in');
       await page.getByLabel('Email').fill(user.email);
       await page.getByLabel('Password').fill('definitely-not-it');
-      await page.getByRole('button', { name: 'Sign in' }).click();
+      await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await expect(page.getByText(/Invalid login credentials|invalid/i)).toBeVisible({
         timeout: 10_000,
       });

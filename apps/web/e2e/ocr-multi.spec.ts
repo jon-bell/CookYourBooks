@@ -1,77 +1,60 @@
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test, expect } from './support/fixtures.js';
 import { waitForSynced } from './support/fixtures.js';
 
-const ID = {
-  flourA: '11111111-1111-1111-1111-111111111111',
-  saltA: '22222222-2222-2222-2222-222222222222',
-  stepA: '33333333-3333-3333-3333-333333333333',
-  flourB: '44444444-4444-4444-4444-444444444444',
-  stepB: '55555555-5555-5555-5555-555555555555',
-} as const;
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURES_DIR = resolve(__dirname, 'fixtures');
+import {
+  configureOcrKey,
+  pumpWorker,
+  seedOcrFixture,
+} from './support/imports.js';
 
 const FAKE_DRAFTS = [
   {
     title: 'Chewy Cookies',
     bookTitle: 'Weekend Baking',
     pageNumbers: [42],
-    servings: { amount: 24, description: 'cookie' },
-    description: 'The chewy one.',
-    timeEstimate: '45 minutes',
-    equipment: ['stand mixer'],
+    servings: { amount: 24 },
     ingredients: [
       {
-        type: 'MEASURED',
-        id: ID.flourA,
+        type: 'MEASURED' as const,
         name: 'flour',
-        quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
+        quantity: { type: 'EXACT' as const, amount: 2, unit: 'cup' },
       },
-      { type: 'VAGUE', id: ID.saltA, name: 'salt', description: 'to taste' },
+      { type: 'VAGUE' as const, name: 'salt' },
     ],
-    instructions: [
-      {
-        id: ID.stepA,
-        stepNumber: 1,
-        text: 'Mix 2 cup flour with the salt.',
-        ingredientRefs: [],
-      },
-    ],
-    leftover: [],
+    instructions: [{ stepNumber: 1, text: 'Mix 2 cup flour with the salt.' }],
   },
   {
     title: 'Crispy Cookies',
     bookTitle: 'Weekend Baking',
     pageNumbers: [43],
-    servings: { amount: 18, description: 'cookie' },
+    servings: { amount: 18 },
     ingredients: [
       {
-        type: 'MEASURED',
-        id: ID.flourB,
+        type: 'MEASURED' as const,
         name: 'flour',
-        quantity: { type: 'EXACT', amount: 1.5, unit: 'cup' },
+        quantity: { type: 'EXACT' as const, amount: 1.5, unit: 'cup' },
       },
     ],
-    instructions: [
-      {
-        id: ID.stepB,
-        stepNumber: 1,
-        text: 'Roll thin and bake.',
-        ingredientRefs: [],
-      },
-    ],
-    leftover: [],
+    instructions: [{ stepNumber: 1, text: 'Roll thin and bake.' }],
   },
 ];
 
-async function installShim(
-  page: import('@playwright/test').Page,
-  drafts: typeof FAKE_DRAFTS,
-): Promise<void> {
-  await page.addInitScript((draftsJson: string) => {
-    const parsed = JSON.parse(draftsJson);
-    window.__cybOcrShim = async () => parsed;
-  }, JSON.stringify(drafts));
-  await page.reload();
-  await waitForSynced(page);
+async function seedMultiRecipeFixture(): Promise<void> {
+  // Wildcard path so the page-generated storage path matches. The
+  // worker's `(*, gemini, '')` probe picks this up regardless of which
+  // model the batch is configured with.
+  await seedOcrFixture({
+    storagePath: '*',
+    provider: 'gemini',
+    kind: 'recipe',
+    upsert: true,
+    drafts: FAKE_DRAFTS,
+  });
 }
 
 async function uploadAndOpenPicker(
@@ -86,22 +69,33 @@ async function uploadAndOpenPicker(
   const fileChooserPromise = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: 'Upload image' }).click();
   const chooser = await fileChooserPromise;
+  // Real PNG — prepareImage decodes via canvas and throws on a
+  // stub-byte JPEG.
   await chooser.setFiles({
-    name: 'spread.jpg',
-    mimeType: 'image/jpeg',
-    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    name: 'spread.png',
+    mimeType: 'image/png',
+    buffer: readFileSync(resolve(FIXTURES_DIR, 'page1.png')),
   });
 
+  // The page calls ocr_kick once the upload completes, but the test
+  // env doesn't have the vault secret. Pump the worker until it claims
+  // something — the outbox push that makes the row visible server-side
+  // is asynchronous.
+  await pumpWorker();
+
   const picker = page.getByTestId('ocr-recipe-picker');
-  await expect(picker).toBeVisible({ timeout: 15_000 });
+  await expect(picker).toBeVisible({ timeout: 30_000 });
   await expect(picker.getByText('Found 2 recipes')).toBeVisible();
 }
 
 test.describe('OCR multi-recipe review editor', () => {
+  test.slow();
+
   test('two drafts arrive as tabs; promoting both lands two recipes and moves the item to REVIEWED', async ({
     authedPage: page,
   }) => {
-    await installShim(page, FAKE_DRAFTS);
+    await configureOcrKey(page, 'gemini');
+    await seedMultiRecipeFixture();
     await uploadAndOpenPicker(page, 'Multi-Recipe Photo');
 
     const picker = page.getByTestId('ocr-recipe-picker');
@@ -113,9 +107,6 @@ test.describe('OCR multi-recipe review editor', () => {
     await expect(tabs.getByRole('tab', { name: 'Crispy Cookies' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Save as recipe' }).click();
-    // After saving the active draft, only the remaining one is left
-    // on this item — the tab strip collapses entirely (it only renders
-    // when drafts.length > 1).
     await expect(tabs).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Save as recipe' }).click();
@@ -131,7 +122,8 @@ test.describe('OCR multi-recipe review editor', () => {
   test('discarding one draft and promoting the other still moves the item to REVIEWED', async ({
     authedPage: page,
   }) => {
-    await installShim(page, FAKE_DRAFTS);
+    await configureOcrKey(page, 'gemini');
+    await seedMultiRecipeFixture();
     await uploadAndOpenPicker(page, 'Discard-One Photo');
 
     const picker = page.getByTestId('ocr-recipe-picker');

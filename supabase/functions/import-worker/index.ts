@@ -40,9 +40,22 @@ interface ImportBatch {
   owner_id: string;
   default_model: string;
   default_provider: Provider;
+  default_prompt: string | null;
   fallback_model: string | null;
   fallback_provider: Provider | null;
   recitation_policy: 'ASK' | 'FALLBACK' | 'FAIL';
+}
+
+interface BakeoffVariant {
+  id: string;
+  run_id: string;
+  owner_id: string;
+  name: string;
+  provider: Provider;
+  model: string;
+  prompt: string;
+  base_url: string | null;
+  attempts: number;
 }
 
 interface UserKey {
@@ -194,7 +207,15 @@ Deno.serve(async (req) => {
   const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
   wLog.info('invocation start');
   const summary = await runLoop(workerId, batchId, wLog);
-  wLog.info('invocation end', { ...summary });
+  // Drain any pending bakeoff variants in the same invocation. Variants
+  // are per-user, so we don't filter by batch — the page that just
+  // started the bakeoff kicks us, and we pull anything queued.
+  const bakeoffSummary = await runBakeoffLoop(workerId, wLog);
+  wLog.info('invocation end', {
+    ...summary,
+    bakeoff_processed: bakeoffSummary.processed,
+    bakeoff_failed: bakeoffSummary.failed,
+  });
 
   if (summary.remaining > 0) {
     wLog.info('self-invoke (queue not drained)', { remaining: summary.remaining });
@@ -453,7 +474,7 @@ async function processItem(
     model,
     apiKey: key?.apiKey ?? '',
     baseUrl: key?.baseUrl ?? undefined,
-    prompt: item.is_toc ? TOC_PROMPT : RECIPE_PROMPT,
+    prompt: item.is_toc ? TOC_PROMPT : (batch.default_prompt || RECIPE_PROMPT),
     images: images.map((i) => ({ base64: bytesToBase64(i.bytes), mimeType: i.mime })),
     log,
   });
@@ -574,7 +595,7 @@ async function handleRecitation(
     model: fbModel,
     apiKey: fbKey?.apiKey ?? '',
     baseUrl: fbKey?.baseUrl ?? undefined,
-    prompt: item.is_toc ? TOC_PROMPT : RECIPE_PROMPT,
+    prompt: item.is_toc ? TOC_PROMPT : (batch.default_prompt || RECIPE_PROMPT),
     images: images.map((i) => ({ base64: bytesToBase64(i.bytes), mimeType: i.mime })),
     log,
   });
@@ -692,6 +713,214 @@ async function parseAndComplete(
   return 'OCR_DONE';
 }
 
+// ---------- bakeoff variant pipeline ----------
+//
+// Each variant in a run is processed independently of the others, so a
+// slow model never blocks a cheap one. We reuse the same fetch / LLM
+// call / parse path as the bulk-import flow, but write results into
+// `bakeoff_variants` rather than `import_items`.
+
+async function runBakeoffLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  // One claim pass per invocation; the page polls bakeoff_variants and
+  // can kick the worker again if a variant lingers. Keeping this simple
+  // avoids fighting with the import loop for parallelism budget.
+  const variants = await claimBakeoffBatch(workerId, log);
+  if (variants.length === 0) return { processed, failed };
+  log.info('claimed variants', { count: variants.length });
+
+  for (let i = 0; i < variants.length; i += PARALLEL) {
+    const chunk = variants.slice(i, i + PARALLEL);
+    const results = await Promise.all(
+      chunk.map((v) =>
+        processVariant(v, workerId, log.child({ item: shortId(v.id) })),
+      ),
+    );
+    for (const r of results) {
+      if (r === 'DONE') processed++;
+      else failed++;
+    }
+  }
+  return { processed, failed };
+}
+
+async function claimBakeoffBatch(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<BakeoffVariant[]> {
+  const { data, error } = await supabase.rpc('bakeoff_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+  });
+  if (error) {
+    log.error('bakeoff_claim_next failed', { code: error.code, message: error.message });
+    return [];
+  }
+  return (data ?? []) as BakeoffVariant[];
+}
+
+async function processVariant(
+  variant: BakeoffVariant,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  log.info('variant start', {
+    provider: variant.provider,
+    model: variant.model,
+    name: variant.name,
+  });
+  const claimToken = workerId;
+  const started = Date.now();
+
+  // Look up the parent run so we know which image to load.
+  const { data: run, error: runErr } = await supabase
+    .from('bakeoff_runs')
+    .select('id, owner_id, image_storage_path')
+    .eq('id', variant.run_id)
+    .maybeSingle();
+  if (runErr || !run) {
+    log.error('bakeoff_run missing', { run_id: variant.run_id, error: runErr?.message });
+    await failVariant(
+      variant,
+      claimToken,
+      'OTHER',
+      'Parent bakeoff_run not found.',
+      Date.now() - started,
+      log,
+    );
+    return 'FAILED';
+  }
+
+  // Resolve the API key. Bakeoff variants share the user's vault keys
+  // with the bulk-import flow — no separate creds.
+  let key: UserKey | null = null;
+  try {
+    key = await loadUserKey(variant.owner_id, variant.provider, log);
+  } catch (err) {
+    log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!key && !MOCK_MODE) {
+    await failVariant(
+      variant,
+      claimToken,
+      'AUTH',
+      `No API key configured for ${variant.provider}. Add it in Settings.`,
+      Date.now() - started,
+      log,
+    );
+    return 'FAILED';
+  }
+
+  let image: { bytes: Uint8Array; mime: string };
+  try {
+    image = await fetchImage(variant.owner_id, run.image_storage_path);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('image fetch failed', { error: msg });
+    await failVariant(variant, claimToken, 'NETWORK', msg, Date.now() - started, log);
+    return 'FAILED';
+  }
+
+  const result = await runOrMock({
+    item: { id: variant.id, storage_path: run.image_storage_path },
+    provider: variant.provider,
+    model: variant.model,
+    apiKey: key?.apiKey ?? '',
+    baseUrl: key?.baseUrl ?? variant.base_url ?? undefined,
+    prompt: variant.prompt,
+    images: [{ base64: bytesToBase64(image.bytes), mimeType: image.mime }],
+    bakeoff: true,
+    log,
+  });
+  log.info('variant llm end', {
+    error_kind: result.errorKind,
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    latency_ms: result.latencyMs,
+  });
+
+  if (result.errorKind !== 'OK') {
+    await failVariant(
+      variant,
+      claimToken,
+      result.errorKind,
+      result.errorMessage ?? result.errorKind,
+      result.latencyMs || Date.now() - started,
+      log,
+    );
+    return 'FAILED';
+  }
+
+  const text = result.text ?? result.rawResponse;
+  let drafts: ParsedRecipeDraft[];
+  try {
+    drafts = parseLlmJson(text);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn('variant parse error', { message: msg });
+    await failVariant(
+      variant,
+      claimToken,
+      'PARSE',
+      msg,
+      result.latencyMs || Date.now() - started,
+      log,
+    );
+    return 'FAILED';
+  }
+
+  const cost = costUsdMicros(
+    variant.provider,
+    variant.model,
+    result.promptTokens,
+    result.completionTokens,
+  );
+  const payload = {
+    drafts,
+    raw_text: text,
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    cost_usd_micros: cost,
+    latency_ms: result.latencyMs || Date.now() - started,
+  };
+  const { data: ok, error } = await supabase.rpc('bakeoff_complete', {
+    p_variant_id: variant.id,
+    p_claim_token: claimToken,
+    p_result: payload,
+  });
+  if (error) {
+    log.error('bakeoff_complete error', { code: error.code, message: error.message });
+    return 'FAILED';
+  }
+  if (!ok) log.warn('bakeoff_complete returned false (lease lost)');
+  return 'DONE';
+}
+
+async function failVariant(
+  variant: BakeoffVariant,
+  claimToken: string,
+  errorKind: ErrorKind,
+  errorMessage: string,
+  latencyMs: number,
+  log: ReturnType<typeof makeLog>,
+): Promise<void> {
+  const { error } = await supabase.rpc('bakeoff_fail', {
+    p_variant_id: variant.id,
+    p_claim_token: claimToken,
+    p_error_kind: errorKind,
+    p_error_message: errorMessage,
+    p_latency_ms: latencyMs,
+  });
+  if (error) {
+    log.error('bakeoff_fail rpc error', { code: error.code, message: error.message });
+  }
+}
+
 // ---------- helpers ----------
 
 interface AttemptShape {
@@ -758,7 +987,7 @@ async function failItem(
 async function loadBatch(batchId: string, log: ReturnType<typeof makeLog>): Promise<ImportBatch | null> {
   const { data, error } = await supabase
     .from('import_batches')
-    .select('id, owner_id, default_model, default_provider, fallback_model, fallback_provider, recitation_policy')
+    .select('id, owner_id, default_model, default_provider, default_prompt, fallback_model, fallback_provider, recitation_policy')
     .eq('id', batchId)
     .maybeSingle();
   if (error) {
@@ -891,13 +1120,17 @@ interface OcrCallLike {
 }
 
 async function runOrMock(p: {
-  item: ImportItem;
+  item: { id: string; storage_path: string };
   provider: Provider;
   model: string;
   apiKey: string;
   baseUrl?: string;
   prompt: string;
   images: ReadonlyArray<{ base64: string; mimeType: string }>;
+  /** When true, the mock-mode fixture lookup uses the `bakeoff:*`
+   *  wildcard sentinel instead of the plain `*`. Keeps bakeoff fixtures
+   *  isolated from photo-import fixtures in the shared fixture table. */
+  bakeoff?: boolean;
   log?: ReturnType<typeof makeLog>;
 }): Promise<OcrCallLike> {
   if (!MOCK_MODE) {
@@ -914,19 +1147,39 @@ async function runOrMock(p: {
     });
   }
 
-  // First try a provider-specific fixture; if none, fall back to the
-  // empty-provider sentinel row so older tests that didn't specify a
-  // provider keep working.
+  // Lookup precedence: most-specific (path × provider × model) first,
+  // then progressively wider. Bakeoff variants seed `(path='bakeoff:*',
+  // provider, model)` rows so each variant returns a distinct payload
+  // regardless of which random storage path the BakeoffPage uploaded to.
+  // Bulk imports use `('*', provider, '')` — model-agnostic — so a single
+  // fixture row covers every batch. The two wildcard sentinels are kept
+  // distinct so a bakeoff fixture seeded by one test can't be picked up
+  // by an unrelated photo-import test in the same DB.
+  const bakeoffWildcard = p.bakeoff ? 'bakeoff:*' : '*';
   let row: { response_json: unknown; error_kind: ErrorKind | null; latency_ms: number | null } | null = null;
-  for (const probe of [p.provider, '']) {
+  const probes: Array<{ path: string; provider: string; model: string }> = p.bakeoff
+    ? [
+        { path: p.item.storage_path, provider: p.provider, model: p.model },
+        { path: p.item.storage_path, provider: p.provider, model: '' },
+        { path: bakeoffWildcard, provider: p.provider, model: p.model },
+        { path: bakeoffWildcard, provider: p.provider, model: '' },
+      ]
+    : [
+        { path: p.item.storage_path, provider: p.provider, model: p.model },
+        { path: p.item.storage_path, provider: p.provider, model: '' },
+        { path: '*', provider: p.provider, model: '' },
+        { path: p.item.storage_path, provider: '', model: '' },
+      ];
+  for (const probe of probes) {
     const { data, error } = await supabase
       .from('ocr_test_fixtures')
       .select('response_json, error_kind, latency_ms')
-      .eq('item_storage_path', p.item.storage_path)
-      .eq('provider', probe)
+      .eq('item_storage_path', probe.path)
+      .eq('provider', probe.provider)
+      .eq('model', probe.model)
       .maybeSingle();
     if (error) {
-      logLine('error', 'ocr_test_fixtures lookup', { item: shortId(p.item.id) }, { code: error.code, message: error.message, probe });
+      logLine('error', 'ocr_test_fixtures lookup', { item: shortId(p.item.id) }, { code: error.code, message: error.message, ...probe });
       continue;
     }
     if (data) {
@@ -940,7 +1193,7 @@ async function runOrMock(p: {
       rawResponse: 'no fixture',
       promptTokens: 0,
       completionTokens: 0,
-      errorMessage: `OCR_MOCK_MODE: no fixture for ${p.item.storage_path} (provider=${p.provider})`,
+      errorMessage: `OCR_MOCK_MODE: no fixture for ${p.item.storage_path} (provider=${p.provider}, model=${p.model})`,
       latencyMs: 0,
     };
   }

@@ -6,7 +6,8 @@ import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.j
 import { useOcrKeys } from '../import/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
-import { loadOcrSettings, DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
+import { getUserOcrPrefs } from '../import/api.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import {
   captureMultiShot,
   isMultiShotAvailable,
@@ -47,21 +48,33 @@ export function ImportNewPage() {
   const [multiShotReady, setMultiShotReady] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
-  // Seed defaults from the user's OCR settings, falling back to a sensible
-  // provider/model if nothing's stored yet.
+  // Seed defaults from the user's saved server-side prefs, falling back
+  // to whichever provider has a key configured, then a hardcoded default.
   useEffect(() => {
-    const existing = loadOcrSettings();
-    if (existing) {
-      setProvider(existing.provider);
-      setModel(existing.model);
-    } else if (ocrKeys.length > 0) {
-      const k = ocrKeys[0]!;
-      const p = k.provider === 'openai-compatible' ? 'openai-compatible' : 'gemini';
-      setProvider(p);
-      setModel(DEFAULT_MODEL_BY_PROVIDER[p]);
-    } else {
-      setModel(DEFAULT_MODEL_BY_PROVIDER.gemini);
-    }
+    let cancelled = false;
+    void getUserOcrPrefs()
+      .then((prefs) => {
+        if (cancelled) return;
+        if (prefs && prefs.model) {
+          setProvider(prefs.provider);
+          setModel(prefs.model);
+          return;
+        }
+        if (ocrKeys.length > 0) {
+          const k = ocrKeys[0]!;
+          const p = k.provider === 'openai-compatible' ? 'openai-compatible' : 'gemini';
+          setProvider(p);
+          setModel(DEFAULT_MODEL_BY_PROVIDER[p]);
+        } else {
+          setModel(DEFAULT_MODEL_BY_PROVIDER.gemini);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setModel(DEFAULT_MODEL_BY_PROVIDER.gemini);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [ocrKeys]);
 
   useEffect(() => {

@@ -2,47 +2,57 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   diffLines,
-  runBakeoff,
   summarizeDraftForDiff,
-  type BakeoffResult,
-  type BakeoffVariant,
 } from '../import/bakeoff.js';
 import {
   DEFAULT_VARIANTS,
   loadBakeoffVariants,
   newVariant,
   saveBakeoffVariants,
+  type LocalBakeoffVariant,
 } from '../settings/bakeoffSettings.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  loadOcrSettings,
+  getBakeoffRun,
+  kickOcr,
+  promoteBakeoffVariant,
+  startBakeoff,
+  type BakeoffVariantRow,
   type OcrProvider,
-} from '../settings/ocrSettings.js';
+} from '../import/api.js';
+import { uploadBakeoffImage } from '../import/uploadBatch.js';
+import { useAuth } from '../auth/AuthProvider.js';
+import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
 
 /**
  * Side-by-side OCR shootout. The user uploads a single image, configures
- * a matrix of (provider × model × prompt) variants, kicks them off in
- * parallel, and inspects per-variant cost / wall time / parsed output.
- * A diff view between any two variants helps spot where models disagree.
- *
- * This page deliberately stays client-side: it reuses the same API key as
- * the legacy in-browser Import-from-Photo path (`loadOcrSettings`). The
- * bulk Edge-Function-driven import flow is for production runs; this
- * page is an experimentation tool.
+ * a matrix of (provider × model × prompt) variants, kicks them off via
+ * the same Edge Function the bulk-import flow uses, and inspects
+ * per-variant cost / wall time / parsed output as the worker streams
+ * results back. A diff view between any two variants helps spot where
+ * models disagree, and "Set as default" promotes a variant's config
+ * into the user's import defaults.
  */
 export function BakeoffPage() {
-  const [variants, setVariants] = useState<BakeoffVariant[]>(() => loadBakeoffVariants());
+  const { user } = useAuth();
+  const [variants, setVariants] = useState<LocalBakeoffVariant[]>(() =>
+    loadBakeoffVariants(),
+  );
   const [file, setFile] = useState<File | undefined>();
   const [previewUrl, setPreviewUrl] = useState<string | undefined>();
-  const [results, setResults] = useState<Map<string, BakeoffResult>>(new Map());
-  const [running, setRunning] = useState(false);
+  const [runId, setRunId] = useState<string | undefined>();
+  const [serverVariants, setServerVariants] = useState<BakeoffVariantRow[]>([]);
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'starting' | 'running' | 'done'>(
+    'idle',
+  );
   const [topLevelError, setTopLevelError] = useState<string | undefined>();
+  const [promotedId, setPromotedId] = useState<string | undefined>();
   const [leftId, setLeftId] = useState<string | undefined>();
   const [rightId, setRightId] = useState<string | undefined>();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollTimer = useRef<number | null>(null);
 
-  // Persist the variant matrix on every change so the user doesn't lose
-  // their carefully-tuned set when they navigate away mid-experiment.
+  // Persist the variant *template* on every change so the form survives
+  // navigation. The run itself is server-owned.
   useEffect(() => {
     saveBakeoffVariants(variants);
   }, [variants]);
@@ -57,13 +67,45 @@ export function BakeoffPage() {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  function patchVariant(id: string, patch: Partial<BakeoffVariant>) {
+  // Stream results in. Realtime would be ideal but local-dev realtime is
+  // sometimes flaky; a 1.5s poll alongside the realtime subscription is
+  // cheap and reliable. We tear it down when every variant has settled.
+  useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    async function tick() {
+      try {
+        const { variants: rows } = await getBakeoffRun(runId!);
+        if (cancelled) return;
+        setServerVariants(rows);
+        const settled = rows.every((v) => v.status === 'DONE' || v.status === 'FAILED');
+        if (settled) {
+          setPhase('done');
+          if (pollTimer.current) {
+            window.clearInterval(pollTimer.current);
+            pollTimer.current = null;
+          }
+        }
+      } catch (e) {
+        if (!cancelled) setTopLevelError((e as Error).message);
+      }
+    }
+    void tick();
+    pollTimer.current = window.setInterval(() => void tick(), 1_500);
+    return () => {
+      cancelled = true;
+      if (pollTimer.current) {
+        window.clearInterval(pollTimer.current);
+        pollTimer.current = null;
+      }
+    };
+  }, [runId]);
+
+  function patchVariant(id: string, patch: Partial<LocalBakeoffVariant>) {
     setVariants((cur) =>
       cur.map((v) => {
         if (v.id !== id) return v;
         const next = { ...v, ...patch };
-        // Switching providers — adopt the new provider's default model
-        // unless the user has clearly typed something custom.
         if (patch.provider && patch.provider !== v.provider) {
           if (v.model === DEFAULT_MODEL_BY_PROVIDER[v.provider]) {
             next.model = DEFAULT_MODEL_BY_PROVIDER[patch.provider];
@@ -80,19 +122,11 @@ export function BakeoffPage() {
 
   function removeVariant(id: string) {
     setVariants((cur) => (cur.length <= 1 ? cur : cur.filter((v) => v.id !== id)));
-    setResults((cur) => {
-      const next = new Map(cur);
-      next.delete(id);
-      return next;
-    });
-    if (leftId === id) setLeftId(undefined);
-    if (rightId === id) setRightId(undefined);
   }
 
   function resetToDefaults() {
     if (!confirm('Reset the variant list to defaults?')) return;
     setVariants(DEFAULT_VARIANTS.map((v) => ({ ...v })));
-    setResults(new Map());
   }
 
   async function runAll() {
@@ -100,58 +134,75 @@ export function BakeoffPage() {
       setTopLevelError('Upload an image first.');
       return;
     }
+    if (!user) {
+      setTopLevelError('Not signed in.');
+      return;
+    }
     if (variants.length === 0) {
       setTopLevelError('Add at least one variant.');
       return;
     }
-    // Shim-mode skips the API key check so E2E tests don't need a real key.
-    const shimActive = typeof window !== 'undefined' && !!window.__cybBakeoffShim;
-    const settings = loadOcrSettings();
-    if (!shimActive && (!settings || !settings.apiKey)) {
-      setTopLevelError(
-        'No OCR API key is configured. Set one in Settings before running the bakeoff.',
-      );
-      return;
-    }
     setTopLevelError(undefined);
-    setResults(new Map());
-    setRunning(true);
+    setRunId(undefined);
+    setServerVariants([]);
+    setPromotedId(undefined);
     try {
-      await runBakeoff(variants, file, settings?.apiKey ?? '', (r) => {
-        setResults((cur) => {
-          const next = new Map(cur);
-          next.set(r.variantId, r);
-          return next;
-        });
-      });
-    } finally {
-      setRunning(false);
+      setPhase('uploading');
+      const storagePath = await uploadBakeoffImage(user.id, file);
+      setPhase('starting');
+      const id = await startBakeoff(
+        storagePath,
+        variants.map((v) => ({
+          name: v.name,
+          provider: v.provider,
+          model: v.model,
+          prompt: v.prompt,
+          base_url: v.baseUrl,
+        })),
+      );
+      // Kick the worker so we don't wait for the next 30s cron tick.
+      // `ocr_kick(null)` is fine — the bakeoff loop scans all PENDING
+      // variants regardless of batch.
+      try {
+        await kickOcr();
+      } catch (e) {
+        // Worker not configured is a common local-dev case. Surface it
+        // but don't block the page — the cron tick will eventually pick
+        // it up if the secret is set later.
+        setTopLevelError(
+          `Worker kick failed (${(e as Error).message}). Variants are queued; results will appear when the worker runs.`,
+        );
+      }
+      setRunId(id);
+      setPhase('running');
+    } catch (e) {
+      setTopLevelError((e as Error).message);
+      setPhase('idle');
+    }
+  }
+
+  async function promote(variantId: string) {
+    try {
+      await promoteBakeoffVariant(variantId);
+      setPromotedId(variantId);
+    } catch (e) {
+      setTopLevelError((e as Error).message);
     }
   }
 
   const okResults = useMemo(
-    () =>
-      variants
-        .map((v) => results.get(v.id))
-        .filter((r): r is BakeoffResult & { status: 'ok' } => r?.status === 'ok'),
-    [variants, results],
+    () => serverVariants.filter((v) => v.status === 'DONE'),
+    [serverVariants],
   );
 
-  // Default the diff selectors to the first two successful variants once
-  // we have them — saves a click for the common "compare the only two
-  // models I ran" case.
   useEffect(() => {
     if (okResults.length >= 2) {
-      if (!leftId || !okResults.find((r) => r.variantId === leftId)) {
-        setLeftId(okResults[0]!.variantId);
+      if (!leftId || !okResults.find((r) => r.id === leftId)) {
+        setLeftId(okResults[0]!.id);
       }
-      if (
-        !rightId ||
-        rightId === leftId ||
-        !okResults.find((r) => r.variantId === rightId)
-      ) {
-        const fallback = okResults.find((r) => r.variantId !== (leftId ?? okResults[0]!.variantId));
-        setRightId(fallback?.variantId);
+      if (!rightId || rightId === leftId || !okResults.find((r) => r.id === rightId)) {
+        const fallback = okResults.find((r) => r.id !== (leftId ?? okResults[0]!.id));
+        setRightId(fallback?.id);
       }
     }
   }, [okResults, leftId, rightId]);
@@ -162,8 +213,9 @@ export function BakeoffPage() {
         <div>
           <h1 className="text-2xl font-semibold">OCR bakeoff</h1>
           <p className="mt-1 text-sm text-stone-600">
-            Race multiple prompts and models against the same photo. Compare cost, latency,
-            and parsed output side by side.
+            Race multiple prompts and models against the same photo. Uses your existing
+            server-side OCR keys (Settings → OCR keys). Promote a winner to make it the
+            default for new imports.
           </p>
         </div>
         <Link to="/import" className="text-sm underline text-stone-700">
@@ -183,7 +235,6 @@ export function BakeoffPage() {
       <section className="rounded-lg border border-stone-200 bg-white p-5 space-y-3">
         <h2 className="text-lg font-semibold">1. Pick a photo</h2>
         <input
-          ref={fileInputRef}
           type="file"
           accept="image/*"
           data-testid="bakeoff-file-input"
@@ -237,21 +288,31 @@ export function BakeoffPage() {
         <button
           type="button"
           onClick={() => void runAll()}
-          disabled={running || !file}
+          disabled={!file || phase === 'uploading' || phase === 'starting'}
           data-testid="bakeoff-run"
           className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-60"
         >
-          {running ? 'Running…' : `Run bakeoff (${variants.length})`}
+          {phase === 'uploading'
+            ? 'Uploading…'
+            : phase === 'starting'
+              ? 'Starting…'
+              : phase === 'running'
+                ? 'Running…'
+                : `Run bakeoff (${variants.length})`}
         </button>
       </div>
 
-      {(results.size > 0 || running) && (
-        <ResultsTable variants={variants} results={results} running={running} />
+      {(serverVariants.length > 0 || phase === 'running') && (
+        <ResultsTable
+          variants={serverVariants}
+          running={phase === 'running'}
+          promotedId={promotedId}
+          onPromote={(id) => void promote(id)}
+        />
       )}
 
       {okResults.length >= 2 && leftId && rightId && (
         <DiffSection
-          variants={variants}
           results={okResults}
           leftId={leftId}
           rightId={rightId}
@@ -270,10 +331,10 @@ function VariantRow({
   onChange,
   onDelete,
 }: {
-  variant: BakeoffVariant;
+  variant: LocalBakeoffVariant;
   index: number;
   canDelete: boolean;
-  onChange: (patch: Partial<BakeoffVariant>) => void;
+  onChange: (patch: Partial<LocalBakeoffVariant>) => void;
   onDelete: () => void;
 }) {
   const [showPrompt, setShowPrompt] = useState(false);
@@ -361,12 +422,14 @@ function VariantRow({
 
 function ResultsTable({
   variants,
-  results,
   running,
+  promotedId,
+  onPromote,
 }: {
-  variants: readonly BakeoffVariant[];
-  results: Map<string, BakeoffResult>;
+  variants: readonly BakeoffVariantRow[];
   running: boolean;
+  promotedId: string | undefined;
+  onPromote: (id: string) => void;
 }) {
   return (
     <section className="rounded-lg border border-stone-200 bg-white p-5 space-y-3">
@@ -381,58 +444,72 @@ function ResultsTable({
               <th className="py-2 pr-4">Tokens (in / out)</th>
               <th className="py-2 pr-4">Cost</th>
               <th className="py-2 pr-4">Output</th>
+              <th className="py-2 pr-4">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-stone-100">
-            {variants.map((v) => {
-              const r = results.get(v.id);
-              return (
-                <tr key={v.id} data-testid="bakeoff-result-row" data-variant-id={v.id}>
-                  <td className="py-2 pr-4 align-top">
-                    <div className="font-medium">{v.name}</div>
-                    <div className="text-xs text-stone-500">
-                      {v.provider} · <code>{v.model}</code>
-                    </div>
-                  </td>
-                  <td className="py-2 pr-4 align-top">
-                    {!r ? (
-                      <span className="text-stone-500">{running ? 'running…' : 'pending'}</span>
-                    ) : r.status === 'ok' ? (
-                      <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
-                        OK
-                      </span>
-                    ) : (
-                      <span
-                        title={r.error}
-                        className="rounded bg-red-50 px-2 py-0.5 text-xs text-red-700"
-                      >
-                        Error
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4 align-top">
-                    {r ? `${(r.elapsedMs / 1000).toFixed(2)} s` : '—'}
-                  </td>
-                  <td className="py-2 pr-4 align-top">
-                    {r?.status === 'ok'
-                      ? `${r.usage.promptTokens.toLocaleString()} / ${r.usage.completionTokens.toLocaleString()}`
-                      : '—'}
-                  </td>
-                  <td className="py-2 pr-4 align-top">
-                    {r?.status === 'ok' ? formatCost(r.costUsdMicros) : '—'}
-                  </td>
-                  <td className="py-2 pr-4 align-top">
-                    {r?.status === 'ok' ? (
-                      <DraftSummary result={r} />
-                    ) : r?.status === 'error' ? (
-                      <span className="text-xs text-red-700">{r.error}</span>
-                    ) : (
-                      <span className="text-xs text-stone-400">—</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {variants.map((v) => (
+              <tr key={v.id} data-testid="bakeoff-result-row" data-variant-id={v.id}>
+                <td className="py-2 pr-4 align-top">
+                  <div className="font-medium">{v.name || '(unnamed)'}</div>
+                  <div className="text-xs text-stone-500">
+                    {v.provider} · <code>{v.model}</code>
+                  </div>
+                </td>
+                <td className="py-2 pr-4 align-top">
+                  {v.status === 'DONE' ? (
+                    <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
+                      OK
+                    </span>
+                  ) : v.status === 'FAILED' ? (
+                    <span
+                      title={v.error_message ?? undefined}
+                      className="rounded bg-red-50 px-2 py-0.5 text-xs text-red-700"
+                    >
+                      {v.error_kind ?? 'Error'}
+                    </span>
+                  ) : (
+                    <span className="text-stone-500">
+                      {running ? v.status.toLowerCase() + '…' : v.status.toLowerCase()}
+                    </span>
+                  )}
+                </td>
+                <td className="py-2 pr-4 align-top">
+                  {v.latency_ms != null ? `${(v.latency_ms / 1000).toFixed(2)} s` : '—'}
+                </td>
+                <td className="py-2 pr-4 align-top">
+                  {v.status === 'DONE'
+                    ? `${(v.prompt_tokens ?? 0).toLocaleString()} / ${(v.completion_tokens ?? 0).toLocaleString()}`
+                    : '—'}
+                </td>
+                <td className="py-2 pr-4 align-top">
+                  {v.status === 'DONE' ? formatCost(v.cost_usd_micros ?? 0) : '—'}
+                </td>
+                <td className="py-2 pr-4 align-top">
+                  {v.status === 'DONE' ? (
+                    <DraftSummary drafts={(v.drafts ?? []) as ParsedRecipeDraft[]} />
+                  ) : v.status === 'FAILED' ? (
+                    <span className="text-xs text-red-700">{v.error_message}</span>
+                  ) : (
+                    <span className="text-xs text-stone-400">—</span>
+                  )}
+                </td>
+                <td className="py-2 pr-4 align-top">
+                  {v.status === 'DONE' && (
+                    <button
+                      type="button"
+                      onClick={() => onPromote(v.id)}
+                      disabled={promotedId === v.id}
+                      data-testid="bakeoff-promote"
+                      data-variant-id={v.id}
+                      className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100 disabled:opacity-60"
+                    >
+                      {promotedId === v.id ? 'Default ✓' : 'Set as default'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -440,13 +517,9 @@ function ResultsTable({
   );
 }
 
-function DraftSummary({
-  result,
-}: {
-  result: BakeoffResult & { status: 'ok' };
-}) {
-  const total = result.drafts.length;
-  const first = result.drafts[0];
+function DraftSummary({ drafts }: { drafts: ParsedRecipeDraft[] }) {
+  const total = drafts.length;
+  const first = drafts[0];
   return (
     <div className="space-y-0.5 text-xs">
       <div>
@@ -463,31 +536,27 @@ function DraftSummary({
 }
 
 function DiffSection({
-  variants,
   results,
   leftId,
   rightId,
   onLeft,
   onRight,
 }: {
-  variants: readonly BakeoffVariant[];
-  results: ReadonlyArray<BakeoffResult & { status: 'ok' }>;
+  results: ReadonlyArray<BakeoffVariantRow>;
   leftId: string;
   rightId: string;
   onLeft: (id: string) => void;
   onRight: (id: string) => void;
 }) {
-  const left = results.find((r) => r.variantId === leftId);
-  const right = results.find((r) => r.variantId === rightId);
-  const nameOf = (id: string) => variants.find((v) => v.id === id)?.name ?? id;
+  const left = results.find((r) => r.id === leftId);
+  const right = results.find((r) => r.id === rightId);
 
   const diff = useMemo(() => {
     if (!left || !right) return [];
-    // Diff the *first* draft from each side. The vast majority of photos
-    // produce a single recipe; for multi-recipe spreads the user can swap
-    // selectors to compare a different pairing.
-    const leftSummary = left.drafts[0] ? summarizeDraftForDiff(left.drafts[0]) : '';
-    const rightSummary = right.drafts[0] ? summarizeDraftForDiff(right.drafts[0]) : '';
+    const leftDrafts = (left.drafts ?? []) as ParsedRecipeDraft[];
+    const rightDrafts = (right.drafts ?? []) as ParsedRecipeDraft[];
+    const leftSummary = leftDrafts[0] ? summarizeDraftForDiff(leftDrafts[0]) : '';
+    const rightSummary = rightDrafts[0] ? summarizeDraftForDiff(rightDrafts[0]) : '';
     return diffLines(leftSummary, rightSummary);
   }, [left, right]);
 
@@ -508,8 +577,8 @@ function DiffSection({
               className="rounded border border-stone-300 px-2 py-1 text-xs"
             >
               {results.map((r) => (
-                <option key={r.variantId} value={r.variantId}>
-                  {nameOf(r.variantId)}
+                <option key={r.id} value={r.id}>
+                  {r.name || `(unnamed) ${r.model}`}
                 </option>
               ))}
             </select>
@@ -524,8 +593,8 @@ function DiffSection({
               className="rounded border border-stone-300 px-2 py-1 text-xs"
             >
               {results.map((r) => (
-                <option key={r.variantId} value={r.variantId}>
-                  {nameOf(r.variantId)}
+                <option key={r.id} value={r.id}>
+                  {r.name || `(unnamed) ${r.model}`}
                 </option>
               ))}
             </select>

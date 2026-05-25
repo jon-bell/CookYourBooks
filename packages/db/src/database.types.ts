@@ -70,6 +70,116 @@ export type Database = {
           },
         ]
       }
+      bakeoff_runs: {
+        Row: {
+          created_at: string
+          id: string
+          image_storage_path: string
+          owner_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          image_storage_path: string
+          owner_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          image_storage_path?: string
+          owner_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      bakeoff_variants: {
+        Row: {
+          attempts: number
+          base_url: string | null
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string
+          drafts: Json | null
+          error_kind: string | null
+          error_message: string | null
+          id: string
+          latency_ms: number | null
+          model: string
+          name: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number | null
+          provider: string
+          raw_text: string | null
+          run_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          base_url?: string | null
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          latency_ms?: number | null
+          model: string
+          name?: string
+          owner_id: string
+          prompt: string
+          prompt_tokens?: number | null
+          provider: string
+          raw_text?: string | null
+          run_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          base_url?: string | null
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          latency_ms?: number | null
+          model?: string
+          name?: string
+          owner_id?: string
+          prompt?: string
+          prompt_tokens?: number | null
+          provider?: string
+          raw_text?: string | null
+          run_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bakeoff_variants_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "bakeoff_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cli_tokens: {
         Row: {
           created_at: string
@@ -160,6 +270,7 @@ export type Database = {
         Row: {
           created_at: string
           default_model: string
+          default_prompt: string | null
           default_provider: string
           fallback_model: string | null
           fallback_provider: string | null
@@ -176,6 +287,7 @@ export type Database = {
         Insert: {
           created_at?: string
           default_model?: string
+          default_prompt?: string | null
           default_provider?: string
           fallback_model?: string | null
           fallback_provider?: string | null
@@ -192,6 +304,7 @@ export type Database = {
         Update: {
           created_at?: string
           default_model?: string
+          default_prompt?: string | null
           default_provider?: string
           fallback_model?: string | null
           fallback_provider?: string | null
@@ -676,6 +789,7 @@ export type Database = {
           error_kind: string | null
           item_storage_path: string
           latency_ms: number
+          model: string
           provider: string
           response_json: Json
         }
@@ -684,6 +798,7 @@ export type Database = {
           error_kind?: string | null
           item_storage_path: string
           latency_ms?: number
+          model?: string
           provider?: string
           response_json?: Json
         }
@@ -692,6 +807,7 @@ export type Database = {
           error_kind?: string | null
           item_storage_path?: string
           latency_ms?: number
+          model?: string
           provider?: string
           response_json?: Json
         }
@@ -1040,6 +1156,30 @@ export type Database = {
           },
         ]
       }
+      user_ocr_prefs: {
+        Row: {
+          model: string
+          owner_id: string
+          prompt: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          model?: string
+          owner_id: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          model?: string
+          owner_id?: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       public_collections: {
@@ -1056,6 +1196,62 @@ export type Database = {
       }
     }
     Functions: {
+      bakeoff_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          base_url: string | null
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string
+          drafts: Json | null
+          error_kind: string | null
+          error_message: string | null
+          id: string
+          latency_ms: number | null
+          model: string
+          name: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number | null
+          provider: string
+          raw_text: string | null
+          run_id: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "bakeoff_variants"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      bakeoff_complete: {
+        Args: { p_claim_token: string; p_result: Json; p_variant_id: string }
+        Returns: boolean
+      }
+      bakeoff_fail: {
+        Args: {
+          p_claim_token: string
+          p_error_kind: string
+          p_error_message: string
+          p_latency_ms: number
+          p_variant_id: string
+        }
+        Returns: boolean
+      }
+      bakeoff_promote: { Args: { p_variant_id: string }; Returns: undefined }
+      bakeoff_start: {
+        Args: { p_image_storage_path: string; p_variants: Json }
+        Returns: string
+      }
       cli_add_shopping: {
         Args: {
           name: string
@@ -1189,7 +1385,7 @@ export type Database = {
         Returns: number
       }
       import_set_batch_fallback: {
-        Args: { p_batch_id: string; p_provider: string | null; p_model: string | null }
+        Args: { p_batch_id: string; p_model: string; p_provider: string }
         Returns: undefined
       }
       import_set_recitation_policy: {
@@ -1237,6 +1433,10 @@ export type Database = {
           api_key: string
           base_url: string
         }[]
+      }
+      user_ocr_prefs_set: {
+        Args: { p_model: string; p_prompt: string; p_provider: string }
+        Returns: undefined
       }
     }
     Enums: {

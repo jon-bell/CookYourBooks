@@ -37,6 +37,125 @@ export async function resetImportItem(itemId: string): Promise<void> {
   if (error) throw error;
 }
 
+// ---------- bakeoff ----------
+
+export interface BakeoffVariantInput {
+  name: string;
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+  base_url?: string;
+}
+
+export interface BakeoffVariantRow {
+  id: string;
+  run_id: string;
+  name: string;
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+  base_url: string | null;
+  status: 'PENDING' | 'CLAIMED' | 'DONE' | 'FAILED';
+  drafts: unknown[] | null;
+  raw_text: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cost_usd_micros: number | null;
+  latency_ms: number | null;
+  error_kind: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BakeoffRunRow {
+  id: string;
+  image_storage_path: string;
+  status: 'OPEN' | 'CLOSED';
+  created_at: string;
+  updated_at: string;
+}
+
+export async function startBakeoff(
+  imageStoragePath: string,
+  variants: ReadonlyArray<BakeoffVariantInput>,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('bakeoff_start', {
+    p_image_storage_path: imageStoragePath,
+    // PostgREST's typed Json parameter accepts arrays-of-objects fine at
+    // runtime, but the generated type alias is too narrow for it.
+    p_variants: variants as unknown as never,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function getBakeoffRun(runId: string): Promise<{
+  run: BakeoffRunRow;
+  variants: BakeoffVariantRow[];
+}> {
+  // No bespoke RPC: PostgREST + RLS already scopes both tables to the
+  // owner, so two parallel reads are fine. Keeping this in one helper
+  // means callers don't have to know about the realtime topic shape.
+  const [runQ, vQ] = await Promise.all([
+    supabase
+      .from('bakeoff_runs')
+      .select('id, image_storage_path, status, created_at, updated_at')
+      .eq('id', runId)
+      .maybeSingle(),
+    supabase
+      .from('bakeoff_variants')
+      .select(
+        'id, run_id, name, provider, model, prompt, base_url, status, drafts, raw_text, prompt_tokens, completion_tokens, cost_usd_micros, latency_ms, error_kind, error_message, created_at, updated_at',
+      )
+      .eq('run_id', runId)
+      .order('sort_index', { ascending: true }),
+  ]);
+  if (runQ.error) throw runQ.error;
+  if (vQ.error) throw vQ.error;
+  if (!runQ.data) throw new Error('Bakeoff run not found');
+  return {
+    run: runQ.data as BakeoffRunRow,
+    variants: (vQ.data ?? []) as BakeoffVariantRow[],
+  };
+}
+
+export async function promoteBakeoffVariant(variantId: string): Promise<void> {
+  const { error } = await supabase.rpc('bakeoff_promote', { p_variant_id: variantId });
+  if (error) throw error;
+}
+
+// ---------- user OCR prefs (server-side) ----------
+
+export interface UserOcrPrefs {
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+  updated_at: string;
+}
+
+export async function getUserOcrPrefs(): Promise<UserOcrPrefs | null> {
+  const { data, error } = await supabase
+    .from('user_ocr_prefs')
+    .select('provider, model, prompt, updated_at')
+    .maybeSingle();
+  if (error) throw error;
+  return (data as UserOcrPrefs | null) ?? null;
+}
+
+export async function setUserOcrPrefs(prefs: {
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc('user_ocr_prefs_set', {
+    p_provider: prefs.provider,
+    p_model: prefs.model,
+    p_prompt: prefs.prompt,
+  });
+  if (error) throw error;
+}
+
 export async function mergeImportItems(
   primaryId: string,
   absorbIds: readonly string[],
@@ -85,8 +204,10 @@ export async function setBatchFallback(
 ): Promise<void> {
   const { error } = await supabase.rpc('import_set_batch_fallback', {
     p_batch_id: batchId,
-    p_provider: provider,
-    p_model: model,
+    // The function body normalises empty / null inputs to "clear"; the
+    // generated type alias erroneously narrows these to required text.
+    p_provider: provider as unknown as string,
+    p_model: model as unknown as string,
   });
   if (error) throw error;
 }

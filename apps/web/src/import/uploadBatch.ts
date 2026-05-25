@@ -43,6 +43,21 @@ async function uploadBlob(path: string, blob: Blob): Promise<void> {
 }
 
 /**
+ * Upload a single image for the bakeoff page. Reuses the imports bucket
+ * + RLS — bakeoff blobs live under `<ownerId>/bakeoffs/<uuid>.jpg` so the
+ * existing per-owner folder policy keeps them isolated.
+ */
+export async function uploadBakeoffImage(
+  ownerId: string,
+  file: File,
+): Promise<string> {
+  const prepared = await prepareImage(file);
+  const path = `${ownerId}/bakeoffs/${crypto.randomUUID()}.jpg`;
+  await uploadBlob(path, prepared.fullJpeg);
+  return path;
+}
+
+/**
  * Drive the full create-batch pipeline: prepare images (or split a PDF),
  * upload page + thumb blobs, insert the batch row + item rows, and call
  * `kickOcr` so the worker starts draining.

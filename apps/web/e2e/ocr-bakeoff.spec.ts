@@ -1,78 +1,69 @@
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test, expect } from './support/fixtures.js';
+import {
+  configureOcrKey,
+  seedOcrFixture,
+  triggerWorker,
+} from './support/imports.js';
 
-// Two canned per-variant outputs the bakeoff shim hands back. The shapes
-// match what the real Gemini / OpenAI parsers would produce after running
-// `parseLlmJson`, plus the usage block the runner needs to compute cost.
-//
-// They differ on title, an ingredient, and an instruction so the diff
-// view has something to render.
-const FAKE_RESULTS: Record<string, {
-  title: string;
-  ingredientName: string;
-  stepText: string;
-  promptTokens: number;
-  completionTokens: number;
-  elapsedMs: number;
-}> = {
-  fast: {
-    title: 'Quick Cookies',
-    ingredientName: 'flour',
-    stepText: 'Mix everything in one bowl.',
-    promptTokens: 800,
-    completionTokens: 200,
-    elapsedMs: 500,
-  },
-  pro: {
-    title: 'Quick Cookies (revised)',
-    ingredientName: 'all-purpose flour',
-    stepText: 'Cream butter and sugar until fluffy, then fold in the dry ingredients.',
-    promptTokens: 1200,
-    completionTokens: 400,
-    elapsedMs: 1500,
-  },
-};
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURES_DIR = resolve(__dirname, 'fixtures');
 
-async function installBakeoffShim(page: import('@playwright/test').Page): Promise<void> {
-  await page.addInitScript((payload: string) => {
-    const fakes = JSON.parse(payload) as typeof FAKE_RESULTS;
-    window.__cybBakeoffShim = async (variant) => {
-      // Route by the variant's persisted seed id. Tests rely on these
-      // ids surviving any localStorage round-trip, which they do because
-      // the page seeds `DEFAULT_VARIANTS` on first load and writes them
-      // through.
-      const key = variant.id === 'seed-flash' ? 'fast' : 'pro';
-      const fake = fakes[key]!;
-      const draft = {
-        title: fake.title,
-        ingredients: [
-          {
-            type: 'MEASURED',
-            id: '11111111-1111-1111-1111-111111111111',
-            name: fake.ingredientName,
-            quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
-          },
-        ],
-        instructions: [
-          {
-            id: '22222222-2222-2222-2222-222222222222',
-            stepNumber: 1,
-            text: fake.stepText,
-            ingredientRefs: [],
-          },
-        ],
-        leftover: [],
-      };
-      return {
-        drafts: [draft],
-        rawText: JSON.stringify({ recipes: [draft] }),
-        usage: {
-          promptTokens: fake.promptTokens,
-          completionTokens: fake.completionTokens,
+/**
+ * The OCR bakeoff page uploads one image, kicks the worker, and watches
+ * each variant's row in `bakeoff_variants` settle. The worker is in
+ * mock mode (`OCR_MOCK_MODE=1`), so we seed one fixture per
+ * (provider, model) so each variant returns a distinct draft. Fixtures
+ * use the `*` wildcard path because the page-generated storage path is
+ * a random UUID we can't predict.
+ */
+
+async function seedBakeoffFixtures(): Promise<void> {
+  await seedOcrFixture({
+    storagePath: 'bakeoff:*',
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    kind: 'recipe',
+    upsert: true,
+    latencyMs: 500,
+    draft: {
+      title: 'Quick Cookies',
+      ingredients: [
+        {
+          type: 'MEASURED',
+          name: 'flour',
+          quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
         },
-        elapsedMs: fake.elapsedMs,
-      };
-    };
-  }, JSON.stringify(FAKE_RESULTS));
+      ],
+      instructions: [{ stepNumber: 1, text: 'Mix everything in one bowl.' }],
+    },
+  });
+  await seedOcrFixture({
+    storagePath: 'bakeoff:*',
+    provider: 'gemini',
+    model: 'gemini-3-pro-image-preview',
+    kind: 'recipe',
+    upsert: true,
+    latencyMs: 1_500,
+    draft: {
+      title: 'Quick Cookies (revised)',
+      ingredients: [
+        {
+          type: 'MEASURED',
+          name: 'all-purpose flour',
+          quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
+        },
+      ],
+      instructions: [
+        {
+          stepNumber: 1,
+          text: 'Cream butter and sugar until fluffy, then fold in the dry ingredients.',
+        },
+      ],
+    },
+  });
 }
 
 async function gotoBakeoff(page: import('@playwright/test').Page): Promise<void> {
@@ -81,56 +72,67 @@ async function gotoBakeoff(page: import('@playwright/test').Page): Promise<void>
 }
 
 async function uploadFakeImage(page: import('@playwright/test').Page): Promise<void> {
+  // BakeoffPage runs the file through `prepareImage`, which actually
+  // decodes the image via the browser's canvas API; a synthetic
+  // minimum-length PNG isn't enough. Reuse the same fixture image the
+  // bulk-import tests use.
   await page.getByTestId('bakeoff-file-input').setInputFiles({
-    name: 'recipe.jpg',
-    mimeType: 'image/jpeg',
-    // 4-byte SOI/EOI stub — the shim never decodes the bytes.
-    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    name: 'recipe.png',
+    mimeType: 'image/png',
+    buffer: readFileSync(resolve(FIXTURES_DIR, 'page1.png')),
   });
 }
 
+async function clearVariantLocalStorage(
+  page: import('@playwright/test').Page,
+): Promise<void> {
+  await page.evaluate(() => localStorage.removeItem('cookyourbooks.bakeoff.v1'));
+}
+
 test.describe('OCR bakeoff', () => {
+  test.slow();
+
   test('races two variants against the same photo and shows per-variant cost / latency / output', async ({
     authedPage: page,
   }) => {
-    await installBakeoffShim(page);
-    // The bakeoff page reads variants from localStorage on mount; clear
-    // any state a prior test left behind so we land on the seed pair.
-    await page.evaluate(() => localStorage.removeItem('cookyourbooks.bakeoff.v1'));
+    await configureOcrKey(page, 'gemini');
+    await seedBakeoffFixtures();
+    await clearVariantLocalStorage(page);
 
     await gotoBakeoff(page);
 
     // Default matrix is the two seed variants — verify both render.
-    const variants = page.getByTestId('bakeoff-variant');
-    await expect(variants).toHaveCount(2);
     await expect(page.getByLabel('Variant 1 name')).toHaveValue('Gemini Flash');
     await expect(page.getByLabel('Variant 2 name')).toHaveValue('Gemini Pro');
 
     await uploadFakeImage(page);
-
     await page.getByTestId('bakeoff-run').click();
 
+    // The page calls ocr_kick once `bakeoff_start` returns, but the
+    // worker's import_worker_config vault secret isn't set in the test
+    // env, so we drive the worker by hand. Wait for the result rows to
+    // render first (proves the run + variants are persisted) before
+    // kicking, otherwise the worker sees an empty queue.
     const rows = page.getByTestId('bakeoff-result-row');
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(2, { timeout: 30_000 });
+    await triggerWorker();
 
-    // Each row should reach OK status. The shim resolves quickly but the
-    // runner still measures elapsed time, so both rows should render the
-    // per-variant outputs. `exact: true` is critical — Playwright's
-    // default text matching is case-insensitive substring, so a bare
-    // `getByText('OK')` would also match "Quick C[ook]ies" in the
-    // adjacent output cell.
+    // Each row should reach OK status. `exact: true` is critical —
+    // Playwright's default text matching is case-insensitive substring,
+    // which matches "ok" inside "Cookies".
     await expect(rows.nth(0).getByText('OK', { exact: true })).toBeVisible({
-      timeout: 10_000,
+      timeout: 30_000,
     });
     await expect(rows.nth(1).getByText('OK', { exact: true })).toBeVisible({
-      timeout: 10_000,
+      timeout: 30_000,
     });
 
-    // Token usage formats with thousands separators and pairs in/out.
-    await expect(rows.nth(0)).toContainText('800 / 200');
-    await expect(rows.nth(1)).toContainText('1,200 / 400');
+    // Token usage from the mock fixtures (the __mock_usage stub seeds
+    // 100 / 200 for every recipe-kind fixture).
+    await expect(rows.nth(0)).toContainText('100 / 200');
+    await expect(rows.nth(1)).toContainText('100 / 200');
 
-    // The cheap variant's elapsed-time should be the shim-reported 0.50 s.
+    // Per-fixture latency comes through verbatim.
     await expect(rows.nth(0)).toContainText('0.50 s');
     await expect(rows.nth(1)).toContainText('1.50 s');
 
@@ -142,24 +144,28 @@ test.describe('OCR bakeoff', () => {
   test('diff view highlights additions and deletions between two variants', async ({
     authedPage: page,
   }) => {
-    await installBakeoffShim(page);
-    await page.evaluate(() => localStorage.removeItem('cookyourbooks.bakeoff.v1'));
+    await configureOcrKey(page, 'gemini');
+    await seedBakeoffFixtures();
+    await clearVariantLocalStorage(page);
 
     await gotoBakeoff(page);
     await uploadFakeImage(page);
     await page.getByTestId('bakeoff-run').click();
+    await expect(page.getByTestId('bakeoff-result-row')).toHaveCount(2, {
+      timeout: 30_000,
+    });
+    await triggerWorker();
 
     const diff = page.getByTestId('bakeoff-diff');
-    await expect(diff).toBeVisible({ timeout: 10_000 });
+    await expect(diff).toBeVisible({ timeout: 30_000 });
 
-    // The diff selectors default to the first two successful variants.
     await expect(page.getByLabel('Diff left variant')).toHaveValue(/.+/);
     await expect(page.getByLabel('Diff right variant')).toHaveValue(/.+/);
 
     // The diff text exists — at minimum it contains an added line for
-    // "all-purpose flour" (only in the second variant) and a deletion for
-    // the bare "flour" name from the first. Filter to the specific row
-    // since the title and step lines also appear as add / del.
+    // "all-purpose flour" (only in the pro variant) and a deletion for
+    // the bare "flour" name from the flash variant. Filter to specific
+    // hunks since title + step lines also appear as add / del.
     await expect(
       diff.locator('[data-diff-kind="add"]').filter({ hasText: 'all-purpose flour' }),
     ).toHaveCount(1);
@@ -168,18 +174,67 @@ test.describe('OCR bakeoff', () => {
     ).toHaveCount(1);
   });
 
+  test('"Set as default" promotes a variant into user_ocr_prefs', async ({
+    authedPage: page,
+  }) => {
+    await configureOcrKey(page, 'gemini');
+    await seedBakeoffFixtures();
+    await clearVariantLocalStorage(page);
+
+    await gotoBakeoff(page);
+    await uploadFakeImage(page);
+    await page.getByTestId('bakeoff-run').click();
+    const rows = page.getByTestId('bakeoff-result-row');
+    await expect(rows).toHaveCount(2, { timeout: 30_000 });
+    await triggerWorker();
+
+    await expect(rows.nth(0).getByText('OK', { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // Click promote, *then* re-locate the button — the row re-renders
+    // when results stream in (the `promotedId` lift) and the original
+    // element-handle goes stale. Skip the toContainText assertion: just
+    // verify the side effect.
+    await rows.nth(0).getByTestId('bakeoff-promote').click();
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(async () => {
+            const sb = (window as unknown as {
+              __cybSupabase?: {
+                from: (t: string) => {
+                  select: (c: string) => {
+                    maybeSingle: () => Promise<{ data?: { model?: string } | null }>;
+                  };
+                };
+              };
+            }).__cybSupabase;
+            const r = await sb!.from('user_ocr_prefs').select('model').maybeSingle();
+            return r.data?.model ?? '';
+          }),
+        { timeout: 15_000, intervals: [500, 1000, 2000] },
+      )
+      .toBe('gemini-2.5-flash');
+
+    // /settings should now reflect the promoted model. The form's
+    // useEffect-driven load lands asynchronously after mount, so use a
+    // generous timeout on the value assertion.
+    await page.goto('/settings');
+    await expect(page.getByLabel('Default model')).toHaveValue('gemini-2.5-flash', {
+      timeout: 10_000,
+    });
+  });
+
   test('variants persist to localStorage and survive a reload', async ({
     authedPage: page,
   }) => {
-    await page.evaluate(() => localStorage.removeItem('cookyourbooks.bakeoff.v1'));
+    await clearVariantLocalStorage(page);
 
     await gotoBakeoff(page);
     await page.getByLabel('Variant 1 name').fill('My Custom Variant');
-    // Blur the field so React commits the change before reload.
     await page.getByLabel('Variant 1 name').press('Tab');
 
-    // Round-trip the localStorage value directly — both as a guarantee that
-    // we wrote it and to keep the assertion narrow if the page restructures.
     const stored = await page.evaluate(() =>
       JSON.parse(localStorage.getItem('cookyourbooks.bakeoff.v1') ?? '[]'),
     );
@@ -190,7 +245,7 @@ test.describe('OCR bakeoff', () => {
   });
 
   test('blocks "Run bakeoff" until an image is selected', async ({ authedPage: page }) => {
-    await page.evaluate(() => localStorage.removeItem('cookyourbooks.bakeoff.v1'));
+    await clearVariantLocalStorage(page);
     await gotoBakeoff(page);
     await expect(page.getByTestId('bakeoff-run')).toBeDisabled();
     await uploadFakeImage(page);
