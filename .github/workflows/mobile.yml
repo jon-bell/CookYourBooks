@@ -1,16 +1,14 @@
 name: Mobile
 
 on:
-  # Mobile native builds require Xcode (iOS) or the Android SDK, which we
-  # only want to pay for when the native wrapper actually changes.
+  # Push to main: fire on every change. The iOS app embeds apps/web/dist,
+  # so any web change is effectively a mobile change — users on
+  # TestFlight don't see new web code until a new IPA ships. Cheaper to
+  # auto-ship than to remember to dispatch manually.
   push:
     branches: [main]
-    paths:
-      - 'apps/mobile/**'
-      - 'apps/web/src/import/camera.ts'
-      - 'apps/web/src/share/share.ts'
-      - 'apps/web/src/pages/CookModePage.tsx'
-      - '.github/workflows/mobile.yml'
+  # PRs: only fire the smoke build when the native wrapper or its
+  # immediate web bridge changes. Web-only PRs are covered by ci.yml.
   pull_request:
     paths:
       - 'apps/mobile/**'
