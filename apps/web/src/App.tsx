@@ -17,6 +17,7 @@ import { ImportNewPage } from './pages/ImportNewPage.js';
 import { ImportBatchPage } from './pages/ImportBatchPage.js';
 import { ImportGroupingPage } from './pages/ImportGroupingPage.js';
 import { ImportItemPage } from './pages/ImportItemPage.js';
+import { SpeedImporterPage } from './pages/SpeedImporterPage.js';
 import { SignInPage } from './auth/SignInPage.js';
 import { SignUpPage } from './auth/SignUpPage.js';
 import { RequireAuth } from './auth/RequireAuth.js';
@@ -159,6 +160,14 @@ export function App() {
             element={
               <RequireAuth>
                 <ImportNewPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/speed"
+            element={
+              <RequireAuth>
+                <SpeedImporterPage />
               </RequireAuth>
             }
           />

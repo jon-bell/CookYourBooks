@@ -116,18 +116,21 @@ export async function upsertRecipeRow(
       book_title?: string | null;
       page_numbers?: unknown;
       source_image_text?: string | null;
+      starred?: boolean | number | null;
     };
     // Array-ish columns live as TEXT (JSON) in SQLite; the Postgres
     // mirror uses jsonb. Accept either shape on input.
     const equipmentJson = toJsonText(recipeRowX.equipment);
     const pageNumbersJson = toJsonText(recipeRowX.page_numbers);
+    const starredRaw: unknown = recipeRowX.starred;
+    const starredInt = starredRaw === true || starredRaw === 1 ? 1 : 0;
     await tx.exec(
       `insert into recipes
          (id, collection_id, title, servings_amount, servings_description,
           servings_amount_max, sort_order, notes, parent_recipe_id,
           description, time_estimate, equipment, book_title, page_numbers,
-          source_image_text, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+          source_image_text, starred, updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
        on conflict(id) do update set
          collection_id=excluded.collection_id,
          title=excluded.title,
@@ -143,6 +146,7 @@ export async function upsertRecipeRow(
          book_title=excluded.book_title,
          page_numbers=excluded.page_numbers,
          source_image_text=excluded.source_image_text,
+         starred=excluded.starred,
          updated_at=excluded.updated_at,
          deleted=0`,
       [
@@ -161,6 +165,7 @@ export async function upsertRecipeRow(
         recipeRowX.book_title ?? null,
         pageNumbersJson,
         recipeRowX.source_image_text ?? null,
+        starredInt,
         incomingTs,
       ],
     );

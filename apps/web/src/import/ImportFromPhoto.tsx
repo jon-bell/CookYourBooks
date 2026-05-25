@@ -119,6 +119,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       recitationPolicy: 'ASK',
       status: 'OPEN',
       totalItems: 1,
+      isPlanner: false,
       updatedAt: now,
     });
     await new LocalImportItemRepository(user.id).insertLocal({
@@ -132,6 +133,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       sourcePdfPage: null,
       assignedCollectionId: collectionId,
       assignedPageNumber: null,
+      assignedRecipeId: null,
       isToc: false,
       status: 'OCR_DONE',
       claimExpiresAt: 0,

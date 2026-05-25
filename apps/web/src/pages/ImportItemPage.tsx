@@ -196,14 +196,25 @@ export function ImportItemPage() {
     [currentDraft?.title, tocEntries],
   );
 
-  // Look for an existing recipe in the target cookbook whose title
-  // matches the draft. Used to merge into placeholder ToC entries
+  // When the Speed Importer planner bound this scan to a specific
+  // placeholder up front (`item.assignedRecipeId`), trust that
+  // binding — the user already told us where this scan belongs, so
+  // skip the fuzzy match entirely.
+  const plannedRecipe = useMemo(() => {
+    if (!item?.assignedRecipeId || !targetCollection) return undefined;
+    const r = (targetCollection.recipes ?? []).find((rr) => rr.id === item.assignedRecipeId);
+    return r ? { id: r.id, title: r.title } : undefined;
+  }, [item?.assignedRecipeId, targetCollection]);
+
+  // Fallback: look for an existing recipe in the target cookbook whose
+  // title matches the draft. Used to merge into placeholder ToC entries
   // rather than create duplicates. Threshold is intentionally tight
   // (0.85) — we want OCR-cleanup matches like "Garam Masala" vs
   // "garam masala" to fold together, but distinct recipes that happen
   // to share a noun ("Crispy Cookies" vs "Chewy Cookies", ~0.77) must
-  // stay separate.
+  // stay separate. Skipped when the planner has already bound this scan.
   const matchedExisting = useMemo(() => {
+    if (plannedRecipe) return undefined;
     if (!targetCollection || !currentDraft?.title) return undefined;
     let best: { id: string; title: string; score: number } | undefined;
     for (const r of targetCollection.recipes ?? []) {
@@ -213,7 +224,7 @@ export function ImportItemPage() {
       }
     }
     return best;
-  }, [targetCollection, currentDraft?.title]);
+  }, [plannedRecipe, targetCollection, currentDraft?.title]);
 
   function onWheel(e: React.WheelEvent) {
     if (!e.ctrlKey && !e.metaKey) return;
@@ -386,7 +397,10 @@ export function ImportItemPage() {
     // OCR-extracted bookTitle is just a hint and the user has
     // explicitly chosen where this recipe belongs.
     const bookTitle = targetCollection?.title ?? currentDraft.bookTitle;
-    const recipeId = matchedExisting?.id; // undefined -> mint new
+    // Planner pre-binding takes precedence over fuzzy match. Neither
+    // wins → mint a fresh id.
+    const recipeId = plannedRecipe?.id ?? matchedExisting?.id;
+    const overwriteTitle = plannedRecipe?.title ?? matchedExisting?.title;
     const remainingAfter = drafts.length - 1; // local count of drafts still left on this item
     const nextItem = remainingAfter === 0 ? findReviewable(batchItems, item.id, 'next') : undefined;
     // Toast immediately so the user has feedback before the network
@@ -401,7 +415,7 @@ export function ImportItemPage() {
     }
     const recipe = createRecipe({
       id: recipeId,
-      title: currentDraft.title?.trim() || matchedExisting?.title || 'Untitled',
+      title: currentDraft.title?.trim() || overwriteTitle || 'Untitled',
       servings: currentDraft.servings,
       ingredients,
       instructions,
@@ -411,6 +425,9 @@ export function ImportItemPage() {
       bookTitle,
       pageNumbers,
       sourceImageText: currentDraft.sourceImageText,
+      // Filling the placeholder clears its planner star — the user's
+      // wish has been granted, drop it from the queue.
+      starred: false,
     });
     try {
       await saveRecipe.mutateAsync(recipe);
@@ -811,7 +828,15 @@ export function ImportItemPage() {
                 <p className="text-sm text-stone-600 dark:text-stone-400">No drafts yet — OCR results will appear here.</p>
               )}
 
-              {matchedExisting && targetCollection && (
+              {plannedRecipe && targetCollection && (
+                <div className="rounded-md border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-2 text-xs text-indigo-900 dark:text-indigo-200">
+                  <strong>Planned:</strong> this scan is reserved for{' '}
+                  <span className="font-medium">{plannedRecipe.title}</span> in{' '}
+                  <em>{targetCollection.title}</em> (from the Speed Importer).
+                  Save will fill that placeholder in place.
+                </div>
+              )}
+              {!plannedRecipe && matchedExisting && targetCollection && (
                 <div className="rounded-md border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200">
                   <strong>Matches existing recipe:</strong>{' '}
                   <span className="font-medium">{matchedExisting.title}</span> in{' '}
@@ -830,9 +855,11 @@ export function ImportItemPage() {
                 >
                   {saveRecipe.isPending
                     ? 'Saving…'
-                    : matchedExisting
-                      ? `Update "${matchedExisting.title}"`
-                      : 'Save as recipe'}
+                    : plannedRecipe
+                      ? `Fill "${plannedRecipe.title}"`
+                      : matchedExisting
+                        ? `Update "${matchedExisting.title}"`
+                        : 'Save as recipe'}
                 </button>
                 <button
                   type="button"

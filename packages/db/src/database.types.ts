@@ -329,6 +329,7 @@ export type Database = {
           fallback_model: string | null
           fallback_provider: string | null
           id: string
+          is_planner: boolean
           name: string
           owner_id: string
           recitation_policy: string
@@ -345,6 +346,7 @@ export type Database = {
           fallback_model?: string | null
           fallback_provider?: string | null
           id?: string
+          is_planner?: boolean
           name?: string
           owner_id: string
           recitation_policy?: string
@@ -361,6 +363,7 @@ export type Database = {
           fallback_model?: string | null
           fallback_provider?: string | null
           id?: string
+          is_planner?: boolean
           name?: string
           owner_id?: string
           recitation_policy?: string
@@ -474,6 +477,7 @@ export type Database = {
         Row: {
           assigned_collection_id: string | null
           assigned_page_number: number | null
+          assigned_recipe_id: string | null
           attempts: number
           batch_id: string
           claim_expires_at: string
@@ -502,6 +506,7 @@ export type Database = {
         Insert: {
           assigned_collection_id?: string | null
           assigned_page_number?: number | null
+          assigned_recipe_id?: string | null
           attempts?: number
           batch_id: string
           claim_expires_at?: string
@@ -530,6 +535,7 @@ export type Database = {
         Update: {
           assigned_collection_id?: string | null
           assigned_page_number?: number | null
+          assigned_recipe_id?: string | null
           attempts?: number
           batch_id?: string
           claim_expires_at?: string
@@ -1017,6 +1023,7 @@ export type Database = {
           servings_description: string | null
           sort_order: number
           source_image_text: string | null
+          starred: boolean
           time_estimate: string | null
           title: string
           updated_at: string
@@ -1036,6 +1043,7 @@ export type Database = {
           servings_description?: string | null
           sort_order?: number
           source_image_text?: string | null
+          starred?: boolean
           time_estimate?: string | null
           title: string
           updated_at?: string
@@ -1055,6 +1063,7 @@ export type Database = {
           servings_description?: string | null
           sort_order?: number
           source_image_text?: string | null
+          starred?: boolean
           time_estimate?: string | null
           title?: string
           updated_at?: string

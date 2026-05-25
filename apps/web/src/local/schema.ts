@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -47,6 +47,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     book_title text,
     page_numbers text,         -- JSON array of numbers
     source_image_text text,
+    starred integer not null default 0,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -129,6 +130,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     recitation_policy text not null default 'ASK',
     status text not null default 'OPEN',
     total_items integer not null default 0,
+    is_planner integer not null default 0,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -146,6 +148,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     source_pdf_page integer,
     assigned_collection_id text,
     assigned_page_number integer,
+    assigned_recipe_id text,
     is_toc integer not null default 0,
     status text not null default 'PENDING',
     claim_expires_at integer not null default 0,
@@ -384,4 +387,13 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `create index if not exists conversion_rules_owner_idx on conversion_rules(owner_id)`,
   // Free-form per-rule notes (added 2026-06-02).
   `alter table conversion_rules add column notes text`,
+  // Speed Importer additions (2026-06-03):
+  //  - recipes.starred: the planner queue derives from this column.
+  //  - import_items.assigned_recipe_id: pre-bind a scan to an existing
+  //    placeholder so the worker output updates it in place.
+  //  - import_batches.is_planner: lets the planner page find its own
+  //    open AWAITING_GROUPING session across app restarts.
+  `alter table recipes add column starred integer not null default 0`,
+  `alter table import_items add column assigned_recipe_id text`,
+  `alter table import_batches add column is_planner integer not null default 0`,
 ];

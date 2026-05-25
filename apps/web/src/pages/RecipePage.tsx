@@ -87,6 +87,11 @@ export function RecipePage() {
     navigate(`/collections/${collection!.id}/recipes/${clone.id}/edit`);
   }
 
+  async function toggleStar() {
+    if (!recipe) return;
+    await saveRecipe.mutateAsync({ ...recipe, starred: !(recipe.starred === true) });
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -227,6 +232,25 @@ export function RecipePage() {
             className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
           >
             Adapt
+          </button>
+          <button
+            type="button"
+            onClick={toggleStar}
+            disabled={saveRecipe.isPending}
+            aria-pressed={recipe.starred === true}
+            title={
+              recipe.starred === true
+                ? 'Unstar (remove from Speed Importer queue)'
+                : 'Star this recipe so the Speed Importer queues it for scanning'
+            }
+            className={`rounded-md px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50 ${
+              recipe.starred === true
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-stone-700 dark:text-stone-300'
+            }`}
+          >
+            <span aria-hidden>{recipe.starred === true ? '★' : '☆'}</span>{' '}
+            {recipe.starred === true ? 'Starred' : 'Star'}
           </button>
           <button
             onClick={shareAsMarkdown}
