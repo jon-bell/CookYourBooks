@@ -95,6 +95,15 @@ jobs:
       CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      # Login password for the cyb-mac runner user. The launchd-spawned
+      # actions runner can't read this from the local keychain (different
+      # security domain than the user's GUI session), so we surface it as
+      # a workflow secret. Used to unlock the login keychain and set the
+      # codesign partition list before fastlane signs anything.
+      MAC_LOGIN_PASSWORD: ${{ secrets.MAC_LOGIN_PASSWORD }}
+      # Match auto-detects this env var and uses it for keychain ops
+      # (unlock + set-key-partition-list after import).
+      MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MAC_LOGIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -173,6 +182,25 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             -derivedDataPath ./ci-build \
             build
+
+      - name: Unlock keychain + apply codesign partition list
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # The launchd-spawned actions runner inherits a security domain
+        # where the login keychain may be locked. Unlock it explicitly
+        # and re-apply the partition list so codesign can use the
+        # private key non-interactively. Match's `keychain_password`
+        # parameter is supposed to do this during the .p12 import, but
+        # we've observed it failing silently — this is the reliable
+        # fallback.
+        run: |
+          security unlock-keychain -p "$MAC_LOGIN_PASSWORD" ~/Library/Keychains/login.keychain-db
+          security set-keychain-settings -l ~/Library/Keychains/login.keychain-db
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$MAC_LOGIN_PASSWORD" \
+            ~/Library/Keychains/login.keychain-db >/dev/null 2>&1 || true
+          security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db | head -3
 
       - name: Push to main — fastlane beta (TestFlight)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
