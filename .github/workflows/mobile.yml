@@ -83,15 +83,13 @@ jobs:
     runs-on: [self-hosted, macOS, X64, cyb-mac]
     timeout-minutes: 45
     env:
-      # Strip RVM env vars that pollute brew-installed pod/fastlane GEM_PATH.
-      GEM_PATH: ""
-      GEM_HOME: ""
-      RUBY_VERSION: ""
-      MY_RUBY_HOME: ""
-      IRBRC: ""
-      rvm_path: ""
       LANG: en_US.UTF-8
       # Fastlane secrets — see .github/RUNNERS.md for how these are stored.
+      # Pod/fastlane steps below prefix commands with `env -u GEM_PATH -u
+      # GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME -u IRBRC -u rvm_path` to
+      # strip RVM pollution that breaks brew-installed cocoapods/fastlane.
+      # We can't blank these at the job level (empty string ≠ unset; an
+      # empty GEM_PATH stops Ruby from finding minitest under cocoapods).
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
       CYB_ASC_KEY_ID: ${{ secrets.CYB_ASC_KEY_ID }}
       CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
@@ -132,7 +130,12 @@ jobs:
 
       - name: Build web + cap sync
         # `cap sync` runs `pod install` against the committed ios/ project.
-        run: pnpm --filter @cookyourbooks/mobile sync
+        # `env -u` strips RVM vars so brew's pod doesn't follow them into
+        # an RVM ruby that doesn't have the right gems installed.
+        run: |
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            pnpm --filter @cookyourbooks/mobile sync
 
       - name: Regenerate icons + splashes
         run: pnpm --filter @cookyourbooks/mobile assets || true
@@ -155,12 +158,18 @@ jobs:
       - name: Push to main — fastlane beta (TestFlight)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/mobile/ios
-        run: fastlane beta
+        run: |
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            fastlane beta
 
       - name: Dispatch=ios-release — fastlane release (App Store submit)
         if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios-release'
         working-directory: apps/mobile/ios
-        run: fastlane release
+        run: |
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            fastlane release
 
       - name: Clean up decoded ASC key
         if: always()
