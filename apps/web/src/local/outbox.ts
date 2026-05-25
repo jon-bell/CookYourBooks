@@ -14,7 +14,11 @@ export type OutboxKind =
   | 'import_batch_insert'
   | 'import_batch_update'
   | 'import_item_insert'
-  | 'import_item_update';
+  | 'import_item_update'
+  // Per-user HOUSE conversion rules. Pushed via the
+  // house_conversion_upsert / house_conversion_delete RPCs.
+  | 'conversion_rule_save'
+  | 'conversion_rule_delete';
 
 export interface OutboxEntry {
   id: number;

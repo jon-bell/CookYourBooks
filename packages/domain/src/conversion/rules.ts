@@ -1,4 +1,4 @@
-export type ConversionRulePriority = 'HOUSE' | 'RECIPE' | 'STANDARD';
+export type ConversionRulePriority = 'HOUSE' | 'RECIPE' | 'GLOBAL' | 'STANDARD';
 
 export interface ConversionRule {
   readonly fromUnit: string;

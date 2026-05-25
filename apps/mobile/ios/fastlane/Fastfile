@@ -46,6 +46,21 @@ def asc_api_key
   key
 end
 
+# Login keychain password for the cyb-mac runner. Stashed by
+# scripts/runner/install-launch-agents.sh under the keychain entry
+# `cyb-mac-runner-keychain-unlock`. When present, we pass it to match so
+# it can run `security set-key-partition-list` after importing the .p12 —
+# without that, codesign trips errSecInternalComponent on every signed
+# build because the freshly-imported private key has an empty ACL.
+#
+# Returns nil on dev machines that don't have the keychain entry; on
+# those, match falls back to its interactive prompt behavior.
+def runner_keychain_password
+  return nil unless File.exist?("/usr/bin/security")
+  pwd = `security find-generic-password -a "#{ENV['USER']}" -s cyb-mac-runner-keychain-unlock -w 2>/dev/null`.strip
+  pwd.empty? ? nil : pwd
+end
+
 platform :ios do
   desc "Diagnostic: print every signing cert currently active on the Apple Developer account. Useful when match says 'reached the maximum number'."
   lane :list_certs do
@@ -100,12 +115,22 @@ platform :ios do
     # from env) avoids the "invalid number: '-----BEGIN'" JSON-parse error you
     # get when match auto-detection picks up a .p8 path and tries to read it
     # as a JSON config file.
-    match(type: "appstore", readonly: false, api_key: asc_api_key_or_nil)
+    match(
+      type: "appstore",
+      readonly: false,
+      api_key: asc_api_key_or_nil,
+      keychain_password: runner_keychain_password,
+    )
   end
 
   desc "Pull signing material from the certs repo without creating anything new. Safe to run on any machine / CI."
   lane :certs do
-    match(type: "appstore", readonly: true, api_key: asc_api_key_or_nil)
+    match(
+      type: "appstore",
+      readonly: true,
+      api_key: asc_api_key_or_nil,
+      keychain_password: runner_keychain_password,
+    )
   end
 
   desc "Bump the build number (CURRENT_PROJECT_VERSION) to one above the highest already on TestFlight. Run before `beta` or `release`."
@@ -123,6 +148,26 @@ platform :ios do
   desc "Build a signed Release archive and upload it to TestFlight. Requires ASC API key env vars + a match-provisioned profile."
   lane :beta do
     certs
+    # Belt-and-suspenders: re-apply the ACL partition list right before
+    # gym. Match's keychain_password parameter is supposed to do this
+    # during the import, but observation shows the freshly-imported
+    # key's ACL is still empty when codesign runs, tripping
+    # errSecInternalComponent. Re-applying here costs nothing and is
+    # idempotent.
+    pwd = runner_keychain_password
+    if pwd
+      sh(
+        "security", "set-key-partition-list",
+        "-S", "apple-tool:,apple:,codesign:",
+        "-s",
+        "-k", pwd,
+        File.expand_path("~/Library/Keychains/login.keychain-db"),
+        log: false,
+        error_callback: ->(_) {
+          UI.important("set-key-partition-list returned non-zero; codesign may still trip errSecInternalComponent")
+        },
+      )
+    end
     bump_build
     gym(
       workspace: "App/App.xcworkspace",

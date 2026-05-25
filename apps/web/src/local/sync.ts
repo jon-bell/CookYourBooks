@@ -101,6 +101,20 @@ export interface PullResult {
   importItems: number;
   importItemAttempts: number;
   importTocEntries: number;
+  conversionRules: number;
+}
+
+interface ConversionRuleRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string | null;
+  from_unit: string;
+  to_unit: string;
+  factor: number;
+  ingredient_name: string | null;
+  priority: 'HOUSE' | 'RECIPE' | 'STANDARD' | 'GLOBAL';
+  created_at: string;
+  updated_at: string;
 }
 
 // ---------- bulk OCR import: local row shapes ----------
@@ -197,7 +211,7 @@ interface ImportTocEntryRow {
 // first pull after the user upgrades, every per-topic watermark is
 // reset to 0 so missed rows get a chance to flow in. Increment when
 // fixing a pull bug that could have stranded server rows.
-const SYNC_RESET_VERSION = 2;
+const SYNC_RESET_VERSION = 3;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
   const versionTopic = `sync_reset_version:${ownerId}`;
@@ -205,7 +219,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -213,6 +227,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `import_items:${ownerId}`,
       `import_item_attempts:${ownerId}`,
       `import_toc_entries:${ownerId}`,
+      `conversion_rules:${ownerId}`,
     ],
   );
   await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
@@ -351,6 +366,7 @@ export async function pullAll(
   }
 
   const importCounts = await pullImports(client, ownerId);
+  const conversionRulesPulled = await pullConversionRules(client, ownerId);
 
   return {
     collections: collections.length,
@@ -361,7 +377,33 @@ export async function pullAll(
     importItems: importCounts.items,
     importItemAttempts: importCounts.attempts,
     importTocEntries: importCounts.tocEntries,
+    conversionRules: conversionRulesPulled,
   };
+}
+
+async function pullConversionRules(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `conversion_rules:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<ConversionRuleRow>((from, to) =>
+    client
+      .from('conversion_rules')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  let max = await getWatermark(topic);
+  for (const row of rows) {
+    await upsertConversionRuleRow(row);
+    max = Math.max(max, toMs(row.updated_at));
+  }
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
 }
 
 // ---------- pull: bulk OCR imports ----------
@@ -629,6 +671,39 @@ async function upsertImportItemAttemptRow(row: ImportItemAttemptRow): Promise<vo
   );
 }
 
+async function upsertConversionRuleRow(row: ConversionRuleRow): Promise<void> {
+  const db = await getLocalDb();
+  const ts = toMs(row.updated_at);
+  await db.exec(
+    `insert into conversion_rules
+       (id, owner_id, recipe_id, from_unit, to_unit, factor, ingredient_name,
+        priority, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       from_unit=excluded.from_unit,
+       to_unit=excluded.to_unit,
+       factor=excluded.factor,
+       ingredient_name=excluded.ingredient_name,
+       priority=excluded.priority,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= conversion_rules.updated_at`,
+    [
+      row.id,
+      row.owner_id,
+      row.recipe_id,
+      row.from_unit,
+      row.to_unit,
+      row.factor,
+      row.ingredient_name,
+      row.priority,
+      ts,
+    ],
+  );
+}
+
 async function upsertImportTocEntryRow(row: ImportTocEntryRow): Promise<void> {
   const db = await getLocalDb();
   const ts = toMs(row.updated_at);
@@ -766,6 +841,14 @@ export function subscribeRealtime(
         onLocalUpdate();
       },
     )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'conversion_rules', filter: `owner_id=eq.${ownerId}` },
+      async (payload) => {
+        await handleConversionRuleEvent(payload);
+        onLocalUpdate();
+      },
+    )
     .subscribe();
 
   return {
@@ -863,6 +946,18 @@ async function handleImportTocEvent(payload: RealtimePayload): Promise<void> {
   await upsertImportTocEntryRow(payload.new as unknown as ImportTocEntryRow);
 }
 
+async function handleConversionRuleEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { id?: string }).id;
+    if (id) {
+      const db = await getLocalDb();
+      await db.exec(`delete from conversion_rules where id = ?`, [id]);
+    }
+    return;
+  }
+  await upsertConversionRuleRow(payload.new as unknown as ConversionRuleRow);
+}
+
 // ---------- push ----------
 
 export async function pushOutbox(
@@ -924,6 +1019,13 @@ async function pushOne(
       return pushImportItemInsert(client, entry.entity_id);
     case 'import_item_update':
       return pushImportItem(client, entry.entity_id);
+    case 'conversion_rule_save':
+      return pushConversionRule(client, entry.entity_id);
+    case 'conversion_rule_delete': {
+      const { error } = await client.rpc('house_conversion_delete', { p_id: entry.entity_id });
+      if (error) throw error;
+      return;
+    }
   }
 }
 
@@ -998,6 +1100,27 @@ async function pushImportItemInsert(
   const { error } = await client
     .from('import_items')
     .upsert(payload, { onConflict: 'id' });
+  if (error) throw error;
+}
+
+async function pushConversionRule(client: CookbooksClient, id: string): Promise<void> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<Record<string, unknown>>(
+    `select * from conversion_rules where id = ?`,
+    [id],
+  )) as Record<string, unknown>[];
+  const local = rows[0];
+  if (!local) return;
+  // The RPC is a true upsert keyed by id: inserts if the row doesn't
+  // exist server-side (first push of a locally-minted rule), updates
+  // if it does (subsequent edits).
+  const { error } = await client.rpc('house_conversion_upsert', {
+    p_id: local.id as string,
+    p_from_unit: local.from_unit as string,
+    p_to_unit: local.to_unit as string,
+    p_factor: local.factor as number,
+    p_ingredient_name: (local.ingredient_name as string | null) ?? null,
+  });
   if (error) throw error;
 }
 

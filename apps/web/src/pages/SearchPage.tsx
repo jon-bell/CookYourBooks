@@ -12,7 +12,14 @@ export function SearchPage() {
     const visible = sourceType
       ? collections.filter((c) => c.sourceType === sourceType)
       : collections;
-    return searchLibrary(visible, q);
+    const raw = searchLibrary(visible, q);
+    // Imported recipes lead; ToC placeholders (no ingredients + no
+    // instructions) sink to the bottom. Stable within each group.
+    return [...raw].sort((a, b) => {
+      const af = a.recipe.ingredients.length > 0 || a.recipe.instructions.length > 0 ? 0 : 1;
+      const bf = b.recipe.ingredients.length > 0 || b.recipe.instructions.length > 0 ? 0 : 1;
+      return af - bf;
+    });
   }, [collections, q, sourceType]);
 
   return (
@@ -48,20 +55,35 @@ export function SearchPage() {
               : `${hits.length} recipes`}
           </div>
           <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-            {hits.map(({ collection, recipe }) => (
-              <li key={recipe.id}>
-                <Link
-                  to={`/collections/${collection.id}/recipes/${recipe.id}`}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900"
-                >
-                  <span>
-                    <span className="font-medium">{recipe.title}</span>
-                    <span className="ml-2 text-sm text-stone-500 dark:text-stone-400">· {collection.title}</span>
-                  </span>
-                  <span className="text-sm text-stone-400">→</span>
-                </Link>
-              </li>
-            ))}
+            {hits.map(({ collection, recipe }) => {
+              const isPlaceholder =
+                recipe.ingredients.length === 0 && recipe.instructions.length === 0;
+              return (
+                <li key={recipe.id}>
+                  <Link
+                    to={`/collections/${collection.id}/recipes/${recipe.id}`}
+                    className={`flex items-center justify-between px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900 ${
+                      isPlaceholder ? 'text-stone-500 dark:text-stone-500' : ''
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className={`truncate ${isPlaceholder ? '' : 'font-medium'}`}>
+                        {recipe.title}
+                      </span>
+                      {isPlaceholder && (
+                        <span className="shrink-0 rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                          Not imported
+                        </span>
+                      )}
+                      <span className="ml-2 truncate text-sm text-stone-500 dark:text-stone-400">
+                        · {collection.title}
+                      </span>
+                    </span>
+                    <span className="text-sm text-stone-400">→</span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </>
       )}

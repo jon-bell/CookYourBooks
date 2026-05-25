@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -202,6 +202,24 @@ export const SCHEMA_STATEMENTS: string[] = [
 
   `create index if not exists import_toc_entries_batch_idx on import_toc_entries(batch_id, title)`,
 
+  // ---------- Conversion rules ----------
+  // Mirrors public.conversion_rules. Owner-scoped HOUSE rules only;
+  // GLOBAL defaults aren't replicated here (fetched via React Query
+  // from the read-only public.global_conversions table).
+  `create table if not exists conversion_rules (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text,
+    from_unit text not null default '',
+    to_unit text not null default '',
+    factor real not null default 1,
+    ingredient_name text,
+    priority text not null default 'HOUSE',
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists conversion_rules_owner_idx on conversion_rules(owner_id)`,
+
   // Sync metadata — a singleton row per logical topic holding the
   // latest-seen remote `updated_at` (ms since epoch). Local-only, not CRR.
   `create table if not exists sync_state (
@@ -233,6 +251,7 @@ export const CRR_TABLES = [
   'import_items',
   'import_item_attempts',
   'import_toc_entries',
+  'conversion_rules',
 ];
 
 // Idempotent post-schema migrations. Appended to over time as columns
@@ -347,4 +366,18 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     deleted integer not null default 0
   )`,
   `create index if not exists import_toc_entries_batch_idx on import_toc_entries(batch_id, title)`,
+  // Conversion rules (HOUSE-tier mirror of public.conversion_rules).
+  `create table if not exists conversion_rules (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text,
+    from_unit text not null default '',
+    to_unit text not null default '',
+    factor real not null default 1,
+    ingredient_name text,
+    priority text not null default 'HOUSE',
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists conversion_rules_owner_idx on conversion_rules(owner_id)`,
 ];

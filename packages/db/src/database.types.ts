@@ -110,6 +110,7 @@ export type Database = {
       }
       conversion_rules: {
         Row: {
+          created_at: string
           factor: number
           from_unit: string
           id: string
@@ -118,8 +119,10 @@ export type Database = {
           priority: string
           recipe_id: string | null
           to_unit: string
+          updated_at: string
         }
         Insert: {
+          created_at?: string
           factor: number
           from_unit: string
           id?: string
@@ -128,8 +131,10 @@ export type Database = {
           priority: string
           recipe_id?: string | null
           to_unit: string
+          updated_at?: string
         }
         Update: {
+          created_at?: string
           factor?: number
           from_unit?: string
           id?: string
@@ -138,6 +143,7 @@ export type Database = {
           priority?: string
           recipe_id?: string | null
           to_unit?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -152,6 +158,60 @@ export type Database = {
             columns: ["recipe_id"]
             isOneToOne: false
             referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      global_conversions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          factor: number
+          from_unit: string
+          id: string
+          ingredient_name: string | null
+          notes: string | null
+          to_unit: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          factor: number
+          from_unit: string
+          id?: string
+          ingredient_name?: string | null
+          notes?: string | null
+          to_unit: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          factor?: number
+          from_unit?: string
+          id?: string
+          ingredient_name?: string | null
+          notes?: string | null
+          to_unit?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "global_conversions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "global_conversions_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1269,6 +1329,18 @@ export type Database = {
         Args: { source_collection_id: string }
         Returns: string
       }
+      global_conversion_delete: { Args: { p_id: string }; Returns: undefined }
+      global_conversion_upsert: {
+        Args: {
+          p_factor: number
+          p_from_unit: string
+          p_id: string | null
+          p_ingredient_name: string | null
+          p_notes: string | null
+          p_to_unit: string
+        }
+        Returns: string
+      }
       global_toc_admin_import: {
         Args: { source_collection_id: string }
         Returns: string
@@ -1279,6 +1351,17 @@ export type Database = {
       }
       global_toc_share_collection: {
         Args: { source_collection_id: string }
+        Returns: string
+      }
+      house_conversion_delete: { Args: { p_id: string }; Returns: undefined }
+      house_conversion_upsert: {
+        Args: {
+          p_factor: number
+          p_from_unit: string
+          p_id: string
+          p_ingredient_name: string | null
+          p_to_unit: string
+        }
         Returns: string
       }
       import_claim_next: {
