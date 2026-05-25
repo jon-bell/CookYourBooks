@@ -1,4 +1,4 @@
-import { test, expect, signIn } from './support/fixtures.js';
+import { test, expect, signIn, waitForSynced } from './support/fixtures.js';
 import { adminGet, createTestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
 
@@ -266,6 +266,9 @@ test.describe('Admin: global cookbook ToC', () => {
 
     // Land on the collection page.
     await expect(page.getByRole('heading', { name: 'My Family Cookbook' })).toBeVisible();
+    // Wait for the local-first write to flush to remote — the share RPC
+    // refuses if the source row hasn't reached the server yet.
+    await waitForSynced(page);
 
     // Share button is visible (PUBLISHED_BOOK, not taken down).
     await page.getByRole('button', { name: 'Share to global catalog' }).click();
