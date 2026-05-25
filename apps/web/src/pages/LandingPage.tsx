@@ -9,26 +9,26 @@ export function LandingPage() {
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
           Your cookbook library, with you everywhere.
         </h1>
-        <p className="mx-auto max-w-2xl text-lg text-stone-600">
+        <p className="mx-auto max-w-2xl text-lg text-stone-600 dark:text-stone-400">
           CookYourBooks keeps every recipe — your own notes, cookbooks, web bookmarks — in one
           searchable, offline-first library that syncs across your phone and browser.
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
           <Link
             to="/sign-up"
-            className="rounded-md bg-stone-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-stone-800"
+            className="rounded-md bg-stone-900 dark:bg-stone-100 px-5 py-2.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
           >
             Create an account
           </Link>
           <Link
             to="/sign-in"
-            className="rounded-md border border-stone-300 px-5 py-2.5 text-sm font-medium text-stone-800 hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 px-5 py-2.5 text-sm font-medium text-stone-800 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Sign in
           </Link>
           <Link
             to="/discover"
-            className="rounded-md px-5 py-2.5 text-sm font-medium text-stone-700 hover:text-stone-900"
+            className="rounded-md px-5 py-2.5 text-sm font-medium text-stone-700 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100"
           >
             Browse public recipes →
           </Link>
@@ -63,18 +63,18 @@ export function LandingPage() {
         </Feature>
       </section>
 
-      <section className="rounded-lg border border-amber-200 bg-amber-50 p-8">
-        <h2 className="text-2xl font-semibold tracking-tight text-stone-900">
+      <section className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/40 p-8">
+        <h2 className="text-2xl font-semibold tracking-tight text-stone-900 dark:text-stone-100">
           Free as in sourdough starter, not as in beer.
         </h2>
-        <div className="mt-3 space-y-3 text-stone-700">
+        <div className="mt-3 space-y-3 text-stone-700 dark:text-stone-300">
           <p>
             CookYourBooks is open source under the AGPL. Fork it, feed it, pass it on. The
             recipe for the app itself is right there in the jar — take a scoop, add your own
             flour, bake something new. If you run a modified copy for others, share what you
             changed so the next cook can keep it alive.
           </p>
-          <p className="text-sm text-stone-600">
+          <p className="text-sm text-stone-600 dark:text-stone-400">
             Self-host it against your own Supabase project, read the code before you trust it
             with your grandmother's brisket, or send a patch when something bugs you.
           </p>
@@ -82,7 +82,7 @@ export function LandingPage() {
         <div className="mt-4 flex flex-wrap gap-3">
           <a
             href="https://github.com/jon-bell/CookYourBooks"
-            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+            className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
             target="_blank"
             rel="noreferrer"
           >
@@ -90,7 +90,7 @@ export function LandingPage() {
           </a>
           <a
             href="https://github.com/jon-bell/CookYourBooks/blob/main/CONTRIBUTING.md"
-            className="rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-800 hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-4 py-2 text-sm font-medium text-stone-800 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800"
             target="_blank"
             rel="noreferrer"
           >
@@ -98,7 +98,7 @@ export function LandingPage() {
           </a>
           <a
             href="https://github.com/jon-bell/CookYourBooks/blob/main/LICENSE"
-            className="rounded-md px-4 py-2 text-sm font-medium text-stone-700 hover:text-stone-900"
+            className="rounded-md px-4 py-2 text-sm font-medium text-stone-700 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100"
             target="_blank"
             rel="noreferrer"
           >
@@ -107,7 +107,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-stone-200 bg-white p-6 text-sm text-stone-600">
+      <section className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-6 text-sm text-stone-600 dark:text-stone-400">
         <p>
           Built as a local-first web app with a Capacitor wrapper for iOS + Android. Backed by
           Supabase for auth, sync, and storage — your keys and your recipes stay yours.
@@ -119,9 +119,9 @@ export function LandingPage() {
 
 function Feature({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-stone-200 bg-white p-5">
+    <div className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
       <h2 className="text-base font-semibold">{title}</h2>
-      <p className="mt-2 text-sm text-stone-600">{children}</p>
+      <p className="mt-2 text-sm text-stone-600 dark:text-stone-400">{children}</p>
     </div>
   );
 }

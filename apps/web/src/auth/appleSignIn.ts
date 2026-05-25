@@ -1,19 +1,17 @@
-// Sign in with Apple — cross-platform entry point. App Store guideline
-// 4.8 requires this to be offered whenever we also offer Google OAuth
-// (which we do on SignInPage / SignUpPage).
-//
-// On Capacitor iOS: uses @capacitor-community/apple-sign-in to invoke the
-// native ASAuthorizationController flow (system-rendered sheet, no
-// browser switch), then hands the resulting identity token to Supabase
-// via signInWithIdToken.
-//
-// On web (incl. Android Capacitor): falls back to Supabase's
-// signInWithOAuth which redirects to Apple's web auth flow and back to
-// our origin.
+// Native iOS Sign-in-with-Apple path. The web (and Capacitor-Android)
+// flow uses `supabase.auth.signInWithOAuth({ provider: 'apple' })`
+// inline in the sign-in/sign-up pages — that redirect-based flow works
+// in any browser and on Android. On iOS that same call opens an
+// external Safari, which is jarring and (per App Store reviewers) less
+// preferred than the system-rendered ASAuthorizationController sheet.
+// So on iOS we intercept and use @capacitor-community/apple-sign-in
+// instead, then hand the resulting identity token to Supabase's
+// signInWithIdToken.
 
 import { supabase } from '../supabase.js';
 
-function isCapacitorIOS(): boolean {
+/** True if running inside the Capacitor iOS shell. */
+export function isCapacitorIOS(): boolean {
   const cap = (globalThis as {
     Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
   }).Capacitor;
@@ -21,58 +19,40 @@ function isCapacitorIOS(): boolean {
 }
 
 /**
- * Drives the Apple sign-in flow appropriate for the current runtime.
- * Resolves when the user is authenticated (or the OAuth redirect has
- * been kicked off, in the web case). Rejects with the underlying error
- * on actual failure; user-cancellation is swallowed and resolves to
- * `{ cancelled: true }`.
+ * Drives the native iOS Sign-in-with-Apple flow. Resolves with
+ * `{ cancelled: true }` when the user dismisses the sheet, or
+ * `{ cancelled: false }` once Supabase has accepted the identity token
+ * and the auth state listener has been notified. Rejects with the
+ * underlying error otherwise.
+ *
+ * Caller is responsible for checking `isCapacitorIOS()` first; calling
+ * this on web or Android throws when the plugin isn't bundled.
  */
-export async function signInWithApple(): Promise<
-  { cancelled: true } | { cancelled?: false }
-> {
-  if (isCapacitorIOS()) return signInWithAppleNative();
-  return signInWithAppleWeb();
-}
-
-async function signInWithAppleNative(): Promise<
-  { cancelled: true } | { cancelled?: false }
+export async function signInWithAppleNative(): Promise<
+  { cancelled: true } | { cancelled: false }
 > {
   const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
   try {
     const result = await SignInWithApple.authorize({
       clientId: 'app.cookyourbooks',
-      // Redirect URI is required by the plugin's web fallback but ignored
-      // by the iOS-native path. Point it at our Supabase callback so it's
-      // a valid value if the user is somehow on the web shim.
+      // The plugin requires a redirect URI for its web fallback but ignores
+      // it on the iOS-native path. Point it at the Supabase callback so
+      // it's a valid value either way.
       redirectURI: 'https://xdyhhycfolcpqdawfkcj.supabase.co/auth/v1/callback',
       scopes: 'email name',
     });
     const idToken = result.response.identityToken;
-    if (!idToken) {
-      throw new Error('Apple sign-in did not return an identity token');
-    }
+    if (!idToken) throw new Error('Apple sign-in did not return an identity token');
     const { error } = await supabase.auth.signInWithIdToken({
       provider: 'apple',
       token: idToken,
     });
     if (error) throw error;
-    return {};
+    return { cancelled: false };
   } catch (err) {
-    // The plugin throws on cancellation with a code-1001 style error.
     if (isCancellation(err)) return { cancelled: true };
     throw err;
   }
-}
-
-async function signInWithAppleWeb(): Promise<
-  { cancelled: true } | { cancelled?: false }
-> {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'apple',
-    options: { redirectTo: window.location.origin },
-  });
-  if (error) throw error;
-  return {};
 }
 
 function isCancellation(err: unknown): boolean {

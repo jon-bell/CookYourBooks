@@ -22,6 +22,10 @@
         }
       ],
       "destination": "/api/og?kind=collection&cid=:cid"
+    },
+    {
+      "source": "/((?!api/|assets/).*)",
+      "destination": "/index.html"
     }
   ]
 }

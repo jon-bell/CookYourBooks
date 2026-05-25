@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { supabase } from '../supabase.js';
-import { AppleButton } from './AppleButton.js';
+import { AppleLogo } from './AppleLogo.js';
+import { isCapacitorIOS, signInWithAppleNative } from './appleSignIn.js';
 
 export function SignInPage() {
   const navigate = useNavigate();
@@ -25,10 +26,22 @@ export function SignInPage() {
     navigate(redirectTo, { replace: true });
   }
 
-  async function handleGoogle() {
+  async function handleOAuth(provider: 'google' | 'apple') {
     setError(null);
+    // On iOS, route Apple through the native ASAuthorizationController so
+    // the user sees the system sheet instead of an external Safari
+    // redirect. Google still uses the OAuth redirect everywhere.
+    if (provider === 'apple' && isCapacitorIOS()) {
+      try {
+        const result = await signInWithAppleNative();
+        if (!result.cancelled) navigate(redirectTo, { replace: true });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
+      provider,
       options: { redirectTo: window.location.origin },
     });
     if (error) setError(error.message);
@@ -38,61 +51,70 @@ export function SignInPage() {
     <div className="mx-auto max-w-sm space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Sign in</h1>
-        <p className="mt-1 text-sm text-stone-600">Welcome back.</p>
+        <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">Welcome back.</p>
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-stone-700">Email</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Email</span>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
-            className="w-full rounded border border-stone-300 px-3 py-2"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-stone-700">Password</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Password</span>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
-            className="w-full rounded border border-stone-300 px-3 py-2"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
           />
         </label>
         {error && (
-          <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
             {error}
           </div>
         )}
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50"
+          className="w-full rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
         >
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
       <div className="relative text-center">
-        <span className="bg-stone-50 px-3 text-xs uppercase tracking-wide text-stone-500">
+        <span className="bg-stone-50 dark:bg-stone-900 px-3 text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
           or
         </span>
       </div>
-      <div className="space-y-2">
-        <AppleButton label="Sign in with Apple" onError={setError} />
-        <button
-          onClick={handleGoogle}
-          className="w-full rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-100"
-        >
-          Continue with Google
-        </button>
-      </div>
-      <p className="text-center text-sm text-stone-600">
+      <button
+        type="button"
+        onClick={() => void handleOAuth('google')}
+        className="w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-4 py-2 text-sm font-medium hover:bg-stone-100 dark:hover:bg-stone-800"
+      >
+        Continue with Google
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleOAuth('apple')}
+        aria-label="Sign in with Apple"
+        // Apple HIG: black-on-light, white-on-dark, with the canonical
+        // glyph on the leading side of the label.
+        className="flex w-full items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 dark:bg-white dark:text-black dark:hover:bg-stone-200"
+      >
+        <AppleLogo className="h-4 w-4" />
+        <span>Sign in with Apple</span>
+      </button>
+      <p className="text-center text-sm text-stone-600 dark:text-stone-400">
         No account?{' '}
-        <Link to="/sign-up" className="font-medium text-stone-900 underline">
+        <Link to="/sign-up" className="font-medium text-stone-900 dark:text-stone-100 underline">
           Create one
         </Link>
       </p>

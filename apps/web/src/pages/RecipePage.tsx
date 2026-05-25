@@ -40,9 +40,9 @@ export function RecipePage() {
   const registry = useMemo(() => createRegistry(), []);
   const scaled = useMemo(() => (recipe ? scaleRecipe(recipe, scale) : undefined), [recipe, scale]);
 
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
+  if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
   if (!collection || !recipe || !scaled) {
-    return <p className="text-stone-600">Recipe not found.</p>;
+    return <p className="text-stone-600 dark:text-stone-400">Recipe not found.</p>;
   }
 
   function displayQuantity(q: Quantity, ingredientName: string): string {
@@ -74,12 +74,12 @@ export function RecipePage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to={`/collections/${collection.id}`} className="text-sm text-stone-600 hover:underline">
+        <Link to={`/collections/${collection.id}`} className="text-sm text-stone-600 dark:text-stone-400 hover:underline">
           ← {collection.title}
         </Link>
         <h1 className="mt-1 text-3xl font-semibold">{recipe.title}</h1>
         {(recipe.bookTitle || (recipe.pageNumbers && recipe.pageNumbers.length > 0)) && (
-          <p className="mt-1 text-sm text-stone-500">
+          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
             {recipe.bookTitle}
             {recipe.bookTitle && recipe.pageNumbers && recipe.pageNumbers.length > 0 ? ' · ' : ''}
             {recipe.pageNumbers && recipe.pageNumbers.length > 0
@@ -88,31 +88,31 @@ export function RecipePage() {
           </p>
         )}
         {parent && (
-          <p className="mt-1 text-sm text-stone-600">
+          <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
             Adapted from{' '}
             <Link
               to={`/collections/${parent.collectionId}/recipes/${parent.id}`}
-              className="underline hover:text-stone-900"
+              className="underline hover:text-stone-900 dark:hover:text-stone-100"
             >
               {parent.title}
             </Link>
           </p>
         )}
         {scaled.servings && (
-          <p className="mt-1 text-stone-600">Serves {formatServings(scaled.servings)}</p>
+          <p className="mt-1 text-stone-600 dark:text-stone-400">Serves {formatServings(scaled.servings)}</p>
         )}
         {recipe.timeEstimate && (
-          <p className="mt-1 text-sm text-stone-600">⏲ {recipe.timeEstimate}</p>
+          <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">⏲ {recipe.timeEstimate}</p>
         )}
         {recipe.description && (
-          <p className="mt-3 whitespace-pre-wrap text-stone-700">{recipe.description}</p>
+          <p className="mt-3 whitespace-pre-wrap text-stone-700 dark:text-stone-300">{recipe.description}</p>
         )}
         {recipe.equipment && recipe.equipment.length > 0 && (
           <ul className="mt-3 flex flex-wrap gap-1.5 text-xs">
             {recipe.equipment.map((item) => (
               <li
                 key={item}
-                className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-700"
+                className="rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-stone-700 dark:text-stone-300"
               >
                 {item}
               </li>
@@ -121,18 +121,18 @@ export function RecipePage() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 bg-white p-4">
+      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-stone-600">Scale</span>
+          <span className="text-stone-600 dark:text-stone-400">Scale</span>
           <input
             type="number"
             min={0.25}
             step={0.25}
             value={scale}
             onChange={(e) => setScale(Math.max(0.25, Number(e.target.value) || 1))}
-            className="w-20 rounded border border-stone-300 px-2 py-1"
+            className="w-20 rounded border border-stone-300 dark:border-stone-600 px-2 py-1"
           />
-          <span className="text-stone-500">×</span>
+          <span className="text-stone-500 dark:text-stone-400">×</span>
         </label>
         <div className="flex items-center gap-2 text-sm">
           {[0.5, 1, 2, 3].map((v) => (
@@ -148,11 +148,11 @@ export function RecipePage() {
           ))}
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-stone-600">Convert to</span>
+          <span className="text-stone-600 dark:text-stone-400">Convert to</span>
           <select
             value={targetUnit}
             onChange={(e) => setTargetUnit(e.target.value)}
-            className="rounded border border-stone-300 px-2 py-1"
+            className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1"
           >
             <option value="">original units</option>
             {Object.values(Units).map((u) => (
@@ -165,26 +165,26 @@ export function RecipePage() {
         <div className="ml-auto flex gap-2">
           <Link
             to={`/collections/${collection.id}/recipes/${recipe.id}/cook`}
-            className="rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800"
+            className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
           >
             Cook mode
           </Link>
           <Link
             to={`/collections/${collection.id}/recipes/${recipe.id}/edit`}
-            className="rounded-md px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100"
+            className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Edit
           </Link>
           <button
             onClick={adaptThisRecipe}
             disabled={saveRecipe.isPending}
-            className="rounded-md px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+            className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
           >
             Adapt
           </button>
           <button
             onClick={shareAsMarkdown}
-            className="rounded-md px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+            className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
           >
             Share
           </button>
@@ -198,7 +198,7 @@ export function RecipePage() {
                 navigate(`/collections/${collection.id}`);
               }
             }}
-            className="rounded-md px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+            className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
           >
             Delete
           </button>
@@ -218,14 +218,14 @@ export function RecipePage() {
                     </span>{' '}
                     {ing.name}
                     {ing.preparation && (
-                      <span className="text-stone-500">, {ing.preparation}</span>
+                      <span className="text-stone-500 dark:text-stone-400">, {ing.preparation}</span>
                     )}
                   </>
                 ) : (
                   <>
                     {ing.name}
                     {ing.preparation && (
-                      <span className="text-stone-500">, {ing.preparation}</span>
+                      <span className="text-stone-500 dark:text-stone-400">, {ing.preparation}</span>
                     )}
                   </>
                 )}
@@ -238,28 +238,28 @@ export function RecipePage() {
           <ol className="space-y-3">
             {scaled.instructions.map((step) => (
               <li key={step.id} className="flex gap-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-900 text-xs font-medium text-white">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-900 dark:bg-stone-100 text-xs font-medium text-white dark:text-stone-900">
                   {step.stepNumber}
                 </span>
                 <div className="flex-1">
                   <div className="flex flex-wrap items-baseline gap-2">
                     <span>{step.text}</span>
                     {step.temperature && (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-900 ring-1 ring-amber-200">
+                      <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 text-xs text-amber-900 dark:text-amber-200 ring-1 ring-amber-200">
                         {step.temperature.value}°
                         {step.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
                       </span>
                     )}
                   </div>
                   {step.subInstructions && step.subInstructions.length > 0 && (
-                    <ul className="mt-1 ml-4 list-disc space-y-0.5 text-sm text-stone-600">
+                    <ul className="mt-1 ml-4 list-disc space-y-0.5 text-sm text-stone-600 dark:text-stone-400">
                       {step.subInstructions.map((sub, i) => (
                         <li key={i}>{sub}</li>
                       ))}
                     </ul>
                   )}
                   {step.notes && (
-                    <p className="mt-1 text-xs italic text-stone-500">{step.notes}</p>
+                    <p className="mt-1 text-xs italic text-stone-500 dark:text-stone-400">{step.notes}</p>
                   )}
                 </div>
               </li>
@@ -269,9 +269,9 @@ export function RecipePage() {
       </div>
 
       {recipe.notes && (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <h2 className="text-sm font-semibold text-stone-900">Notes</h2>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-stone-700">{recipe.notes}</p>
+        <section className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/40 p-4">
+          <h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">Notes</h2>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-stone-700 dark:text-stone-300">{recipe.notes}</p>
         </section>
       )}
 
@@ -280,12 +280,12 @@ export function RecipePage() {
           <h2 className="text-lg font-semibold">
             Adaptations ({adaptations.length})
           </h2>
-          <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
+          <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
             {adaptations.map((a) => (
               <li key={a.id}>
                 <Link
                   to={`/collections/${a.collectionId}/recipes/${a.id}`}
-                  className="block px-4 py-2 text-sm text-stone-700 hover:bg-stone-50"
+                  className="block px-4 py-2 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-900"
                 >
                   {a.title}
                 </Link>

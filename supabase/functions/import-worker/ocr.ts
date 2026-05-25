@@ -245,9 +245,12 @@ async function callOpenAI(
   started: number,
 ): Promise<OcrCallResult> {
   const base = (p.baseUrl ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+  // Don't pin temperature. The newer reasoning-family models (o-series,
+  // gpt-5+) reject any non-default temperature with a 400. JSON mode
+  // below is what actually constrains the output shape; determinism
+  // isn't worth losing those models as a fallback.
   const body = {
     model: p.model,
-    temperature: 0,
     response_format: { type: 'json_object' },
     messages: [
       {

@@ -76,13 +76,13 @@ export function ReasonDialog({
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg ring-1 ring-stone-200"
+        className="w-full max-w-md rounded-lg bg-white dark:bg-stone-900 p-6 shadow-lg ring-1 ring-stone-200"
       >
         <h2 className="text-lg font-semibold">{title}</h2>
-        {description && <p className="mt-1 text-sm text-stone-600">{description}</p>}
+        {description && <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">{description}</p>}
 
         <label className="mt-4 block">
-          <span className="mb-1 block text-sm font-medium text-stone-700">
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
             Reason (logged publicly in the audit trail)
           </span>
           <input
@@ -91,12 +91,12 @@ export function ReasonDialog({
             onChange={(e) => setReason(e.target.value)}
             placeholder={placeholder ?? 'Short explanation…'}
             maxLength={500}
-            className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
           />
         </label>
 
         {error && (
-          <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="mt-3 rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
             {error}
           </div>
         )}
@@ -114,7 +114,7 @@ export function ReasonDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900"
+            className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
           >
             Cancel
           </button>

@@ -15,6 +15,10 @@ export interface UploadBatchInput {
   fallbackModel: string | null;
   sourceKind: SourceKind;
   files: File[];
+  /** When true, items land in AWAITING_GROUPING and the worker is not
+   *  kicked. Caller must drive the user through grouping and then call
+   *  `import_finalize_grouping` to release items into PENDING. */
+  awaitGrouping?: boolean;
 }
 
 export interface UploadProgress {
@@ -124,6 +128,7 @@ export async function uploadBatch(
   );
   await enqueue({ kind: 'import_batch_insert', entity_id: batchId });
 
+  const initialStatus = input.awaitGrouping ? 'AWAITING_GROUPING' : 'PENDING';
   for (const it of items) {
     const storagePath = `${input.ownerId}/${batchId}/pages/${it.id}.jpg`;
     const thumbPath = `${input.ownerId}/${batchId}/thumbs/${it.id}.jpg`;
@@ -149,7 +154,7 @@ export async function uploadBatch(
         input.targetCollectionId,
         null,
         0,
-        'PENDING',
+        initialStatus,
         0,
         0,
         null,
@@ -167,13 +172,15 @@ export async function uploadBatch(
     await enqueue({ kind: 'import_item_insert', entity_id: it.id });
   }
 
-  // Step 5: Nudge the worker. The kick will no-op if the rows haven't
-  // reached Postgres yet, but the next sync push + pg_cron tick will
-  // pick them up anyway.
-  try {
-    await kickOcr(batchId);
-  } catch {
-    // Kick is best-effort — pg_cron's 30s tick will still pick the batch up.
+  // Step 5: Nudge the worker — unless this batch is awaiting grouping,
+  // in which case the user still has to decide which pages go together
+  // and `import_finalize_grouping` will release rows into PENDING.
+  if (!input.awaitGrouping) {
+    try {
+      await kickOcr(batchId);
+    } catch {
+      // Kick is best-effort — pg_cron's 30s tick will still pick the batch up.
+    }
   }
   onProgress?.({ phase: 'done', done: total, total });
   return { batchId, itemIds: items.map((it) => it.id) };

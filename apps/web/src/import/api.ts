@@ -48,6 +48,25 @@ export async function mergeImportItems(
   if (error) throw error;
 }
 
+/**
+ * Confirm a "Group then OCR" batch's groupings. `groups` is an array of
+ * item-id arrays — within each inner array the first id is the primary
+ * (recipe gets that page's storage_path) and the rest are absorbed
+ * (DISCARDED, their storage_paths appended to the primary's extras).
+ * Singletons are passed as one-element arrays. All AWAITING_GROUPING
+ * primaries flip to PENDING in one transaction.
+ */
+export async function finalizeGrouping(
+  batchId: string,
+  groups: readonly (readonly string[])[],
+): Promise<void> {
+  const { error } = await supabase.rpc('import_finalize_grouping', {
+    p_batch_id: batchId,
+    p_groups: groups.map((g) => [...g]),
+  });
+  if (error) throw error;
+}
+
 export async function setRecitationPolicy(
   batchId: string,
   policy: RecitationPolicy,
@@ -57,6 +76,27 @@ export async function setRecitationPolicy(
     p_policy: policy,
   });
   if (error) throw error;
+}
+
+export async function setBatchFallback(
+  batchId: string,
+  provider: OcrProvider | null,
+  model: string | null,
+): Promise<void> {
+  const { error } = await supabase.rpc('import_set_batch_fallback', {
+    p_batch_id: batchId,
+    p_provider: provider,
+    p_model: model,
+  });
+  if (error) throw error;
+}
+
+export async function retryRecitationFailures(batchId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('import_retry_recitation_failures', {
+    p_batch_id: batchId,
+  });
+  if (error) throw error;
+  return typeof data === 'number' ? data : 0;
 }
 
 export class OcrWorkerNotConfiguredError extends Error {
