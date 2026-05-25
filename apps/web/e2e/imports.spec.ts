@@ -52,6 +52,23 @@ async function createCookbook(
   await waitForSynced(page);
 }
 
+/**
+ * Pick a cookbook in the import form's combobox. Replaces the old
+ * `selectOption` call — the picker is no longer a native `<select>`; it's
+ * a button that opens a listbox with a search input.
+ */
+async function pickTargetCookbook(
+  page: import('@playwright/test').Page,
+  title: string,
+): Promise<void> {
+  await page.getByLabel('Target cookbook').click();
+  const listbox = page.getByRole('listbox');
+  await expect(listbox).toBeVisible();
+  await listbox.getByPlaceholder('Search cookbooks…').fill(title);
+  await listbox.getByRole('option', { name: title }).first().click();
+  await expect(listbox).toHaveCount(0);
+}
+
 test.describe('bulk OCR imports', () => {
   test.slow();
 
@@ -64,7 +81,7 @@ test.describe('bulk OCR imports', () => {
     await page.goto('/import/new');
     await uploadTestImages(page, ['page1.png', 'page2.png', 'page3.png', 'page4.png', 'page5.png']);
     await page.getByLabel('Batch name').fill('Bulk Batch One');
-    await page.getByLabel('Target cookbook').selectOption({ label: 'Bulk Bakery' });
+    await pickTargetCookbook(page, 'Bulk Bakery');
     await page.getByRole('button', { name: 'Start import' }).click();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+$/);
@@ -142,7 +159,7 @@ test.describe('bulk OCR imports', () => {
 
     await page.goto('/import/new');
     await uploadTestImages(page, ['page1.png', 'page2.png', 'page3.png']);
-    await page.getByLabel('Target cookbook').selectOption({ label: 'Fallback Cookbook' });
+    await pickTargetCookbook(page, 'Fallback Cookbook');
     await page.getByLabel('Fallback provider (optional)').selectOption('openai-compatible');
     await page.getByLabel('Fallback model').fill('gpt-4o');
     await page.getByRole('button', { name: 'Start import' }).click();
