@@ -148,6 +148,26 @@ platform :ios do
   desc "Build a signed Release archive and upload it to TestFlight. Requires ASC API key env vars + a match-provisioned profile."
   lane :beta do
     certs
+    # Belt-and-suspenders: re-apply the ACL partition list right before
+    # gym. Match's keychain_password parameter is supposed to do this
+    # during the import, but observation shows the freshly-imported
+    # key's ACL is still empty when codesign runs, tripping
+    # errSecInternalComponent. Re-applying here costs nothing and is
+    # idempotent.
+    pwd = runner_keychain_password
+    if pwd
+      sh(
+        "security", "set-key-partition-list",
+        "-S", "apple-tool:,apple:,codesign:",
+        "-s",
+        "-k", pwd,
+        File.expand_path("~/Library/Keychains/login.keychain-db"),
+        log: false,
+        error_callback: ->(_) {
+          UI.important("set-key-partition-list returned non-zero; codesign may still trip errSecInternalComponent")
+        },
+      )
+    end
     bump_build
     gym(
       workspace: "App/App.xcworkspace",
