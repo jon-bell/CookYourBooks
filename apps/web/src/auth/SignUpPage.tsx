@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase.js';
 import { AppleLogo } from './AppleLogo.js';
+import { isCapacitorIOS, signInWithAppleNative } from './appleSignIn.js';
 
 export function SignUpPage() {
   const navigate = useNavigate();
@@ -36,6 +37,15 @@ export function SignUpPage() {
 
   async function handleOAuth(provider: 'google' | 'apple') {
     setError(null);
+    if (provider === 'apple' && isCapacitorIOS()) {
+      try {
+        const result = await signInWithAppleNative();
+        if (!result.cancelled) navigate('/', { replace: true });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: { redirectTo: window.location.origin },

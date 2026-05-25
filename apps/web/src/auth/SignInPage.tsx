@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { supabase } from '../supabase.js';
 import { AppleLogo } from './AppleLogo.js';
+import { isCapacitorIOS, signInWithAppleNative } from './appleSignIn.js';
 
 export function SignInPage() {
   const navigate = useNavigate();
@@ -27,6 +28,18 @@ export function SignInPage() {
 
   async function handleOAuth(provider: 'google' | 'apple') {
     setError(null);
+    // On iOS, route Apple through the native ASAuthorizationController so
+    // the user sees the system sheet instead of an external Safari
+    // redirect. Google still uses the OAuth redirect everywhere.
+    if (provider === 'apple' && isCapacitorIOS()) {
+      try {
+        const result = await signInWithAppleNative();
+        if (!result.cancelled) navigate(redirectTo, { replace: true });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: { redirectTo: window.location.origin },

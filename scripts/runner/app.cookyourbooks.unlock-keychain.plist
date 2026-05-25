@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>app.cookyourbooks.unlock-keychain</string>
+
+  <!-- Runs once when the user logs in. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- And again every 30 minutes, in case something else re-locks the
+       keychain mid-session. Cheap enough; no-op if already unlocked. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <!-- The actions runner ALSO runs as this user, so its codesign calls
+       see the same unlocked keychain. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jon/CookYourBooks/scripts/runner/unlock-keychain.sh</string>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/jon/Library/Logs/cyb-mac-runner.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/jon/Library/Logs/cyb-mac-runner.log</string>
+</dict>
+</plist>
