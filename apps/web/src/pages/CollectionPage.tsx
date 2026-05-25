@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { RecipeCollection } from '@cookyourbooks/domain';
+import type { Cookbook, RecipeCollection } from '@cookyourbooks/domain';
 import {
   useCollection,
   useDeleteCollection,
@@ -12,6 +13,7 @@ import { SortableRecipeList } from '../components/SortableRecipeList.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
 import { ShareToGlobalButton } from '../components/ShareToGlobalButton.js';
+import { MakePublicDialog } from '../components/MakePublicDialog.js';
 export function CollectionPage() {
   const { collectionId } = useParams();
   const navigate = useNavigate();
@@ -19,14 +21,31 @@ export function CollectionPage() {
   const deleteCollection = useDeleteCollection();
   const saveCollection = useSaveCollection();
   const reorderRecipes = useReorderRecipes(collectionId ?? '');
+  const [showPublishWarning, setShowPublishWarning] = useState(false);
 
   if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
   if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
   if (!collection) return <p className="text-stone-600 dark:text-stone-400">Collection not found.</p>;
 
   const c = collection;
+  // Hard rule mirrored at the DB layer: a PUBLISHED_BOOK with an ISBN
+  // contains copyrighted material and can never be public.
+  const isbnBlocksPublic =
+    c.sourceType === 'PUBLISHED_BOOK' &&
+    !!(c as Cookbook).isbn &&
+    (c as Cookbook).isbn!.trim() !== '';
+
+  function onPublicClick() {
+    if (c.isPublic) {
+      void togglePublic();
+    } else {
+      // First-time publish goes through the DMCA / zero-tolerance dialog.
+      setShowPublishWarning(true);
+    }
+  }
 
   async function togglePublic() {
+    setShowPublishWarning(false);
     await saveCollection.mutateAsync({ ...c, isPublic: !c.isPublic } as RecipeCollection);
   }
 
@@ -74,12 +93,18 @@ export function CollectionPage() {
         </Link>
         <ImportFromPhoto collectionId={c.id} />
         <button
-          onClick={togglePublic}
-          disabled={saveCollection.isPending || c.moderationState === 'TAKEN_DOWN'}
+          onClick={onPublicClick}
+          disabled={
+            saveCollection.isPending ||
+            c.moderationState === 'TAKEN_DOWN' ||
+            (isbnBlocksPublic && !c.isPublic)
+          }
           title={
             c.moderationState === 'TAKEN_DOWN'
               ? 'Taken down by a moderator'
-              : undefined
+              : isbnBlocksPublic && !c.isPublic
+                ? "Cookbooks with an ISBN can't be made public — those recipes belong to the publisher. Email dmca@cookyourbooks.app to report a violation."
+                : undefined
           }
           className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
         >
@@ -116,6 +141,13 @@ export function CollectionPage() {
           onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
         />
       )}
+      <MakePublicDialog
+        open={showPublishWarning}
+        collectionTitle={c.title}
+        onCancel={() => setShowPublishWarning(false)}
+        onConfirm={() => void togglePublic()}
+        isPending={saveCollection.isPending}
+      />
     </div>
   );
 }

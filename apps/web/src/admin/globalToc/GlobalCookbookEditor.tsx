@@ -142,6 +142,14 @@ function CookbookForm({
         </Link>
       </div>
 
+      {cookbook.shared_from_collection_id && (
+        <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/40 px-3 py-2 text-xs text-sky-900 dark:text-sky-100">
+          Linked to a user's library cookbook. Edits to the title, author, publisher, year,
+          ISBN, or cover propagate back to that source row on save. (Recipe titles don't sync —
+          those stay user-curated.)
+        </div>
+      )}
+
       <div className="flex gap-4">
         <CoverDropZone
           cookbookId={cookbook.id}

@@ -14,6 +14,7 @@ export interface GlobalCookbook {
   publication_year: number | null;
   cover_image_path: string | null;
   notes: string | null;
+  shared_from_collection_id: string | null;
   created_at: string;
   updated_at: string;
 }

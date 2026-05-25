@@ -41,6 +41,11 @@ test.describe('Collections', () => {
     await page.getByRole('button', { name: 'Create' }).click();
 
     await page.getByRole('button', { name: 'Make public' }).click();
+    // First-time publish goes through the DMCA / zero-tolerance dialog.
+    await page
+      .getByRole('dialog', { name: /Publish .* to Discover\?/ })
+      .getByRole('button', { name: 'I understand, publish' })
+      .click();
     // The local save renders immediately, but a subsequent pull round-trip
     // can briefly echo the server's pre-toggle row back before settling.
     // Give the toggle long enough to stabilise.

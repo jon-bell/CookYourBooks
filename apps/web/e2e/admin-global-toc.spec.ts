@@ -208,6 +208,17 @@ test.describe('Admin: global cookbook ToC', () => {
 
     const admin = await createTestUser('importadm', { admin: true });
     try {
+      // Sanity: the just-seeded cookbook is actually visible in the
+      // candidates view before we hand off to the UI. Catches PostgREST
+      // schema-cache lag on a fresh CI runner before it shows up as a
+      // confusing "list is empty" failure deeper in the test.
+      await expect.poll(async () => {
+        const rows = await adminGet<{ collection_id: string }[]>(
+          `/rest/v1/admin_global_toc_import_candidates?select=collection_id&isbn=eq.${isbn}`,
+        );
+        return rows.length;
+      }, { timeout: 10_000 }).toBe(1);
+
       await signIn(page, admin);
 
       // List page shows the backlog banner.
@@ -256,13 +267,15 @@ test.describe('Admin: global cookbook ToC', () => {
   });
 
   test('owner filter narrows candidates and select-all bulk-imports them', async ({ page }) => {
-    // Two owners, two cookbooks each, four distinct ISBNs.
-    const stamp = Date.now().toString(36).slice(-4);
+    // Two owners, two cookbooks each, four distinct ISBNs. Digits-only
+    // so the SQL normalize_isbn upper() doesn't change them under us
+    // when we round-trip through the view.
+    const tail = Date.now().toString().slice(-8);
     const isbns = [
-      `9780${stamp}0001`,
-      `9780${stamp}0002`,
-      `9780${stamp}0003`,
-      `9780${stamp}0004`,
+      `97800${tail}1`,
+      `97800${tail}2`,
+      `97800${tail}3`,
+      `97800${tail}4`,
     ];
     const ownerAlpha = await createTestUser('alpha');
     const ownerBeta = await createTestUser('beta');
@@ -289,6 +302,14 @@ test.describe('Admin: global cookbook ToC', () => {
 
     const admin = await createTestUser('bulkadm', { admin: true });
     try {
+      // Wait for the seed to be visible in the view before driving the UI.
+      await expect.poll(async () => {
+        const rows = await adminGet<{ collection_id: string }[]>(
+          `/rest/v1/admin_global_toc_import_candidates?select=collection_id&isbn=in.(${isbns.join(',')})`,
+        );
+        return rows.length;
+      }, { timeout: 10_000 }).toBe(4);
+
       await signIn(page, admin);
       await page.goto('/admin/global-toc/import');
 
@@ -399,6 +420,111 @@ test.describe('Admin: global cookbook ToC', () => {
       },
     ).catch(() => {});
   });
+
+  test('admin edits sync back to the source user cookbook', async ({ page }) => {
+    const isbn = `97808${Math.floor(Math.random() * 100_000_000).toString().padStart(8, '0')}`;
+    const owner = await createTestUser('syncback');
+    const colId = await seedCookbookCollection(owner.id, {
+      title: 'Original Title',
+      author: 'Original Author',
+      isbn,
+      recipes: ['r1'],
+    });
+    const admin = await createTestUser('syncadm', { admin: true });
+    try {
+      // Stand up a global row that's already linked to the source.
+      // We don't go through the admin RPC here because it requires an
+      // auth.uid() to be admin and we're posting with service_role
+      // (which has auth.uid() = null). The trigger we care about fires
+      // on UPDATE either way.
+      const insertResp = await fetch(`${SUPABASE_URL}/rest/v1/global_cookbooks`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({
+          title: 'Original Title',
+          author: 'Original Author',
+          isbn,
+          shared_from_collection_id: colId,
+        }),
+      });
+      expect(insertResp.ok).toBe(true);
+      const [row] = (await insertResp.json()) as { id: string }[];
+      const cookbookId = row!.id;
+
+      await signIn(page, admin);
+      await page.goto(`/admin/global-toc/${cookbookId}`);
+
+      // Sync-back hint visible.
+      await expect(page.getByText(/Linked to a user's library cookbook/)).toBeVisible();
+
+      // Edit title and author, save.
+      await page.getByLabel('Title').fill('Polished Title');
+      await page.getByLabel('Author').fill('Polished Author');
+      await page.getByRole('button', { name: 'Save cookbook' }).click();
+
+      // Source collection now reflects the polished metadata.
+      await expect.poll(async () => {
+        const rows = await adminGet<{ title: string; author: string }[]>(
+          `/rest/v1/recipe_collections?select=title,author&id=eq.${colId}`,
+        );
+        return rows[0];
+      }).toMatchObject({ title: 'Polished Title', author: 'Polished Author' });
+    } finally {
+      await fetch(`${SUPABASE_URL}/rest/v1/global_cookbooks?isbn=eq.${isbn}`, {
+        method: 'DELETE',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        },
+      }).catch(() => {});
+      await owner.cleanup();
+      await admin.cleanup();
+    }
+  });
+
+  test('cookbooks with an ISBN cannot be made public', async ({ user }) => {
+    // Hits the REST layer directly so we exercise the DB trigger, not
+    // the UI's pre-emptive disable.
+    const colResp = await fetch(`${SUPABASE_URL}/rest/v1/recipe_collections`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        owner_id: user.id,
+        title: 'Copyrighted Cookbook',
+        source_type: 'PUBLISHED_BOOK',
+        isbn: '978-0-321-12345-6',
+      }),
+    });
+    expect(colResp.ok).toBe(true);
+    const [col] = (await colResp.json()) as { id: string }[];
+
+    // Attempt to flip to public — trigger should refuse.
+    const updateResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/recipe_collections?id=eq.${col!.id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ is_public: true }),
+      },
+    );
+    expect(updateResp.ok).toBe(false);
+    const body = await updateResp.text();
+    expect(body).toMatch(/cannot be made public/i);
+  });
 });
 
 // Direct REST insert for a user cookbook + N recipes. Keeps tests
@@ -435,7 +561,7 @@ async function seedCookbookCollection(
   const [col] = (await colResp.json()) as { id: string }[];
   if (!col) throw new Error('seed collection: no row returned');
 
-  await fetch(`${SUPABASE_URL}/rest/v1/recipes`, {
+  const recipesResp = await fetch(`${SUPABASE_URL}/rest/v1/recipes`, {
     method: 'POST',
     headers: {
       apikey: SUPABASE_SERVICE_ROLE,
@@ -450,5 +576,8 @@ async function seedCookbookCollection(
       })),
     ),
   });
+  if (!recipesResp.ok) {
+    throw new Error(`seed recipes: ${recipesResp.status} ${await recipesResp.text()}`);
+  }
   return col.id;
 }

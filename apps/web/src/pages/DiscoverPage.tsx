@@ -10,6 +10,11 @@ import { supabase } from '../supabase.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
 import { ReportDialog } from '../moderation/ReportDialog.js';
+import {
+  listGlobalCookbooks,
+  type GlobalCookbookSummary,
+} from '../data/globalCookbookLookup.js';
+import { CoverImage } from '../components/CoverImage.js';
 
 export function DiscoverPage() {
   const [q, setQ] = useState('');
@@ -30,6 +35,17 @@ export function DiscoverPage() {
       }),
   });
 
+  // Global catalog is admin-curated and public-readable. It shows up
+  // alongside user-published collections so visitors landing on
+  // Discover can browse the whole "known cookbooks" universe at once.
+  const { data: globalCatalog } = useQuery<GlobalCookbookSummary[]>({
+    queryKey: ['discover-global-cookbooks', q],
+    queryFn: () => listGlobalCookbooks(q || undefined),
+    // Only show the catalog when the user isn't filtering by source
+    // type to a non-cookbook subset, since the catalog is cookbooks-only.
+    enabled: sourceType === '' || sourceType === 'PUBLISHED_BOOK',
+  });
+
   const fork = useMutation({
     mutationFn: (sourceId: string) => forkCollection(supabase, sourceId),
     onSuccess: async (newId) => {
@@ -42,9 +58,18 @@ export function DiscoverPage() {
     },
   });
 
+  const catalog = globalCatalog ?? [];
+  const showCatalog = catalog.length > 0;
+
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-semibold">Discover public collections</h1>
+      <h1 className="text-2xl font-semibold">Discover</h1>
+      <p className="text-sm text-stone-600 dark:text-stone-400">
+        Two ways to find recipes: the <strong>global cookbook catalog</strong> is an
+        admin-curated index of known cookbooks — you can browse their tables of contents and
+        seed your own copy by ISBN. <strong>Public collections</strong> are user-published
+        libraries you can fork into your own account.
+      </p>
       <div className="flex flex-wrap items-center gap-3">
         <input
           value={q}
@@ -63,6 +88,41 @@ export function DiscoverPage() {
           <option value="WEBSITE">Web</option>
         </select>
       </div>
+      {showCatalog && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">Global cookbook catalog ({catalog.length})</h2>
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {catalog.map((cb) => (
+              <li
+                key={cb.id}
+                className="flex gap-3 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3"
+              >
+                <CoverImage
+                  path={cb.cover_image_path ?? undefined}
+                  className="h-20 w-14 flex-shrink-0 rounded"
+                  alt={`${cb.title} cover`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{cb.title}</div>
+                  <div className="truncate text-xs text-stone-600 dark:text-stone-400">
+                    {cb.author ?? 'Unknown author'}
+                    {cb.publication_year && <> · {cb.publication_year}</>}
+                  </div>
+                  {cb.isbn && (
+                    <code className="block truncate text-[10px] text-stone-500 font-mono">
+                      {cb.isbn}
+                    </code>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {(showCatalog || (data ?? []).length > 0) && (
+        <h2 className="text-lg font-semibold pt-2">Public collections</h2>
+      )}
       {isLoading ? (
         <p className="text-stone-500 dark:text-stone-400">Loading…</p>
       ) : error ? (

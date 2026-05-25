@@ -19,6 +19,24 @@ export interface GlobalCookbookWithEntries extends GlobalCookbookSummary {
   entries: { title: string; page_number: number | null; sort_order: number }[];
 }
 
+// Lists global_cookbooks for the Discover page. Public read (no auth
+// required), so anonymous landing-page visitors see the catalog too.
+export async function listGlobalCookbooks(search?: string): Promise<GlobalCookbookSummary[]> {
+  let q = supabase
+    .from('global_cookbooks')
+    .select('id, isbn, title, author, publisher, publication_year, cover_image_path')
+    .order('title', { ascending: true })
+    .limit(50);
+  const trimmed = search?.trim();
+  if (trimmed) {
+    const like = `%${trimmed.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    q = q.or(`title.ilike.${like},author.ilike.${like},isbn.ilike.${like}`);
+  }
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as GlobalCookbookSummary[];
+}
+
 // Hits global_cookbooks by normalized ISBN. Returns null on no match.
 // Does not error on bad input — callers can poll as the user types and
 // just need a tristate (loading / found / not-found).
