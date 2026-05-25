@@ -21,11 +21,11 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: 'Native platform to build (sync = just verify Capacitor config)'
+        description: 'Native platform to build'
         required: true
         default: sync
         type: choice
-        options: [sync, ios, android]
+        options: [sync, ios, ios-release, android]
 
 concurrency:
   group: mobile-${{ github.ref }}
@@ -70,31 +70,62 @@ jobs:
         run: pnpm --filter @cookyourbooks/mobile exec cap sync
 
   ios:
-    name: Build iOS
-    if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios'
-    # TODO: replace with the ripley-cloud macOS scale-set label once that
-    # pool is provisioned. Manual-dispatch only for now, so leaving it as
-    # a placeholder won't accidentally wake the job.
-    runs-on: ripley-cloud-macos-pending
+    name: Build iOS (signed, ship to TestFlight on push to main)
+    # Runs on:
+    #   - PRs touching mobile code  → unsigned simulator build (sanity check)
+    #   - push to main              → fastlane beta (auto-ship to TestFlight)
+    #   - workflow_dispatch=ios     → same as PR (unsigned simulator)
+    #   - workflow_dispatch=ios-release → fastlane release (App Store submit)
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'ios' || inputs.platform == 'ios-release'))
+    runs-on: [self-hosted, macOS, X64, cyb-mac]
     timeout-minutes: 45
+    env:
+      # Strip RVM env vars that pollute brew-installed pod/fastlane GEM_PATH.
+      GEM_PATH: ""
+      GEM_HOME: ""
+      RUBY_VERSION: ""
+      MY_RUBY_HOME: ""
+      IRBRC: ""
+      rvm_path: ""
+      LANG: en_US.UTF-8
+      # Fastlane secrets — see .github/RUNNERS.md for how these are stored.
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      CYB_ASC_KEY_ID: ${{ secrets.CYB_ASC_KEY_ID }}
+      CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
 
-      # pnpm version resolved from root package.json's `packageManager`.
-      - uses: pnpm/action-setup@v4
+      # The runner Mac has nvm under /usr/local/opt/nvm (Homebrew). pnpm
+      # comes from corepack which is bundled with Node 20.
+      - name: Activate Node 20 + pnpm
+        run: |
+          export NVM_DIR="/usr/local/opt/nvm"
+          . "$NVM_DIR/nvm.sh"
+          nvm use 20 --delete-prefix >/dev/null
+          echo "$(dirname "$(which node)")" >> "$GITHUB_PATH"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
+      - name: Write .env.local with Supabase config
+        # Mobile builds bake the hosted Supabase creds into the bundle.
+        run: |
+          cat > apps/web/.env.local <<EOF
+          VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+          VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+          EOF
 
-      - name: Cache Turbo outputs
-        uses: actions/cache@v4
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
+      - name: Decode App Store Connect API key (.p8)
+        # The .p8 PEM file can't be stored directly as a secret (newlines
+        # get mangled). Store the base64-encoded contents in
+        # CYB_ASC_KEY_P8_BASE64 and decode at job start.
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          echo "${{ secrets.CYB_ASC_KEY_P8_BASE64 }}" | base64 --decode \
+            > "$RUNNER_TEMP/asc/AuthKey_${CYB_ASC_KEY_ID}.p8"
+          echo "CYB_ASC_KEY_PATH=$RUNNER_TEMP/asc/AuthKey_${CYB_ASC_KEY_ID}.p8" >> "$GITHUB_ENV"
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -106,11 +137,11 @@ jobs:
       - name: Regenerate icons + splashes
         run: pnpm --filter @cookyourbooks/mobile assets || true
 
-      - name: Build via xcodebuild
+      - name: PR / dispatch=ios — unsigned simulator build (sanity)
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.platform == 'ios')
         working-directory: apps/mobile/ios/App
-        # Archive the Debug config for smoke-only validation. Real release
-        # archives go through `fastlane beta` / `fastlane release` from
-        # apps/mobile/ios/ — see apps/mobile/README.md.
+        # Smoke-only Debug archive. Real release archives go through
+        # `fastlane beta` below on push to main.
         run: |
           xcodebuild \
             -workspace App.xcworkspace \
@@ -118,7 +149,22 @@ jobs:
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath ./ci-build \
             build
+
+      - name: Push to main — fastlane beta (TestFlight)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: apps/mobile/ios
+        run: fastlane beta
+
+      - name: Dispatch=ios-release — fastlane release (App Store submit)
+        if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios-release'
+        working-directory: apps/mobile/ios
+        run: fastlane release
+
+      - name: Clean up decoded ASC key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc/AuthKey_${CYB_ASC_KEY_ID}.p8"
 
   android:
     name: Build Android
