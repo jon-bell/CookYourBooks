@@ -18,6 +18,7 @@ import {
   LocalImportItemRepository,
 } from './localRepos.js';
 import { prepareImage } from './imageProcessing.js';
+import { resolveImportFallback } from '../settings/FallbackModelSection.js';
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   loadOcrSettings,
@@ -86,6 +87,7 @@ export async function ensurePlannerBatch(
   if (existing) return existing;
 
   const defaults = resolveOcrDefaults(registeredProviders);
+  const { fallbackProvider, fallbackModel } = resolveImportFallback();
   const now = Date.now();
   const batch: ImportBatch = {
     id: crypto.randomUUID(),
@@ -95,8 +97,8 @@ export async function ensurePlannerBatch(
     targetCollectionId: collectionId,
     defaultModel: defaults.model,
     defaultProvider: defaults.provider,
-    fallbackModel: null,
-    fallbackProvider: null,
+    fallbackModel,
+    fallbackProvider,
     recitationPolicy: 'ASK',
     status: 'OPEN',
     totalItems: 0,

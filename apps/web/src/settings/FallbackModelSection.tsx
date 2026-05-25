@@ -3,6 +3,10 @@ import type { OcrProvider } from '../import/api.js';
 
 const KEY = 'cookyourbooks.ocr.fallback.v1';
 
+/** Snapshotted onto new import batches when the user hasn't saved fallback prefs. */
+export const DEFAULT_FALLBACK_PROVIDER: OcrProvider = 'openai-compatible';
+export const DEFAULT_FALLBACK_MODEL = 'gpt-5.4';
+
 interface FallbackPrefs {
   provider: OcrProvider | '';
   model: string;
@@ -11,7 +15,9 @@ interface FallbackPrefs {
 function load(): FallbackPrefs {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return { provider: '', model: '' };
+    if (!raw) {
+      return { provider: DEFAULT_FALLBACK_PROVIDER, model: DEFAULT_FALLBACK_MODEL };
+    }
     const parsed = JSON.parse(raw) as Partial<FallbackPrefs>;
     return {
       provider: parsed.provider === 'gemini' || parsed.provider === 'openai-compatible' ? parsed.provider : '',
@@ -30,8 +36,21 @@ export function loadFallbackPrefs(): FallbackPrefs {
   return load();
 }
 
+/** Provider/model pair written onto a new import batch. */
+export function resolveImportFallback(): {
+  fallbackProvider: OcrProvider | null;
+  fallbackModel: string | null;
+} {
+  const prefs = loadFallbackPrefs();
+  if (!prefs.provider) {
+    return { fallbackProvider: null, fallbackModel: null };
+  }
+  const model = prefs.model.trim() || DEFAULT_FALLBACK_MODEL;
+  return { fallbackProvider: prefs.provider, fallbackModel: model };
+}
+
 export function FallbackModelSection() {
-  const [prefs, setPrefs] = useState<FallbackPrefs>(() => load());
+  const [prefs, setPrefs] = useState<FallbackPrefs>(() => loadFallbackPrefs());
   const [savedFlash, setSavedFlash] = useState(false);
 
   useEffect(() => {
