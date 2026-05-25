@@ -5,10 +5,15 @@ import type { LibraryCollectionSummary } from '../local/repositories.js';
 import { CoverImage } from '../components/CoverImage.js';
 
 export function LibraryPage() {
-  const { localReady } = useSync();
+  const { localReady, hydrated, status } = useSync();
   const { data: collections = [], isLoading, error } = useLibrarySummaries();
 
   const waitingForData = isLoading && collections.length === 0;
+  // The first server pull hasn't finished yet. The local cache might
+  // be empty simply because we haven't read from the network — show
+  // that state explicitly instead of the "no collections yet" empty.
+  const awaitingFirstSync =
+    collections.length === 0 && (!hydrated || status === 'syncing' || status === 'initializing');
 
   if (!localReady || waitingForData) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
   if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
@@ -25,9 +30,15 @@ export function LibraryPage() {
         </Link>
       </div>
       {collections.length === 0 ? (
-        <p className="text-stone-600 dark:text-stone-400">
-          No collections yet. Create your first to start adding recipes.
-        </p>
+        awaitingFirstSync ? (
+          <p className="text-stone-600 dark:text-stone-400">
+            No data locally cached, refreshing from server…
+          </p>
+        ) : (
+          <p className="text-stone-600 dark:text-stone-400">
+            No collections yet. Create your first to start adding recipes.
+          </p>
+        )
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {collections.map((c) => {

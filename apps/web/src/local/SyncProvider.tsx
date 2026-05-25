@@ -6,6 +6,25 @@ import { getLocalDb } from './db.js';
 import { countPending } from './outbox.js';
 import { pullAll, pushOutbox, subscribeRealtime, type RealtimeHandle } from './sync.js';
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
+
 export type SyncStatus = 'initializing' | 'idle' | 'syncing' | 'error' | 'offline';
 
 interface SyncState {
@@ -27,6 +46,17 @@ const SyncContext = createContext<SyncState | undefined>(undefined);
 
 const INVALIDATE_DEBOUNCE_MS = 100;
 const PULL_DEBOUNCE_MS = 2000;
+// Hard cap on a single sync cycle. If something hangs (a long-tail
+// fetch never resolving, supabase-js stalling around token refresh,
+// etc.) we abort the await chain so the badge can leave "Syncing…"
+// and the user can retry. The actual network requests don't get
+// cancelled — we just stop waiting on them.
+const CYCLE_TIMEOUT_MS = 45_000;
+// How often the watchdog checks for a wedged status. The boot UX is
+// "page reload always fixes it", which is exactly the symptom of a
+// dangling 'syncing' setState that no one comes back to clear. The
+// watchdog gives us a recovery path without a reload.
+const WATCHDOG_INTERVAL_MS = 5_000;
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -41,6 +71,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const pullPending = useRef(false);
   const pullDebounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const invalidateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Wall-clock when status was most recently set to 'syncing'. Used by
+  // the watchdog to detect a wedged state where the IIFE never reaches
+  // its own finally (network hang, supabase-js auth queue stuck, etc).
+  const syncingStartedAt = useRef<number | null>(null);
 
   function scheduleInvalidate() {
     clearTimeout(invalidateTimer.current);
@@ -61,24 +95,37 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  function setSyncing() {
+    syncingStartedAt.current = Date.now();
+    setStatus('syncing');
+  }
+
+  function setSettled(next: SyncStatus, error?: string) {
+    syncingStartedAt.current = null;
+    if (error !== undefined) setLastError(error);
+    setStatus(next);
+  }
+
   async function cycle(ownerId: string) {
     if (inFlight.current) {
       pullPending.current = true;
       return inFlight.current;
     }
     const run = (async () => {
-      setStatus('syncing');
+      setSyncing();
       setLastError(null);
       try {
         // Push first so the pull sees our own changes reflected as
         // server-acknowledged state (avoids echo-induced overwrites).
-        await pushOutbox(supabase, ownerId);
-        await pullAll(supabase, ownerId);
+        // Wrap in a hard timeout so a single hung request can't trap
+        // the user on "Syncing…" forever — the actual fetch keeps
+        // running, we just stop awaiting it.
+        await withTimeout(pushOutbox(supabase, ownerId), CYCLE_TIMEOUT_MS, 'push');
+        await withTimeout(pullAll(supabase, ownerId), CYCLE_TIMEOUT_MS, 'pull');
         setLastSyncedAt(Date.now());
-        setStatus('idle');
+        setSettled('idle');
       } catch (err) {
-        setLastError((err as Error).message);
-        setStatus('error');
+        setSettled('error', (err as Error).message);
       } finally {
         await refreshPendingCount();
         scheduleInvalidate();
@@ -160,6 +207,28 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     },
     [],
   );
+
+  // Watchdog: if status has been 'syncing' for longer than the cycle
+  // timeout, force-recover. The withTimeout inside cycle already
+  // guards the awaited path, but this catches state-machine bugs
+  // where setStatus('syncing') was issued and the matching settle
+  // never landed (e.g., an aborted effect that left the badge stale).
+  useEffect(() => {
+    if (status !== 'syncing') return;
+    const tick = setInterval(() => {
+      const startedAt = syncingStartedAt.current;
+      if (!startedAt) return;
+      if (Date.now() - startedAt <= CYCLE_TIMEOUT_MS) return;
+      // Clear inFlight so the next syncNow / realtime nudge can start
+      // a fresh cycle instead of joining the wedged promise.
+      inFlight.current = null;
+      setSettled(
+        'error',
+        'Sync stalled — click "Syncing…" or refresh to retry.',
+      );
+    }, WATCHDOG_INTERVAL_MS);
+    return () => clearInterval(tick);
+  }, [status]);
 
   // Online/offline transitions trigger a catch-up sync.
   useEffect(() => {
