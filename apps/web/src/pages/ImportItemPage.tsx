@@ -38,6 +38,7 @@ import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
+import { PinchPanImage } from '../components/PinchPanImage.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -75,6 +76,14 @@ export function ImportItemPage() {
   const [actionError, setActionError] = useState<string | undefined>();
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const pinch = useRef<{
+    startDist: number;
+    startMidX: number;
+    startMidY: number;
+    startZoom: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!item) return;
@@ -231,6 +240,74 @@ export function ImportItemPage() {
   }
   function onMouseUp() {
     if (drag.current) drag.current.active = false;
+  }
+
+  // Touch handlers — one finger pans (mirrors mouse drag), two fingers pinch
+  // zoom. iOS WKWebView's default page-level pinch is suppressed via
+  // `touchAction: 'none'` on the viewer div below, so the gesture stays
+  // scoped to this image instead of zooming the surrounding page.
+  function onTouchStart(e: React.TouchEvent) {
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    if (e.touches.length === 1 && t0) {
+      drag.current = {
+        active: true,
+        startX: t0.clientX,
+        startY: t0.clientY,
+        origX: pan.x,
+        origY: pan.y,
+      };
+      pinch.current = null;
+    } else if (e.touches.length === 2 && t0 && t1) {
+      drag.current = null;
+      pinch.current = {
+        startDist: Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY),
+        startMidX: (t0.clientX + t1.clientX) / 2,
+        startMidY: (t0.clientY + t1.clientY) / 2,
+        startZoom: zoom,
+        origX: pan.x,
+        origY: pan.y,
+      };
+    }
+  }
+  function onTouchMove(e: React.TouchEvent) {
+    e.preventDefault();
+    const t0 = e.touches[0];
+    const t1 = e.touches[1];
+    if (e.touches.length === 1 && t0 && drag.current?.active) {
+      setPan({
+        x: drag.current.origX + (t0.clientX - drag.current.startX),
+        y: drag.current.origY + (t0.clientY - drag.current.startY),
+      });
+    } else if (e.touches.length === 2 && t0 && t1 && pinch.current) {
+      const newDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+      const ratio = newDist / pinch.current.startDist;
+      const mx = (t0.clientX + t1.clientX) / 2;
+      const my = (t0.clientY + t1.clientY) / 2;
+      setZoom(Math.max(0.5, Math.min(4, pinch.current.startZoom * ratio)));
+      setPan({
+        x: pinch.current.origX + (mx - pinch.current.startMidX),
+        y: pinch.current.origY + (my - pinch.current.startMidY),
+      });
+    }
+  }
+  function onTouchEnd(e: React.TouchEvent) {
+    const remaining = e.touches[0];
+    if (e.touches.length === 0) {
+      drag.current = null;
+      pinch.current = null;
+    } else if (e.touches.length === 1 && remaining && pinch.current) {
+      // Pinch released to one-finger; seed a pan from current position so
+      // the image doesn't jump.
+      pinch.current = null;
+      drag.current = {
+        active: true,
+        startX: remaining.clientX,
+        startY: remaining.clientY,
+        origX: pan.x,
+        origY: pan.y,
+      };
+    }
   }
 
   if (!localReady || batchLoading || itemLoading) {
@@ -454,7 +531,11 @@ export function ImportItemPage() {
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
             onMouseLeave={onMouseUp}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
             className="relative aspect-[3/4] cursor-grab overflow-hidden rounded-lg border border-stone-200 bg-stone-100"
+            style={{ touchAction: 'none' }}
           >
             {imgUrl ? (
               <img
@@ -1129,19 +1210,21 @@ function FullscreenImage({
     <div
       role="dialog"
       aria-label={alt}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/95"
+      className="fixed inset-0 z-50 bg-stone-900/95"
       onClick={onClose}
     >
-      <img
-        src={src}
-        alt={alt}
-        className="max-h-screen max-w-screen-2xl object-contain"
+      <div
+        className="absolute inset-0"
+        // The PinchPanImage hosts its own gesture handlers; stop the click
+        // from bubbling to the backdrop's onClick={onClose}.
         onClick={(e) => e.stopPropagation()}
-      />
+      >
+        <PinchPanImage src={src} alt={alt} className="relative h-full w-full" />
+      </div>
       <button
         type="button"
         onClick={onClose}
-        className="absolute right-4 top-4 rounded-full bg-white/90 px-3 py-1.5 text-sm font-medium text-stone-900 hover:bg-white"
+        className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-10 rounded-full bg-white/90 px-3 py-1.5 text-sm font-medium text-stone-900 hover:bg-white"
       >
         Close (esc)
       </button>

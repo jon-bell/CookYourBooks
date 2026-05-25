@@ -1,0 +1,6 @@
+workspace("App/App.xcworkspace")
+scheme("App")
+configuration("Release")
+export_method("app-store")
+output_directory("build")
+output_name("CookYourBooks.ipa")

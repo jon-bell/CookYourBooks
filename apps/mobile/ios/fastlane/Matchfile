@@ -1,0 +1,10 @@
+git_url("git@github.com:jon-bell/cookyourbooks-certs.git")
+git_branch("main")
+storage_mode("git")
+
+# Default to App Store distribution profiles — `fastlane match development`
+# pulls dev profiles instead when working on a new dev machine.
+type("appstore")
+
+app_identifier(["app.cookyourbooks"])
+username(ENV["FASTLANE_APPLE_ID"]) if ENV["FASTLANE_APPLE_ID"]

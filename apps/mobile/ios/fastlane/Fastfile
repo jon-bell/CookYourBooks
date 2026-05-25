@@ -1,0 +1,158 @@
+default_platform(:ios)
+
+# Defensively clear any standard fastlane ASC-key env vars the user might have
+# set. We load the API key explicitly from CYB_ASC_* vars below — leaving the
+# standard names set causes match to auto-detect them as `api_key_path`, which
+# conflicts with the `api_key:` we pass explicitly.
+%w[
+  APP_STORE_CONNECT_API_KEY_PATH
+  APP_STORE_CONNECT_API_KEY_KEY_FILEPATH
+  APP_STORE_CONNECT_API_KEY_KEY
+  APP_STORE_CONNECT_API_KEY_KEY_ID
+  APP_STORE_CONNECT_API_KEY_ID
+  APP_STORE_CONNECT_API_KEY_ISSUER_ID
+  APP_STORE_CONNECT_API_KEY_DURATION
+  APP_STORE_CONNECT_API_KEY_IN_HOUSE
+  APP_STORE_CONNECT_API_KEY_IS_KEY_CONTENT_BASE64
+  MATCH_API_KEY_PATH
+  FASTLANE_API_KEY
+  FASTLANE_API_KEY_PATH
+].each { |k| ENV.delete(k) }
+
+# Returns an App Store Connect API key descriptor if all three CYB_ASC_* vars
+# are set, else nil. Lanes that get nil back fall through to interactive Apple
+# ID 2FA. Generate the key at:
+#   https://appstoreconnect.apple.com/access/integrations/api
+# (role "App Manager"). Download the .p8 once — Apple won't let you re-download.
+def asc_api_key_or_nil
+  return nil unless ENV["CYB_ASC_KEY_ID"] \
+               && ENV["CYB_ASC_ISSUER_ID"] \
+               && ENV["CYB_ASC_KEY_PATH"]
+  app_store_connect_api_key(
+    key_id: ENV["CYB_ASC_KEY_ID"],
+    issuer_id: ENV["CYB_ASC_ISSUER_ID"],
+    key_filepath: ENV["CYB_ASC_KEY_PATH"],
+    in_house: false
+  )
+end
+
+# Same but raises if missing — lanes that *require* the key call this.
+def asc_api_key
+  key = asc_api_key_or_nil
+  UI.user_error!(
+    "ASC API key env vars are not set. Copy fastlane/.env.example to " \
+    "fastlane/.env and fill in CYB_ASC_KEY_ID, CYB_ASC_ISSUER_ID, CYB_ASC_KEY_PATH."
+  ) unless key
+  key
+end
+
+platform :ios do
+  desc "Diagnostic: print every signing cert currently active on the Apple Developer account. Useful when match says 'reached the maximum number'."
+  lane :list_certs do
+    require "spaceship"
+    token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("CYB_ASC_KEY_ID"),
+      issuer_id: ENV.fetch("CYB_ASC_ISSUER_ID"),
+      key: File.read(ENV.fetch("CYB_ASC_KEY_PATH"))
+    )
+    Spaceship::ConnectAPI.token = token
+    rows = Spaceship::ConnectAPI::Certificate.all
+    UI.message "Found #{rows.size} cert(s) on the account:"
+    rows.each do |c|
+      UI.message "  #{c.certificate_type.to_s.ljust(28)} id=#{c.id} name=#{c.name.inspect} expires=#{c.expiration_date}"
+    end
+  end
+
+  desc "DANGEROUS: revoke every Apple Distribution cert by id. Pass `ids:abc,def,ghi`. Only use to clean up orphans created by failed match runs."
+  lane :revoke_certs do |options|
+    ids = (options[:ids] || "").split(",").map(&:strip).reject(&:empty?)
+    UI.user_error!("Pass ids:abc,def,ghi") if ids.empty?
+    require "spaceship"
+    token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("CYB_ASC_KEY_ID"),
+      issuer_id: ENV.fetch("CYB_ASC_ISSUER_ID"),
+      key: File.read(ENV.fetch("CYB_ASC_KEY_PATH"))
+    )
+    Spaceship::ConnectAPI.token = token
+    all_certs = Spaceship::ConnectAPI::Certificate.all
+    ids.each do |id|
+      cert = all_certs.find { |c| c.id == id }
+      if cert.nil?
+        UI.important "No cert with id=#{id} found — skipping"
+        next
+      end
+      UI.message "Revoking cert id=#{id} (#{cert.certificate_type} #{cert.name.inspect})"
+      cert.delete!
+    end
+    UI.success "Revoked #{ids.size} cert(s)."
+  end
+
+  desc "One-time: create + upload an App Store distribution cert + provisioning profile to the certs repo. Run once per Apple Developer account."
+  lane :bootstrap_signing do
+    # Only the App Store distribution cert goes through match — Xcode's
+    # automatic signing handles Development certs locally for `pnpm open:ios`.
+    # Apple caps individual accounts at one active Development cert, so trying
+    # to also do `match development` here trips "You already have a current
+    # Development certificate" when the user already has one from Xcode.
+    #
+    # `api_key:` is optional — if set, match skips the interactive Apple ID
+    # 2FA prompt. Passing it explicitly (rather than letting match auto-detect
+    # from env) avoids the "invalid number: '-----BEGIN'" JSON-parse error you
+    # get when match auto-detection picks up a .p8 path and tries to read it
+    # as a JSON config file.
+    match(type: "appstore", readonly: false, api_key: asc_api_key_or_nil)
+  end
+
+  desc "Pull signing material from the certs repo without creating anything new. Safe to run on any machine / CI."
+  lane :certs do
+    match(type: "appstore", readonly: true, api_key: asc_api_key_or_nil)
+  end
+
+  desc "Bump the build number (CURRENT_PROJECT_VERSION) to one above the highest already on TestFlight. Run before `beta` or `release`."
+  lane :bump_build do
+    latest = latest_testflight_build_number(
+      app_identifier: "app.cookyourbooks",
+      api_key: asc_api_key
+    )
+    increment_build_number(
+      build_number: latest + 1,
+      xcodeproj: "App/App.xcodeproj"
+    )
+  end
+
+  desc "Build a signed Release archive and upload it to TestFlight. Requires ASC API key env vars + a match-provisioned profile."
+  lane :beta do
+    certs
+    bump_build
+    gym(
+      workspace: "App/App.xcworkspace",
+      scheme: "App",
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "build",
+      output_name: "CookYourBooks.ipa",
+      clean: true
+    )
+    pilot(
+      api_key: asc_api_key,
+      ipa: "build/CookYourBooks.ipa",
+      skip_waiting_for_build_processing: true,
+      # Beta groups + changelog can be filled in later via App Store Connect UI.
+      changelog: ENV["BETA_CHANGELOG"] || "Internal build"
+    )
+  end
+
+  desc "Build + upload to TestFlight + submit the build for App Store review. Use only when you actually want a public release."
+  lane :release do
+    beta
+    deliver(
+      api_key: asc_api_key,
+      submit_for_review: true,
+      automatic_release: false,  # Hold the release after approval — flip in ASC manually.
+      force: true,               # Skip the HTML preview prompt.
+      skip_screenshots: true,    # Manage screenshots in ASC by hand until we automate it.
+      skip_metadata: true,       # Same — metadata stays in ASC for now.
+      precheck_include_in_app_purchases: false
+    )
+  end
+end
