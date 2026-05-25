@@ -28,6 +28,8 @@
 	<string>CookYourBooks uses the camera to scan handwritten or printed recipes via OCR.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>CookYourBooks reads photos of recipes you select so it can import them via OCR.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>CookYourBooks can save scanned recipe photos back to your photo library.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
