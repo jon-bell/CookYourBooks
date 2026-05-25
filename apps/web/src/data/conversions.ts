@@ -21,6 +21,7 @@ export interface HouseConversionRule {
   toUnit: string;
   factor: number;
   ingredientName: string | null;
+  notes: string | null;
 }
 
 export interface GlobalConversionRule {
@@ -39,6 +40,7 @@ interface LocalRow {
   to_unit: string;
   factor: number;
   ingredient_name: string | null;
+  notes: string | null;
   deleted: number;
 }
 
@@ -47,7 +49,7 @@ interface LocalRow {
 async function listHouseRulesLocal(ownerId: string): Promise<HouseConversionRule[]> {
   const db = await getLocalDb();
   const rows = (await db.execO<LocalRow>(
-    `select id, owner_id, from_unit, to_unit, factor, ingredient_name, deleted
+    `select id, owner_id, from_unit, to_unit, factor, ingredient_name, notes, deleted
        from conversion_rules
       where owner_id = ?
         and deleted = 0
@@ -62,6 +64,7 @@ async function listHouseRulesLocal(ownerId: string): Promise<HouseConversionRule
     toUnit: r.to_unit,
     factor: Number(r.factor),
     ingredientName: r.ingredient_name,
+    notes: r.notes,
   }));
 }
 
@@ -74,13 +77,14 @@ async function writeHouseRuleLocal(rule: HouseConversionRule): Promise<void> {
   await db.exec(
     `insert into conversion_rules
        (id, owner_id, recipe_id, from_unit, to_unit, factor,
-        ingredient_name, priority, updated_at, deleted)
-     values (?,?,?,?,?,?,?, 'HOUSE', ?, 0)
+        ingredient_name, notes, priority, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?, 'HOUSE', ?, 0)
      on conflict(id) do update set
        from_unit=excluded.from_unit,
        to_unit=excluded.to_unit,
        factor=excluded.factor,
        ingredient_name=excluded.ingredient_name,
+       notes=excluded.notes,
        updated_at=excluded.updated_at,
        deleted=0`,
     [
@@ -91,6 +95,7 @@ async function writeHouseRuleLocal(rule: HouseConversionRule): Promise<void> {
       rule.toUnit,
       rule.factor,
       rule.ingredientName,
+      rule.notes,
       now,
     ],
   );
@@ -130,6 +135,7 @@ export function useUpsertHouseConversionRule() {
       toUnit: string;
       factor: number;
       ingredientName: string | null;
+      notes: string | null;
     }) => {
       if (!user) throw new Error('Sign in required');
       const rule: HouseConversionRule = {
@@ -141,6 +147,7 @@ export function useUpsertHouseConversionRule() {
         ingredientName: input.ingredientName
           ? input.ingredientName.trim().toLowerCase()
           : null,
+        notes: input.notes && input.notes.trim() !== '' ? input.notes.trim() : null,
       };
       await writeHouseRuleLocal(rule);
       return rule;

@@ -24,6 +24,7 @@ interface DraftState {
   ingredient: string;
   toAmount: string;
   toUnit: string;
+  notes: string;
 }
 
 const EMPTY_DRAFT: DraftState = {
@@ -32,6 +33,7 @@ const EMPTY_DRAFT: DraftState = {
   ingredient: '',
   toAmount: '',
   toUnit: 'gram',
+  notes: '',
 };
 
 export function ConversionsSection() {
@@ -73,6 +75,7 @@ export function ConversionsSection() {
       ingredient: rule.ingredientName ?? '',
       toAmount: String(rule.factor),
       toUnit: rule.toUnit,
+      notes: rule.notes ?? '',
     });
     setAdvanced(false);
     setError(null);
@@ -86,6 +89,9 @@ export function ConversionsSection() {
       ingredient: rule.ingredientName ?? '',
       toAmount: String(rule.factor),
       toUnit: rule.toUnit,
+      // The global rule's notes are admin-authored; don't carry them
+      // into the user's HOUSE override — they can add their own.
+      notes: '',
     });
     setAdvanced(false);
     setError(null);
@@ -130,6 +136,7 @@ export function ConversionsSection() {
         toUnit,
         factor: toAmount / fromAmount,
         ingredientName: ingredientOrNull(),
+        notes: draft.notes.trim() === '' ? null : draft.notes.trim(),
       });
       setDraft(EMPTY_DRAFT);
     } catch (e) {
@@ -252,6 +259,15 @@ export function ConversionsSection() {
             </button>
           )}
         </div>
+        <input
+          type="text"
+          value={draft.notes}
+          onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+          placeholder="Note (optional) — e.g. weighed 2026-05, my 8oz cup, etc."
+          maxLength={500}
+          className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+          aria-label="Note"
+        />
         <div className="flex items-center justify-between text-xs">
           <button
             type="button"
@@ -337,7 +353,7 @@ function RuleList({
       {rows.map((row, i) => (
         <li
           key={i}
-          className={`flex flex-wrap items-center gap-2 p-3 text-sm ${
+          className={`flex flex-wrap items-center gap-x-2 gap-y-1 p-3 text-sm ${
             row.kind === 'global' ? 'text-stone-500 dark:text-stone-400' : ''
           }`}
         >
@@ -355,6 +371,14 @@ function RuleList({
           {row.kind === 'global' && (
             <span className="rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
               Global default
+            </span>
+          )}
+          {ruleNotes(row.rule) && (
+            <span
+              className="basis-full text-xs italic text-stone-500 dark:text-stone-400"
+              title={ruleNotes(row.rule) ?? undefined}
+            >
+              {ruleNotes(row.rule)}
             </span>
           )}
           <span className="ml-auto flex gap-1">
@@ -421,6 +445,10 @@ function RuleSentence({
       <strong>{formatFactor(factor)}</strong> {toUnit}
     </span>
   );
+}
+
+function ruleNotes(rule: HouseConversionRule | GlobalConversionRule): string | null {
+  return rule.notes && rule.notes.trim() !== '' ? rule.notes : null;
 }
 
 function formatFactor(n: number): string {

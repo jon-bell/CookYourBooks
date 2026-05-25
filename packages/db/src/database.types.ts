@@ -115,6 +115,7 @@ export type Database = {
           from_unit: string
           id: string
           ingredient_name: string | null
+          notes: string | null
           owner_id: string
           priority: string
           recipe_id: string | null
@@ -127,6 +128,7 @@ export type Database = {
           from_unit: string
           id?: string
           ingredient_name?: string | null
+          notes?: string | null
           owner_id: string
           priority: string
           recipe_id?: string | null
@@ -139,6 +141,7 @@ export type Database = {
           from_unit?: string
           id?: string
           ingredient_name?: string | null
+          notes?: string | null
           owner_id?: string
           priority?: string
           recipe_id?: string | null
@@ -1360,6 +1363,7 @@ export type Database = {
           p_from_unit: string
           p_id: string
           p_ingredient_name: string | null
+          p_notes?: string | null
           p_to_unit: string
         }
         Returns: string
