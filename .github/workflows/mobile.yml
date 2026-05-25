@@ -98,6 +98,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Pre-job cleanup (DerivedData, fastlane build dir, sim caches)
+        # The runner Mac is single-tenant, so DerivedData + fastlane build
+        # output accumulates GB/run across builds. Nuke anything older than
+        # 2 days so disk usage stays bounded without losing the warm cache
+        # for back-to-back PRs.
+        run: |
+          set +e
+          find ~/Library/Developer/Xcode/DerivedData -mindepth 1 -maxdepth 1 -mtime +2 -exec rm -rf {} +
+          find /Users/jon/actions-runner/_work/CookYourBooks/CookYourBooks/apps/mobile/ios/build -mindepth 1 -mtime +2 -exec rm -rf {} + 2>/dev/null
+          # Pre-flight: confirm the login keychain is unlocked. The
+          # LaunchAgent at scripts/runner/app.cookyourbooks.unlock-keychain.plist
+          # should keep it unlocked across reboots; this surfaces a clear
+          # error if it isn't (instead of an opaque codesign failure later).
+          if ! security find-identity -v -p codesigning ~/Library/Keychains/login.keychain-db | grep -q 'Apple Distribution'; then
+            echo "::warning::Apple Distribution identity not visible in login keychain. Run scripts/runner/install-launch-agents.sh."
+          fi
+          df -h / | tail -1
+          true
+
       # The runner Mac has nvm under /usr/local/opt/nvm (Homebrew). pnpm
       # comes from corepack which is bundled with Node 20.
       - name: Activate Node 20 + pnpm
