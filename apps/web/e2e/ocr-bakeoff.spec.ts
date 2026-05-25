@@ -115,9 +115,16 @@ test.describe('OCR bakeoff', () => {
 
     // Each row should reach OK status. The shim resolves quickly but the
     // runner still measures elapsed time, so both rows should render the
-    // per-variant outputs.
-    await expect(rows.nth(0).getByText('OK')).toBeVisible({ timeout: 10_000 });
-    await expect(rows.nth(1).getByText('OK')).toBeVisible({ timeout: 10_000 });
+    // per-variant outputs. `exact: true` is critical — Playwright's
+    // default text matching is case-insensitive substring, so a bare
+    // `getByText('OK')` would also match "Quick C[ook]ies" in the
+    // adjacent output cell.
+    await expect(rows.nth(0).getByText('OK', { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(rows.nth(1).getByText('OK', { exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Token usage formats with thousands separators and pairs in/out.
     await expect(rows.nth(0)).toContainText('800 / 200');
@@ -151,9 +158,14 @@ test.describe('OCR bakeoff', () => {
 
     // The diff text exists — at minimum it contains an added line for
     // "all-purpose flour" (only in the second variant) and a deletion for
-    // the bare "flour" name from the first.
-    await expect(diff.locator('[data-diff-kind="add"]')).toContainText('all-purpose flour');
-    await expect(diff.locator('[data-diff-kind="del"]')).toContainText(/flour/);
+    // the bare "flour" name from the first. Filter to the specific row
+    // since the title and step lines also appear as add / del.
+    await expect(
+      diff.locator('[data-diff-kind="add"]').filter({ hasText: 'all-purpose flour' }),
+    ).toHaveCount(1);
+    await expect(
+      diff.locator('[data-diff-kind="del"]').filter({ hasText: '2 cup flour' }),
+    ).toHaveCount(1);
   });
 
   test('variants persist to localStorage and survive a reload', async ({
@@ -188,6 +200,12 @@ test.describe('OCR bakeoff', () => {
   test('"Bakeoff" link on the Import list navigates to the bakeoff page', async ({
     authedPage: page,
   }) => {
+    // ImportListPage auto-opens its onboarding modal on first visit; the
+    // modal's full-screen overlay intercepts clicks until dismissed. Set
+    // the same flag the modal sets so the link is reachable.
+    await page.evaluate(() => {
+      localStorage.setItem('cookyourbooks.import.onboarded.v1', '1');
+    });
     await page.goto('/import');
     await page.getByRole('link', { name: 'Bakeoff' }).click();
     await expect(page).toHaveURL(/\/import\/bakeoff$/);
