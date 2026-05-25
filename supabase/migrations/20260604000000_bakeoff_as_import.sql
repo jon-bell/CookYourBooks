@@ -115,7 +115,7 @@ as $$
 declare
   caller uuid := auth.uid();
   batch_owner uuid;
-  batch_kind text;
+  v_batch_kind text;
   v_id uuid;
   elem jsonb;
   ord int;
@@ -130,12 +130,12 @@ begin
     raise exception 'At most 8 variants per bakeoff';
   end if;
 
-  select owner_id, batch_kind into batch_owner, batch_kind
+  select owner_id, batch_kind into batch_owner, v_batch_kind
     from public.import_batches where id = p_batch_id;
   if batch_owner is null or batch_owner <> caller then
     raise exception 'Batch not found';
   end if;
-  if batch_kind <> 'BAKEOFF' then
+  if v_batch_kind <> 'BAKEOFF' then
     raise exception 'Batch is not a bakeoff';
   end if;
 

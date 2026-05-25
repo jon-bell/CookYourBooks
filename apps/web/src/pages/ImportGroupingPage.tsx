@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useImportBatch, useImportItems } from '../import/queries.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
-import { ImportThumb } from '../import/ImportThumb.js';
+import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { finalizeGrouping, kickOcr } from '../import/api.js';
 import type { ImportItem } from '../import/model.js';
+import { PinchPanImage } from '../components/PinchPanImage.js';
 
 /**
  * "Group then OCR" review page. Shown right after upload for batches
@@ -36,6 +37,7 @@ export function ImportGroupingPage() {
   const [removedSplits, setRemovedSplits] = useState<Set<number>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   // Items in upload order. Only AWAITING_GROUPING items participate in
   // the grouping decision — any item already past that status (e.g.,
@@ -156,7 +158,8 @@ export function ImportGroupingPage() {
         </div>
         <h1 className="text-2xl font-semibold">Group pages into recipes</h1>
         <p className="max-w-3xl text-sm text-stone-600 dark:text-stone-400">
-          Each page is its own recipe by default. Click the{' '}
+          Each page is its own recipe by default. Click a page to view it
+          fullscreen, then click the{' '}
           <span className="font-medium">split</span> between two pages to merge
           them — pages in the same colored band become one recipe and OCR will
           read them together.
@@ -198,7 +201,18 @@ export function ImportGroupingPage() {
         removedSplits={removedSplits}
         groupable={groupable}
         onToggleSplit={toggleSplit}
+        onPreview={(idx) => setPreviewIndex(idx)}
       />
+
+      {previewIndex !== null && (
+        <PagePreviewOverlay
+          item={groupable[previewIndex]!}
+          index={previewIndex}
+          total={groupable.length}
+          onClose={() => setPreviewIndex(null)}
+          onNavigate={setPreviewIndex}
+        />
+      )}
 
       {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
 
@@ -240,11 +254,13 @@ function GroupingStrip({
   removedSplits,
   groupable,
   onToggleSplit,
+  onPreview,
 }: {
   groups: ImportItem[][];
   removedSplits: Set<number>;
   groupable: ImportItem[];
   onToggleSplit: (leftIdx: number) => void;
+  onPreview: (idx: number) => void;
 }) {
   // Map item.id -> its index inside `groupable`, used by the split
   // gap to know which split toggle it represents.
@@ -269,7 +285,12 @@ function GroupingStrip({
               const isLastInBatch = idxInBatch === groupable.length - 1;
               return (
                 <div key={it.id} className="flex items-stretch">
-                  <Thumb item={it} pageInGroup={ii + 1} groupSize={g.length} />
+                  <Thumb
+                    item={it}
+                    pageInGroup={ii + 1}
+                    groupSize={g.length}
+                    onPreview={() => onPreview(idxInBatch)}
+                  />
                   {/* Splits live BETWEEN thumbs; render the right-side
                       gap on every thumb except the very last in the
                       batch. The gap toggles the split at index
@@ -294,20 +315,28 @@ function Thumb({
   item,
   pageInGroup,
   groupSize,
+  onPreview,
 }: {
   item: ImportItem;
   pageInGroup: number;
   groupSize: number;
+  onPreview: () => void;
 }) {
   return (
     <div className="flex w-32 flex-col items-center gap-1">
-      <div className="aspect-[3/4] w-full overflow-hidden rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900">
+      <button
+        type="button"
+        onClick={onPreview}
+        title={`View page ${item.pageIndex + 1} fullscreen`}
+        aria-label={`View page ${item.pageIndex + 1} fullscreen`}
+        className="aspect-[3/4] w-full overflow-hidden rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:border-stone-500 dark:hover:border-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-400"
+      >
         <ImportThumb
           path={item.thumbPath ?? item.storagePath}
           alt={`Page ${item.pageIndex + 1}`}
           className="h-full w-full object-cover"
         />
-      </div>
+      </button>
       <div className="text-[11px] leading-tight text-stone-600 dark:text-stone-400">
         Page {item.pageIndex + 1}
         {groupSize > 1 && (
@@ -361,5 +390,123 @@ function SplitGap({
         merge?
       </span>
     </button>
+  );
+}
+
+function PagePreviewOverlay({
+  item,
+  index,
+  total,
+  onClose,
+  onNavigate,
+}: {
+  item: ImportItem;
+  index: number;
+  total: number;
+  onClose: () => void;
+  onNavigate: (idx: number) => void;
+}) {
+  const [imgUrl, setImgUrl] = useState<string | undefined>();
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setImgUrl(undefined);
+    setLoadError(false);
+    void getSignedImportUrl(item.storagePath)
+      .then((u) => {
+        if (!cancelled) setImgUrl(u);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [item.storagePath]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === 'ArrowLeft' || e.key === 'k') {
+        e.preventDefault();
+        if (index > 0) onNavigate(index - 1);
+      } else if (e.key === 'ArrowRight' || e.key === 'j') {
+        e.preventDefault();
+        if (index < total - 1) onNavigate(index + 1);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [index, total, onClose, onNavigate]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Page ${item.pageIndex + 1} preview`}
+      className="fixed inset-0 z-50 flex flex-col bg-stone-900/95"
+      onClick={onClose}
+    >
+      <div
+        className="relative min-h-0 flex-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {imgUrl ? (
+          <PinchPanImage
+            src={imgUrl}
+            alt={`Page ${item.pageIndex + 1}`}
+            className="relative h-full w-full"
+          />
+        ) : loadError ? (
+          <div className="flex h-full items-center justify-center text-sm text-stone-300">
+            Could not load page image.
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-stone-400">
+            Loading…
+          </div>
+        )}
+      </div>
+
+      <div
+        className="flex shrink-0 flex-wrap items-center gap-3 border-t border-white/10 px-4 py-3 text-sm text-white/90"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span>
+          Page {item.pageIndex + 1} · {index + 1} of {total}
+        </span>
+        <span className="hidden text-white/60 sm:inline">
+          Pinch or ⌘+scroll to zoom · drag to pan · ← / → to move between pages
+        </span>
+        <span className="ml-auto flex gap-2">
+          <button
+            type="button"
+            disabled={index === 0}
+            onClick={() => onNavigate(index - 1)}
+            className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
+          >
+            ← Prev
+          </button>
+          <button
+            type="button"
+            disabled={index >= total - 1}
+            onClick={() => onNavigate(index + 1)}
+            className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
+          >
+            Next →
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md bg-white/90 px-3 py-1.5 font-medium text-stone-900 hover:bg-white"
+          >
+            Close
+          </button>
+        </span>
+      </div>
+    </div>
   );
 }
