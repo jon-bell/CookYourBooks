@@ -113,6 +113,7 @@ interface ConversionRuleRow {
   to_unit: string;
   factor: number;
   ingredient_name: string | null;
+  notes: string | null;
   priority: 'HOUSE' | 'RECIPE' | 'STANDARD' | 'GLOBAL';
   created_at: string;
   updated_at: string;
@@ -734,8 +735,8 @@ async function upsertConversionRuleRow(row: ConversionRuleRow): Promise<void> {
   await db.exec(
     `insert into conversion_rules
        (id, owner_id, recipe_id, from_unit, to_unit, factor, ingredient_name,
-        priority, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,0)
+        notes, priority, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        recipe_id=excluded.recipe_id,
@@ -743,6 +744,7 @@ async function upsertConversionRuleRow(row: ConversionRuleRow): Promise<void> {
        to_unit=excluded.to_unit,
        factor=excluded.factor,
        ingredient_name=excluded.ingredient_name,
+       notes=excluded.notes,
        priority=excluded.priority,
        updated_at=excluded.updated_at,
        deleted=0
@@ -755,6 +757,7 @@ async function upsertConversionRuleRow(row: ConversionRuleRow): Promise<void> {
       row.to_unit,
       row.factor,
       row.ingredient_name,
+      row.notes,
       row.priority,
       ts,
     ],
@@ -1255,6 +1258,7 @@ async function pushConversionRule(client: CookbooksClient, id: string): Promise<
     p_to_unit: local.to_unit as string,
     p_factor: local.factor as number,
     p_ingredient_name: (local.ingredient_name as string | null) ?? null,
+    p_notes: (local.notes as string | null) ?? null,
   });
   if (error) throw error;
 }
