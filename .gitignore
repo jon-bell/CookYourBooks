@@ -31,8 +31,10 @@ supabase/.temp/
 apps/web/test-results/
 apps/web/playwright-report/
 
-# Capacitor-generated native projects
-apps/mobile/ios/
+# Capacitor native projects: we commit ios/ (source-controlled bits only —
+# Pods/, build/, the generated capacitor.config.json are excluded by the
+# platform-level .gitignore that `cap add` wrote). android/ stays ignored
+# until we scaffold + commit it the same way.
 apps/mobile/android/
 apps/mobile/.capacitor/
 

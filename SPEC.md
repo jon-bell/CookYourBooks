@@ -259,9 +259,9 @@ added via `moderation_grant_admin` (callable by any existing admin).
 
 ## 9. Mobile (`apps/mobile`)
 
-- Capacitor config with app id `net.jonbell.cookyourbooks`, `webDir: ../web/dist`.
-- Native projects (`ios/`, `android/`) are **not** checked in; each developer runs `pnpm add:ios` / `pnpm add:android` locally. Documented in `apps/mobile/README.md`.
-- Assets: `icon-only.png`, `splash.png`, `splash-dark.png` (placeholder artwork). `pnpm --filter @cookyourbooks/mobile assets` regenerates per-platform sizes via `@capacitor/assets` + `sharp`.
+- Capacitor config with app id `app.cookyourbooks` (reverse of the team's owned `cookyourbooks.app` domain), `webDir: ../web/dist`.
+- The iOS native project (`apps/mobile/ios/`) is committed; signing + release run through `apps/mobile/ios/fastlane/`. Android is not yet scaffolded — when it lands, treat it the same way. Documented in `apps/mobile/README.md`.
+- Assets: `icon-only.png`, `splash.png`, `splash-dark.png` (derived from `cyb-master.png` at the repo root). `pnpm --filter @cookyourbooks/mobile assets` regenerates per-platform sizes via `@capacitor/assets` + `sharp`.
 - Native integrations live in `apps/web/` and feature-detect `Capacitor.isNativePlatform()`. No forked UI.
 - PWA manifest + `apple-mobile-web-app-*` meta tags so Add-to-Home-Screen on mobile browsers also works.
 
