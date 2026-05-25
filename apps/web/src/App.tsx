@@ -195,7 +195,15 @@ export function App() {
             path="/admin/global-toc"
             element={
               <RequireAuth>
-                <AdminGlobalTocPage />
+                <AdminGlobalTocPage mode="list" />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/global-toc/import"
+            element={
+              <RequireAuth>
+                <AdminGlobalTocPage mode="import" />
               </RequireAuth>
             }
           />
@@ -203,7 +211,7 @@ export function App() {
             path="/admin/global-toc/:cookbookId"
             element={
               <RequireAuth>
-                <AdminGlobalTocPage />
+                <AdminGlobalTocPage mode="editor" />
               </RequireAuth>
             }
           />

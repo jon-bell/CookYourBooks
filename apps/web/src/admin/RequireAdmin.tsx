@@ -31,17 +31,29 @@ export function AdminTabs() {
     <nav aria-label="Admin sections" className="flex gap-3 border-b border-stone-200 text-sm">
       <AdminTabLink to="/admin">Moderation</AdminTabLink>
       <AdminTabLink to="/admin/global-toc">Global ToC</AdminTabLink>
+      <AdminTabLink to="/admin/global-toc/import">Import from library</AdminTabLink>
     </nav>
   );
 }
 
 function AdminTabLink({ to, children }: { to: string; children: React.ReactNode }) {
   const location = useLocation();
-  // /admin matches only exactly, /admin/global-toc matches its subroutes too.
-  const active =
-    to === '/admin'
-      ? location.pathname === '/admin'
-      : location.pathname === to || location.pathname.startsWith(`${to}/`);
+  // Tab matching:
+  //   /admin                       → exact only (otherwise it would also
+  //                                  light up on /admin/global-toc).
+  //   /admin/global-toc            → exact, or any deeper path EXCEPT a
+  //                                  sibling tab's prefix (`/import`).
+  //   /admin/global-toc/import     → exact only.
+  const path = location.pathname;
+  let active = false;
+  if (to === '/admin') {
+    active = path === '/admin';
+  } else if (to === '/admin/global-toc') {
+    active =
+      (path === to || path.startsWith(`${to}/`)) && path !== '/admin/global-toc/import';
+  } else {
+    active = path === to;
+  }
   return (
     <Link
       to={to}

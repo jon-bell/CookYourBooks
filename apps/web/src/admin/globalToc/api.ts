@@ -199,6 +199,46 @@ export async function replaceTocEntries(
 
 // ---------- Open Library + cover upload ----------
 
+// ---------- Admin import from user library ----------
+
+export interface ImportCandidate {
+  collection_id: string;
+  title: string;
+  author: string | null;
+  raw_isbn: string | null;
+  isbn: string | null;
+  publisher: string | null;
+  publication_year: number | null;
+  cover_image_path: string | null;
+  owner_id: string;
+  owner_name: string | null;
+  recipe_count: number;
+  created_at: string;
+}
+
+// Lists user cookbooks with an ISBN that aren't yet mirrored into the
+// global catalog. Backed by the `admin_global_toc_import_candidates`
+// view, which filters by RLS — non-admins simply get an empty list.
+export async function listImportCandidates(): Promise<ImportCandidate[]> {
+  const { data, error } = await supabase
+    .from('admin_global_toc_import_candidates')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(500);
+  if (error) throw error;
+  return (data ?? []) as ImportCandidate[];
+}
+
+// Calls the admin-only RPC that copies a user cookbook into the global
+// catalog. Returns the new global_cookbooks.id.
+export async function adminImportCollection(sourceCollectionId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('global_toc_admin_import', {
+    source_collection_id: sourceCollectionId,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
 export interface OpenLibraryResult {
   metadata: {
     title?: string;

@@ -6,6 +6,7 @@ import {
   createCookbook,
   deleteCookbook,
   listCookbooks,
+  listImportCandidates,
   type GlobalCookbook,
 } from './api.js';
 
@@ -28,8 +29,32 @@ export function GlobalCookbookList() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['global-cookbooks'] }),
   });
 
+  // Surface the size of the import backlog so admins know to clear it
+  // without having to click into the tab. Errors here are silent — the
+  // banner is decorative; the actual import page renders its own.
+  const { data: candidates } = useQuery({
+    queryKey: ['global-toc-import-candidates'],
+    queryFn: listImportCandidates,
+    staleTime: 30_000,
+  });
+  const candidateCount = candidates?.length ?? 0;
+
   return (
     <div className="space-y-4">
+      {candidateCount > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <span>
+            {candidateCount} user cookbook{candidateCount === 1 ? '' : 's'} with an ISBN{' '}
+            {candidateCount === 1 ? 'is' : 'are'} not yet in the global catalog.
+          </span>
+          <Link
+            to="/admin/global-toc/import"
+            className="rounded-md bg-amber-900 px-3 py-1 text-xs font-medium text-amber-50 hover:bg-amber-800"
+          >
+            Review →
+          </Link>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <input
           type="search"
