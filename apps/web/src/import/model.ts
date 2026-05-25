@@ -28,6 +28,10 @@ export interface ImportBatch {
   recitationPolicy: RecitationPolicy;
   status: BatchStatus;
   totalItems: number;
+  /** Marks batches owned by the Speed Importer planner. Lets the
+   *  planner page find its own AWAITING_GROUPING session across app
+   *  restarts without scanning every batch. */
+  isPlanner: boolean;
   updatedAt: number;
 }
 
@@ -42,6 +46,11 @@ export interface ImportItem {
   sourcePdfPage: number | null;
   assignedCollectionId: string | null;
   assignedPageNumber: number | null;
+  /** Pre-binding from the Speed Importer planner: this scan is
+   *  reserved for this existing (placeholder) recipe id. When set,
+   *  ImportItemPage's save flow skips the fuzzy title-match step and
+   *  overwrites this recipe in place. */
+  assignedRecipeId: string | null;
   isToc: boolean;
   status: ImportItemStatus;
   claimExpiresAt: number;

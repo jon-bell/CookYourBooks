@@ -119,8 +119,8 @@ export function SettingsPage() {
             spellCheck={false}
           />
           <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-            Must be multimodal (vision-capable). Examples: <code>gemini-3-pro-image-preview</code>,{' '}
-            <code>gpt-4o</code>, <code>gpt-4o-mini</code>, <code>llama-3.2-90b-vision-preview</code>.
+            Must be multimodal (vision-capable). Examples: <code>gemini-3.1-flash-lite</code>,{' '}
+            <code>gpt-5.4</code>, <code>gpt-4o</code>, <code>llama-3.2-90b-vision-preview</code>.
           </p>
         </Field>
 

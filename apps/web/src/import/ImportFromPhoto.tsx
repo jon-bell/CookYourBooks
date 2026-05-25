@@ -11,7 +11,7 @@ import {
 } from './localRepos.js';
 import { uploadBatch } from './uploadBatch.js';
 import { loadOcrSettings, DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
-import { loadFallbackPrefs } from '../settings/FallbackModelSection.js';
+import { resolveImportFallback } from '../settings/FallbackModelSection.js';
 import type { ImportItem } from './model.js';
 
 type Progress = { status: string };
@@ -119,6 +119,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       recitationPolicy: 'ASK',
       status: 'OPEN',
       totalItems: 1,
+      isPlanner: false,
       updatedAt: now,
     });
     await new LocalImportItemRepository(user.id).insertLocal({
@@ -132,6 +133,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       sourcePdfPage: null,
       assignedCollectionId: collectionId,
       assignedPageNumber: null,
+      assignedRecipeId: null,
       isToc: false,
       status: 'OCR_DONE',
       claimExpiresAt: 0,
@@ -181,7 +183,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
         type: photo.blob.type || 'image/jpeg',
       });
       const settings = loadOcrSettings();
-      const fallback = loadFallbackPrefs();
+      const { fallbackProvider, fallbackModel } = resolveImportFallback();
       setProgress({ status: 'uploading' });
       const { batchId, itemIds } = await uploadBatch(
         {
@@ -191,8 +193,8 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
           defaultProvider: settings?.provider ?? 'gemini',
           defaultModel:
             settings?.model ?? DEFAULT_MODEL_BY_PROVIDER[settings?.provider ?? 'gemini'],
-          fallbackProvider: fallback.provider || null,
-          fallbackModel: fallback.provider ? fallback.model || null : null,
+          fallbackProvider,
+          fallbackModel,
           sourceKind: 'IMAGES',
           files: [file],
         },

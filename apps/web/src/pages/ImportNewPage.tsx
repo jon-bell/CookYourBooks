@@ -6,6 +6,10 @@ import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.j
 import { useOcrKeys } from '../import/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
+import {
+  loadFallbackPrefs,
+  DEFAULT_FALLBACK_MODEL,
+} from '../settings/FallbackModelSection.js';
 import { loadOcrSettings, DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import {
   captureMultiShot,
@@ -40,8 +44,10 @@ export function ImportNewPage() {
   const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
   const [provider, setProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [model, setModel] = useState('');
-  const [fallbackProvider, setFallbackProvider] = useState<'' | 'gemini' | 'openai-compatible'>('');
-  const [fallbackModel, setFallbackModel] = useState('');
+  const [fallbackProvider, setFallbackProvider] = useState<
+    '' | 'gemini' | 'openai-compatible'
+  >(() => loadFallbackPrefs().provider);
+  const [fallbackModel, setFallbackModel] = useState(() => loadFallbackPrefs().model);
   const [progress, setProgress] = useState<UploadProgress | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [multiShotReady, setMultiShotReady] = useState(false);
@@ -62,6 +68,9 @@ export function ImportNewPage() {
     } else {
       setModel(DEFAULT_MODEL_BY_PROVIDER.gemini);
     }
+    const fallback = loadFallbackPrefs();
+    setFallbackProvider(fallback.provider);
+    setFallbackModel(fallback.model);
   }, [ocrKeys]);
 
   useEffect(() => {
@@ -158,7 +167,9 @@ export function ImportNewPage() {
           defaultProvider: provider,
           defaultModel: model.trim() || DEFAULT_MODEL_BY_PROVIDER[provider],
           fallbackProvider: fallbackProvider || null,
-          fallbackModel: fallbackProvider ? fallbackModel.trim() || null : null,
+          fallbackModel: fallbackProvider
+            ? fallbackModel.trim() || DEFAULT_FALLBACK_MODEL
+            : null,
           sourceKind,
           files,
           awaitGrouping: importMode === 'group-first',
@@ -167,12 +178,12 @@ export function ImportNewPage() {
       );
       // Group-first lands on the grouping UI; ocr-first lands on the
       // usual batch board where OCR is already churning.
+      await syncNow();
       navigate(
         importMode === 'group-first'
           ? `/import/${result.batchId}/group`
           : `/import/${result.batchId}`,
       );
-      void syncNow();
     } catch (e) {
       setError((e as Error).message);
       setStep('settings');

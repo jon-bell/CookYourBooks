@@ -138,6 +138,7 @@ interface ImportBatchRow {
   recitation_policy: 'ASK' | 'FALLBACK' | 'FAIL';
   status: 'OPEN' | 'ARCHIVED';
   total_items: number;
+  is_planner: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -153,6 +154,7 @@ interface ImportItemRow {
   source_pdf_page: number | null;
   assigned_collection_id: string | null;
   assigned_page_number: number | null;
+  assigned_recipe_id: string | null;
   is_toc: boolean;
   status:
     | 'AWAITING_GROUPING'
@@ -516,8 +518,8 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
     `insert into import_batches
        (id, owner_id, name, source_kind, target_collection_id,
         default_model, default_provider, fallback_model, fallback_provider,
-        recitation_policy, status, total_items, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+        recitation_policy, status, total_items, is_planner, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        name=excluded.name,
@@ -530,6 +532,7 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
        recitation_policy=excluded.recitation_policy,
        status=excluded.status,
        total_items=excluded.total_items,
+       is_planner=excluded.is_planner,
        updated_at=excluded.updated_at,
        deleted=0
      where excluded.updated_at >= import_batches.updated_at`,
@@ -546,6 +549,7 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
       row.recitation_policy,
       row.status,
       row.total_items,
+      row.is_planner ? 1 : 0,
       ts,
     ],
   );
@@ -565,12 +569,12 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
     `insert into import_items
        (id, batch_id, owner_id, page_index, storage_path, thumb_path,
         source_pdf_path, source_pdf_page,
-        assigned_collection_id, assigned_page_number, is_toc, status,
-        claim_expires_at, attempts, last_error, parsed_drafts_json,
-        model_used, prompt_tokens, completion_tokens, cost_usd_micros,
-        created_recipe_ids, needs_fallback, extra_storage_paths,
-        updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+        assigned_collection_id, assigned_page_number, assigned_recipe_id,
+        is_toc, status, claim_expires_at, attempts, last_error,
+        parsed_drafts_json, model_used, prompt_tokens, completion_tokens,
+        cost_usd_micros, created_recipe_ids, needs_fallback,
+        extra_storage_paths, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        batch_id=excluded.batch_id,
        owner_id=excluded.owner_id,
@@ -581,6 +585,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
        source_pdf_page=excluded.source_pdf_page,
        assigned_collection_id=excluded.assigned_collection_id,
        assigned_page_number=excluded.assigned_page_number,
+       assigned_recipe_id=excluded.assigned_recipe_id,
        is_toc=excluded.is_toc,
        status=excluded.status,
        claim_expires_at=excluded.claim_expires_at,
@@ -608,6 +613,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
       row.source_pdf_page,
       row.assigned_collection_id,
       row.assigned_page_number,
+      row.assigned_recipe_id ?? null,
       row.is_toc ? 1 : 0,
       row.status,
       toMs(row.claim_expires_at),
@@ -1065,6 +1071,7 @@ async function pushImportBatchInsert(
     fallback_provider:
       (local.fallback_provider as 'gemini' | 'openai-compatible' | null) ?? null,
     status: local.status as 'OPEN' | 'ARCHIVED',
+    is_planner: local.is_planner === 1 || local.is_planner === true,
   };
   const { error } = await client
     .from('import_batches')
@@ -1097,6 +1104,8 @@ async function pushImportItemInsert(
     source_pdf_path: (local.source_pdf_path as string | null) ?? null,
     source_pdf_page: (local.source_pdf_page as number | null) ?? null,
     assigned_collection_id: (local.assigned_collection_id as string | null) ?? null,
+    assigned_page_number: (local.assigned_page_number as number | null) ?? null,
+    assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
     is_toc: local.is_toc === 1 || local.is_toc === true,
     status: local.status as ItemInsert['status'],
   };
@@ -1104,6 +1113,39 @@ async function pushImportItemInsert(
     .from('import_items')
     .upsert(payload, { onConflict: 'id' });
   if (error) throw error;
+}
+
+/**
+ * Push a locally-minted import batch and all of its items to Supabase.
+ * Upload flows write metadata locally first and enqueue outbox pushes;
+ * server-side import RPCs (e.g. `import_finalize_grouping`) fail with
+ * "Batch not found or not owned by caller" if called before that push
+ * lands. Call this immediately before any such RPC.
+ */
+export async function pushImportBatchGraph(
+  client: CookbooksClient,
+  batchId: string,
+): Promise<void> {
+  await pushImportBatchInsert(client, batchId);
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ id: string }>(
+    `select id from import_items where batch_id = ? and deleted = 0 order by page_index`,
+    [batchId],
+  )) as { id: string }[];
+  for (const row of rows) {
+    await pushImportItemInsert(client, row.id);
+  }
+  // The direct push above supersedes any still-pending outbox entries
+  // for this batch graph — drop them so a later full sync doesn't
+  // retry redundant upserts.
+  await db.exec(
+    `delete from outbox
+      where (kind in ('import_batch_insert', 'import_batch_update') and entity_id = ?)
+         or (kind = 'import_item_insert' and entity_id in (
+           select id from import_items where batch_id = ?
+         ))`,
+    [batchId, batchId],
+  );
 }
 
 async function pushConversionRule(client: CookbooksClient, id: string): Promise<void> {
@@ -1197,6 +1239,7 @@ async function pushImportItem(client: CookbooksClient, id: string): Promise<void
   const payload: ItemUpdate = {
     assigned_collection_id: (local.assigned_collection_id as string | null) ?? null,
     assigned_page_number: (local.assigned_page_number as number | null) ?? null,
+    assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
     is_toc: local.is_toc === 1 || local.is_toc === true,
     created_recipe_ids: createdIds,
     parsed_drafts_json: parsedDrafts as ItemUpdate['parsed_drafts_json'],
@@ -1316,11 +1359,15 @@ async function pushRecipe(
   // through — which gets stored as a JSON string, not an array — so
   // parse back to native arrays before upsert. Same on the
   // instruction side below.
+  // SQLite stores boolean as 0/1; PostgREST rejects integers in a
+  // boolean column. Normalize before the upsert.
+  const starredRaw = (recipeRow as { starred?: unknown }).starred;
   const recipePayload = {
     ...recipeRow,
     collection_id: collectionId,
     equipment: parseJsonField((recipeRow as { equipment?: unknown }).equipment),
     page_numbers: parseJsonField((recipeRow as { page_numbers?: unknown }).page_numbers),
+    starred: starredRaw === true || starredRaw === 1,
   } as RecipeRow;
   const { error: rErr } = await client
     .from('recipes')
