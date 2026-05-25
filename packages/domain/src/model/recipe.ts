@@ -34,6 +34,13 @@ export interface Recipe {
    * never shown inline.
    */
   readonly sourceImageText?: string;
+  /**
+   * "I want to import this." Set on ToC-seeded placeholder recipes by
+   * the user; consumed by the Speed Importer planner to build a
+   * page-ordered scan queue. Cleared automatically when the planner
+   * fills the placeholder with real OCR content.
+   */
+  readonly starred?: boolean;
 }
 
 export function newRecipeId(): string {
@@ -54,6 +61,7 @@ export function createRecipe(params: {
   bookTitle?: string;
   pageNumbers?: readonly number[];
   sourceImageText?: string;
+  starred?: boolean;
 }): Recipe {
   return {
     id: params.id ?? newRecipeId(),
@@ -69,6 +77,7 @@ export function createRecipe(params: {
     bookTitle: params.bookTitle,
     pageNumbers: params.pageNumbers ? [...params.pageNumbers] : undefined,
     sourceImageText: params.sourceImageText,
+    starred: params.starred ? true : undefined,
   };
 }
 

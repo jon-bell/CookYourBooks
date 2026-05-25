@@ -176,6 +176,7 @@ export function rowsToRecipe(
     book_title?: string | null;
     page_numbers?: unknown;
     source_image_text?: string | null;
+    starred?: boolean | number | null;
   };
   return createRecipe({
     id: row.id,
@@ -200,7 +201,14 @@ export function rowsToRecipe(
     bookTitle: rowX.book_title ?? undefined,
     pageNumbers: numberArray(rowX.page_numbers),
     sourceImageText: rowX.source_image_text ?? undefined,
+    // Local SQLite stores starred as 0/1; Postgres returns a real
+    // boolean. Either flavor is truthy when set.
+    starred: toBool(rowX.starred),
   });
+}
+
+function toBool(v: unknown): boolean {
+  return v === true || v === 1;
 }
 
 export function recipeToInsert(
@@ -229,6 +237,7 @@ export function recipeToInsert(
     book_title: recipe.bookTitle ?? null,
     page_numbers: recipe.pageNumbers ? [...recipe.pageNumbers] : null,
     source_image_text: recipe.sourceImageText ?? null,
+    starred: recipe.starred === true,
   };
   return { ...base, ...extras } as RecipeInsert;
 }

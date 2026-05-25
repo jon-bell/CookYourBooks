@@ -6,6 +6,27 @@
 
 export type OcrProvider = 'gemini' | 'openai-compatible';
 
+/**
+ * Legacy localStorage shape for OCR prefs. The new bakeoff-as-import and
+ * instruction-rewriting flows use server-side `user_ocr_prefs` instead
+ * (see `getUserOcrPrefs`/`setUserOcrPrefs` in `src/import/api.ts`), but the
+ * Speed Importer feature still reads from localStorage for its
+ * synchronous code paths, so the load/save/clear helpers stay.
+ */
+export interface OcrSettings {
+  provider: OcrProvider;
+  apiKey: string;
+  /** For Gemini, a model like `gemini-3.1-flash-lite`. For OpenAI-compat, `gpt-5.4` / etc. */
+  model: string;
+  /** Only used by OpenAI-compat (Groq, Together, OpenRouter, self-hosted …). */
+  baseUrl?: string;
+  /** Full prompt used as the text instruction to the model. */
+  prompt: string;
+}
+
+const KEY = 'cookyourbooks.ocr.v1';
+
+
 export const DEFAULT_PROMPT = `Extract recipe information from this image and return it as valid JSON (no markdown, no code blocks).
 
 The image may contain one or more recipes. Extract all recipes you can identify.
@@ -230,6 +251,34 @@ For each instruction, identify which ingredients from the recipe's ingredient li
   * "Add remaining flour" (if recipe has "2 cups flour" and 1 cup was used earlier) -> [{ "ingredientName": "flour", "quantity": { "type": "exact", "value": 1.0, "unit": "CUP" } }]`;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<OcrProvider, string> = {
-  gemini: 'gemini-3-pro-image-preview',
-  'openai-compatible': 'gpt-4o-mini',
+  gemini: 'gemini-3.1-flash-lite',
+  'openai-compatible': 'gpt-5.4',
 };
+
+export function loadOcrSettings(): OcrSettings | undefined {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as Partial<OcrSettings>;
+    if (!parsed.provider || !parsed.apiKey || !parsed.model || !parsed.prompt) {
+      return undefined;
+    }
+    return {
+      provider: parsed.provider,
+      apiKey: parsed.apiKey,
+      model: parsed.model,
+      baseUrl: parsed.baseUrl,
+      prompt: parsed.prompt,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveOcrSettings(s: OcrSettings): void {
+  localStorage.setItem(KEY, JSON.stringify(s));
+}
+
+export function clearOcrSettings(): void {
+  localStorage.removeItem(KEY);
+}

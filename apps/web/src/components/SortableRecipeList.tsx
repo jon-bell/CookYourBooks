@@ -32,10 +32,15 @@ export function SortableRecipeList({
   collectionId,
   recipes,
   onReorder,
+  onToggleStar,
 }: {
   collectionId: string;
   recipes: readonly Recipe[];
   onReorder: (orderedIds: string[]) => Promise<void> | void;
+  /** When provided, renders a ★/☆ button per row. The Speed Importer
+   *  queue is derived from `recipes.starred`; placeholders are the
+   *  usual target but starring is allowed on filled recipes too. */
+  onToggleStar?: (recipeId: string) => Promise<void> | void;
 }) {
   // Keep a local mirror of the order so the drop animates before the
   // server round-trip. Re-sync from props when the incoming list changes.
@@ -70,7 +75,13 @@ export function SortableRecipeList({
             const recipe = byId.get(id);
             if (!recipe) return null;
             return (
-              <SortableRow key={id} id={id} collectionId={collectionId} recipe={recipe} />
+              <SortableRow
+                key={id}
+                id={id}
+                collectionId={collectionId}
+                recipe={recipe}
+                onToggleStar={onToggleStar}
+              />
             );
           })}
         </ul>
@@ -83,10 +94,12 @@ function SortableRow({
   id,
   collectionId,
   recipe,
+  onToggleStar,
 }: {
   id: string;
   collectionId: string;
   recipe: Recipe;
+  onToggleStar?: (recipeId: string) => Promise<void> | void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -101,6 +114,7 @@ function SortableRow({
   // that the user hasn't imported / hand-entered yet. Render it
   // muted so the imported ones above pop visually.
   const isPlaceholder = recipe.ingredients.length === 0 && recipe.instructions.length === 0;
+  const starred = recipe.starred === true;
   return (
     <li ref={setNodeRef} style={style} className="flex items-center gap-2">
       <button
@@ -112,6 +126,32 @@ function SortableRow({
       >
         <span aria-hidden>⋮⋮</span>
       </button>
+      {onToggleStar && (
+        <button
+          type="button"
+          aria-label={starred ? `Unstar ${recipe.title}` : `Star ${recipe.title}`}
+          aria-pressed={starred}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            void onToggleStar(recipe.id);
+          }}
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-500 ${
+            starred
+              ? 'text-amber-500 hover:text-amber-600'
+              : 'text-stone-300 hover:text-amber-500 dark:text-stone-600'
+          }`}
+          title={
+            starred
+              ? 'Starred — queued for Speed Importer'
+              : isPlaceholder
+                ? 'Star to queue for Speed Importer scanning'
+                : 'Star this recipe'
+          }
+        >
+          <span aria-hidden>{starred ? '★' : '☆'}</span>
+        </button>
+      )}
       <Link
         to={`/collections/${collectionId}/recipes/${recipe.id}`}
         className={`flex flex-1 items-center justify-between py-3 pr-4 hover:bg-stone-50 dark:hover:bg-stone-900 ${

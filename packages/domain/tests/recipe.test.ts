@@ -205,3 +205,26 @@ describe('Rich recipe metadata', () => {
     expect(s2.simplifiedSteps).toHaveLength(2);
   });
 });
+
+describe('Recipe.starred', () => {
+  it('round-trips through createRecipe', () => {
+    const r = createRecipe({ title: 't', starred: true });
+    expect(r.starred).toBe(true);
+  });
+
+  it('treats omitted starred as undefined (falsy)', () => {
+    const r = createRecipe({ title: 't' });
+    expect(r.starred).toBeUndefined();
+  });
+
+  it('survives scaleRecipe', () => {
+    const r = createRecipe({ title: 't', starred: true });
+    expect(scaleRecipe(r, 2).starred).toBe(true);
+  });
+
+  it('does NOT propagate through adaptRecipe — adaptations start unstarred', () => {
+    const starred = createRecipe({ title: 't', starred: true });
+    const adapted = adaptRecipe(starred);
+    expect(adapted.starred).toBeUndefined();
+  });
+});

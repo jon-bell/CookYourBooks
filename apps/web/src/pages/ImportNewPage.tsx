@@ -9,6 +9,10 @@ import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
 import { getUserOcrPrefs } from '../import/api.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import {
+  DEFAULT_FALLBACK_MODEL,
+  loadFallbackPrefs,
+} from '../settings/FallbackModelSection.js';
+import {
   captureMultiShot,
   isMultiShotAvailable,
 } from '../import/multiShotShim.js';
@@ -41,8 +45,10 @@ export function ImportNewPage() {
   const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
   const [provider, setProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [model, setModel] = useState('');
-  const [fallbackProvider, setFallbackProvider] = useState<'' | 'gemini' | 'openai-compatible'>('');
-  const [fallbackModel, setFallbackModel] = useState('');
+  const [fallbackProvider, setFallbackProvider] = useState<
+    '' | 'gemini' | 'openai-compatible'
+  >(() => loadFallbackPrefs().provider);
+  const [fallbackModel, setFallbackModel] = useState(() => loadFallbackPrefs().model);
   const [progress, setProgress] = useState<UploadProgress | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [multiShotReady, setMultiShotReady] = useState(false);
@@ -52,15 +58,15 @@ export function ImportNewPage() {
   // to whichever provider has a key configured, then a hardcoded default.
   useEffect(() => {
     let cancelled = false;
+    // Prefer server-side prefs (user_ocr_prefs); fall back to a sensible
+    // default keyed off whichever provider already has a vault key.
     void getUserOcrPrefs()
       .then((prefs) => {
         if (cancelled) return;
         if (prefs && prefs.model) {
           setProvider(prefs.provider);
           setModel(prefs.model);
-          return;
-        }
-        if (ocrKeys.length > 0) {
+        } else if (ocrKeys.length > 0) {
           const k = ocrKeys[0]!;
           const p = k.provider === 'openai-compatible' ? 'openai-compatible' : 'gemini';
           setProvider(p);
@@ -68,6 +74,11 @@ export function ImportNewPage() {
         } else {
           setModel(DEFAULT_MODEL_BY_PROVIDER.gemini);
         }
+        // Fallback model still lives in localStorage (Speed Importer +
+        // fallback prefs share the same form).
+        const fallback = loadFallbackPrefs();
+        setFallbackProvider(fallback.provider);
+        setFallbackModel(fallback.model);
       })
       .catch(() => {
         if (!cancelled) setModel(DEFAULT_MODEL_BY_PROVIDER.gemini);
@@ -171,7 +182,9 @@ export function ImportNewPage() {
           defaultProvider: provider,
           defaultModel: model.trim() || DEFAULT_MODEL_BY_PROVIDER[provider],
           fallbackProvider: fallbackProvider || null,
-          fallbackModel: fallbackProvider ? fallbackModel.trim() || null : null,
+          fallbackModel: fallbackProvider
+            ? fallbackModel.trim() || DEFAULT_FALLBACK_MODEL
+            : null,
           sourceKind,
           files,
           awaitGrouping: importMode === 'group-first',
@@ -180,12 +193,12 @@ export function ImportNewPage() {
       );
       // Group-first lands on the grouping UI; ocr-first lands on the
       // usual batch board where OCR is already churning.
+      await syncNow();
       navigate(
         importMode === 'group-first'
           ? `/import/${result.batchId}/group`
           : `/import/${result.batchId}`,
       );
-      void syncNow();
     } catch (e) {
       setError((e as Error).message);
       setStep('settings');

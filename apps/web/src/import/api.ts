@@ -1,3 +1,4 @@
+import { pushImportBatchGraph } from '../local/sync.js';
 import { supabase } from '../supabase.js';
 
 // Typed wrappers around the user-facing bulk OCR RPCs. Anything that
@@ -255,6 +256,9 @@ export async function finalizeGrouping(
   batchId: string,
   groups: readonly (readonly string[])[],
 ): Promise<void> {
+  // Batch metadata is local-first; the RPC runs on Postgres and needs
+  // the row (and items) to exist server-side before it can authorize.
+  await pushImportBatchGraph(supabase, batchId);
   const { error } = await supabase.rpc('import_finalize_grouping', {
     p_batch_id: batchId,
     p_groups: groups.map((g) => [...g]),

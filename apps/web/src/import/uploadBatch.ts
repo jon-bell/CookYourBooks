@@ -128,8 +128,8 @@ export async function uploadBatch(
     `insert into import_batches
        (id, owner_id, name, batch_kind, source_kind, target_collection_id,
         default_model, default_provider, fallback_model, fallback_provider,
-        recitation_policy, status, total_items, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+        recitation_policy, status, total_items, is_planner, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
     [
       batchId,
       input.ownerId,
@@ -144,6 +144,7 @@ export async function uploadBatch(
       'ASK',
       'OPEN',
       items.length,
+      0,
       now,
     ],
   );
@@ -162,12 +163,13 @@ export async function uploadBatch(
       `insert into import_items
          (id, batch_id, owner_id, page_index, storage_path, thumb_path,
           source_pdf_path, source_pdf_page,
-          assigned_collection_id, assigned_page_number, is_toc, status,
+          assigned_collection_id, assigned_page_number, assigned_recipe_id,
+          is_toc, status,
           claim_expires_at, attempts, last_error, parsed_drafts_json,
           model_used, prompt_tokens, completion_tokens, cost_usd_micros,
           created_recipe_ids, needs_fallback, extra_storage_paths,
           updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
       [
         it.id,
         batchId,
@@ -178,6 +180,7 @@ export async function uploadBatch(
         null,
         it.sourcePdfPage,
         input.targetCollectionId,
+        null,
         null,
         0,
         initialStatus,
