@@ -39,19 +39,6 @@ async function batchIdFromUrl(page: import('@playwright/test').Page): Promise<st
   return m[1]!;
 }
 
-// Drives the rich CookbookCombobox on /import/new. The "Target
-// cookbook" label wraps the combobox trigger button; clicking opens
-// the listbox and the option with the cookbook title is then a role-
-// based locator. Native selectOption no longer works because the
-// trigger isn't a <select>.
-async function pickCookbook(
-  page: import('@playwright/test').Page,
-  title: string,
-): Promise<void> {
-  await page.getByLabel('Target cookbook').click();
-  await page.getByRole('option', { name: new RegExp(`^${title}\\b`) }).click();
-}
-
 async function createCookbook(
   page: import('@playwright/test').Page,
   title: string,
@@ -63,6 +50,21 @@ async function createCookbook(
   await page.getByRole('button', { name: 'Create' }).click();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
   await waitForSynced(page);
+}
+
+/** Drives the CookbookCombobox on /import/new. Replaces native
+ * `selectOption` — the trigger is a button that opens a listbox with
+ * a search input. */
+async function pickTargetCookbook(
+  page: import('@playwright/test').Page,
+  title: string,
+): Promise<void> {
+  await page.getByLabel('Target cookbook').click();
+  const listbox = page.getByRole('listbox');
+  await expect(listbox).toBeVisible();
+  await listbox.getByPlaceholder('Search cookbooks…').fill(title);
+  await listbox.getByRole('option', { name: title }).first().click();
+  await expect(listbox).toHaveCount(0);
 }
 
 test.describe('bulk OCR imports', () => {
@@ -77,7 +79,7 @@ test.describe('bulk OCR imports', () => {
     await page.goto('/import/new');
     await uploadTestImages(page, ['page1.png', 'page2.png', 'page3.png', 'page4.png', 'page5.png']);
     await page.getByLabel('Batch name').fill('Bulk Batch One');
-    await pickCookbook(page, 'Bulk Bakery');
+    await pickTargetCookbook(page, 'Bulk Bakery');
     await page.getByRole('button', { name: 'Start import' }).click();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+$/);
@@ -155,7 +157,7 @@ test.describe('bulk OCR imports', () => {
 
     await page.goto('/import/new');
     await uploadTestImages(page, ['page1.png', 'page2.png', 'page3.png']);
-    await pickCookbook(page, 'Fallback Cookbook');
+    await pickTargetCookbook(page, 'Fallback Cookbook');
     await page.getByLabel('Fallback provider (optional)').selectOption('openai-compatible');
     await page.getByLabel('Fallback model').fill('gpt-4o');
     await page.getByRole('button', { name: 'Start import' }).click();

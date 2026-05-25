@@ -102,6 +102,7 @@ export interface PullResult {
   importItemAttempts: number;
   importTocEntries: number;
   conversionRules: number;
+  rewriteJobs: number;
 }
 
 interface ConversionRuleRow {
@@ -129,6 +130,7 @@ interface ImportBatchRow {
   id: string;
   owner_id: string;
   name: string;
+  batch_kind: 'STANDARD' | 'BAKEOFF';
   source_kind: 'IMAGES' | 'PDF';
   target_collection_id: string | null;
   default_model: string;
@@ -158,6 +160,8 @@ interface ImportItemRow {
   is_toc: boolean;
   status:
     | 'AWAITING_GROUPING'
+    | 'BAKEOFF_PENDING'
+    | 'BAKEOFF_READY'
     | 'PENDING'
     | 'CLAIMED'
     | 'OCR_DONE'
@@ -165,6 +169,7 @@ interface ImportItemRow {
     | 'OCR_FAILED'
     | 'REVIEWED'
     | 'DISCARDED';
+  selected_variant_id: string | null;
   claim_expires_at: string;
   attempts: number;
   last_error: string | null;
@@ -210,11 +215,31 @@ interface ImportTocEntryRow {
   updated_at: string;
 }
 
+interface RewriteJobRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  status: 'PENDING' | 'CLAIMED' | 'DONE' | 'FAILED';
+  provider: 'gemini' | 'openai-compatible';
+  model: string;
+  prompt: string;
+  claim_expires_at: string;
+  attempts: number;
+  last_error: string | null;
+  result_json: unknown;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd_micros: number;
+  latency_ms: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // Bumped whenever a sync bug invalidates existing watermarks. On the
 // first pull after the user upgrades, every per-topic watermark is
 // reset to 0 so missed rows get a chance to flow in. Increment when
 // fixing a pull bug that could have stranded server rows.
-const SYNC_RESET_VERSION = 3;
+const SYNC_RESET_VERSION = 4;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
   const versionTopic = `sync_reset_version:${ownerId}`;
@@ -222,7 +247,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -231,6 +256,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `import_item_attempts:${ownerId}`,
       `import_toc_entries:${ownerId}`,
       `conversion_rules:${ownerId}`,
+      `rewrite_jobs:${ownerId}`,
     ],
   );
   await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
@@ -370,6 +396,7 @@ export async function pullAll(
 
   const importCounts = await pullImports(client, ownerId);
   const conversionRulesPulled = await pullConversionRules(client, ownerId);
+  const rewriteJobsPulled = await pullRewriteJobs(client, ownerId);
 
   return {
     collections: collections.length,
@@ -381,6 +408,7 @@ export async function pullAll(
     importItemAttempts: importCounts.attempts,
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
+    rewriteJobs: rewriteJobsPulled,
   };
 }
 
@@ -403,6 +431,31 @@ async function pullConversionRules(
   let max = await getWatermark(topic);
   for (const row of rows) {
     await upsertConversionRuleRow(row);
+    max = Math.max(max, toMs(row.updated_at));
+  }
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+async function pullRewriteJobs(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `rewrite_jobs:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<RewriteJobRow>((from, to) =>
+    client
+      .from('rewrite_jobs')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  let max = await getWatermark(topic);
+  for (const row of rows) {
+    await upsertRewriteJobRow(row);
     max = Math.max(max, toMs(row.updated_at));
   }
   if (max > 0) await bumpWatermark(topic, max);
@@ -516,13 +569,14 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
   const ts = toMs(row.updated_at);
   await db.exec(
     `insert into import_batches
-       (id, owner_id, name, source_kind, target_collection_id,
+       (id, owner_id, name, batch_kind, source_kind, target_collection_id,
         default_model, default_provider, fallback_model, fallback_provider,
         recitation_policy, status, total_items, is_planner, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        name=excluded.name,
+       batch_kind=excluded.batch_kind,
        source_kind=excluded.source_kind,
        target_collection_id=excluded.target_collection_id,
        default_model=excluded.default_model,
@@ -540,6 +594,7 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
       row.id,
       row.owner_id,
       row.name,
+      row.batch_kind ?? 'STANDARD',
       row.source_kind,
       row.target_collection_id,
       row.default_model,
@@ -572,9 +627,9 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
         assigned_collection_id, assigned_page_number, assigned_recipe_id,
         is_toc, status, claim_expires_at, attempts, last_error,
         parsed_drafts_json, model_used, prompt_tokens, completion_tokens,
-        cost_usd_micros, created_recipe_ids, needs_fallback,
-        extra_storage_paths, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+        cost_usd_micros, created_recipe_ids, selected_variant_id,
+        needs_fallback, extra_storage_paths, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        batch_id=excluded.batch_id,
        owner_id=excluded.owner_id,
@@ -597,6 +652,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
        completion_tokens=excluded.completion_tokens,
        cost_usd_micros=excluded.cost_usd_micros,
        created_recipe_ids=excluded.created_recipe_ids,
+       selected_variant_id=excluded.selected_variant_id,
        needs_fallback=excluded.needs_fallback,
        extra_storage_paths=excluded.extra_storage_paths,
        updated_at=excluded.updated_at,
@@ -625,6 +681,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
       row.completion_tokens,
       row.cost_usd_micros,
       createdIdsText,
+      row.selected_variant_id ?? null,
       row.needs_fallback ? 1 : 0,
       extrasText,
       ts,
@@ -708,6 +765,58 @@ async function upsertConversionRuleRow(row: ConversionRuleRow): Promise<void> {
       row.ingredient_name,
       row.notes,
       row.priority,
+      ts,
+    ],
+  );
+}
+
+async function upsertRewriteJobRow(row: RewriteJobRow): Promise<void> {
+  const db = await getLocalDb();
+  const ts = toMs(row.updated_at);
+  const resultText = row.result_json === null || row.result_json === undefined
+    ? null
+    : JSON.stringify(row.result_json);
+  await db.exec(
+    `insert into rewrite_jobs
+       (id, owner_id, recipe_id, status, provider, model, prompt,
+        claim_expires_at, attempts, last_error, result_json,
+        prompt_tokens, completion_tokens, cost_usd_micros, latency_ms,
+        updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       status=excluded.status,
+       provider=excluded.provider,
+       model=excluded.model,
+       prompt=excluded.prompt,
+       claim_expires_at=excluded.claim_expires_at,
+       attempts=excluded.attempts,
+       last_error=excluded.last_error,
+       result_json=excluded.result_json,
+       prompt_tokens=excluded.prompt_tokens,
+       completion_tokens=excluded.completion_tokens,
+       cost_usd_micros=excluded.cost_usd_micros,
+       latency_ms=excluded.latency_ms,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= rewrite_jobs.updated_at`,
+    [
+      row.id,
+      row.owner_id,
+      row.recipe_id,
+      row.status,
+      row.provider,
+      row.model,
+      row.prompt,
+      toMs(row.claim_expires_at),
+      row.attempts,
+      row.last_error,
+      resultText,
+      row.prompt_tokens,
+      row.completion_tokens,
+      row.cost_usd_micros,
+      row.latency_ms,
       ts,
     ],
   );
@@ -858,6 +967,19 @@ export function subscribeRealtime(
         onLocalUpdate();
       },
     )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'rewrite_jobs', filter: `owner_id=eq.${ownerId}` },
+      async (payload) => {
+        await handleRewriteJobEvent(payload);
+        // A DONE job means the worker just wrote `simplified_steps` to
+        // one or more instructions rows. Trigger a recipe refetch so the
+        // user sees the new steps without waiting for the next pull.
+        const evt = payload.new as { status?: string } | undefined;
+        if (evt?.status === 'DONE') onNeedsPull();
+        onLocalUpdate();
+      },
+    )
     .subscribe();
 
   return {
@@ -967,6 +1089,18 @@ async function handleConversionRuleEvent(payload: RealtimePayload): Promise<void
   await upsertConversionRuleRow(payload.new as unknown as ConversionRuleRow);
 }
 
+async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { id?: string }).id;
+    if (id) {
+      const db = await getLocalDb();
+      await db.exec(`delete from rewrite_jobs where id = ?`, [id]);
+    }
+    return;
+  }
+  await upsertRewriteJobRow(payload.new as unknown as RewriteJobRow);
+}
+
 // ---------- push ----------
 
 export async function pushOutbox(
@@ -1059,10 +1193,11 @@ async function pushImportBatchInsert(
   const local = rows[0];
   if (!local) return;
   type BatchInsert = Database['public']['Tables']['import_batches']['Insert'];
-  const payload: BatchInsert = {
+  const payload = {
     id: local.id as string,
     owner_id: local.owner_id as string,
     name: local.name as string,
+    batch_kind: (local.batch_kind as string | undefined) ?? 'STANDARD',
     source_kind: local.source_kind as 'IMAGES' | 'PDF',
     target_collection_id: (local.target_collection_id as string | null) ?? null,
     default_model: local.default_model as string,
@@ -1072,7 +1207,7 @@ async function pushImportBatchInsert(
       (local.fallback_provider as 'gemini' | 'openai-compatible' | null) ?? null,
     status: local.status as 'OPEN' | 'ARCHIVED',
     is_planner: local.is_planner === 1 || local.is_planner === true,
-  };
+  } as BatchInsert;
   const { error } = await client
     .from('import_batches')
     .upsert(payload, { onConflict: 'id' });

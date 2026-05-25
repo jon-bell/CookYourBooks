@@ -126,6 +126,9 @@ async function callGemini(
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     p.model,
   )}:generateContent?key=${encodeURIComponent(p.apiKey)}`;
+  // When called for text-only tasks (e.g. instruction rewriting) we
+  // send the prompt-only parts. Gemini accepts a single text-only part
+  // just fine.
   const body = {
     contents: [
       {

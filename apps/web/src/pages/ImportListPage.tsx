@@ -28,7 +28,11 @@ function useBatchStats(ownerId: string | undefined, batchIds: string[]) {
         out[id] = {
           total: items.length,
           done: items.filter(
-            (i) => i.status === 'REVIEWED' || i.status === 'OCR_DONE' || i.status === 'DISCARDED',
+            (i) =>
+              i.status === 'REVIEWED' ||
+              i.status === 'OCR_DONE' ||
+              i.status === 'BAKEOFF_READY' ||
+              i.status === 'DISCARDED',
           ).length,
           failed: items.filter((i) => i.status === 'OCR_FAILED').length,
           costUsdMicros: items.reduce((acc, i) => acc + i.costUsdMicros, 0),
@@ -90,6 +94,12 @@ export function ImportListPage() {
           ★ Speed Importer
         </Link>
         <Link
+          to="/import/new/bakeoff"
+          className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+        >
+          Bakeoff
+        </Link>
+        <Link
           to="/import/new"
           className="inline-flex items-center rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
         >
@@ -128,6 +138,11 @@ export function ImportListPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <div className="font-medium">{b.name || '(untitled)'}</div>
+                    {b.batchKind === 'BAKEOFF' && (
+                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-800">
+                        Bakeoff
+                      </span>
+                    )}
                     <StatusBadge status={b.status} />
                   </div>
                   <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">

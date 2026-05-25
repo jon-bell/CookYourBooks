@@ -102,6 +102,10 @@ export async function ensurePlannerBatch(
     recitationPolicy: 'ASK',
     status: 'OPEN',
     totalItems: 0,
+    // Planner sessions are a regular STANDARD import; the is_planner
+    // boolean is what /import/speed keys off, not the bakeoff-as-import
+    // batch_kind discriminator.
+    batchKind: 'STANDARD',
     isPlanner: true,
     updatedAt: now,
   };
@@ -178,6 +182,7 @@ export async function addPlannedShot(
     completionTokens: 0,
     costUsdMicros: 0,
     createdRecipeIds: [],
+    selectedVariantId: null,
     extraStoragePaths: [],
     updatedAt: Date.now(),
   };

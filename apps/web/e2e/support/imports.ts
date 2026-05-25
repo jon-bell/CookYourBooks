@@ -47,6 +47,12 @@ export interface SeedFixtureArgs {
   storagePath: string;
   kind: 'recipe' | 'toc' | 'recitation' | 'auth-fail';
   draft?: FakeRecipeDraft;
+  /**
+   * For multi-recipe responses (e.g. a cookbook spread). When set the
+   * response payload uses the `{ recipes: [...] }` wrapper shape so the
+   * worker's parser returns multiple drafts.
+   */
+  drafts?: FakeRecipeDraft[];
   entries?: TocEntryInput[];
   latencyMs?: number;
   /**
@@ -57,6 +63,13 @@ export interface SeedFixtureArgs {
    * attempt #1 (default provider) vs attempt #2 (fallback provider).
    */
   provider?: 'gemini' | 'openai-compatible' | '';
+  /**
+   * Model the fixture is tied to. Empty (default) matches any model for
+   * the given provider — the regular bulk-import flow uses this. Bakeoff
+   * variants seed a fixture per model so each variant in a run returns
+   * a distinct payload; pair with `storagePath: '*'` to be path-agnostic.
+   */
+  model?: string;
   /**
    * If true, upsert over an existing row. Useful when simulating "the
    * fallback model would have succeeded" by re-seeding the same path
@@ -80,6 +93,7 @@ export async function seedOcrFixture(args: SeedFixtureArgs): Promise<void> {
   const row = {
     item_storage_path: args.storagePath,
     provider: args.provider ?? '',
+    model: args.model ?? '',
     response_json: responseJson,
     error_kind: errorKind,
     latency_ms: args.latencyMs ?? 0,
@@ -106,23 +120,70 @@ export async function deleteOcrFixture(storagePath: string): Promise<void> {
   );
 }
 
+export interface RewriteFixtureSimplifiedStep {
+  text: string;
+  durationSec?: number;
+  temperature?: { value: number; unit: 'FAHRENHEIT' | 'CELSIUS' };
+  notes?: string;
+}
+
+export interface SeedRewriteFixtureArgs {
+  /** Recipe id the fixture is keyed against; `'*'` matches any recipe. */
+  recipeId: string;
+  /** `''` matches any provider for this recipe. */
+  provider?: 'gemini' | 'openai-compatible' | '';
+  /** `''` matches any model for this provider. */
+  model?: string;
+  rewritten?: Array<{
+    instructionId: string;
+    simplifiedSteps: RewriteFixtureSimplifiedStep[];
+  }>;
+  /** Force a worker error path instead of OK. */
+  errorKind?: 'RECITATION' | 'AUTH' | 'NETWORK' | 'PARSE' | 'TIMEOUT' | 'OTHER';
+  latencyMs?: number;
+  upsert?: boolean;
+}
+
+export async function seedRewriteFixture(args: SeedRewriteFixtureArgs): Promise<void> {
+  const responseJson = args.errorKind
+    ? {}
+    : { rewritten: args.rewritten ?? [] };
+  const row = {
+    recipe_id: args.recipeId,
+    provider: args.provider ?? '',
+    model: args.model ?? '',
+    response_json: responseJson,
+    error_kind: args.errorKind ?? 'OK',
+    latency_ms: args.latencyMs ?? 0,
+  };
+  const headers = adminHeaders({
+    Prefer: args.upsert ? 'resolution=merge-duplicates,return=minimal' : 'return=minimal',
+  });
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/rewrite_test_fixtures`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(row),
+  });
+  if (!resp.ok) {
+    throw new Error(
+      `seedRewriteFixture for ${args.recipeId} failed: ${resp.status} ${await resp.text()}`,
+    );
+  }
+}
+
 function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
   if (args.kind === 'recipe' || args.kind === 'recitation' || args.kind === 'auth-fail') {
-    const d = args.draft ?? defaultDraft();
+    if (args.drafts && args.drafts.length > 1) {
+      // Multi-recipe responses go through the `{ recipes: [...] }`
+      // wrapper so the worker's parser returns multiple drafts.
+      return {
+        recipes: args.drafts.map(serializeDraft),
+        __mock_usage: { prompt_tokens: 100, completion_tokens: 200 },
+      };
+    }
+    const d = args.drafts?.[0] ?? args.draft ?? defaultDraft();
     return {
-      title: d.title,
-      yield: d.servings ? { amount: d.servings.amount } : undefined,
-      ingredients: (d.ingredients ?? []).map((ing) => ({
-        type: ing.type,
-        name: ing.name,
-        quantity: ing.quantity,
-      })),
-      instructions: (d.instructions ?? []).map((s) => ({
-        stepNumber: s.stepNumber,
-        text: s.text,
-      })),
-      bookTitle: d.bookTitle,
-      pageNumbers: d.pageNumbers,
+      ...serializeDraft(d),
       __mock_usage: { prompt_tokens: 100, completion_tokens: 200 },
     };
   }
@@ -147,6 +208,24 @@ function mapErrorKind(kind: SeedFixtureArgs['kind']): string | null {
     default:
       return 'OK';
   }
+}
+
+function serializeDraft(d: FakeRecipeDraft): Record<string, unknown> {
+  return {
+    title: d.title,
+    yield: d.servings ? { amount: d.servings.amount } : undefined,
+    ingredients: (d.ingredients ?? []).map((ing) => ({
+      type: ing.type,
+      name: ing.name,
+      quantity: ing.quantity,
+    })),
+    instructions: (d.instructions ?? []).map((s) => ({
+      stepNumber: s.stepNumber,
+      text: s.text,
+    })),
+    bookTitle: d.bookTitle,
+    pageNumbers: d.pageNumbers,
+  };
 }
 
 function defaultDraft(): FakeRecipeDraft {
@@ -330,6 +409,21 @@ export async function triggerWorker(batchId?: string | null): Promise<{
     parked: number;
     remaining: number;
   };
+}
+
+/**
+ * Kick the worker repeatedly until either the queue drains some work or
+ * we hit `maxAttempts`. Used by tests that drive the UI through the
+ * full upload pipeline — the page does its own ocr_kick but the test
+ * env doesn't have the worker vault secret, and the outbox push that
+ * makes the row visible server-side is asynchronous.
+ */
+export async function pumpWorker(maxAttempts = 30): Promise<void> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const r = await triggerWorker();
+    if (r.processed > 0 || r.failed > 0 || r.parked > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
 }
 
 /**

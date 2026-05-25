@@ -6,12 +6,6 @@ import {
   type OcrKeySummary,
   type OcrProvider,
 } from '../import/api.js';
-import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  loadOcrSettings,
-  saveOcrSettings,
-  clearOcrSettings,
-} from './ocrSettings.js';
 
 const PROVIDERS: OcrProvider[] = ['gemini', 'openai-compatible'];
 
@@ -21,15 +15,13 @@ const LABELS: Record<OcrProvider, string> = {
 };
 
 /**
- * Server-side OCR keys (BYOK). Replaces the local-storage key the
- * legacy `OcrSettings` form holds. Also handles the one-time migration
- * prompt that moves an existing browser-side key into Vault.
+ * Server-side OCR keys (BYOK). The keys live in Supabase Vault — only
+ * the worker (running as the service role) can decrypt them; the
+ * browser never reads the key back. Set / rotate per provider.
  */
 export function OcrKeysSection() {
   const [keys, setKeys] = useState<OcrKeySummary[] | undefined>();
   const [error, setError] = useState<string | null>(null);
-  const [migrating, setMigrating] = useState(false);
-  const [legacyDismissed, setLegacyDismissed] = useState(false);
   const [draft, setDraft] = useState<Record<OcrProvider, { key: string; baseUrl: string; busy: boolean }>>({
     gemini: { key: '', baseUrl: '', busy: false },
     'openai-compatible': { key: '', baseUrl: '', busy: false },
@@ -43,10 +35,6 @@ export function OcrKeysSection() {
     }
   }
   useEffect(() => void refresh(), []);
-
-  const legacy = loadOcrSettings();
-  const showLegacyMigration =
-    !!legacy?.apiKey && !legacyDismissed && (keys?.length ?? 0) === 0;
 
   async function save(provider: OcrProvider) {
     const entry = draft[provider];
@@ -80,74 +68,23 @@ export function OcrKeysSection() {
     }
   }
 
-  async function migrateLegacy() {
-    if (!legacy?.apiKey) return;
-    setMigrating(true);
-    setError(null);
-    try {
-      await setOcrKey(legacy.provider, legacy.apiKey, legacy.baseUrl);
-      // Persist remaining settings (model / prompt / baseUrl) without the key.
-      saveOcrSettings({
-        provider: legacy.provider,
-        apiKey: '',
-        model: legacy.model || DEFAULT_MODEL_BY_PROVIDER[legacy.provider],
-        baseUrl: legacy.baseUrl,
-        prompt: legacy.prompt,
-      });
-      await refresh();
-      setLegacyDismissed(true);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setMigrating(false);
-    }
-  }
-
   const keyByProvider = new Map<string, OcrKeySummary>(
     (keys ?? []).map((k) => [k.provider, k]),
   );
 
   return (
-    <section className="space-y-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
+    <section className="space-y-4 rounded-lg border border-stone-200 bg-white p-5">
       <div>
-        <h2 className="text-lg font-semibold">OCR keys (server-side)</h2>
-        <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-          API keys for the bulk OCR worker. Stored in Supabase Vault — only the worker
-          (running as the service role) can decrypt them. The browser never reads the key
-          back. Set / rotate per provider.
+        <h2 className="text-lg font-semibold">OCR keys</h2>
+        <p className="mt-1 text-sm text-stone-600">
+          API keys for the OCR worker. Stored in Supabase Vault — only the worker (running as the
+          service role) can decrypt them. The browser never reads the key back. The same keys
+          power the bulk import flow and the bakeoff page.
         </p>
       </div>
 
-      {showLegacyMigration && (
-        <div className="space-y-2 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
-          <div className="font-medium">Move your legacy in-browser key to the server?</div>
-          <div className="text-xs">
-            You have a key stored locally for {LABELS[legacy!.provider]}. The new bulk
-            import flow runs OCR server-side and needs the key in Vault. After moving, the
-            local copy is cleared.
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void migrateLegacy()}
-              disabled={migrating}
-              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
-            >
-              {migrating ? 'Moving…' : 'Move to server'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setLegacyDismissed(true)}
-              className="rounded-md px-3 py-1.5 text-xs text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
-
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
         </div>
       )}
@@ -157,11 +94,11 @@ export function OcrKeysSection() {
           const current = keyByProvider.get(p);
           const entry = draft[p];
           return (
-            <li key={p} className="space-y-2 rounded-md border border-stone-200 dark:border-stone-700 p-3">
+            <li key={p} className="space-y-2 rounded-md border border-stone-200 p-3">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium">{LABELS[p]}</div>
-                  <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+                  <div className="mt-0.5 text-xs text-stone-500">
                     {current ? (
                       <>
                         fingerprint <code className="font-mono">{current.key_fingerprint}</code>
@@ -177,7 +114,7 @@ export function OcrKeysSection() {
                   <button
                     type="button"
                     onClick={() => void remove(p)}
-                    className="rounded-md px-3 py-1.5 text-xs text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
+                    className="rounded-md px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
                   >
                     Delete
                   </button>
@@ -192,13 +129,13 @@ export function OcrKeysSection() {
                     setDraft((cur) => ({ ...cur, [p]: { ...cur[p], key: e.target.value } }))
                   }
                   placeholder={current ? 'Rotate: paste new key' : 'Paste API key'}
-                  className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-xs"
+                  className="w-full rounded border border-stone-300 px-3 py-2 font-mono text-xs"
                 />
                 <button
                   type="button"
                   onClick={() => void save(p)}
                   disabled={entry.busy || !entry.key.trim()}
-                  className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
+                  className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-60"
                 >
                   {entry.busy ? 'Saving…' : 'Save'}
                 </button>
@@ -210,32 +147,13 @@ export function OcrKeysSection() {
                     setDraft((cur) => ({ ...cur, [p]: { ...cur[p], baseUrl: e.target.value } }))
                   }
                   placeholder="Base URL (optional, defaults to https://api.openai.com/v1)"
-                  className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-xs"
+                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs"
                 />
               )}
             </li>
           );
         })}
       </ul>
-
-      {legacy?.apiKey && (
-        <div className="flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
-          <span>
-            Legacy in-browser key is still present. Once you've confirmed the server key
-            works, you can clear it.
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              clearOcrSettings();
-              setLegacyDismissed(true);
-            }}
-            className="rounded-md px-2 py-1 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
-          >
-            Clear local key
-          </button>
-        </div>
-      )}
     </section>
   );
 }

@@ -87,6 +87,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     temperature_value real,
     temperature_unit text,
     sub_instructions text,    -- JSON array of strings
+    simplified_steps text,    -- JSON array of {text,durationSec?,temperature?,notes?}
     notes text
   )`,
 
@@ -130,6 +131,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     recitation_policy text not null default 'ASK',
     status text not null default 'OPEN',
     total_items integer not null default 0,
+    batch_kind text not null default 'STANDARD',
     is_planner integer not null default 0,
     updated_at integer not null default 0,
     deleted integer not null default 0
@@ -160,6 +162,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     completion_tokens integer not null default 0,
     cost_usd_micros integer not null default 0,
     created_recipe_ids text not null default '[]',
+    selected_variant_id text,
     needs_fallback integer not null default 0,
     extra_storage_paths text not null default '[]',
     updated_at integer not null default 0,
@@ -256,6 +259,7 @@ export const CRR_TABLES = [
   'import_item_attempts',
   'import_toc_entries',
   'conversion_rules',
+  'rewrite_jobs',
 ];
 
 // Idempotent post-schema migrations. Appended to over time as columns
@@ -304,6 +308,7 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     recitation_policy text not null default 'ASK',
     status text not null default 'OPEN',
     total_items integer not null default 0,
+    batch_kind text not null default 'STANDARD',
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -330,6 +335,7 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     completion_tokens integer not null default 0,
     cost_usd_micros integer not null default 0,
     created_recipe_ids text not null default '[]',
+    selected_variant_id text,
     needs_fallback integer not null default 0,
     updated_at integer not null default 0,
     deleted integer not null default 0
@@ -370,6 +376,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     deleted integer not null default 0
   )`,
   `create index if not exists import_toc_entries_batch_idx on import_toc_entries(batch_id, title)`,
+  `alter table import_batches add column batch_kind text not null default 'STANDARD'`,
+  `alter table import_items add column selected_variant_id text`,
   // Conversion rules (HOUSE-tier mirror of public.conversion_rules).
   `create table if not exists conversion_rules (
     id text primary key not null default '',
@@ -396,4 +404,33 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipes add column starred integer not null default 0`,
   `alter table import_items add column assigned_recipe_id text`,
   `alter table import_batches add column is_planner integer not null default 0`,
+  // ---------- Instruction rewriting (2026-06-04) ----------
+  // simplified_steps holds the LLM-rewritten atomic steps as JSON text.
+  // Nullable, so no default needed under the cr-sqlite rule (which only
+  // requires defaults on NOT NULL columns).
+  `alter table instructions add column simplified_steps text`,
+  // rewrite_jobs mirrors the import_items claim/lease pipeline but for
+  // per-recipe instruction rewrites. CRR-replicated so the queue state
+  // syncs across the user's devices.
+  `create table if not exists rewrite_jobs (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text not null default '',
+    status text not null default 'PENDING',
+    provider text not null default 'gemini',
+    model text not null default '',
+    prompt text not null default '',
+    claim_expires_at integer not null default 0,
+    attempts integer not null default 0,
+    last_error text,
+    result_json text,
+    prompt_tokens integer not null default 0,
+    completion_tokens integer not null default 0,
+    cost_usd_micros integer not null default 0,
+    latency_ms integer not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists rewrite_jobs_recipe_idx on rewrite_jobs(recipe_id)`,
+  `create index if not exists rewrite_jobs_owner_idx on rewrite_jobs(owner_id, status)`,
 ];

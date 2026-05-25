@@ -50,7 +50,7 @@ function matchesFilter(item: ImportItem, filter: Filter): boolean {
     case 'DONE':
       return item.status === 'REVIEWED';
     case 'NEEDS_REVIEW':
-      return item.status === 'OCR_DONE' || item.status === 'NEEDS_FALLBACK';
+      return item.status === 'OCR_DONE' || item.status === 'NEEDS_FALLBACK' || item.status === 'BAKEOFF_READY';
     case 'FAILED':
       return item.status === 'OCR_FAILED';
     case 'TOC':
@@ -838,6 +838,8 @@ export function ImportBatchPage() {
 function ItemStatusPill({ status }: { status: ImportItemStatus }) {
   const map: Record<ImportItemStatus, { label: string; cls: string }> = {
     AWAITING_GROUPING: { label: 'Awaiting grouping', cls: 'bg-violet-100 text-violet-800' },
+    BAKEOFF_PENDING: { label: 'Running variants', cls: 'bg-blue-100 text-blue-800' },
+    BAKEOFF_READY: { label: 'Pick winner', cls: 'bg-violet-100 text-violet-800' },
     PENDING: { label: 'Queued', cls: 'bg-stone-200 text-stone-700' },
     CLAIMED: { label: 'Processing', cls: 'bg-blue-100 text-blue-800' },
     OCR_DONE: { label: 'Needs review', cls: 'bg-amber-100 text-amber-800' },

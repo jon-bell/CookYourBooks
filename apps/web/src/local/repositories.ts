@@ -213,13 +213,15 @@ export async function upsertRecipeRow(
         temperature_value?: number | null;
         temperature_unit?: string | null;
         sub_instructions?: unknown;
+        simplified_steps?: unknown;
         notes?: string | null;
       };
       await tx.exec(
         `insert into instructions
            (id, recipe_id, step_number, text,
-            temperature_value, temperature_unit, sub_instructions, notes)
-         values (?,?,?,?,?,?,?,?)`,
+            temperature_value, temperature_unit, sub_instructions,
+            simplified_steps, notes)
+         values (?,?,?,?,?,?,?,?,?)`,
         [
           step.id,
           step.recipe_id,
@@ -228,6 +230,7 @@ export async function upsertRecipeRow(
           stepX.temperature_value ?? null,
           stepX.temperature_unit ?? null,
           toJsonText(stepX.sub_instructions),
+          toJsonText(stepX.simplified_steps),
           stepX.notes ?? null,
         ],
       );

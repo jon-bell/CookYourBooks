@@ -15,6 +15,7 @@ import {
   type Quantity,
   type Recipe,
   type RecipeCollection,
+  type SimplifiedStep,
 } from '@cookyourbooks/domain';
 import type { Database } from './database.types.js';
 
@@ -400,11 +401,50 @@ function refRowToQuantity(row: InstructionRefRow): Quantity | undefined {
   }
 }
 
+function simplifiedSteps(raw: unknown): SimplifiedStep[] | undefined {
+  const arr = jsonArray<unknown>(raw);
+  if (!arr) return undefined;
+  const out: SimplifiedStep[] = [];
+  for (const entry of arr) {
+    if (!entry || typeof entry !== 'object') continue;
+    const e = entry as Record<string, unknown>;
+    const text = typeof e.text === 'string' ? e.text.trim() : '';
+    if (!text) continue;
+    const step: {
+      text: string;
+      durationSec?: number;
+      temperature?: { value: number; unit: 'FAHRENHEIT' | 'CELSIUS' };
+      notes?: string;
+    } = { text };
+    if (typeof e.durationSec === 'number' && Number.isFinite(e.durationSec) && e.durationSec > 0) {
+      step.durationSec = Math.round(e.durationSec);
+    }
+    if (e.temperature && typeof e.temperature === 'object') {
+      const t = e.temperature as Record<string, unknown>;
+      const value = typeof t.value === 'number' ? t.value : null;
+      const unit = t.unit === 'FAHRENHEIT' || t.unit === 'CELSIUS' ? t.unit : null;
+      if (value != null && unit) step.temperature = { value, unit };
+    }
+    if (typeof e.notes === 'string' && e.notes.trim().length > 0) {
+      step.notes = e.notes.trim();
+    }
+    out.push(step);
+  }
+  // Distinguish "explicit empty array (user dismissed)" from "no rewrite yet":
+  // we preserve [] as a sentinel by returning an empty array in that case;
+  // a malformed payload that produced no usable steps also returns [],
+  // which matches the dismissal semantics. The LLM never returns an empty
+  // payload on success, so this collision is benign.
+  if (Array.isArray(arr) && arr.length === 0) return [];
+  return out.length > 0 ? out : undefined;
+}
+
 function rowToInstruction(row: InstructionRow, refRows: InstructionRefRow[] = []): Instruction {
   const rowX = row as InstructionRow & {
     temperature_value?: number | null;
     temperature_unit?: string | null;
     sub_instructions?: unknown;
+    simplified_steps?: unknown;
     notes?: string | null;
   };
   const temperature =
@@ -415,7 +455,8 @@ function rowToInstruction(row: InstructionRow, refRows: InstructionRefRow[] = []
           unit: rowX.temperature_unit as 'FAHRENHEIT' | 'CELSIUS',
         }
       : undefined;
-  const subInstructions = stringArray(rowX.sub_instructions);
+  const subInstructionsList = stringArray(rowX.sub_instructions);
+  const simplified = simplifiedSteps(rowX.simplified_steps);
   return instruction({
     id: row.id,
     stepNumber: row.step_number,
@@ -425,7 +466,8 @@ function rowToInstruction(row: InstructionRow, refRows: InstructionRefRow[] = []
       quantity: refRowToQuantity(r),
     })),
     temperature,
-    subInstructions,
+    subInstructions: subInstructionsList,
+    simplifiedSteps: simplified,
     notes: rowX.notes ?? undefined,
   });
 }
@@ -490,6 +532,14 @@ export function instructionToInsert(
     temperature_value: step.temperature?.value ?? null,
     temperature_unit: step.temperature?.unit ?? null,
     sub_instructions: step.subInstructions ? [...step.subInstructions] : null,
+    simplified_steps: step.simplifiedSteps
+      ? step.simplifiedSteps.map((s) => ({
+          text: s.text,
+          ...(s.durationSec != null ? { durationSec: s.durationSec } : {}),
+          ...(s.temperature ? { temperature: { ...s.temperature } } : {}),
+          ...(s.notes ? { notes: s.notes } : {}),
+        }))
+      : null,
     notes: step.notes ?? null,
   };
   return { ...base, ...extras } as InstructionInsert;

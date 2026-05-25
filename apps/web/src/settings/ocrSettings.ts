@@ -1,9 +1,18 @@
-// User preferences for the LLM-backed OCR import. Stored in localStorage
-// so they're per-device (the API key is sensitive — we deliberately do NOT
-// sync it through Supabase/cr-sqlite).
+// Default model + prompt the import flow and bakeoff page seed from
+// when the user hasn't picked anything yet. The user's chosen defaults
+// live server-side in the `user_ocr_prefs` table — there is no
+// localStorage shape anymore; that file used to exist but was removed
+// when OCR keys moved to Vault.
 
 export type OcrProvider = 'gemini' | 'openai-compatible';
 
+/**
+ * Legacy localStorage shape for OCR prefs. The new bakeoff-as-import and
+ * instruction-rewriting flows use server-side `user_ocr_prefs` instead
+ * (see `getUserOcrPrefs`/`setUserOcrPrefs` in `src/import/api.ts`), but the
+ * Speed Importer feature still reads from localStorage for its
+ * synchronous code paths, so the load/save/clear helpers stay.
+ */
 export interface OcrSettings {
   provider: OcrProvider;
   apiKey: string;
@@ -16,6 +25,7 @@ export interface OcrSettings {
 }
 
 const KEY = 'cookyourbooks.ocr.v1';
+
 
 export const DEFAULT_PROMPT = `Extract recipe information from this image and return it as valid JSON (no markdown, no code blocks).
 
