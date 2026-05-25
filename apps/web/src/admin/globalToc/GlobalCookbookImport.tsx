@@ -32,6 +32,13 @@ export function GlobalCookbookImport() {
   const [ownerFilter, setOwnerFilter] = useState<string>('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importedAs, setImportedAs] = useState<Record<string, string>>({});
+  // Snapshot of rows we've imported in this session. Needed because
+  // SyncProvider's debounce auto-invalidates most queries on every
+  // sync round-trip — the import RPC's own write triggers exactly that.
+  // Without this, the candidates query refetches between the RPC return
+  // and the next render, drops the just-imported row, and the admin
+  // never sees the "Imported · edit" affordance.
+  const [importedSnapshots, setImportedSnapshots] = useState<Record<string, ImportCandidate>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [currentlyImporting, setCurrentlyImporting] = useState<string | null>(null);
 
@@ -50,9 +57,21 @@ export function GlobalCookbookImport() {
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   }, [data]);
 
+  // Merge live query data with locally-imported snapshots so just-
+  // imported rows stay rendered even after a sync-induced refetch.
+  const merged = useMemo(() => {
+    const byId = new Map<string, ImportCandidate>(
+      (data ?? []).map((c) => [c.collection_id, c]),
+    );
+    for (const [id, snap] of Object.entries(importedSnapshots)) {
+      if (!byId.has(id)) byId.set(id, snap);
+    }
+    return Array.from(byId.values());
+  }, [data, importedSnapshots]);
+
   const filtered = useMemo(
-    () => (data ?? []).filter((c) => !ownerFilter || c.owner_id === ownerFilter),
-    [data, ownerFilter],
+    () => merged.filter((c) => !ownerFilter || c.owner_id === ownerFilter),
+    [merged, ownerFilter],
   );
 
   // Selectable = filtered AND not yet imported. Used to power "select
@@ -75,14 +94,16 @@ export function GlobalCookbookImport() {
 
   const bulkImport = useMutation({
     mutationFn: async () => {
-      const ids = filtered
-        .filter((c) => selected.has(c.collection_id) && !importedAs[c.collection_id])
-        .map((c) => c.collection_id);
-      for (const id of ids) {
+      const candidates = filtered.filter(
+        (c) => selected.has(c.collection_id) && !importedAs[c.collection_id],
+      );
+      for (const c of candidates) {
+        const id = c.collection_id;
         setCurrentlyImporting(id);
         try {
           const cookbookId = await adminImportCollection(id);
           setImportedAs((prev) => ({ ...prev, [id]: cookbookId }));
+          setImportedSnapshots((prev) => ({ ...prev, [id]: c }));
           setErrors((prev) => {
             if (!(id in prev)) return prev;
             const next = { ...prev };
@@ -138,13 +159,13 @@ export function GlobalCookbookImport() {
       {isLoading && <p className="text-stone-500">Looking for candidates…</p>}
       {error && <p className="text-red-700">{(error as Error).message}</p>}
 
-      {data && data.length === 0 && (
+      {data && merged.length === 0 && (
         <p className="rounded-md border border-stone-200 bg-stone-50 dark:bg-stone-900 p-4 text-stone-600 dark:text-stone-400">
           Nothing to import — every user cookbook with an ISBN is already in the catalog.
         </p>
       )}
 
-      {data && data.length > 0 && (
+      {data && merged.length > 0 && (
         <>
           <div className="flex flex-wrap items-center gap-3 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 p-3">
             <label className="flex items-center gap-2 text-sm">
