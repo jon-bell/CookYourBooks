@@ -7,9 +7,19 @@ import {
   useUpdateImportBatch,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr, mergeImportItems, OcrWorkerNotConfiguredError, setRecitationPolicy } from '../import/api.js';
+import {
+  kickOcr,
+  mergeImportItems,
+  OcrWorkerNotConfiguredError,
+  retryRecitationFailures,
+  setBatchFallback,
+  setRecitationPolicy,
+} from '../import/api.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
+import type { OcrProvider } from '../import/model.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { ImportThumb } from '../import/ImportThumb.js';
+import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
 import {
   compactOcrQueueLabel,
@@ -64,6 +74,15 @@ export function ImportBatchPage() {
   const [recitationBusy, setRecitationBusy] = useState(false);
   const [kickBusy, setKickBusy] = useState(false);
   const [kickError, setKickError] = useState<string | undefined>();
+  const [editingFallback, setEditingFallback] = useState(false);
+  const [fallbackDraft, setFallbackDraft] = useState<{
+    provider: '' | OcrProvider;
+    model: string;
+  }>({ provider: '', model: '' });
+  const [fallbackBusy, setFallbackBusy] = useState(false);
+  const [fallbackError, setFallbackError] = useState<string | undefined>();
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [retryToast, setRetryToast] = useState<string | undefined>();
 
   const localQueryEnabled = useLocalQueryEnabled();
   const { data: attemptsByItem = {} } = useQuery<Record<string, number[]>>({
@@ -90,6 +109,11 @@ export function ImportBatchPage() {
   const totalCost = items.reduce((acc, i) => acc + i.costUsdMicros, 0) / 1_000_000;
 
   const needsFallbackCount = items.filter((i) => i.status === 'NEEDS_FALLBACK').length;
+  const recitationFailedCount = items.filter(
+    (i) =>
+      i.status === 'OCR_FAILED' &&
+      (i.lastError ?? '').toLowerCase().includes('recitation'),
+  ).length;
 
   const { itemsPerMin, eta } = useMemo(() => {
     const cutoff = Date.now() - 60_000;
@@ -121,6 +145,9 @@ export function ImportBatchPage() {
 
   const pendingCount = items.filter((i) => i.status === 'PENDING').length;
   const stalledCount = items.filter((i) => i.status === 'CLAIMED').length;
+  const awaitingGroupingCount = items.filter(
+    (i) => i.status === 'AWAITING_GROUPING',
+  ).length;
   const activeOcrCount = pendingCount + stalledCount;
   const now = useTickingNow(activeOcrCount > 0);
 
@@ -196,6 +223,75 @@ export function ImportBatchPage() {
     }
   }
 
+  function openFallbackEditor() {
+    if (!batch) return;
+    setFallbackError(undefined);
+    setFallbackDraft({
+      provider: batch.fallbackProvider ?? '',
+      model: batch.fallbackModel ?? '',
+    });
+    setEditingFallback(true);
+  }
+
+  async function saveFallback() {
+    if (!batch) return;
+    setFallbackError(undefined);
+    const provider = fallbackDraft.provider || null;
+    const rawModel = fallbackDraft.model.trim();
+    const model = provider ? rawModel || DEFAULT_MODEL_BY_PROVIDER[provider] : null;
+    if ((provider === null) !== (model === null)) {
+      setFallbackError('Provider and model must both be set or both cleared.');
+      return;
+    }
+    setFallbackBusy(true);
+    try {
+      await setBatchFallback(batch.id, provider, model);
+      // Mirror into the local cache immediately so the UI doesn't wait
+      // for the realtime round-trip. The outbox path isn't used here
+      // because we want this write to be server-confirmed before the
+      // user can click "Retry with fallback".
+      await updateBatch.mutateAsync({
+        id: batch.id,
+        patch: { fallbackProvider: provider, fallbackModel: model },
+      });
+      setEditingFallback(false);
+    } catch (e) {
+      setFallbackError((e as Error).message);
+    } finally {
+      setFallbackBusy(false);
+    }
+  }
+
+  async function retryFailedWithFallback() {
+    if (!batch) return;
+    setRetryBusy(true);
+    setRetryToast(undefined);
+    try {
+      const n = await retryRecitationFailures(batch.id);
+      // Mirror policy locally so the FAIL→FALLBACK transition is
+      // visible before the next pull.
+      await updateBatch.mutateAsync({
+        id: batch.id,
+        patch: { recitationPolicy: 'FALLBACK' },
+      });
+      try {
+        await kickOcr(batch.id);
+      } catch {
+        /* cron will catch up */
+      }
+      await syncNow();
+      setRetryToast(
+        n === 0
+          ? 'No recitation-failed items to retry.'
+          : `Retrying ${n} item${n === 1 ? '' : 's'} with fallback model.`,
+      );
+    } catch (e) {
+      setRetryToast(`Retry failed: ${(e as Error).message}`);
+    } finally {
+      setRetryBusy(false);
+    }
+  }
+
   async function kickWorker() {
     if (!batch) return;
     setKickBusy(true);
@@ -235,6 +331,27 @@ export function ImportBatchPage() {
 
   return (
     <div className="space-y-6 pb-20">
+      {awaitingGroupingCount > 0 && (
+        <div className="sticky top-0 z-10 rounded-md border border-violet-300 bg-violet-50 p-3 text-sm text-violet-900">
+          <div className="font-medium">
+            {awaitingGroupingCount} page{awaitingGroupingCount === 1 ? '' : 's'} waiting
+            for grouping
+          </div>
+          <div className="mt-1 text-violet-800">
+            This batch was uploaded as "Group then OCR". Decide which pages go
+            together — OCR runs once you confirm.
+          </div>
+          <div className="mt-2">
+            <Link
+              to={`/import/${batch.id}/group`}
+              className="inline-block rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+            >
+              Group pages
+            </Link>
+          </div>
+        </div>
+      )}
+
       {showStuckBanner && (
         <div className="rounded-md border border-stone-300 bg-stone-50 p-3 text-sm text-stone-800">
           <div className="font-medium">
@@ -261,6 +378,37 @@ export function ImportBatchPage() {
               {kickError}
             </div>
           )}
+        </div>
+      )}
+
+      {recitationFailedCount > 0 && batch.recitationPolicy !== 'ASK' && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="font-medium">
+            {recitationFailedCount} item{recitationFailedCount === 1 ? '' : 's'} failed
+            on recitation.
+          </div>
+          <div className="mt-1">
+            {batch.fallbackProvider && batch.fallbackModel ? (
+              <>Retry with fallback model ({batch.fallbackModel})?</>
+            ) : (
+              <>Set a fallback model above first, then retry.</>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void retryFailedWithFallback()}
+              disabled={
+                retryBusy || !batch.fallbackProvider || !batch.fallbackModel
+              }
+              className="rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+            >
+              {retryBusy ? 'Retrying…' : 'Retry with fallback'}
+            </button>
+            {retryToast && (
+              <span className="self-center text-xs">{retryToast}</span>
+            )}
+          </div>
         </div>
       )}
 
@@ -333,26 +481,87 @@ export function ImportBatchPage() {
             </h1>
           )}
           <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
-            <label className="flex items-center gap-1.5">
-              <span>Target cookbook:</span>
-              <select
+            <span className="text-sm">Target cookbook:</span>
+            <div className="min-w-[18rem]">
+              <CookbookCombobox
+                options={pickerOptions}
                 value={batch.targetCollectionId ?? ''}
-                onChange={(e) =>
+                onChange={(id) =>
                   updateBatch.mutate({
                     id: batch.id,
-                    patch: { targetCollectionId: e.target.value || null },
+                    patch: { targetCollectionId: id || null },
                   })
                 }
-                className="rounded border border-stone-300 px-2 py-1 text-sm"
-              >
-                <option value="">(unassigned)</option>
-                {pickerOptions.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
+            <span>Fallback model:</span>
+            {editingFallback ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <select
+                  value={fallbackDraft.provider}
+                  onChange={(e) =>
+                    setFallbackDraft((d) => ({
+                      ...d,
+                      provider: e.target.value as '' | OcrProvider,
+                      model:
+                        e.target.value && !d.model
+                          ? DEFAULT_MODEL_BY_PROVIDER[e.target.value as OcrProvider]
+                          : d.model,
+                    }))
+                  }
+                  className="rounded border border-stone-300 px-2 py-1 text-sm"
+                >
+                  <option value="">(none)</option>
+                  <option value="gemini">gemini</option>
+                  <option value="openai-compatible">openai-compatible</option>
+                </select>
+                {fallbackDraft.provider && (
+                  <input
+                    value={fallbackDraft.model}
+                    onChange={(e) =>
+                      setFallbackDraft((d) => ({ ...d, model: e.target.value }))
+                    }
+                    placeholder={DEFAULT_MODEL_BY_PROVIDER[fallbackDraft.provider]}
+                    className="rounded border border-stone-300 px-2 py-1 text-sm"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => void saveFallback()}
+                  disabled={fallbackBusy}
+                  className="rounded-md bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+                >
+                  {fallbackBusy ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingFallback(false)}
+                  className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+                >
+                  Cancel
+                </button>
+                {fallbackError && (
+                  <span className="text-xs text-red-700">{fallbackError}</span>
+                )}
+              </div>
+            ) : (
+              <>
+                <span>
+                  {batch.fallbackProvider && batch.fallbackModel
+                    ? `${batch.fallbackModel} (${batch.fallbackProvider})`
+                    : 'not configured'}
+                </span>
+                <button
+                  type="button"
+                  onClick={openFallbackEditor}
+                  className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+                >
+                  Edit
+                </button>
+              </>
+            )}
           </div>
         </div>
         <details className="relative">
@@ -628,6 +837,7 @@ export function ImportBatchPage() {
 
 function ItemStatusPill({ status }: { status: ImportItemStatus }) {
   const map: Record<ImportItemStatus, { label: string; cls: string }> = {
+    AWAITING_GROUPING: { label: 'Awaiting grouping', cls: 'bg-violet-100 text-violet-800' },
     PENDING: { label: 'Queued', cls: 'bg-stone-200 text-stone-700' },
     CLAIMED: { label: 'Processing', cls: 'bg-blue-100 text-blue-800' },
     OCR_DONE: { label: 'Needs review', cls: 'bg-amber-100 text-amber-800' },

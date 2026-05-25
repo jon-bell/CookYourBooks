@@ -51,6 +51,45 @@ function toMs(ts: string | number | null | undefined): number {
   return Number.isFinite(p) ? p : 0;
 }
 
+// PostgREST silently caps responses at the project's max-rows setting
+// (1000 by default on Supabase). For libraries with > PAGE_SIZE rows,
+// every `pullAll` table query has to page with `.range()` or new rows
+// past the cap never reach the local cache. PAGE_SIZE matches the
+// server cap so a "fewer than PAGE_SIZE returned" check is a reliable
+// end-of-stream signal.
+const PAGE_SIZE = 1000;
+
+interface PageResult {
+  data: unknown[] | null;
+  error: unknown;
+}
+
+/**
+ * Drive a paginated PostgREST query until exhausted. The builder is
+ * re-invoked per page so each call gets a fresh query with its own
+ * `.range(from, to)` window; supabase-js query builders aren't safe to
+ * mutate-then-reuse, which is why we don't accept a prebuilt query.
+ * Result rows come back untyped — supabase-js's row types use the raw
+ * Postgres column types (e.g., `status: string` for check-constrained
+ * text columns) while we want narrower TS unions, so callers cast.
+ */
+async function fetchAllPages<T>(
+  build: (from: number, to: number) => PromiseLike<PageResult>,
+): Promise<T[]> {
+  const out: T[] = [];
+  let from = 0;
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await build(from, to);
+    if (error) throw error;
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return out;
+}
+
 // ---------- pull ----------
 
 export interface PullResult {
@@ -101,6 +140,7 @@ interface ImportItemRow {
   assigned_page_number: number | null;
   is_toc: boolean;
   status:
+    | 'AWAITING_GROUPING'
     | 'PENDING'
     | 'CLAIMED'
     | 'OCR_DONE'
@@ -160,18 +200,20 @@ export async function pullAll(
   const collectionTopic = `collections:${ownerId}`;
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
 
-  const { data: collections, error: colErr } = await client
-    .from('recipe_collections')
-    .select('*')
-    .eq('owner_id', ownerId)
-    .gte('updated_at', collectionsSince)
-    .order('updated_at', { ascending: true });
-  if (colErr) throw colErr;
+  const collections = await fetchAllPages<CollectionRow>((from, to) =>
+    client
+      .from('recipe_collections')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', collectionsSince)
+      .order('updated_at', { ascending: true })
+      .range(from, to),
+  );
 
   let maxCollectionTs = await getWatermark(collectionTopic);
-  for (const row of collections ?? []) {
-    await upsertCollectionRow(row as CollectionRow);
-    maxCollectionTs = Math.max(maxCollectionTs, toMs((row as CollectionRow).updated_at));
+  for (const row of collections) {
+    await upsertCollectionRow(row);
+    maxCollectionTs = Math.max(maxCollectionTs, toMs(row.updated_at));
   }
   if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
 
@@ -185,17 +227,23 @@ export async function pullAll(
   // had changed — for libraries with thousands of items that ran past
   // PostgREST's URL/parameter ceiling. Filtering through the join
   // keeps the URL tiny no matter how many rows the user owns.
-  const { data: recipeRowsRaw, error: recErr } = await client
-    .from('recipes')
-    .select('*, recipe_collections!inner(owner_id)')
-    .eq('recipe_collections.owner_id', ownerId)
-    .gte('updated_at', recipesSince)
-    .order('updated_at', { ascending: true });
-  if (recErr) throw recErr;
-  const recipesFetched: RecipeRow[] = (recipeRowsRaw ?? []).map((row) => {
-    const { recipe_collections: _rc, ...rest } = row as RecipeRow & {
-      recipe_collections?: unknown;
-    };
+  //
+  // Each `.range()` page is bounded by the project's max-rows cap
+  // (1000), so we loop until exhausted — without this, libraries past
+  // 1000 recipes never sync the rows beyond the cap and newly-saved
+  // recipes silently fail to appear on other devices.
+  const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
+    (from, to) =>
+      client
+        .from('recipes')
+        .select('*, recipe_collections!inner(owner_id)')
+        .eq('recipe_collections.owner_id', ownerId)
+        .gte('updated_at', recipesSince)
+        .order('updated_at', { ascending: true })
+        .range(from, to),
+  );
+  const recipesFetched: RecipeRow[] = recipeRowsRaw.map((row) => {
+    const { recipe_collections: _rc, ...rest } = row;
     return rest as RecipeRow;
   });
 
@@ -207,50 +255,53 @@ export async function pullAll(
     // Children: filter by the parent recipe's `updated_at` so we only
     // re-pull children for recipes that actually changed this round.
     // Save flow rewrites all children on every recipe save, so the
-    // parent's updated_at moving is a sufficient signal.
-    const [ingRes, stepRes, refRes] = await Promise.all([
-      client
-        .from('ingredients')
-        .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
-        .eq('recipes.recipe_collections.owner_id', ownerId)
-        .gte('recipes.updated_at', recipesSince),
-      client
-        .from('instructions')
-        .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
-        .eq('recipes.recipe_collections.owner_id', ownerId)
-        .gte('recipes.updated_at', recipesSince),
-      client
-        .from('instruction_ingredient_refs')
-        .select(
-          '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
-        )
-        .eq('instructions.recipes.recipe_collections.owner_id', ownerId)
-        .gte('instructions.recipes.updated_at', recipesSince),
+    // parent's updated_at moving is a sufficient signal. Each child
+    // table is paginated independently — the join filter keeps the URL
+    // small no matter how many parents matched.
+    const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
+      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
+        client
+          .from('ingredients')
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+          .eq('recipes.recipe_collections.owner_id', ownerId)
+          .gte('recipes.updated_at', recipesSince)
+          .order('recipe_id', { ascending: true })
+          .order('sort_order', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
+        client
+          .from('instructions')
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+          .eq('recipes.recipe_collections.owner_id', ownerId)
+          .gte('recipes.updated_at', recipesSince)
+          .order('recipe_id', { ascending: true })
+          .order('step_number', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
+        (from, to) =>
+          client
+            .from('instruction_ingredient_refs')
+            .select(
+              '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
+            )
+            .eq('instructions.recipes.recipe_collections.owner_id', ownerId)
+            .gte('instructions.recipes.updated_at', recipesSince)
+            .order('instruction_id', { ascending: true })
+            .range(from, to),
+      ),
     ]);
-    if (ingRes.error) throw ingRes.error;
-    if (stepRes.error) throw stepRes.error;
-    if (refRes.error) throw refRes.error;
 
-    const ings = stripEmbedded(
-      (ingRes.data ?? []) as Array<IngredientRow & { recipes?: unknown }>,
-      'recipes',
-    );
-    const steps = stripEmbedded(
-      (stepRes.data ?? []) as Array<InstructionRow & { recipes?: unknown }>,
-      'recipes',
-    );
+    const ings = stripEmbedded(ingsRaw, 'recipes');
+    const steps = stripEmbedded(stepsRaw, 'recipes');
     const ingByRecipe = groupBy(ings, (i) => i.recipe_id);
     const stepsByRecipe = groupBy(steps, (s) => s.recipe_id);
 
-    const refRows = (refRes.data ?? []) as Array<
-      InstructionRefRow & { instructions?: { recipe_id?: string } }
-    >;
     const refsByRecipe = new Map<string, InstructionRefRow[]>();
-    for (const row of refRows) {
+    for (const row of refsRaw) {
       const recipeId = row.instructions?.recipe_id ?? '';
-      const { instructions: _i, ...refOnly } = row as InstructionRefRow & {
-        instructions?: unknown;
-      };
+      const { instructions: _i, ...refOnly } = row;
       if (!recipeId) continue;
       const arr = refsByRecipe.get(recipeId) ?? [];
       arr.push(refOnly as InstructionRefRow);
@@ -274,7 +325,7 @@ export async function pullAll(
   const importCounts = await pullImports(client, ownerId);
 
   return {
-    collections: collections?.length ?? 0,
+    collections: collections.length,
     recipes: recipesFetched.length,
     ingredients: ingTotal,
     instructions: stepTotal,
@@ -302,34 +353,38 @@ async function pullImports(
 
   const batchTopic = `import_batches:${ownerId}`;
   const batchSince = new Date(await getWatermark(batchTopic)).toISOString();
-  const batchRes = await client
-    .from('import_batches')
-    .select('*')
-    .eq('owner_id', ownerId)
-    .gte('updated_at', batchSince)
-    .order('updated_at', { ascending: true });
-  if (batchRes.error) throw batchRes.error;
+  const batches = await fetchAllPages<ImportBatchRow>((from, to) =>
+    client
+      .from('import_batches')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', batchSince)
+      .order('updated_at', { ascending: true })
+      .range(from, to),
+  );
   let maxBatchTs = await getWatermark(batchTopic);
-  for (const row of batchRes.data ?? []) {
-    await upsertImportBatchRow(row as ImportBatchRow);
-    maxBatchTs = Math.max(maxBatchTs, toMs((row as ImportBatchRow).updated_at));
+  for (const row of batches) {
+    await upsertImportBatchRow(row);
+    maxBatchTs = Math.max(maxBatchTs, toMs(row.updated_at));
     counts.batches += 1;
   }
   if (maxBatchTs > 0) await bumpWatermark(batchTopic, maxBatchTs);
 
   const itemTopic = `import_items:${ownerId}`;
   const itemSince = new Date(await getWatermark(itemTopic)).toISOString();
-  const itemRes = await client
-    .from('import_items')
-    .select('*')
-    .eq('owner_id', ownerId)
-    .gte('updated_at', itemSince)
-    .order('updated_at', { ascending: true });
-  if (itemRes.error) throw itemRes.error;
+  const items = await fetchAllPages<ImportItemRow>((from, to) =>
+    client
+      .from('import_items')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', itemSince)
+      .order('updated_at', { ascending: true })
+      .range(from, to),
+  );
   let maxItemTs = await getWatermark(itemTopic);
-  for (const row of itemRes.data ?? []) {
-    await upsertImportItemRow(row as ImportItemRow);
-    maxItemTs = Math.max(maxItemTs, toMs((row as ImportItemRow).updated_at));
+  for (const row of items) {
+    await upsertImportItemRow(row);
+    maxItemTs = Math.max(maxItemTs, toMs(row.updated_at));
     counts.items += 1;
   }
   if (maxItemTs > 0) await bumpWatermark(itemTopic, maxItemTs);
@@ -338,34 +393,38 @@ async function pullImports(
   // started_at instead so each pull only fetches new rows.
   const attemptTopic = `import_item_attempts:${ownerId}`;
   const attemptSince = new Date(await getWatermark(attemptTopic)).toISOString();
-  const attemptRes = await client
-    .from('import_item_attempts')
-    .select('*')
-    .eq('owner_id', ownerId)
-    .gte('started_at', attemptSince)
-    .order('started_at', { ascending: true });
-  if (attemptRes.error) throw attemptRes.error;
+  const attempts = await fetchAllPages<ImportItemAttemptRow>((from, to) =>
+    client
+      .from('import_item_attempts')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('started_at', attemptSince)
+      .order('started_at', { ascending: true })
+      .range(from, to),
+  );
   let maxAttemptTs = await getWatermark(attemptTopic);
-  for (const row of attemptRes.data ?? []) {
-    await upsertImportItemAttemptRow(row as ImportItemAttemptRow);
-    maxAttemptTs = Math.max(maxAttemptTs, toMs((row as ImportItemAttemptRow).started_at));
+  for (const row of attempts) {
+    await upsertImportItemAttemptRow(row);
+    maxAttemptTs = Math.max(maxAttemptTs, toMs(row.started_at));
     counts.attempts += 1;
   }
   if (maxAttemptTs > 0) await bumpWatermark(attemptTopic, maxAttemptTs);
 
   const tocTopic = `import_toc_entries:${ownerId}`;
   const tocSince = new Date(await getWatermark(tocTopic)).toISOString();
-  const tocRes = await client
-    .from('import_toc_entries')
-    .select('*')
-    .eq('owner_id', ownerId)
-    .gte('updated_at', tocSince)
-    .order('updated_at', { ascending: true });
-  if (tocRes.error) throw tocRes.error;
+  const tocs = await fetchAllPages<ImportTocEntryRow>((from, to) =>
+    client
+      .from('import_toc_entries')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', tocSince)
+      .order('updated_at', { ascending: true })
+      .range(from, to),
+  );
   let maxTocTs = await getWatermark(tocTopic);
-  for (const row of tocRes.data ?? []) {
-    await upsertImportTocEntryRow(row as ImportTocEntryRow);
-    maxTocTs = Math.max(maxTocTs, toMs((row as ImportTocEntryRow).updated_at));
+  for (const row of tocs) {
+    await upsertImportTocEntryRow(row);
+    maxTocTs = Math.max(maxTocTs, toMs(row.updated_at));
     counts.tocEntries += 1;
   }
   if (maxTocTs > 0) await bumpWatermark(tocTopic, maxTocTs);
@@ -888,6 +947,9 @@ async function pushImportItemInsert(
   const local = rows[0];
   if (!local) return;
   type ItemInsert = Database['public']['Tables']['import_items']['Insert'];
+  // Status is included so that AWAITING_GROUPING uploads don't get
+  // silently re-defaulted to PENDING on the server side and immediately
+  // picked up by the worker before the user finishes grouping.
   const payload: ItemInsert = {
     id: local.id as string,
     batch_id: local.batch_id as string,
@@ -899,6 +961,7 @@ async function pushImportItemInsert(
     source_pdf_page: (local.source_pdf_page as number | null) ?? null,
     assigned_collection_id: (local.assigned_collection_id as string | null) ?? null,
     is_toc: local.is_toc === 1 || local.is_toc === true,
+    status: local.status as ItemInsert['status'],
   };
   const { error } = await client
     .from('import_items')

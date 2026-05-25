@@ -14,6 +14,7 @@ import { SettingsPage } from './pages/SettingsPage.js';
 import { ImportListPage } from './pages/ImportListPage.js';
 import { ImportNewPage } from './pages/ImportNewPage.js';
 import { ImportBatchPage } from './pages/ImportBatchPage.js';
+import { ImportGroupingPage } from './pages/ImportGroupingPage.js';
 import { ImportItemPage } from './pages/ImportItemPage.js';
 import { SignInPage } from './auth/SignInPage.js';
 import { SignUpPage } from './auth/SignUpPage.js';
@@ -163,6 +164,14 @@ export function App() {
             element={
               <RequireAuth>
                 <ImportBatchPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/:batchId/group"
+            element={
+              <RequireAuth>
+                <ImportGroupingPage />
               </RequireAuth>
             }
           />

@@ -376,7 +376,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
              group by collection_id
          ) rc on rc.collection_id = c.id
         where c.owner_id = ? and c.deleted = 0
-        order by coalesce(c.updated_at, 0) desc`,
+        order by lower(c.title) asc`,
       [this.ownerId],
     )) as Array<{
       id: string;

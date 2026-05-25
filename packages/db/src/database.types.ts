@@ -1175,11 +1175,23 @@ export type Database = {
         }
         Returns: boolean
       }
+      import_finalize_grouping: {
+        Args: { p_batch_id: string; p_groups: Json }
+        Returns: undefined
+      }
       import_merge_items: {
         Args: { p_absorb_ids: string[]; p_primary_id: string }
         Returns: undefined
       }
       import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
+      import_retry_recitation_failures: {
+        Args: { p_batch_id: string }
+        Returns: number
+      }
+      import_set_batch_fallback: {
+        Args: { p_batch_id: string; p_provider: string | null; p_model: string | null }
+        Returns: undefined
+      }
       import_set_recitation_policy: {
         Args: { p_batch_id: string; p_policy: string }
         Returns: undefined

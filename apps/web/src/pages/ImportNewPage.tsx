@@ -11,6 +11,7 @@ import {
   captureMultiShot,
   isMultiShotAvailable,
 } from '../import/multiShotShim.js';
+import { CookbookCombobox } from '../import/CookbookCombobox.js';
 
 type Step = 'source' | 'review' | 'settings' | 'uploading';
 
@@ -29,6 +30,11 @@ export function ImportNewPage() {
   const [previews, setPreviews] = useState<string[]>([]);
   const [name, setName] = useState(() => `Imported ${new Date().toLocaleDateString()}`);
   const [targetCollectionId, setTargetCollectionId] = useState<string>('');
+  // 'ocr-first' = current behavior (worker OCRs each page, user merges
+  // after). 'group-first' = user clicks splits between pages, then
+  // each group OCRs as one call. Default stays 'ocr-first' so existing
+  // flows are untouched.
+  const [importMode, setImportMode] = useState<'ocr-first' | 'group-first'>('ocr-first');
   const [creatingCookbook, setCreatingCookbook] = useState(false);
   const [newCookbookTitle, setNewCookbookTitle] = useState('');
   const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
@@ -155,10 +161,17 @@ export function ImportNewPage() {
           fallbackModel: fallbackProvider ? fallbackModel.trim() || null : null,
           sourceKind,
           files,
+          awaitGrouping: importMode === 'group-first',
         },
         setProgress,
       );
-      navigate(`/import/${result.batchId}`);
+      // Group-first lands on the grouping UI; ocr-first lands on the
+      // usual batch board where OCR is already churning.
+      navigate(
+        importMode === 'group-first'
+          ? `/import/${result.batchId}/group`
+          : `/import/${result.batchId}`,
+      );
       void syncNow();
     } catch (e) {
       setError((e as Error).message);
@@ -342,6 +355,26 @@ export function ImportNewPage() {
             ))}
           </ul>
 
+          <fieldset className="rounded-lg border border-stone-200 bg-white p-3">
+            <legend className="px-1 text-sm font-medium text-stone-700">
+              When do you want to group multi-page recipes?
+            </legend>
+            <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <ModeOption
+                checked={importMode === 'ocr-first'}
+                onChange={() => setImportMode('ocr-first')}
+                title="OCR each page, then merge"
+                body="Worker reads every page individually. Use this when each page is its own recipe, or you're not sure yet — you can still merge pages later from the batch board."
+              />
+              <ModeOption
+                checked={importMode === 'group-first'}
+                onChange={() => setImportMode('group-first')}
+                title="Group pages first, then OCR"
+                body="You drop splits between pages so the worker reads each group as one recipe. One OCR call per recipe instead of per page — cheaper, and avoids mid-recipe page breaks confusing the model."
+              />
+            </div>
+          </fieldset>
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Batch name">
               <input
@@ -390,28 +423,13 @@ export function ImportNewPage() {
                 </div>
               ) : (
                 <>
-                  <select
+                  <CookbookCombobox
+                    options={pickerOptions}
                     value={targetCollectionId}
-                    onChange={(e) => {
-                      if (e.target.value === '__new__') {
-                        setCreatingCookbook(true);
-                      } else {
-                        setTargetCollectionId(e.target.value);
-                      }
-                    }}
-                    className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
-                  >
-                    <option value="">(unassigned)</option>
-                    {pickerOptions.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.title}
-                      </option>
-                    ))}
-                    <option value="__new__">+ Create new cookbook…</option>
-                  </select>
-                  {pickerLoading && (
-                    <p className="mt-1 text-xs text-stone-500">Loading cookbooks…</p>
-                  )}
+                    onChange={setTargetCollectionId}
+                    onCreateNew={() => setCreatingCookbook(true)}
+                    loading={pickerLoading}
+                  />
                   {!pickerLoading && pickerOptions.length === 0 && (
                     <p className="mt-1 text-xs text-stone-500">
                       No cookbooks yet — pick "Create new cookbook" above or leave unassigned.
@@ -510,6 +528,40 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-stone-700">{label}</span>
       {children}
+    </label>
+  );
+}
+
+function ModeOption({
+  checked,
+  onChange,
+  title,
+  body,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  title: string;
+  body: string;
+}) {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-2 rounded-md border p-3 text-sm ${
+        checked
+          ? 'border-stone-900 bg-stone-50'
+          : 'border-stone-200 hover:border-stone-400'
+      }`}
+    >
+      <input
+        type="radio"
+        name="import-mode"
+        checked={checked}
+        onChange={onChange}
+        className="mt-1"
+      />
+      <span>
+        <span className="block font-medium text-stone-900">{title}</span>
+        <span className="mt-1 block text-xs text-stone-600">{body}</span>
+      </span>
     </label>
   );
 }
