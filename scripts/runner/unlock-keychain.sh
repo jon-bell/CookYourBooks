@@ -37,4 +37,16 @@ security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
 # the user logs out or someone explicitly locks it.
 security set-keychain-settings -l "$KEYCHAIN"
 
-echo "  unlocked $KEYCHAIN, idle auto-lock disabled"
+# Re-apply the ACL partition list so codesign / Apple toolchain can use
+# any signing-class key in the keychain without a UI prompt. Match's
+# default certs lane reimports the .p12 from the certs repo (so the
+# private key churns), and a freshly-imported key's partition list is
+# empty until something explicitly grants access. Without this, the
+# next signed build trips errSecInternalComponent.
+security set-key-partition-list \
+  -S apple-tool:,apple:,codesign: \
+  -s \
+  -k "$PASSWORD" \
+  "$KEYCHAIN" >/dev/null 2>&1 || true
+
+echo "  unlocked $KEYCHAIN, idle auto-lock disabled, partition list re-applied"
