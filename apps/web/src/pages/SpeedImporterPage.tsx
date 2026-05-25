@@ -185,8 +185,8 @@ export function SpeedImporterPage() {
           }
           setPhase('finalizing');
           try {
-            const { recipeCount } = await finalizePlannerSession(user!.id, batch.id);
             await syncNow();
+            const { recipeCount } = await finalizePlannerSession(user!.id, batch.id);
             qc.invalidateQueries({ queryKey: ['import-items', batch.id] });
             qc.invalidateQueries({ queryKey: ['import-batch', batch.id] });
             if (recipeCount === 0) {

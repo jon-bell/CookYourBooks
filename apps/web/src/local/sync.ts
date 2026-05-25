@@ -1115,6 +1115,39 @@ async function pushImportItemInsert(
   if (error) throw error;
 }
 
+/**
+ * Push a locally-minted import batch and all of its items to Supabase.
+ * Upload flows write metadata locally first and enqueue outbox pushes;
+ * server-side import RPCs (e.g. `import_finalize_grouping`) fail with
+ * "Batch not found or not owned by caller" if called before that push
+ * lands. Call this immediately before any such RPC.
+ */
+export async function pushImportBatchGraph(
+  client: CookbooksClient,
+  batchId: string,
+): Promise<void> {
+  await pushImportBatchInsert(client, batchId);
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ id: string }>(
+    `select id from import_items where batch_id = ? and deleted = 0 order by page_index`,
+    [batchId],
+  )) as { id: string }[];
+  for (const row of rows) {
+    await pushImportItemInsert(client, row.id);
+  }
+  // The direct push above supersedes any still-pending outbox entries
+  // for this batch graph — drop them so a later full sync doesn't
+  // retry redundant upserts.
+  await db.exec(
+    `delete from outbox
+      where (kind in ('import_batch_insert', 'import_batch_update') and entity_id = ?)
+         or (kind = 'import_item_insert' and entity_id in (
+           select id from import_items where batch_id = ?
+         ))`,
+    [batchId, batchId],
+  );
+}
+
 async function pushConversionRule(client: CookbooksClient, id: string): Promise<void> {
   const db = await getLocalDb();
   const rows = (await db.execO<Record<string, unknown>>(

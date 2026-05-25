@@ -167,12 +167,12 @@ export function ImportNewPage() {
       );
       // Group-first lands on the grouping UI; ocr-first lands on the
       // usual batch board where OCR is already churning.
+      await syncNow();
       navigate(
         importMode === 'group-first'
           ? `/import/${result.batchId}/group`
           : `/import/${result.batchId}`,
       );
-      void syncNow();
     } catch (e) {
       setError((e as Error).message);
       setStep('settings');
