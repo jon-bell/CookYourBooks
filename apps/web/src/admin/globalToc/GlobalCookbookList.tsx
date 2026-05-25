@@ -3,10 +3,13 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CoverImage } from '../../components/CoverImage.js';
 import {
+  backfillCoversFromOpenLibrary,
   createCookbook,
   deleteCookbook,
   listCookbooks,
+  listCookbooksMissingCovers,
   listImportCandidates,
+  type CoverBackfillResult,
   type GlobalCookbook,
 } from './api.js';
 
@@ -55,6 +58,8 @@ export function GlobalCookbookList() {
           </Link>
         </div>
       )}
+      <CoverBackfillBanner />
+
       <div className="flex flex-wrap items-center gap-3">
         <input
           type="search"
@@ -144,5 +149,70 @@ function DeleteButton({
     >
       Delete
     </button>
+  );
+}
+
+/**
+ * Bulk-backfill Open Library covers for catalog rows that have an ISBN
+ * but no cover. Sequential by design so a single OL hiccup doesn't kill
+ * the whole batch — each row's result is streamed back into `progress`
+ * for an inline counter.
+ */
+function CoverBackfillBanner() {
+  const qc = useQueryClient();
+  const { data: missing } = useQuery({
+    queryKey: ['global-cookbooks-missing-covers'],
+    queryFn: listCookbooksMissingCovers,
+    staleTime: 30_000,
+  });
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [results, setResults] = useState<CoverBackfillResult[] | null>(null);
+
+  const backfill = useMutation({
+    mutationFn: async () => {
+      const cookbooks = missing ?? [];
+      setProgress({ done: 0, total: cookbooks.length });
+      setResults(null);
+      const out = await backfillCoversFromOpenLibrary(cookbooks, (_r, i) => {
+        setProgress({ done: i + 1, total: cookbooks.length });
+      });
+      setResults(out);
+      return out;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['global-cookbooks'] });
+      qc.invalidateQueries({ queryKey: ['global-cookbooks-missing-covers'] });
+    },
+  });
+
+  if (!missing || missing.length === 0) return null;
+
+  const updated = results?.filter((r) => r.status === 'updated').length ?? 0;
+  const noCover = results?.filter((r) => r.status === 'no-cover').length ?? 0;
+  const failed = results?.filter((r) => r.status === 'error').length ?? 0;
+
+  return (
+    <div className="space-y-2 rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/40 px-3 py-2 text-sm text-sky-900 dark:text-sky-100">
+      <div className="flex items-center justify-between gap-3">
+        <span>
+          {missing.length} catalog cookbook{missing.length === 1 ? '' : 's'} {missing.length === 1 ? 'has' : 'have'} an ISBN but no cover.
+        </span>
+        <button
+          onClick={() => backfill.mutate()}
+          disabled={backfill.isPending}
+          className="rounded-md bg-sky-900 dark:bg-sky-100 px-3 py-1 text-xs font-medium text-sky-50 dark:text-sky-900 hover:bg-sky-800 disabled:opacity-60"
+        >
+          {backfill.isPending
+            ? `Fetching ${progress?.done ?? 0} / ${progress?.total ?? 0}…`
+            : 'Fetch from Open Library'}
+        </button>
+      </div>
+      {results && (
+        <div className="text-xs text-sky-800 dark:text-sky-200">
+          Done. {updated} cover{updated === 1 ? '' : 's'} added · {noCover} not found ·{' '}
+          {failed} error{failed === 1 ? '' : 's'}.
+        </div>
+      )}
+    </div>
   );
 }

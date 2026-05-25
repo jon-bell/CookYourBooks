@@ -284,3 +284,120 @@ export async function fetchFromOpenLibrary(
     coverImagePath: coverPath,
   };
 }
+
+// ---------- Bulk cover backfill ----------
+
+// Lists catalog rows with an ISBN but no cover. Used by the catalog
+// page's bulk-backfill banner. The `isbn=not.is.null` filter on
+// PostgREST keeps us from pulling hand-curated rows that intentionally
+// have no ISBN — those need a manual cover upload either way.
+export async function listCookbooksMissingCovers(): Promise<GlobalCookbook[]> {
+  const { data, error } = await supabase
+    .from('global_cookbooks')
+    .select('*')
+    .is('cover_image_path', null)
+    .not('isbn', 'is', null)
+    .order('title', { ascending: true })
+    .limit(500);
+  if (error) throw error;
+  return (data ?? []) as GlobalCookbook[];
+}
+
+// Targeted update of just the cover. The full `updateCookbook` would
+// nullify any field we didn't pass — fine for the editor where the
+// admin has the whole form in hand, but the wrong tool for a backfill
+// that should leave everything else alone.
+export async function setCookbookCover(id: string, coverImagePath: string): Promise<void> {
+  const { error } = await supabase
+    .from('global_cookbooks')
+    .update({ cover_image_path: coverImagePath })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// Uploads an arbitrary image blob (from a file picker, drag-drop, or
+// clipboard paste) as the cover for a global cookbook. The path uses
+// the same `global/<id>-<ts>.<ext>` shape the OL fetch uses, so the
+// editor's CoverImage + the sweepOldCovers cleanup share one rule.
+//
+// Caller is responsible for updating `global_cookbooks.cover_image_path`
+// to the returned value (so this composes with the editor's draft state
+// without forcing an immediate row write).
+export async function uploadCoverFile(
+  cookbookId: string,
+  file: Blob,
+): Promise<string> {
+  const ext = extensionFromMime(file.type) ?? 'jpg';
+  const path = `global/${cookbookId}-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage.from('covers').upload(path, file, {
+    contentType: file.type || `image/${ext}`,
+    upsert: false,
+  });
+  if (error) throw error;
+  await sweepOldCovers(cookbookId, path);
+  return path;
+}
+
+function extensionFromMime(mime: string): string | null {
+  switch (mime) {
+    case 'image/jpeg':
+    case 'image/jpg':
+      return 'jpg';
+    case 'image/png':
+      return 'png';
+    case 'image/webp':
+      return 'webp';
+    case 'image/gif':
+      return 'gif';
+    default:
+      return null;
+  }
+}
+
+export type CoverBackfillResult =
+  | { id: string; isbn: string; status: 'updated'; coverImagePath: string }
+  | { id: string; isbn: string; status: 'no-cover' }
+  | { id: string; isbn: string; status: 'error'; message: string };
+
+// Walks a list of catalog rows sequentially, fetching each from Open
+// Library and updating its cover_image_path when a cover comes back.
+// `onProgress` fires after each row so the UI can stream status without
+// blocking the whole batch on a single slow request.
+export async function backfillCoversFromOpenLibrary(
+  cookbooks: GlobalCookbook[],
+  onProgress?: (result: CoverBackfillResult, index: number) => void,
+): Promise<CoverBackfillResult[]> {
+  const out: CoverBackfillResult[] = [];
+  for (let i = 0; i < cookbooks.length; i += 1) {
+    const cb = cookbooks[i]!;
+    let result: CoverBackfillResult;
+    if (!cb.isbn) {
+      result = { id: cb.id, isbn: '', status: 'no-cover' };
+    } else {
+      try {
+        const fetched = await fetchFromOpenLibrary(cb.isbn, cb.id);
+        if (fetched.coverImagePath) {
+          await setCookbookCover(cb.id, fetched.coverImagePath);
+          result = {
+            id: cb.id,
+            isbn: cb.isbn,
+            status: 'updated',
+            coverImagePath: fetched.coverImagePath,
+          };
+        } else {
+          result = { id: cb.id, isbn: cb.isbn, status: 'no-cover' };
+        }
+      } catch (err) {
+        result = {
+          id: cb.id,
+          isbn: cb.isbn,
+          status: 'error',
+          message: (err as Error).message,
+        };
+      }
+    }
+    out.push(result);
+    onProgress?.(result, i);
+  }
+  return out;
+}

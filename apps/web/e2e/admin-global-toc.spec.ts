@@ -223,7 +223,10 @@ test.describe('Admin: global cookbook ToC', () => {
       await expect(row).toBeVisible();
       await expect(row.getByText(/2 recipes/)).toBeVisible();
 
-      await row.getByRole('button', { name: 'Import' }).click();
+      // Tick the row and hit the bulk action — that's the only path
+      // now, the per-row Import button is gone.
+      await row.getByRole('checkbox', { name: /Select User Library Cookbook/ }).check();
+      await page.getByRole('button', { name: /Import selected \(1\)/ }).click();
 
       // After import the row flips to "Imported · edit" and the catalog
       // gains an entry whose entries match the user's recipes.
@@ -248,6 +251,92 @@ test.describe('Admin: global cookbook ToC', () => {
         },
       }).catch(() => {});
       await owner.cleanup();
+      await admin.cleanup();
+    }
+  });
+
+  test('owner filter narrows candidates and select-all bulk-imports them', async ({ page }) => {
+    // Two owners, two cookbooks each, four distinct ISBNs.
+    const stamp = Date.now().toString(36).slice(-4);
+    const isbns = [
+      `9780${stamp}0001`,
+      `9780${stamp}0002`,
+      `9780${stamp}0003`,
+      `9780${stamp}0004`,
+    ];
+    const ownerAlpha = await createTestUser('alpha');
+    const ownerBeta = await createTestUser('beta');
+    const colA1 = await seedCookbookCollection(ownerAlpha.id, {
+      title: 'Alpha Book A',
+      isbn: isbns[0]!,
+      recipes: ['A1 r1'],
+    });
+    const colA2 = await seedCookbookCollection(ownerAlpha.id, {
+      title: 'Alpha Book B',
+      isbn: isbns[1]!,
+      recipes: ['A2 r1'],
+    });
+    await seedCookbookCollection(ownerBeta.id, {
+      title: 'Beta Book A',
+      isbn: isbns[2]!,
+      recipes: ['B1 r1'],
+    });
+    await seedCookbookCollection(ownerBeta.id, {
+      title: 'Beta Book B',
+      isbn: isbns[3]!,
+      recipes: ['B2 r1'],
+    });
+
+    const admin = await createTestUser('bulkadm', { admin: true });
+    try {
+      await signIn(page, admin);
+      await page.goto('/admin/global-toc/import');
+
+      // All four candidates visible by default.
+      await expect(page.getByText('Alpha Book A')).toBeVisible();
+      await expect(page.getByText('Beta Book A')).toBeVisible();
+
+      // Filter to Alpha owner — Beta rows disappear. selectOption by
+      // value (the owner UUID) so the test isn't sensitive to display-
+      // name churn from other runs polluting the catalog.
+      await page.getByLabel('Owner:').selectOption(ownerAlpha.id);
+      await expect(page.getByText('Alpha Book A')).toBeVisible();
+      await expect(page.getByText('Alpha Book B')).toBeVisible();
+      await expect(page.getByText('Beta Book A')).not.toBeVisible();
+      await expect(page.getByText('Beta Book B')).not.toBeVisible();
+
+      // Select-all + import. The button label reflects the running count.
+      await page.getByLabel('Select all visible candidates').check();
+      await expect(page.getByRole('button', { name: /Import selected \(2\)/ })).toBeVisible();
+      await page.getByRole('button', { name: /Import selected \(2\)/ }).click();
+
+      // Both rows flip to "Imported · edit" once their RPC lands.
+      const rowA1 = page.getByRole('listitem').filter({ hasText: 'Alpha Book A' });
+      const rowA2 = page.getByRole('listitem').filter({ hasText: 'Alpha Book B' });
+      await expect(rowA1.getByRole('link', { name: /Imported · edit/ })).toBeVisible();
+      await expect(rowA2.getByRole('link', { name: /Imported · edit/ })).toBeVisible();
+
+      // Server-side: two new catalog rows pointed at the alpha collections.
+      const cookbooks = await adminGet<{ shared_from_collection_id: string; title: string }[]>(
+        `/rest/v1/global_cookbooks?select=shared_from_collection_id,title&shared_from_collection_id=in.(${colA1},${colA2})`,
+      );
+      expect(new Set(cookbooks.map((c) => c.shared_from_collection_id))).toEqual(
+        new Set([colA1, colA2]),
+      );
+    } finally {
+      // Clean up the two global rows we created and all four user cookbooks.
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/global_cookbooks?isbn=in.(${isbns.join(',')})`,
+        {
+          method: 'DELETE',
+          headers: {
+            apikey: SUPABASE_SERVICE_ROLE,
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          },
+        },
+      ).catch(() => {});
+      await ownerAlpha.cleanup();
+      await ownerBeta.cleanup();
       await admin.cleanup();
     }
   });

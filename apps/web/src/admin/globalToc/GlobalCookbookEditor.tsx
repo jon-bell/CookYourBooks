@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CoverImage } from '../../components/CoverImage.js';
@@ -8,6 +8,7 @@ import {
   listTocEntries,
   replaceTocEntries,
   updateCookbook,
+  uploadCoverFile,
   type GlobalCookbook,
   type GlobalTocEntry,
   type TocEntryDraft,
@@ -142,10 +143,11 @@ function CookbookForm({
       </div>
 
       <div className="flex gap-4">
-        <CoverImage
-          path={form.cover_image_path || undefined}
-          className="h-32 w-24 flex-shrink-0 rounded-md border border-stone-200"
-          alt={`${form.title || 'cookbook'} cover`}
+        <CoverDropZone
+          cookbookId={cookbook.id}
+          currentPath={form.cover_image_path}
+          onUploaded={(path) => setForm((prev) => ({ ...prev, cover_image_path: path }))}
+          alt={form.title || 'cookbook'}
         />
         <div className="flex-1 space-y-3">
           <Field label="Title">
@@ -404,5 +406,124 @@ function TocEditor({ cookbookId }: { cookbookId: string }) {
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Cover thumbnail with three replace paths:
+ *   - Click "Replace" → file picker
+ *   - Drag and drop an image onto the thumbnail
+ *   - Focus the thumbnail and paste (Ctrl/Cmd-V) a copied image
+ *
+ * Upload goes through `uploadCoverFile`, which writes to
+ * covers/global/<id>-<ts>.<ext> and sweeps older paths so storage
+ * doesn't accumulate orphans. The new path is bubbled up via
+ * onUploaded; the editor's draft saves it to the row on the next
+ * Save cookbook click (no implicit row write here).
+ */
+function CoverDropZone({
+  cookbookId,
+  currentPath,
+  onUploaded,
+  alt,
+}: {
+  cookbookId: string;
+  currentPath: string;
+  onUploaded: (path: string) => void;
+  alt: string;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const upload = useMutation({
+    mutationFn: async (file: Blob) => {
+      if (!file.type.startsWith('image/')) {
+        throw new Error(`Not an image (${file.type || 'unknown type'}).`);
+      }
+      return uploadCoverFile(cookbookId, file);
+    },
+    onSuccess: (path) => {
+      onUploaded(path);
+      setError(null);
+    },
+    onError: (err) => setError((err as Error).message),
+  });
+
+  function onPaste(e: React.ClipboardEvent) {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imgItem = items.find((it) => it.kind === 'file' && it.type.startsWith('image/'));
+    const file = imgItem?.getAsFile();
+    if (file) {
+      e.preventDefault();
+      upload.mutate(file);
+    }
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) upload.mutate(file);
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label="Cover image — paste or drop an image, or click Replace"
+        onPaste={onPaste}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
+        className={`relative h-32 w-24 flex-shrink-0 rounded-md border-2 ${
+          dragging ? 'border-sky-500 ring-2 ring-sky-200' : 'border-stone-200 dark:border-stone-700'
+        } focus:outline-none focus:ring-2 focus:ring-sky-400`}
+      >
+        <CoverImage
+          path={currentPath || undefined}
+          className="h-full w-full rounded-md"
+          alt={`${alt} cover`}
+        />
+        {upload.isPending && (
+          <div className="absolute inset-0 flex items-center justify-center rounded-md bg-stone-900/40 text-xs font-medium text-white">
+            Uploading…
+          </div>
+        )}
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) upload.mutate(file);
+          // Reset so the same file can be picked twice in a row.
+          e.target.value = '';
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        className="text-xs text-stone-600 dark:text-stone-400 hover:underline"
+      >
+        Replace
+      </button>
+      <p className="text-[10px] leading-tight text-stone-500 text-center">
+        Click, drag, or paste an image
+      </p>
+      {error && <p className="text-[10px] text-red-700">{error}</p>}
+    </div>
   );
 }
