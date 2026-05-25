@@ -110,6 +110,7 @@ export type Database = {
       }
       conversion_rules: {
         Row: {
+          created_at: string
           factor: number
           from_unit: string
           id: string
@@ -118,8 +119,10 @@ export type Database = {
           priority: string
           recipe_id: string | null
           to_unit: string
+          updated_at: string
         }
         Insert: {
+          created_at?: string
           factor: number
           from_unit: string
           id?: string
@@ -128,8 +131,10 @@ export type Database = {
           priority: string
           recipe_id?: string | null
           to_unit: string
+          updated_at?: string
         }
         Update: {
+          created_at?: string
           factor?: number
           from_unit?: string
           id?: string
@@ -138,6 +143,7 @@ export type Database = {
           priority?: string
           recipe_id?: string | null
           to_unit?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -155,6 +161,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      global_conversions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          factor: number
+          from_unit: string
+          id: string
+          ingredient_name: string | null
+          notes: string | null
+          to_unit: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          factor: number
+          from_unit: string
+          id?: string
+          ingredient_name?: string | null
+          notes?: string | null
+          to_unit: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          factor?: number
+          from_unit?: string
+          id?: string
+          ingredient_name?: string | null
+          notes?: string | null
+          to_unit?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
       }
       import_batches: {
         Row: {
@@ -1184,6 +1229,35 @@ export type Database = {
         Returns: undefined
       }
       import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
+      global_conversion_delete: {
+        Args: { p_id: string }
+        Returns: undefined
+      }
+      global_conversion_upsert: {
+        Args: {
+          p_id: string | null
+          p_from_unit: string
+          p_to_unit: string
+          p_factor: number
+          p_ingredient_name: string | null
+          p_notes: string | null
+        }
+        Returns: string
+      }
+      house_conversion_delete: {
+        Args: { p_id: string }
+        Returns: undefined
+      }
+      house_conversion_upsert: {
+        Args: {
+          p_id: string | null
+          p_from_unit: string
+          p_to_unit: string
+          p_factor: number
+          p_ingredient_name: string | null
+        }
+        Returns: string
+      }
       import_retry_recitation_failures: {
         Args: { p_batch_id: string }
         Returns: number

@@ -15,6 +15,7 @@ import {
 } from '../moderation/api.js';
 import { ReasonDialog } from '../moderation/ReasonDialog.js';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
+import { GlobalConversionsAdmin } from '../moderation/GlobalConversionsAdmin.js';
 
 type PendingAction =
   | { kind: 'unpublish'; collectionId: string }
@@ -24,7 +25,7 @@ type PendingAction =
   | { kind: 'unban'; userId: string }
   | { kind: 'republish'; collectionId: string };
 
-type Tab = 'queue' | 'resolved' | 'log';
+type Tab = 'queue' | 'resolved' | 'log' | 'conversions';
 
 /**
  * Admin-only moderation console. Renders a forbidden message for non-admins
@@ -62,10 +63,14 @@ export function AdminPage() {
         <TabBtn active={tab === 'log'} onClick={() => setTab('log')}>
           Moderation log
         </TabBtn>
+        <TabBtn active={tab === 'conversions'} onClick={() => setTab('conversions')}>
+          Global conversions
+        </TabBtn>
       </div>
       {tab === 'queue' && <ReportList status="OPEN" />}
       {tab === 'resolved' && <ReportList status="ACTIONED" showDismissed />}
       {tab === 'log' && <ModerationLog />}
+      {tab === 'conversions' && <GlobalConversionsAdmin />}
     </div>
   );
 }

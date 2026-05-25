@@ -9,6 +9,7 @@ import {
   isMeasured,
   recipeToMarkdown,
   scaleRecipe,
+  StandardConversions,
   Units,
   type Quantity,
   exact,
@@ -20,6 +21,11 @@ import {
   useRecipeSummary,
   useSaveRecipe,
 } from '../data/queries.js';
+import {
+  toDomainRule,
+  useGlobalConversionRules,
+  useHouseConversionRules,
+} from '../data/conversions.js';
 import { shareRecipe } from '../share/share.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { recipeShareUrl } from '../share/shareUrl.js';
@@ -37,7 +43,17 @@ export function RecipePage() {
   const [scale, setScale] = useState(1);
   const [targetUnit, setTargetUnit] = useState<string>('');
 
-  const registry = useMemo(() => createRegistry(), []);
+  const { data: houseRules = [] } = useHouseConversionRules();
+  const { data: globalRules = [] } = useGlobalConversionRules();
+  const registry = useMemo(
+    () =>
+      createRegistry([
+        ...houseRules.map(toDomainRule('HOUSE')),
+        ...globalRules.map(toDomainRule('GLOBAL')),
+        ...StandardConversions,
+      ]),
+    [houseRules, globalRules],
+  );
   const scaled = useMemo(() => (recipe ? scaleRecipe(recipe, scale) : undefined), [recipe, scale]);
 
   if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;

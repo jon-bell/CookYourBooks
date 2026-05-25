@@ -12,6 +12,7 @@ import {
 import { CliTokensSection } from '../settings/CliTokensSection.js';
 import { OcrKeysSection } from '../settings/OcrKeysSection.js';
 import { FallbackModelSection } from '../settings/FallbackModelSection.js';
+import { ConversionsSection } from '../settings/ConversionsSection.js';
 
 /**
  * Per-device settings page. The API key lives in localStorage only — it
@@ -71,6 +72,7 @@ export function SettingsPage() {
 
       <OcrKeysSection />
       <FallbackModelSection />
+      <ConversionsSection />
 
       <div className="space-y-1 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 p-3 text-xs text-stone-600 dark:text-stone-400">
         <div className="font-medium text-stone-700 dark:text-stone-300">Legacy OCR settings</div>

@@ -1,7 +1,7 @@
 import type { ConversionRule, ConversionRulePriority } from './rules.js';
 import { StandardConversions } from './standard.js';
 
-const PRIORITY_ORDER: ConversionRulePriority[] = ['HOUSE', 'RECIPE', 'STANDARD'];
+const PRIORITY_ORDER: ConversionRulePriority[] = ['HOUSE', 'RECIPE', 'GLOBAL', 'STANDARD'];
 
 function priorityRank(p: ConversionRulePriority): number {
   return PRIORITY_ORDER.indexOf(p);
@@ -24,12 +24,15 @@ class LayeredConversionRegistry implements ConversionRegistry {
     if (fromUnit === toUnit) return 1;
     const direct = this.findDirect(fromUnit, toUnit, ingredientName);
     if (direct !== undefined) return direct;
-    // One-hop search through intermediate units.
+    // One-hop search through intermediate units. Collect intermediates
+    // from either side of each rule — auto-inversion in findDirect
+    // means a rule "piece → gram" also lets us reach "piece" from
+    // "gram" via 1/factor, so we need to seed the search with both.
     const intermediates = new Set<string>();
     for (const r of this.rules) {
-      if (r.fromUnit === fromUnit && this.ingredientMatches(r, ingredientName)) {
-        intermediates.add(r.toUnit);
-      }
+      if (!this.ingredientMatches(r, ingredientName)) continue;
+      if (r.fromUnit === fromUnit) intermediates.add(r.toUnit);
+      else if (r.toUnit === fromUnit) intermediates.add(r.fromUnit);
     }
     let best: { rank: number; factor: number } | undefined;
     for (const mid of intermediates) {
@@ -53,8 +56,14 @@ class LayeredConversionRegistry implements ConversionRegistry {
   private findDirect(from: string, to: string, ingredientName?: string): number | undefined {
     let best: { rank: number; factor: number; specific: boolean } | undefined;
     for (const r of this.rules) {
-      if (r.fromUnit !== from || r.toUnit !== to) continue;
       if (!this.ingredientMatches(r, ingredientName)) continue;
+      // Forward and inverse lookups share priority: a HOUSE rule
+      // "piece → gram" answers both piece→gram and gram→piece queries
+      // before any lower-tier rule does. Inverse uses 1/factor.
+      let factor: number | undefined;
+      if (r.fromUnit === from && r.toUnit === to) factor = r.factor;
+      else if (r.fromUnit === to && r.toUnit === from) factor = 1 / r.factor;
+      if (factor === undefined) continue;
       const rank = priorityRank(r.priority);
       const specific = !!r.ingredientName;
       if (
@@ -63,7 +72,7 @@ class LayeredConversionRegistry implements ConversionRegistry {
         // same priority: ingredient-specific beats generic
         (rank === best.rank && specific && !best.specific)
       ) {
-        best = { rank, factor: r.factor, specific };
+        best = { rank, factor, specific };
       }
     }
     return best?.factor;
