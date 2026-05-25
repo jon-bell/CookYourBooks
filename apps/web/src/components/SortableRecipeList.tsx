@@ -65,7 +65,7 @@ export function SortableRecipeList({
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
       <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-        <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
+        <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
           {ids.map((id) => {
             const recipe = byId.get(id);
             if (!recipe) return null;
@@ -110,10 +110,10 @@ function SortableRow({
       </button>
       <Link
         to={`/collections/${collectionId}/recipes/${recipe.id}`}
-        className="flex flex-1 items-center justify-between py-3 pr-4 hover:bg-stone-50"
+        className="flex flex-1 items-center justify-between py-3 pr-4 hover:bg-stone-50 dark:hover:bg-stone-900"
       >
         <span className="font-medium">{recipe.title}</span>
-        <span className="text-sm text-stone-500">
+        <span className="text-sm text-stone-500 dark:text-stone-400">
           {recipe.ingredients.length} ing · {recipe.instructions.length} steps
         </span>
       </Link>

@@ -10,8 +10,8 @@ export function LibraryPage() {
 
   const waitingForData = isLoading && collections.length === 0;
 
-  if (!localReady || waitingForData) return <p className="text-stone-500">Loading…</p>;
-  if (error) return <p className="text-red-700">{(error as Error).message}</p>;
+  if (!localReady || waitingForData) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
 
   return (
     <div className="space-y-6">
@@ -19,13 +19,13 @@ export function LibraryPage() {
         <h1 className="text-2xl font-semibold">Your library</h1>
         <Link
           to="/collections/new"
-          className="inline-flex items-center rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800"
+          className="inline-flex items-center rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
         >
           New collection
         </Link>
       </div>
       {collections.length === 0 ? (
-        <p className="text-stone-600">
+        <p className="text-stone-600 dark:text-stone-400">
           No collections yet. Create your first to start adding recipes.
         </p>
       ) : (
@@ -33,18 +33,18 @@ export function LibraryPage() {
           {collections.map((c) => (
             <li
               key={c.id}
-              className="overflow-hidden rounded-lg border border-stone-200 bg-white hover:border-stone-400"
+              className="overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 hover:border-stone-400"
             >
               <Link to={`/collections/${c.id}`} className="block">
                 <CoverImage path={c.coverImagePath ?? undefined} className="aspect-[3/2] w-full" />
                 <div className="p-4">
-                  <div className="text-xs uppercase tracking-wide text-stone-500">
+                  <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
                     {collectionSubtitle(c)}
                   </div>
                   <div className="mt-1 text-lg font-medium">{c.title}</div>
-                  <div className="mt-2 text-sm text-stone-600">
+                  <div className="mt-2 text-sm text-stone-600 dark:text-stone-400">
                     {c.recipeCount} {c.recipeCount === 1 ? 'recipe' : 'recipes'}
-                    {c.isPublic && <span className="ml-2 text-emerald-700">· Public</span>}
+                    {c.isPublic && <span className="ml-2 text-emerald-700 dark:text-emerald-300">· Public</span>}
                   </div>
                 </div>
               </Link>

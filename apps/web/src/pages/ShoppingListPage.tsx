@@ -32,19 +32,19 @@ export function ShoppingListPage() {
     });
   }
 
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
+  if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Shopping list</h1>
       <section className="space-y-2">
-        <h2 className="text-sm font-medium text-stone-600">Include recipes</h2>
+        <h2 className="text-sm font-medium text-stone-600 dark:text-stone-400">Include recipes</h2>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
           {collections.flatMap((c) =>
             c.recipes.map((r) => (
               <label
                 key={r.id}
-                className="flex cursor-pointer items-center gap-2 rounded border border-stone-200 bg-white px-3 py-2 text-sm hover:border-stone-400"
+                className="flex cursor-pointer items-center gap-2 rounded border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-3 py-2 text-sm hover:border-stone-400"
               >
                 <input
                   type="checkbox"
@@ -52,7 +52,7 @@ export function ShoppingListPage() {
                   onChange={() => toggleSelect(r.id)}
                 />
                 <span className="font-medium">{r.title}</span>
-                <span className="ml-auto text-xs text-stone-500">{c.title}</span>
+                <span className="ml-auto text-xs text-stone-500 dark:text-stone-400">{c.title}</span>
               </label>
             )),
           )}
@@ -66,7 +66,7 @@ export function ShoppingListPage() {
           {list.measured.length > 0 && (
             <div>
               <h2 className="mb-2 text-lg font-semibold">Groceries</h2>
-              <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
+              <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
                 {list.measured.map((item) => {
                   const key = `m:${item.name}:${item.quantityText}`;
                   const isChecked = checked.has(key);
@@ -81,7 +81,7 @@ export function ShoppingListPage() {
                         <span className="font-medium">{item.quantityText}</span> {item.name}
                       </span>
                       {item.aggregated && (
-                        <span className="text-xs text-stone-500">
+                        <span className="text-xs text-stone-500 dark:text-stone-400">
                           {item.sourceRecipeIds.length} recipes
                         </span>
                       )}
@@ -94,7 +94,7 @@ export function ShoppingListPage() {
           {list.uncountable.length > 0 && (
             <div>
               <h2 className="mb-2 text-lg font-semibold">To taste</h2>
-              <ul className="divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
+              <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
                 {list.uncountable.map((item) => {
                   const key = `v:${item.name}`;
                   const isChecked = checked.has(key);

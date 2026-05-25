@@ -21,6 +21,7 @@ import { SignUpPage } from './auth/SignUpPage.js';
 import { RequireAuth } from './auth/RequireAuth.js';
 import { UserMenu } from './components/UserMenu.js';
 import { SyncBadge } from './components/SyncBadge.js';
+import { ThemePicker } from './theme/ThemePicker.js';
 import { useAuth } from './auth/AuthProvider.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
@@ -36,36 +37,37 @@ export function App() {
       >
         Skip to main content
       </a>
-      <header className="border-b border-stone-200 bg-white pt-[env(safe-area-inset-top)]">
+      <header className="border-b border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-5xl py-3 flex flex-wrap items-center gap-x-6 gap-y-2 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
           <Link to="/" className="text-lg font-semibold tracking-tight">
             CookYourBooks
           </Link>
-          <nav aria-label="Primary" className="flex items-center gap-4 text-sm text-stone-600">
-            <Link to="/" className="hover:text-stone-900 focus-visible:outline-offset-4">
+          <nav aria-label="Primary" className="flex items-center gap-4 text-sm text-stone-600 dark:text-stone-400">
+            <Link to="/" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
               Library
             </Link>
-            <Link to="/discover" className="hover:text-stone-900 focus-visible:outline-offset-4">
+            <Link to="/discover" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
               Discover
             </Link>
-            <Link to="/search" className="hover:text-stone-900 focus-visible:outline-offset-4">
+            <Link to="/search" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
               Search
             </Link>
-            <Link to="/shopping" className="hover:text-stone-900 focus-visible:outline-offset-4">
+            <Link to="/shopping" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
               Shopping
             </Link>
-            <Link to="/import" className="hover:text-stone-900 focus-visible:outline-offset-4">
+            <Link to="/import" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
               Import
             </Link>
           </nav>
           <div className="ml-auto flex items-center gap-3">
             {user && <SyncBadge />}
+            <ThemePicker />
             {user ? (
               <UserMenu />
             ) : (
               <Link
                 to="/sign-in"
-                className="rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-800"
+                className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
               >
                 Sign in
               </Link>
@@ -212,6 +214,6 @@ export function App() {
 // at a returning user.
 function RootRoute() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="text-stone-500">Loading…</div>;
+  if (loading) return <div className="text-stone-500 dark:text-stone-400">Loading…</div>;
   return user ? <LibraryPage /> : <LandingPage />;
 }

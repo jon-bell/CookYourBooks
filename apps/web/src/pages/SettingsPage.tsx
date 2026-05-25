@@ -63,7 +63,7 @@ export function SettingsPage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="mt-1 text-sm text-stone-600">
+        <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
           Configure the large language model used for the "Import from photo" feature. Keys are
           stored locally on this device and never sent through Supabase.
         </p>
@@ -72,8 +72,8 @@ export function SettingsPage() {
       <OcrKeysSection />
       <FallbackModelSection />
 
-      <div className="space-y-1 rounded-md border border-stone-200 bg-stone-50 p-3 text-xs text-stone-600">
-        <div className="font-medium text-stone-700">Legacy OCR settings</div>
+      <div className="space-y-1 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 p-3 text-xs text-stone-600 dark:text-stone-400">
+        <div className="font-medium text-stone-700 dark:text-stone-300">Legacy OCR settings</div>
         <p>
           API keys now live server-side (see OCR keys above). The legacy in-browser key is no
           longer used by the bulk import flow. The prompt below is still applied to the older
@@ -86,7 +86,7 @@ export function SettingsPage() {
           <select
             value={provider}
             onChange={(e) => onProviderChange(e.target.value as OcrProvider)}
-            className="w-full rounded border border-stone-300 px-3 py-2"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
           >
             <option value="gemini">Google Gemini (direct)</option>
             <option value="openai-compatible">OpenAI-compatible (OpenAI, Groq, OpenRouter, …)</option>
@@ -100,9 +100,9 @@ export function SettingsPage() {
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="https://api.openai.com/v1"
-              className="w-full rounded border border-stone-300 px-3 py-2"
+              className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2"
             />
-            <p className="mt-1 text-xs text-stone-500">
+            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
               Defaults to <code>https://api.openai.com/v1</code>. Point at Groq / Together /
               OpenRouter / your own proxy as needed.
             </p>
@@ -113,10 +113,10 @@ export function SettingsPage() {
           <input
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            className="w-full rounded border border-stone-300 px-3 py-2 font-mono text-sm"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-sm"
             spellCheck={false}
           />
-          <p className="mt-1 text-xs text-stone-500">
+          <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
             Must be multimodal (vision-capable). Examples: <code>gemini-3-pro-image-preview</code>,{' '}
             <code>gpt-4o</code>, <code>gpt-4o-mini</code>, <code>llama-3.2-90b-vision-preview</code>.
           </p>
@@ -129,7 +129,7 @@ export function SettingsPage() {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             required
-            className="w-full rounded border border-stone-300 px-3 py-2 font-mono text-sm"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-sm"
             spellCheck={false}
           />
         </Field>
@@ -140,10 +140,10 @@ export function SettingsPage() {
             onChange={(e) => setPrompt(e.target.value)}
             required
             rows={12}
-            className="w-full rounded border border-stone-300 px-3 py-2 font-mono text-xs"
+            className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-xs"
             spellCheck={false}
           />
-          <p className="mt-1 text-xs text-stone-500">
+          <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
             The model is instructed to return JSON matching the app's domain shape. You can tune
             this prompt freely.
           </p>
@@ -152,32 +152,32 @@ export function SettingsPage() {
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
-            className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+            className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
           >
             Save settings
           </button>
           <button
             type="button"
             onClick={() => setPrompt(DEFAULT_PROMPT)}
-            className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900"
+            className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
           >
             Reset prompt
           </button>
           <button
             type="button"
             onClick={onClear}
-            className="rounded-md px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+            className="rounded-md px-4 py-2 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
           >
             Clear all
           </button>
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="rounded-md px-4 py-2 text-sm text-stone-600 hover:text-stone-900"
+            className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
           >
             Back
           </button>
-          {saved && <span className="text-sm text-emerald-700">Saved.</span>}
+          {saved && <span className="text-sm text-emerald-700 dark:text-emerald-300">Saved.</span>}
         </div>
       </form>
 
@@ -189,7 +189,7 @@ export function SettingsPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">{label}</span>
       {children}
     </label>
   );

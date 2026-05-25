@@ -12,24 +12,24 @@ export function UserMenu() {
     'Signed in';
   return (
     <div className="flex items-center gap-3 text-sm">
-      <span className="text-stone-600">{label}</span>
+      <span className="text-stone-600 dark:text-stone-400">{label}</span>
       {isAdmin && (
         <Link
           to="/admin"
-          className="rounded-md px-2 py-1 text-amber-800 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
+          className="rounded-md px-2 py-1 text-amber-800 dark:text-amber-300 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
         >
           Admin
         </Link>
       )}
       <Link
         to="/settings"
-        className="rounded-md px-2 py-1 text-stone-600 hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+        className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
       >
         Settings
       </Link>
       <button
         onClick={() => signOut()}
-        className="rounded-md px-2 py-1 text-stone-600 hover:bg-stone-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+        className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
       >
         Sign out
       </button>

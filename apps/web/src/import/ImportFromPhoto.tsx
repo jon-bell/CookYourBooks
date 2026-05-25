@@ -244,7 +244,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
           type="button"
           onClick={onTake}
           disabled={busy}
-          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
         >
           {busy ? 'Reading photo…' : 'Take photo'}
         </button>
@@ -252,13 +252,13 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
           type="button"
           onClick={onUpload}
           disabled={busy}
-          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
         >
           {busy ? 'Reading image…' : 'Upload image'}
         </button>
       </div>
-      {progress && <span className="text-xs text-stone-500">{progress.status}…</span>}
-      {error && <span className="text-xs text-red-700">{error}</span>}
+      {progress && <span className="text-xs text-stone-500 dark:text-stone-400">{progress.status}…</span>}
+      {error && <span className="text-xs text-red-700 dark:text-red-300">{error}</span>}
 
       {pending && (
         <RecipePicker
@@ -290,7 +290,7 @@ function RecipePicker({
       onClick={onDismiss}
     >
       <div
-        className="w-full max-w-md rounded-lg bg-white p-4 shadow-lg"
+        className="w-full max-w-md rounded-lg bg-white dark:bg-stone-900 p-4 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
@@ -298,25 +298,25 @@ function RecipePicker({
           <button
             type="button"
             onClick={onDismiss}
-            className="text-sm text-stone-500 hover:text-stone-900"
+            className="text-sm text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
             aria-label="Cancel"
           >
             Cancel
           </button>
         </div>
-        <p className="mb-3 text-xs text-stone-600">
+        <p className="mb-3 text-xs text-stone-600 dark:text-stone-400">
           Pick which one to review first — the rest stay on the import batch.
         </p>
-        <ul className="divide-y divide-stone-200 rounded border border-stone-200">
+        <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded border border-stone-200 dark:border-stone-700">
           {drafts.map((d, i) => (
             <li key={i}>
               <button
                 type="button"
                 onClick={() => onPick(d, i)}
-                className="block w-full px-3 py-2 text-left hover:bg-stone-50"
+                className="block w-full px-3 py-2 text-left hover:bg-stone-50 dark:hover:bg-stone-900"
               >
                 <div className="font-medium">{d.title ?? `Recipe ${i + 1}`}</div>
-                <div className="text-xs text-stone-500">
+                <div className="text-xs text-stone-500 dark:text-stone-400">
                   {d.ingredients.length} ingredients · {d.instructions.length} steps
                   {d.pageNumbers && d.pageNumbers.length > 0
                     ? ` · p. ${d.pageNumbers.join(', ')}`

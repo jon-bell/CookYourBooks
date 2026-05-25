@@ -41,7 +41,7 @@ export function OcrStatusBanner({
       <div className="flex items-center gap-2 font-medium">
         {processing && (
           <span
-            className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700"
+            className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-300 dark:border-blue-700 border-t-blue-700"
             aria-hidden
           />
         )}

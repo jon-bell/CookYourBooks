@@ -50,12 +50,12 @@ export function DiscoverPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search titles…"
-          className="flex-1 rounded-md border border-stone-300 px-3 py-2"
+          className="flex-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2"
         />
         <select
           value={sourceType}
           onChange={(e) => setSourceType(e.target.value)}
-          className="rounded border border-stone-300 px-3 py-2 text-sm"
+          className="rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
         >
           <option value="">All types</option>
           <option value="PUBLISHED_BOOK">Cookbooks</option>
@@ -64,25 +64,25 @@ export function DiscoverPage() {
         </select>
       </div>
       {isLoading ? (
-        <p className="text-stone-500">Loading…</p>
+        <p className="text-stone-500 dark:text-stone-400">Loading…</p>
       ) : error ? (
-        <p className="text-red-700">{(error as Error).message}</p>
+        <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>
       ) : (data ?? []).length === 0 ? (
-        <p className="text-stone-600">No public collections match that filter.</p>
+        <p className="text-stone-600 dark:text-stone-400">No public collections match that filter.</p>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {(data ?? []).map((c) => (
             <li
               key={c.id}
-              className="rounded-lg border border-stone-200 bg-white p-4 hover:border-stone-400"
+              className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 hover:border-stone-400"
             >
-              <div className="text-xs uppercase tracking-wide text-stone-500">
+              <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
                 {c.source_type === 'PUBLISHED_BOOK' && c.author
                   ? `Cookbook · ${c.author}`
                   : c.source_type.replace('_', ' ').toLowerCase()}
               </div>
               <div className="mt-1 text-lg font-medium">{c.title}</div>
-              <div className="mt-2 text-sm text-stone-600">
+              <div className="mt-2 text-sm text-stone-600 dark:text-stone-400">
                 {c.recipe_count} {c.recipe_count === 1 ? 'recipe' : 'recipes'}
                 {c.owner_name && <span> · by {c.owner_name}</span>}
               </div>
@@ -91,18 +91,18 @@ export function DiscoverPage() {
                   <button
                     onClick={() => fork.mutate(c.id)}
                     disabled={fork.isPending}
-                    className="rounded-md bg-stone-900 px-3 py-1.5 text-sm text-white hover:bg-stone-800 disabled:opacity-50"
+                    className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
                   >
                     {fork.isPending ? 'Forking…' : 'Fork to library'}
                   </button>
                 )}
                 {!user && (
-                  <span className="text-xs text-stone-500">Sign in to fork</span>
+                  <span className="text-xs text-stone-500 dark:text-stone-400">Sign in to fork</span>
                 )}
                 {user && (
                   <button
                     onClick={() => setReporting(c)}
-                    className="ml-auto rounded-md px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-800"
+                    className="ml-auto rounded-md px-2 py-1 text-xs text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-stone-800"
                     aria-label={`Report ${c.title}`}
                   >
                     Report
@@ -114,7 +114,7 @@ export function DiscoverPage() {
         </ul>
       )}
       {fork.isError && (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+        <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
           {(fork.error as Error).message}
         </div>
       )}

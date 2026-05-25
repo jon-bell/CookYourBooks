@@ -152,22 +152,22 @@ export function ImportBatchPage() {
   const now = useTickingNow(activeOcrCount > 0);
 
   if (!localReady || batchLoading) {
-    return <p className="text-stone-500">Loading…</p>;
+    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
   }
   if (!batch && !hydrated) {
-    return <p className="text-stone-500">Initializing local cache…</p>;
+    return <p className="text-stone-500 dark:text-stone-400">Initializing local cache…</p>;
   }
   if (!batch) {
     return (
       <div className="space-y-3">
-        <p className="text-stone-700">Batch not found locally.</p>
-        <p className="text-sm text-stone-500">
+        <p className="text-stone-700 dark:text-stone-300">Batch not found locally.</p>
+        <p className="text-sm text-stone-500 dark:text-stone-400">
           It may not have synced from the server yet ({syncStatus}).
         </p>
         <button
           type="button"
           onClick={() => void syncNow()}
-          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
         >
           Sync now
         </button>
@@ -344,7 +344,7 @@ export function ImportBatchPage() {
           <div className="mt-2">
             <Link
               to={`/import/${batch.id}/group`}
-              className="inline-block rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800"
+              className="inline-block rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
             >
               Group pages
             </Link>
@@ -353,12 +353,12 @@ export function ImportBatchPage() {
       )}
 
       {showStuckBanner && (
-        <div className="rounded-md border border-stone-300 bg-stone-50 p-3 text-sm text-stone-800">
+        <div className="rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-3 text-sm text-stone-800 dark:text-stone-200">
           <div className="font-medium">
             {pendingCount} item{pendingCount === 1 ? '' : 's'} queued — worker hasn't
             picked them up.
           </div>
-          <div className="mt-1 text-stone-600">
+          <div className="mt-1 text-stone-600 dark:text-stone-400">
             Pending = uploaded and waiting for the OCR worker. If this doesn't
             clear, the worker may not be configured or running. See CLAUDE.md →
             "Setting up the OCR worker".
@@ -368,13 +368,13 @@ export function ImportBatchPage() {
               type="button"
               onClick={kickWorker}
               disabled={kickBusy}
-              className="rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
               {kickBusy ? 'Kicking…' : 'Process now'}
             </button>
           </div>
           {kickError && (
-            <div className="mt-2 rounded border border-red-300 bg-red-50 p-2 text-xs text-red-800">
+            <div className="mt-2 rounded border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/40 p-2 text-xs text-red-800 dark:text-red-200">
               {kickError}
             </div>
           )}
@@ -382,7 +382,7 @@ export function ImportBatchPage() {
       )}
 
       {recitationFailedCount > 0 && batch.recitationPolicy !== 'ASK' && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
             {recitationFailedCount} item{recitationFailedCount === 1 ? '' : 's'} failed
             on recitation.
@@ -401,7 +401,7 @@ export function ImportBatchPage() {
               disabled={
                 retryBusy || !batch.fallbackProvider || !batch.fallbackModel
               }
-              className="rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
               {retryBusy ? 'Retrying…' : 'Retry with fallback'}
             </button>
@@ -413,7 +413,7 @@ export function ImportBatchPage() {
       )}
 
       {needsFallbackCount > 0 && batch.recitationPolicy === 'ASK' && (
-        <div className="sticky top-0 z-10 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="sticky top-0 z-10 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
             {needsFallbackCount} item{needsFallbackCount === 1 ? '' : 's'} hit copyright
             recitation.
@@ -426,7 +426,7 @@ export function ImportBatchPage() {
               type="button"
               onClick={() => applyRecitation('FALLBACK')}
               disabled={recitationBusy}
-              className="rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
               Yes, use fallback
             </button>
@@ -434,7 +434,7 @@ export function ImportBatchPage() {
               type="button"
               onClick={() => applyRecitation('FAIL')}
               disabled={recitationBusy}
-              className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-100 disabled:opacity-60"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-xs font-medium hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-60"
             >
               No, mark them failed
             </button>
@@ -465,7 +465,7 @@ export function ImportBatchPage() {
                   setEditingName(false);
                 }
               }}
-              className="w-full rounded border border-stone-300 px-2 py-1 text-2xl font-semibold"
+              className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-2xl font-semibold"
             />
           ) : (
             <h1
@@ -475,12 +475,12 @@ export function ImportBatchPage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') setEditingName(true);
               }}
-              className="cursor-text rounded text-2xl font-semibold hover:bg-stone-100"
+              className="cursor-text rounded text-2xl font-semibold hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               {batch.name || '(untitled)'}
             </h1>
           )}
-          <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
             <span className="text-sm">Target cookbook:</span>
             <div className="min-w-[18rem]">
               <CookbookCombobox
@@ -495,7 +495,7 @@ export function ImportBatchPage() {
               />
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
             <span>Fallback model:</span>
             {editingFallback ? (
               <div className="flex flex-wrap items-center gap-1.5">
@@ -511,7 +511,7 @@ export function ImportBatchPage() {
                           : d.model,
                     }))
                   }
-                  className="rounded border border-stone-300 px-2 py-1 text-sm"
+                  className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
                 >
                   <option value="">(none)</option>
                   <option value="gemini">gemini</option>
@@ -524,26 +524,26 @@ export function ImportBatchPage() {
                       setFallbackDraft((d) => ({ ...d, model: e.target.value }))
                     }
                     placeholder={DEFAULT_MODEL_BY_PROVIDER[fallbackDraft.provider]}
-                    className="rounded border border-stone-300 px-2 py-1 text-sm"
+                    className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
                   />
                 )}
                 <button
                   type="button"
                   onClick={() => void saveFallback()}
                   disabled={fallbackBusy}
-                  className="rounded-md bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800 disabled:opacity-60"
+                  className="rounded-md bg-stone-900 dark:bg-stone-100 px-2 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
                 >
                   {fallbackBusy ? 'Saving…' : 'Save'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setEditingFallback(false)}
-                  className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+                  className="rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
                 >
                   Cancel
                 </button>
                 {fallbackError && (
-                  <span className="text-xs text-red-700">{fallbackError}</span>
+                  <span className="text-xs text-red-700 dark:text-red-300">{fallbackError}</span>
                 )}
               </div>
             ) : (
@@ -556,7 +556,7 @@ export function ImportBatchPage() {
                 <button
                   type="button"
                   onClick={openFallbackEditor}
-                  className="rounded-md border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100"
+                  className="rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
                 >
                   Edit
                 </button>
@@ -565,10 +565,10 @@ export function ImportBatchPage() {
           </div>
         </div>
         <details className="relative">
-          <summary className="cursor-pointer list-none rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100">
+          <summary className="cursor-pointer list-none rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800">
             …
           </summary>
-          <div className="absolute right-0 mt-1 w-48 rounded-md border border-stone-200 bg-white p-1 text-sm shadow-md">
+          <div className="absolute right-0 mt-1 w-48 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-1 text-sm shadow-md">
             <button
               type="button"
               onClick={() =>
@@ -577,7 +577,7 @@ export function ImportBatchPage() {
                   patch: { status: batch.status === 'ARCHIVED' ? 'OPEN' : 'ARCHIVED' },
                 })
               }
-              className="block w-full rounded px-3 py-1.5 text-left hover:bg-stone-100"
+              className="block w-full rounded px-3 py-1.5 text-left hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               {batch.status === 'ARCHIVED' ? 'Unarchive batch' : 'Archive batch'}
             </button>
@@ -586,7 +586,7 @@ export function ImportBatchPage() {
       </div>
 
       {activeOcrCount > 0 && (
-        <p className="text-sm text-stone-600" role="status">
+        <p className="text-sm text-stone-600 dark:text-stone-400" role="status">
           {stalledCount > 0 && (
             <>
               <strong>{stalledCount}</strong> processing
@@ -632,19 +632,19 @@ export function ImportBatchPage() {
       </div>
 
       {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-stone-300 bg-stone-50 p-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2 text-sm">
           <span>{selected.size} selected</span>
           <button
             type="button"
             onClick={() => applyBulk({ isToc: true, status: 'PENDING' })}
-            className="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Mark as ToC
           </button>
           <button
             type="button"
             onClick={() => applyBulk({ status: 'DISCARDED' })}
-            className="rounded-md border border-red-300 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+            className="rounded-md border border-red-300 dark:border-red-700 bg-white dark:bg-stone-900 px-2 py-1 text-xs text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
           >
             Discard
           </button>
@@ -682,7 +682,7 @@ export function ImportBatchPage() {
                   alert(`Merge failed: ${(e as Error).message}`);
                 }
               }}
-              className="rounded-md border border-emerald-400 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-900 hover:bg-emerald-100"
+              className="rounded-md border border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-1 text-xs font-medium text-emerald-900 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/40"
               title="Combine selected scans into one item and re-OCR with all images at once. Useful when a recipe spans a page break and the worker split it into two items."
             >
               Merge {selected.size} pages into one item
@@ -691,7 +691,7 @@ export function ImportBatchPage() {
           <button
             type="button"
             onClick={() => setSelected(new Set())}
-            className="ml-auto text-xs text-stone-500 hover:text-stone-900"
+            className="ml-auto text-xs text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
           >
             Clear
           </button>
@@ -699,7 +699,7 @@ export function ImportBatchPage() {
       )}
 
       {selected.size === 0 && filtered.length > 1 && (
-        <p className="text-xs text-stone-500">
+        <p className="text-xs text-stone-500 dark:text-stone-400">
           Tip: tick the checkboxes on two or more pages to merge them
           into a single item (re-OCR's them together — useful when a
           recipe spans a page break), reassign cookbook, or discard in
@@ -718,7 +718,7 @@ export function ImportBatchPage() {
           return (
             <li key={item.id} className="relative">
               <label
-                className="absolute left-1.5 top-1.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-stone-300 bg-white/95 shadow-sm hover:border-stone-500"
+                className="absolute left-1.5 top-1.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-stone-300 dark:border-stone-600 bg-white/95 shadow-sm hover:border-stone-500"
                 title="Select for bulk action"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -753,11 +753,11 @@ export function ImportBatchPage() {
                 />
                 <div className="space-y-1 p-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-stone-500">
+                    <span className="text-xs text-stone-500 dark:text-stone-400">
                       #{item.pageIndex + 1}
                       {item.extraStoragePaths.length > 0 && (
                         <span
-                          className="ml-1 rounded-full bg-stone-200 px-1.5 text-[10px] font-medium text-stone-700"
+                          className="ml-1 rounded-full bg-stone-200 dark:bg-stone-700 px-1.5 text-[10px] font-medium text-stone-700 dark:text-stone-300"
                           title={`Merged with ${item.extraStoragePaths.length} more page(s)`}
                         >
                           +{item.extraStoragePaths.length}
@@ -767,15 +767,15 @@ export function ImportBatchPage() {
                     <ItemStatusPill status={item.status} />
                   </div>
                   {queueLabel && (
-                    <div className="text-[10px] leading-tight text-stone-600">{queueLabel}</div>
+                    <div className="text-[10px] leading-tight text-stone-600 dark:text-stone-400">{queueLabel}</div>
                   )}
                   {draftTitle && (
-                    <div className="truncate text-xs font-medium text-stone-800">
+                    <div className="truncate text-xs font-medium text-stone-800 dark:text-stone-200">
                       {draftTitle}
                     </div>
                   )}
                   {item.isToc && (
-                    <div className="text-[10px] uppercase tracking-wide text-stone-500">
+                    <div className="text-[10px] uppercase tracking-wide text-stone-500 dark:text-stone-400">
                       Table of Contents
                     </div>
                   )}
@@ -787,11 +787,11 @@ export function ImportBatchPage() {
       </ul>
 
       {filtered.length === 0 && (
-        <p className="text-stone-600">No items match this filter.</p>
+        <p className="text-stone-600 dark:text-stone-400">No items match this filter.</p>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 border-t border-stone-200 bg-white/95 px-4 py-2 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-600">
+      <div className="fixed inset-x-0 bottom-0 border-t border-stone-200 dark:border-stone-700 bg-white/95 px-4 py-2 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-600 dark:text-stone-400">
           <span>
             Total cost: <strong>${totalCost.toFixed(2)}</strong>
           </span>
@@ -801,7 +801,7 @@ export function ImportBatchPage() {
           <span>
             ETA: <strong>{eta}</strong>
           </span>
-          <span className="ml-auto text-stone-500">
+          <span className="ml-auto text-stone-500 dark:text-stone-400">
             <Link to="/import" className="underline">
               ← All batches
             </Link>
@@ -821,7 +821,7 @@ export function ImportBatchPage() {
           if (v === '__unassign__') onApply(null);
           else if (v) onApply(v);
         }}
-        className="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs"
+        className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 text-xs"
       >
         <option value="">Reassign…</option>
         <option value="__unassign__">(unassigned)</option>
