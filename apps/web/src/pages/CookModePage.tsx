@@ -164,7 +164,7 @@ export function CookModePage() {
         </ul>
       </aside>
 
-      <div className="sticky bottom-0 flex items-stretch gap-3 pt-4">
+      <div className="sticky bottom-0 flex items-stretch gap-3 pt-4 pb-[env(safe-area-inset-bottom)]">
         <button
           onClick={() => retreat(setIdx)}
           disabled={idx === 0}
