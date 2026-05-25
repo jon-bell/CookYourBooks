@@ -193,10 +193,36 @@ interface ImportTocEntryRow {
   updated_at: string;
 }
 
+// Bumped whenever a sync bug invalidates existing watermarks. On the
+// first pull after the user upgrades, every per-topic watermark is
+// reset to 0 so missed rows get a chance to flow in. Increment when
+// fixing a pull bug that could have stranded server rows.
+const SYNC_RESET_VERSION = 2;
+
+async function maybeResetWatermarks(ownerId: string): Promise<void> {
+  const versionTopic = `sync_reset_version:${ownerId}`;
+  const current = await getWatermark(versionTopic);
+  if (current >= SYNC_RESET_VERSION) return;
+  const db = await getLocalDb();
+  await db.exec(
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?)`,
+    [
+      `collections:${ownerId}`,
+      `recipes:${ownerId}`,
+      `import_batches:${ownerId}`,
+      `import_items:${ownerId}`,
+      `import_item_attempts:${ownerId}`,
+      `import_toc_entries:${ownerId}`,
+    ],
+  );
+  await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
+}
+
 export async function pullAll(
   client: CookbooksClient,
   ownerId: string,
 ): Promise<PullResult> {
+  await maybeResetWatermarks(ownerId);
   const collectionTopic = `collections:${ownerId}`;
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
 
@@ -207,6 +233,7 @@ export async function pullAll(
       .eq('owner_id', ownerId)
       .gte('updated_at', collectionsSince)
       .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, to),
   );
 
@@ -240,6 +267,7 @@ export async function pullAll(
         .eq('recipe_collections.owner_id', ownerId)
         .gte('updated_at', recipesSince)
         .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
         .range(from, to),
   );
   const recipesFetched: RecipeRow[] = recipeRowsRaw.map((row) => {
@@ -360,6 +388,7 @@ async function pullImports(
       .eq('owner_id', ownerId)
       .gte('updated_at', batchSince)
       .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, to),
   );
   let maxBatchTs = await getWatermark(batchTopic);
@@ -379,6 +408,7 @@ async function pullImports(
       .eq('owner_id', ownerId)
       .gte('updated_at', itemSince)
       .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, to),
   );
   let maxItemTs = await getWatermark(itemTopic);
@@ -400,6 +430,7 @@ async function pullImports(
       .eq('owner_id', ownerId)
       .gte('started_at', attemptSince)
       .order('started_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, to),
   );
   let maxAttemptTs = await getWatermark(attemptTopic);
@@ -419,6 +450,7 @@ async function pullImports(
       .eq('owner_id', ownerId)
       .gte('updated_at', tocSince)
       .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, to),
   );
   let maxTocTs = await getWatermark(tocTopic);
