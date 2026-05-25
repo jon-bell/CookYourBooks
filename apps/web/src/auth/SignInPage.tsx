@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { supabase } from '../supabase.js';
+import { AppleButton } from './AppleButton.js';
 
 export function SignInPage() {
   const navigate = useNavigate();
@@ -80,12 +81,15 @@ export function SignInPage() {
           or
         </span>
       </div>
-      <button
-        onClick={handleGoogle}
-        className="w-full rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-100"
-      >
-        Continue with Google
-      </button>
+      <div className="space-y-2">
+        <AppleButton label="Sign in with Apple" onError={setError} />
+        <button
+          onClick={handleGoogle}
+          className="w-full rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium hover:bg-stone-100"
+        >
+          Continue with Google
+        </button>
+      </div>
       <p className="text-center text-sm text-stone-600">
         No account?{' '}
         <Link to="/sign-up" className="font-medium text-stone-900 underline">

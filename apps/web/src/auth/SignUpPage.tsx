@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase.js';
+import { AppleButton } from './AppleButton.js';
 
 export function SignUpPage() {
   const navigate = useNavigate();
@@ -84,6 +85,12 @@ export function SignUpPage() {
           {submitting ? 'Creating…' : 'Create account'}
         </button>
       </form>
+      <div className="relative text-center">
+        <span className="bg-stone-50 px-3 text-xs uppercase tracking-wide text-stone-500">
+          or
+        </span>
+      </div>
+      <AppleButton label="Sign up with Apple" onError={setError} />
       <p className="text-center text-sm text-stone-600">
         Already have one?{' '}
         <Link to="/sign-in" className="font-medium text-stone-900 underline">

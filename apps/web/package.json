@@ -13,6 +13,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@capacitor-community/apple-sign-in": "6.0.0",
     "@capacitor/camera": "^6.1.2",
     "@capacitor/core": "^6.2.1",
     "@capacitor/haptics": "^6.0.2",
