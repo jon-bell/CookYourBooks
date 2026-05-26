@@ -9,7 +9,11 @@ import {
 import { listOutboxForDebug, outboxKindCounts } from '../local/outbox.js';
 import { listWatermarks } from '../local/sync.js';
 import { snapshotDbOps, snapshotDbInit, emergencyResetLocalDb } from '../local/db.js';
-import { releaseLeadership } from '../local/tabLeader.js';
+import {
+  releaseLeadership,
+  forceReelect,
+  queryLeaderLockState,
+} from '../local/tabLeader.js';
 import type { OutboxEntry } from '../local/outbox.js';
 
 interface DbOpView {
@@ -19,14 +23,31 @@ interface DbOpView {
   ageMs: number;
 }
 
+interface LockEntryView {
+  name: string;
+  clientId?: string;
+  mode?: string;
+}
+
 interface Snapshot {
   outbox: OutboxEntry[];
   kindCounts: Record<string, number>;
   watermarks: { topic: string; high_water_mark: number }[];
   dbOps: DbOpView[];
+  lockHeld: LockEntryView[];
+  lockPending: LockEntryView[];
+  lockSupported: boolean;
 }
 
-const EMPTY: Snapshot = { outbox: [], kindCounts: {}, watermarks: [], dbOps: [] };
+const EMPTY: Snapshot = {
+  outbox: [],
+  kindCounts: {},
+  watermarks: [],
+  dbOps: [],
+  lockHeld: [],
+  lockPending: [],
+  lockSupported: true,
+};
 
 export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { status, pendingWrites, lastSyncedAt, lastError, syncingSince, tabRole, syncNow } =
@@ -68,13 +89,28 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
       ageMs: nowTs - o.startedAt,
     }));
     setSnap((s) => ({ ...s, dbOps }));
+    const lockSnap = await queryLeaderLockState();
+    setSnap((s) => ({
+      ...s,
+      lockHeld: lockSnap.held,
+      lockPending: lockSnap.pending,
+      lockSupported: lockSnap.supported,
+    }));
     try {
       const [outbox, kindCounts, watermarks] = await Promise.all([
         listOutboxForDebug(),
         outboxKindCounts(),
         listWatermarks(),
       ]);
-      setSnap({ outbox, kindCounts, watermarks, dbOps });
+      setSnap({
+        outbox,
+        kindCounts,
+        watermarks,
+        dbOps,
+        lockHeld: lockSnap.held,
+        lockPending: lockSnap.pending,
+        lockSupported: lockSnap.supported,
+      });
     } catch (err) {
       console.error('SyncDebugDialog refresh failed', err);
     } finally {
@@ -196,20 +232,70 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
             />
             <KV k="last error" v={lastError ?? '—'} mono />
             {tabRole === 'follower' && (
-              <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                Another tab is the sync leader. This tab reads from the local
-                cache but doesn&apos;t push/pull or listen for realtime updates.
+              <div className="mt-2 space-y-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                <p>
+                  Another tab is the sync leader. This tab reads from the
+                  local cache but doesn&apos;t push/pull or listen for
+                  realtime updates.
+                </p>
+                <p className="text-amber-700 dark:text-amber-400">
+                  If no other tab is open, the lock may be wedged — click
+                  Force re-elect to reset.
+                </p>
               </div>
             )}
-            {tabRole === 'leader' && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {tabRole === 'leader' && (
+                <button
+                  type="button"
+                  onClick={() => releaseLeadership()}
+                  className="rounded border border-stone-300 px-2 py-0.5 text-xs hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
+                  title="Release the sync lock so another open tab can take over."
+                >
+                  Release leadership
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => releaseLeadership()}
-                className="mt-2 self-start rounded border border-stone-300 px-2 py-0.5 text-xs hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
-                title="Release the sync lock so another open tab can take over."
+                onClick={() => forceReelect()}
+                className="rounded border border-stone-300 px-2 py-0.5 text-xs hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
+                title="Tear down local lock state and re-run election."
               >
-                Release leadership
+                Force re-elect
               </button>
+            </div>
+          </Section>
+
+          <Section title="Web Locks">
+            {!snap.lockSupported ? (
+              <p className="text-xs text-stone-500">
+                navigator.locks unavailable in this browser — auto-leader.
+              </p>
+            ) : (
+              <>
+                <div className="text-xs">
+                  <span className="text-stone-500">held:</span>{' '}
+                  {snap.lockHeld.length === 0 ? (
+                    <span className="text-stone-500">none</span>
+                  ) : (
+                    <span className="font-mono">
+                      {snap.lockHeld.length}
+                      {snap.lockHeld[0]?.clientId
+                        ? ` (clientId ${snap.lockHeld[0].clientId.slice(0, 8)}…)`
+                        : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs">
+                  <span className="text-stone-500">pending:</span>{' '}
+                  <span className="font-mono">{snap.lockPending.length}</span>
+                </div>
+                <p className="mt-1 text-[11px] text-stone-500">
+                  If you only have one tab open but role is &quot;follower&quot;,
+                  the lock is held by a stale context (a recently closed tab,
+                  bfcached page). Force re-elect should clear it.
+                </p>
+              </>
             )}
           </Section>
 
