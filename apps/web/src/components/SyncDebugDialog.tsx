@@ -9,6 +9,7 @@ import {
 import { listOutboxForDebug, outboxKindCounts } from '../local/outbox.js';
 import { listWatermarks } from '../local/sync.js';
 import { snapshotDbOps, snapshotDbInit, emergencyResetLocalDb } from '../local/db.js';
+import { releaseLeadership } from '../local/tabLeader.js';
 import type { OutboxEntry } from '../local/outbox.js';
 
 interface DbOpView {
@@ -28,7 +29,8 @@ interface Snapshot {
 const EMPTY: Snapshot = { outbox: [], kindCounts: {}, watermarks: [], dbOps: [] };
 
 export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { status, pendingWrites, lastSyncedAt, lastError, syncingSince, syncNow } = useSync();
+  const { status, pendingWrites, lastSyncedAt, lastError, syncingSince, tabRole, syncNow } =
+    useSync();
   const [logEntries, setLogEntries] = useState<readonly SyncLogEntry[]>(() => getSyncLog());
   const [snap, setSnap] = useState<Snapshot>(EMPTY);
   const [refreshing, setRefreshing] = useState(false);
@@ -102,6 +104,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
           lastSyncedAt,
           lastError,
           syncingForMs: syncingSince ? Date.now() - syncingSince : null,
+          tabRole,
           kindCounts: snap.kindCounts,
           watermarks: snap.watermarks,
           dbOps: snap.dbOps,
@@ -111,7 +114,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
         null,
         2,
       ),
-    [status, pendingWrites, lastSyncedAt, lastError, syncingSince, snap, logEntries],
+    [status, pendingWrites, lastSyncedAt, lastError, syncingSince, tabRole, snap, logEntries],
   );
 
   function copySummary() {
@@ -181,6 +184,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
         <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-5 md:grid-cols-2">
           <Section title="Status">
             <KV k="state" v={status} />
+            <KV k="tab role" v={tabRole} />
             <KV
               k="syncing for"
               v={syncingSince ? relMs(now - syncingSince) : '—'}
@@ -191,6 +195,22 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
               v={lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString() : '—'}
             />
             <KV k="last error" v={lastError ?? '—'} mono />
+            {tabRole === 'follower' && (
+              <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                Another tab is the sync leader. This tab reads from the local
+                cache but doesn&apos;t push/pull or listen for realtime updates.
+              </div>
+            )}
+            {tabRole === 'leader' && (
+              <button
+                type="button"
+                onClick={() => releaseLeadership()}
+                className="mt-2 self-start rounded border border-stone-300 px-2 py-0.5 text-xs hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
+                title="Release the sync lock so another open tab can take over."
+              >
+                Release leadership
+              </button>
+            )}
           </Section>
 
           <DbInitSection now={now} />

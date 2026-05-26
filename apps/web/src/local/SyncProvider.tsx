@@ -6,6 +6,12 @@ import { getLocalDb } from './db.js';
 import { countPending } from './outbox.js';
 import { pullAll, pushOutbox, subscribeRealtime, type RealtimeHandle } from './sync.js';
 import { logSync } from './syncLog.js';
+import {
+  ensureLeaderElection,
+  getTabRole,
+  subscribeTabRole,
+  type TabRole,
+} from './tabLeader.js';
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -41,6 +47,12 @@ interface SyncState {
   lastError: string | null;
   /** Wall-clock when the current 'syncing' cycle started, or null. */
   syncingSince: number | null;
+  /**
+   * Cross-tab role. Only the leader runs sync cycles + realtime; other
+   * tabs read from local SQLite but skip writes/network to avoid
+   * wedging the shared IndexedDB backing store.
+   */
+  tabRole: TabRole;
   /** Trigger an immediate pull + push cycle. Safe to call concurrently — overlapping calls coalesce. */
   syncNow: () => Promise<void>;
   /**
@@ -78,6 +90,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const [pendingWrites, setPendingWrites] = useState(0);
   const [syncingSince, setSyncingSince] = useState<number | null>(null);
+  const [tabRole, setTabRole] = useState<TabRole>(() => getTabRole());
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
@@ -204,11 +217,30 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // When the user changes, kick off an initial sync and open a realtime
-  // channel to keep local in step with server-side changes.
+  // Kick off cross-tab leader election. Subscribe so role changes
+  // (e.g. another tab closing makes us the leader) are reflected.
+  useEffect(() => {
+    ensureLeaderElection();
+    setTabRole(getTabRole());
+    const unsub = subscribeTabRole(setTabRole);
+    return unsub;
+  }, []);
+
+  // When the user changes (or we become the leader), kick off an
+  // initial sync and open a realtime channel. Follower tabs skip both
+  // — they read from local SQLite but the leader is the sole writer
+  // and the sole realtime listener (avoids two tabs racing on the
+  // shared IDB and on Supabase row events).
   useEffect(() => {
     if (!user) {
       setHydrated(false);
+      return;
+    }
+    if (tabRole !== 'leader') {
+      logSync('info', `skipping sync cycle: tab role is ${tabRole}`);
+      // Followers still count as hydrated for the UI gate — the
+      // existing local cache from a prior session is good enough.
+      setHydrated(true);
       return;
     }
     let handle: RealtimeHandle | undefined;
@@ -228,7 +260,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       void handle?.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [user?.id, tabRole]);
 
   useEffect(
     () => () => {
@@ -290,11 +322,21 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     lastSyncedAt,
     lastError,
     syncingSince,
+    tabRole,
     syncNow: async () => {
-      if (user) await cycle(user.id);
+      if (!user) return;
+      if (tabRole !== 'leader') {
+        logSync('warn', 'syncNow ignored: this tab is not the sync leader');
+        return;
+      }
+      await cycle(user.id);
     },
     flushOutbox: async () => {
       if (!user) return;
+      if (tabRole !== 'leader') {
+        logSync('warn', 'flushOutbox ignored: this tab is not the sync leader');
+        return;
+      }
       try {
         await pushOutbox(supabase, user.id);
       } finally {
