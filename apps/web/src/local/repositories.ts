@@ -272,17 +272,16 @@ export async function upsertRecipeRow(
 }
 
 /**
- * Bulk-upsert many recipes (and their children) in a single SQLite
- * transaction. Used by the sync pull path so a library with 100+
- * recipes doesn't pay the per-recipe tx start/commit cost over and
- * over — on iPad's WASM SQLite, each tx boundary is ~50ms and pulling
- * a fresh library can stretch into half a minute of "synced but
- * empty" UI while every other reader queues for the lock between
- * recipes.
+ * Bulk-upsert many recipes (and their children) using multi-row VALUES
+ * inserts and batched IN-list deletes. The per-row WASM round-trip cost
+ * is the dominant factor on iPad SQLite, so collapsing thousands of
+ * single-row INSERTs into a handful of multi-row statements cuts a
+ * fresh-library pull from tens of seconds down to seconds.
  *
- * The per-recipe updated_at guard from upsertRecipeRow is inlined
- * here so we don't have to take and release the lock per recipe to
- * do the pre-check.
+ * The per-recipe updated_at guard is applied via a single SELECT-IN
+ * lookup at the top, then stale rows are filtered out before any
+ * writes — preserving the "refuse to regress a fresher local row"
+ * semantic without paying for a separate round-trip per recipe.
  */
 export async function upsertRecipesBatch(
   batch: ReadonlyArray<{
@@ -295,15 +294,43 @@ export async function upsertRecipesBatch(
   if (batch.length === 0) return;
   const db = await getLocalDb();
   await db.tx(async (tx) => {
-    for (const { recipe, ingredients, instructions, refs } of batch) {
-      const incomingTs = tsToMs(recipe.updated_at);
-      const existing = (await tx.execO(
-        `select updated_at from recipes where id = ?`,
-        [recipe.id],
-      )) as { updated_at: number }[];
-      if (existing[0] && existing[0].updated_at > incomingTs) continue;
-      await writeRecipeAndChildren(tx, recipe, ingredients, instructions, refs, incomingTs);
+    // Pre-check: pull all existing updated_ats in one shot.
+    const ids = batch.map((b) => b.recipe.id);
+    const existingMap = new Map<string, number>();
+    if (ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = (await tx.execO(
+        `select id, updated_at from recipes where id in (${placeholders})`,
+        ids,
+      )) as { id: string; updated_at: number }[];
+      for (const r of rows) existingMap.set(r.id, r.updated_at);
     }
+    const fresh = batch.filter((b) => {
+      const local = existingMap.get(b.recipe.id);
+      return !local || local <= tsToMs(b.recipe.updated_at);
+    });
+    if (fresh.length === 0) return;
+
+    const freshIds = fresh.map((b) => b.recipe.id);
+    // Batched deletes: replace 3 deletes per recipe with 3 deletes total.
+    await execInChunks(tx, freshIds, (chunk, ph) => [
+      `delete from instruction_ingredient_refs
+       where instruction_id in (select id from instructions where recipe_id in (${ph}))`,
+      chunk,
+    ]);
+    await execInChunks(tx, freshIds, (chunk, ph) => [
+      `delete from ingredients where recipe_id in (${ph})`,
+      chunk,
+    ]);
+    await execInChunks(tx, freshIds, (chunk, ph) => [
+      `delete from instructions where recipe_id in (${ph})`,
+      chunk,
+    ]);
+
+    await bulkUpsertRecipes(tx, fresh.map((b) => b.recipe));
+    await bulkInsertIngredients(tx, fresh.flatMap((b) => b.ingredients));
+    await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
+    await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
   });
 }
 
@@ -312,91 +339,130 @@ interface RecipeTx {
   execO: (sql: string, bind?: unknown[]) => Promise<unknown[]>;
 }
 
-async function writeRecipeAndChildren(
+// SQLite's compiled-in SQLITE_MAX_VARIABLE_NUMBER defaults to 32766 in
+// modern builds, but cr-sqlite ships its own wasm; stay well below to
+// be safe across cols × rows combinations. 16 cols × 100 rows = 1600.
+const MAX_ROWS_PER_INSERT = 100;
+
+async function execInChunks(
   tx: RecipeTx,
-  recipeRow: RecipeRow,
-  ingredients: IngredientRow[],
-  instructions: InstructionRow[],
-  refs: InstructionRefRow[],
-  incomingTs: number,
+  ids: readonly string[],
+  build: (chunk: string[], placeholders: string) => [string, unknown[]],
 ): Promise<void> {
-  const recipeRowX = recipeRow as RecipeRow & {
-    notes?: string | null;
-    parent_recipe_id?: string | null;
-    servings_amount_max?: number | null;
-    description?: string | null;
-    time_estimate?: string | null;
-    equipment?: unknown;
-    book_title?: string | null;
-    page_numbers?: unknown;
-    source_image_text?: string | null;
-    starred?: boolean | number | null;
-  };
-  const equipmentJson = toJsonText(recipeRowX.equipment);
-  const pageNumbersJson = toJsonText(recipeRowX.page_numbers);
-  const starredRaw: unknown = recipeRowX.starred;
-  const starredInt = starredRaw === true || starredRaw === 1 ? 1 : 0;
-  await tx.exec(
-    `insert into recipes
-       (id, collection_id, title, servings_amount, servings_description,
-        servings_amount_max, sort_order, notes, parent_recipe_id,
-        description, time_estimate, equipment, book_title, page_numbers,
-        source_image_text, starred, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-     on conflict(id) do update set
-       collection_id=excluded.collection_id,
-       title=excluded.title,
-       servings_amount=excluded.servings_amount,
-       servings_description=excluded.servings_description,
-       servings_amount_max=excluded.servings_amount_max,
-       sort_order=excluded.sort_order,
-       notes=excluded.notes,
-       parent_recipe_id=excluded.parent_recipe_id,
-       description=excluded.description,
-       time_estimate=excluded.time_estimate,
-       equipment=excluded.equipment,
-       book_title=excluded.book_title,
-       page_numbers=excluded.page_numbers,
-       source_image_text=excluded.source_image_text,
-       starred=excluded.starred,
-       updated_at=excluded.updated_at,
-       deleted=0`,
-    [
-      recipeRow.id,
-      recipeRow.collection_id,
-      recipeRow.title,
-      recipeRow.servings_amount,
-      recipeRow.servings_description,
-      recipeRowX.servings_amount_max ?? null,
-      recipeRow.sort_order,
-      recipeRowX.notes ?? null,
-      recipeRowX.parent_recipe_id ?? null,
-      recipeRowX.description ?? null,
-      recipeRowX.time_estimate ?? null,
-      equipmentJson,
-      recipeRowX.book_title ?? null,
-      pageNumbersJson,
-      recipeRowX.source_image_text ?? null,
-      starredInt,
-      incomingTs,
-    ],
-  );
-  await tx.exec(
-    `delete from instruction_ingredient_refs
-     where instruction_id in (select id from instructions where recipe_id = ?)`,
-    [recipeRow.id],
-  );
-  await tx.exec(`delete from ingredients where recipe_id = ?`, [recipeRow.id]);
-  await tx.exec(`delete from instructions where recipe_id = ?`, [recipeRow.id]);
-  for (const ing of ingredients) {
-    const ingX = ing as IngredientRow & { description?: string | null };
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    const [sql, bind] = build(chunk, ph);
+    await tx.exec(sql, bind);
+  }
+}
+
+async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): Promise<void> {
+  if (recipes.length === 0) return;
+  const cols = [
+    'id',
+    'collection_id',
+    'title',
+    'servings_amount',
+    'servings_description',
+    'servings_amount_max',
+    'sort_order',
+    'notes',
+    'parent_recipe_id',
+    'description',
+    'time_estimate',
+    'equipment',
+    'book_title',
+    'page_numbers',
+    'source_image_text',
+    'starred',
+    'updated_at',
+    'deleted',
+  ];
+  const valuesTuple = `(${cols.map(() => '?').join(',')})`;
+  const setClause = cols
+    .filter((c) => c !== 'id')
+    .map((c) => `${c}=excluded.${c}`)
+    .join(',\n      ');
+  for (let i = 0; i < recipes.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = recipes.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const r of chunk) {
+      const rx = r as RecipeRow & {
+        notes?: string | null;
+        parent_recipe_id?: string | null;
+        servings_amount_max?: number | null;
+        description?: string | null;
+        time_estimate?: string | null;
+        equipment?: unknown;
+        book_title?: string | null;
+        page_numbers?: unknown;
+        source_image_text?: string | null;
+        starred?: boolean | number | null;
+      };
+      const starredRaw: unknown = rx.starred;
+      params.push(
+        r.id,
+        r.collection_id,
+        r.title,
+        r.servings_amount,
+        r.servings_description,
+        rx.servings_amount_max ?? null,
+        r.sort_order,
+        rx.notes ?? null,
+        rx.parent_recipe_id ?? null,
+        rx.description ?? null,
+        rx.time_estimate ?? null,
+        toJsonText(rx.equipment),
+        rx.book_title ?? null,
+        toJsonText(rx.page_numbers),
+        rx.source_image_text ?? null,
+        starredRaw === true || starredRaw === 1 ? 1 : 0,
+        tsToMs(r.updated_at),
+        0,
+      );
+    }
+    const placeholders = chunk.map(() => valuesTuple).join(',');
     await tx.exec(
-      `insert into ingredients
-         (id, recipe_id, sort_order, type, name, preparation, notes, description,
-          quantity_type, quantity_amount, quantity_whole, quantity_numerator,
-          quantity_denominator, quantity_min, quantity_max, quantity_unit)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
+      `insert into recipes (${cols.join(',')}) values ${placeholders}
+       on conflict(id) do update set
+       ${setClause}`,
+      params,
+    );
+  }
+}
+
+async function bulkInsertIngredients(
+  tx: RecipeTx,
+  ingredients: readonly IngredientRow[],
+): Promise<void> {
+  if (ingredients.length === 0) return;
+  const cols = [
+    'id',
+    'recipe_id',
+    'sort_order',
+    'type',
+    'name',
+    'preparation',
+    'notes',
+    'description',
+    'quantity_type',
+    'quantity_amount',
+    'quantity_whole',
+    'quantity_numerator',
+    'quantity_denominator',
+    'quantity_min',
+    'quantity_max',
+    'quantity_unit',
+  ];
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  for (let i = 0; i < ingredients.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = ingredients.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const ing of chunk) {
+      const ingX = ing as IngredientRow & { description?: string | null };
+      params.push(
         ing.id,
         ing.recipe_id,
         ing.sort_order,
@@ -413,67 +479,112 @@ async function writeRecipeAndChildren(
         ing.quantity_min,
         ing.quantity_max,
         ing.quantity_unit,
-      ],
+      );
+    }
+    await tx.exec(
+      `insert into ingredients (${cols.join(',')}) values ${chunk.map(() => tuple).join(',')}`,
+      params,
     );
   }
-  for (const step of instructions) {
-    const stepX = step as InstructionRow & {
-      temperature_value?: number | null;
-      temperature_unit?: string | null;
-      sub_instructions?: unknown;
-      simplified_steps?: unknown;
-      notes?: string | null;
-    };
-    await tx.exec(
-      `insert into instructions
-         (id, recipe_id, step_number, text,
-          temperature_value, temperature_unit, sub_instructions,
-          simplified_steps, notes)
-       values (?,?,?,?,?,?,?,?,?)`,
-      [
+}
+
+async function bulkInsertInstructions(
+  tx: RecipeTx,
+  steps: readonly InstructionRow[],
+): Promise<void> {
+  if (steps.length === 0) return;
+  const cols = [
+    'id',
+    'recipe_id',
+    'step_number',
+    'text',
+    'temperature_value',
+    'temperature_unit',
+    'sub_instructions',
+    'simplified_steps',
+    'notes',
+  ];
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  for (let i = 0; i < steps.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = steps.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const step of chunk) {
+      const sx = step as InstructionRow & {
+        temperature_value?: number | null;
+        temperature_unit?: string | null;
+        sub_instructions?: unknown;
+        simplified_steps?: unknown;
+        notes?: string | null;
+      };
+      params.push(
         step.id,
         step.recipe_id,
         step.step_number,
         step.text,
-        stepX.temperature_value ?? null,
-        stepX.temperature_unit ?? null,
-        toJsonText(stepX.sub_instructions),
-        toJsonText(stepX.simplified_steps),
-        stepX.notes ?? null,
-      ],
+        sx.temperature_value ?? null,
+        sx.temperature_unit ?? null,
+        toJsonText(sx.sub_instructions),
+        toJsonText(sx.simplified_steps),
+        sx.notes ?? null,
+      );
+    }
+    await tx.exec(
+      `insert into instructions (${cols.join(',')}) values ${chunk.map(() => tuple).join(',')}`,
+      params,
     );
   }
-  for (const ref of refs) {
-    const refX = ref as InstructionRefRow & {
-      consumed_quantity_type?: string | null;
-      consumed_quantity_amount?: number | null;
-      consumed_quantity_whole?: number | null;
-      consumed_quantity_numerator?: number | null;
-      consumed_quantity_denominator?: number | null;
-      consumed_quantity_min?: number | null;
-      consumed_quantity_max?: number | null;
-      consumed_quantity_unit?: string | null;
-    };
-    await tx.exec(
-      `insert into instruction_ingredient_refs
-         (instruction_id, ingredient_id,
-          consumed_quantity_type, consumed_quantity_amount,
-          consumed_quantity_whole, consumed_quantity_numerator,
-          consumed_quantity_denominator, consumed_quantity_min,
-          consumed_quantity_max, consumed_quantity_unit)
-       values (?,?,?,?,?,?,?,?,?,?) on conflict do nothing`,
-      [
+}
+
+async function bulkInsertRefs(
+  tx: RecipeTx,
+  refs: readonly InstructionRefRow[],
+): Promise<void> {
+  if (refs.length === 0) return;
+  const cols = [
+    'instruction_id',
+    'ingredient_id',
+    'consumed_quantity_type',
+    'consumed_quantity_amount',
+    'consumed_quantity_whole',
+    'consumed_quantity_numerator',
+    'consumed_quantity_denominator',
+    'consumed_quantity_min',
+    'consumed_quantity_max',
+    'consumed_quantity_unit',
+  ];
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  for (let i = 0; i < refs.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = refs.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const ref of chunk) {
+      const rx = ref as InstructionRefRow & {
+        consumed_quantity_type?: string | null;
+        consumed_quantity_amount?: number | null;
+        consumed_quantity_whole?: number | null;
+        consumed_quantity_numerator?: number | null;
+        consumed_quantity_denominator?: number | null;
+        consumed_quantity_min?: number | null;
+        consumed_quantity_max?: number | null;
+        consumed_quantity_unit?: string | null;
+      };
+      params.push(
         ref.instruction_id,
         ref.ingredient_id,
-        refX.consumed_quantity_type ?? null,
-        refX.consumed_quantity_amount ?? null,
-        refX.consumed_quantity_whole ?? null,
-        refX.consumed_quantity_numerator ?? null,
-        refX.consumed_quantity_denominator ?? null,
-        refX.consumed_quantity_min ?? null,
-        refX.consumed_quantity_max ?? null,
-        refX.consumed_quantity_unit ?? null,
-      ],
+        rx.consumed_quantity_type ?? null,
+        rx.consumed_quantity_amount ?? null,
+        rx.consumed_quantity_whole ?? null,
+        rx.consumed_quantity_numerator ?? null,
+        rx.consumed_quantity_denominator ?? null,
+        rx.consumed_quantity_min ?? null,
+        rx.consumed_quantity_max ?? null,
+        rx.consumed_quantity_unit ?? null,
+      );
+    }
+    await tx.exec(
+      `insert into instruction_ingredient_refs (${cols.join(',')}) values ${chunk
+        .map(() => tuple)
+        .join(',')} on conflict do nothing`,
+      params,
     );
   }
 }
