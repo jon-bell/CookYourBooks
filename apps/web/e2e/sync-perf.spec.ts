@@ -1,5 +1,5 @@
 import { test, expect } from './support/fixtures.js';
-import { seedUserLibrary } from './support/admin.js';
+import { seedUserLibrary, seedUserImports } from './support/admin.js';
 import type { Page } from '@playwright/test';
 import type { TestUser } from './support/admin.js';
 
@@ -22,6 +22,13 @@ async function signInAndWaitForSync(
     }
   });
   await page.goto('/sign-in');
+  // Opt in to sync info-level console mirroring so the page.on('console')
+  // hook above sees the per-phase logs. By default this is gated
+  // (see syncLog.shouldMirrorInfo) because the IPC cost shows up on
+  // iPad / remote-attached devtools.
+  await page.evaluate(() => {
+    localStorage.setItem('cookyourbooks.sync.consoleMirror', '1');
+  });
   await page.getByLabel('Email').fill(user.email);
   await page.getByLabel('Password').fill(user.password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -142,5 +149,46 @@ test.describe('Sync performance', () => {
     await expect(page.locator('header button', { hasText: 'Synced' })).toBeVisible({
       timeout: 60_000,
     });
+  });
+
+  test('tail-table pull (50 import_items) stays under budget', async ({
+    user,
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    // 5 batches × 10 items — exercises the bulk import_batches +
+    // import_items path with enough rows that the per-row codepath
+    // would visibly regress here.
+    const ITEM_COUNT = 50;
+    const TAIL_BUDGET_MS = 8_000;
+    await seedUserImports({
+      ownerId: user.id,
+      batchCount: 5,
+      itemsPerBatch: 10,
+    });
+    await signInAndWaitForSync(page, user, 60_000);
+
+    const log = (await page.evaluate(
+      () => window.__cybSyncLog?.() ?? [],
+    )) as SyncLogEntry[];
+    const importsDone = log.find((e) => e.message.startsWith('pull imports done'));
+    expect(importsDone, 'pull imports done should have logged').toBeTruthy();
+    const importsMatch = /pull imports done in (\d+)ms/.exec(importsDone!.message);
+    expect(importsMatch).toBeTruthy();
+    const importsMs = Number(importsMatch![1]);
+    expect(
+      importsMs,
+      `imports phase under ${TAIL_BUDGET_MS}ms (got ${importsMs}ms)`,
+    ).toBeLessThan(TAIL_BUDGET_MS);
+
+    const data = importsDone!.data as { items?: number } | undefined;
+    expect(data?.items).toBe(ITEM_COUNT);
+
+    // No lock-wait warnings — the bulk + trigger-suppress path keeps
+    // the mutex short enough that no reader stalls >3s.
+    const lockWarnings = log.filter(
+      (e) => e.level === 'warn' && e.message.startsWith('db lock: still waiting'),
+    );
+    expect(lockWarnings.length, 'no reader should stall during tail pull').toBe(0);
   });
 });

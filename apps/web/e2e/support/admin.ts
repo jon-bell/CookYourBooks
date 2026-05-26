@@ -198,6 +198,66 @@ export async function seedUserLibrary(params: {
   return { collectionId: col.id };
 }
 
+/**
+ * Seed `count` import_batches for the user with `itemsPerBatch` import_items
+ * each. Used by sync perf tests to exercise the tail-table bulk-pull path.
+ */
+export async function seedUserImports(params: {
+  ownerId: string;
+  batchCount: number;
+  itemsPerBatch: number;
+}): Promise<void> {
+  const batches: Record<string, unknown>[] = [];
+  const items: Record<string, unknown>[] = [];
+  for (let b = 0; b < params.batchCount; b += 1) {
+    const batchId = crypto.randomUUID();
+    batches.push({
+      id: batchId,
+      owner_id: params.ownerId,
+      name: `Perf batch ${b + 1}`,
+      batch_kind: 'STANDARD',
+      source_kind: 'IMAGES',
+      default_model: 'gemini-2.5-flash',
+      default_provider: 'gemini',
+      recitation_policy: 'ASK',
+      status: 'OPEN',
+      total_items: params.itemsPerBatch,
+      is_planner: false,
+    });
+    for (let i = 0; i < params.itemsPerBatch; i += 1) {
+      items.push({
+        id: crypto.randomUUID(),
+        batch_id: batchId,
+        owner_id: params.ownerId,
+        page_index: i,
+        storage_path: `${params.ownerId}/${batchId}/pages/${i}.jpg`,
+        status: 'OCR_DONE',
+        is_toc: false,
+      });
+    }
+  }
+  const bulk = async (table: string, rows: unknown[]) => {
+    if (rows.length === 0) return;
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const slice = rows.slice(i, i + CHUNK);
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(slice),
+      });
+      if (!resp.ok) throw new Error(`seed ${table}: ${resp.status} ${await resp.text()}`);
+    }
+  };
+  await bulk('import_batches', batches);
+  await bulk('import_items', items);
+}
+
 /** Insert a public demo collection owned by the admin for Discover tests. */
 export async function seedPublicCollection(params: {
   title: string;

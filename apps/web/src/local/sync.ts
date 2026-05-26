@@ -12,8 +12,13 @@ import {
   purgeCollection,
   purgeRecipe,
   upsertCollectionRow,
+  upsertCollectionsBatch,
   upsertRecipeRow,
   upsertRecipesBatch,
+  withSuppressedCrrTriggers,
+  filterFresherIncoming,
+  bulkInsertOnConflictId,
+  bulkInsertIgnoreId,
 } from './repositories.js';
 import {
   listPending,
@@ -272,10 +277,20 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
 }
 
+export interface PullCallbacks {
+  /**
+   * Fired when a major phase finishes writing to local SQLite. Use to
+   * invalidate React Query keys incrementally so the UI hydrates as
+   * each topic lands instead of waiting for the whole pull to finish.
+   */
+  onPhaseComplete?: (phase: 'collections' | 'recipes' | 'imports' | 'conversion_rules' | 'rewrite_jobs') => void;
+}
+
 export async function pullAll(
   client: CookbooksClient,
   ownerId: string,
   signal?: AbortSignal,
+  callbacks?: PullCallbacks,
 ): Promise<PullResult> {
   const pullStart = Date.now();
   logSync('info', 'pullAll: entered');
@@ -306,11 +321,12 @@ export async function pullAll(
   logSync('info', `pull collections: ${collections.length} rows in ${Date.now() - collectionsPhase}ms`);
 
   let maxCollectionTs = await getWatermark(collectionTopic);
+  await upsertCollectionsBatch(collections);
   for (const row of collections) {
-    await upsertCollectionRow(row);
     maxCollectionTs = Math.max(maxCollectionTs, toMs(row.updated_at));
   }
   if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
+  callbacks?.onPhaseComplete?.('collections');
 
   checkAbort('recipes');
   const recipeTopic = `recipes:${ownerId}`;
@@ -429,27 +445,40 @@ export async function pullAll(
     'info',
     `pull recipes: ${recipesFetched.length} rows in ${Date.now() - recipesPhase}ms`,
   );
+  callbacks?.onPhaseComplete?.('recipes');
 
+  // Tail topics (imports, conversion_rules, rewrite_jobs) have no FK
+  // or RLS dependency on each other. Run them in parallel so network
+  // fetches overlap; their local-write phases still serialize on the
+  // SQLite mutex, but each phase is now O(few statements) thanks to
+  // bulk INSERTs + trigger suppression, so the contention is small.
   checkAbort('imports');
   const importPhase = Date.now();
-  const importCounts = await pullImports(client, ownerId);
-  logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, {
-    ...importCounts,
-  });
-  checkAbort('conversion_rules');
   const convPhase = Date.now();
-  const conversionRulesPulled = await pullConversionRules(client, ownerId);
-  logSync(
-    'info',
-    `pull conversion_rules: ${conversionRulesPulled} rows in ${Date.now() - convPhase}ms`,
-  );
-  checkAbort('rewrite_jobs');
   const rewritePhase = Date.now();
-  const rewriteJobsPulled = await pullRewriteJobs(client, ownerId);
-  logSync(
-    'info',
-    `pull rewrite_jobs: ${rewriteJobsPulled} rows in ${Date.now() - rewritePhase}ms`,
-  );
+  const [importCounts, conversionRulesPulled, rewriteJobsPulled] = await Promise.all([
+    pullImports(client, ownerId).then((c) => {
+      logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, { ...c });
+      callbacks?.onPhaseComplete?.('imports');
+      return c;
+    }),
+    pullConversionRules(client, ownerId).then((n) => {
+      logSync(
+        'info',
+        `pull conversion_rules: ${n} rows in ${Date.now() - convPhase}ms`,
+      );
+      callbacks?.onPhaseComplete?.('conversion_rules');
+      return n;
+    }),
+    pullRewriteJobs(client, ownerId).then((n) => {
+      logSync(
+        'info',
+        `pull rewrite_jobs: ${n} rows in ${Date.now() - rewritePhase}ms`,
+      );
+      callbacks?.onPhaseComplete?.('rewrite_jobs');
+      return n;
+    }),
+  ]);
   logSync('info', `pull complete in ${Date.now() - pullStart}ms`);
 
   return {
@@ -464,6 +493,262 @@ export async function pullAll(
     conversionRules: conversionRulesPulled,
     rewriteJobs: rewriteJobsPulled,
   };
+}
+
+// Column lists for the tail tables' bulk INSERTs. Keep these in sync
+// with the local SQLite schema in `schema.ts` and the per-row upsert
+// builders below (the per-row paths are still used by the realtime
+// event handlers so they aren't dead).
+const CONVERSION_RULE_COLS = [
+  'id',
+  'owner_id',
+  'recipe_id',
+  'from_unit',
+  'to_unit',
+  'factor',
+  'ingredient_name',
+  'notes',
+  'priority',
+  'updated_at',
+  'deleted',
+] as const;
+
+const REWRITE_JOB_COLS = [
+  'id',
+  'owner_id',
+  'recipe_id',
+  'status',
+  'provider',
+  'model',
+  'prompt',
+  'claim_expires_at',
+  'attempts',
+  'last_error',
+  'result_json',
+  'prompt_tokens',
+  'completion_tokens',
+  'cost_usd_micros',
+  'latency_ms',
+  'updated_at',
+  'deleted',
+] as const;
+
+const IMPORT_BATCH_COLS = [
+  'id',
+  'owner_id',
+  'name',
+  'batch_kind',
+  'source_kind',
+  'target_collection_id',
+  'default_model',
+  'default_provider',
+  'fallback_model',
+  'fallback_provider',
+  'recitation_policy',
+  'status',
+  'total_items',
+  'is_planner',
+  'updated_at',
+  'deleted',
+] as const;
+
+const IMPORT_ITEM_COLS = [
+  'id',
+  'batch_id',
+  'owner_id',
+  'page_index',
+  'storage_path',
+  'thumb_path',
+  'source_pdf_path',
+  'source_pdf_page',
+  'assigned_collection_id',
+  'assigned_page_number',
+  'assigned_recipe_id',
+  'is_toc',
+  'status',
+  'claim_expires_at',
+  'attempts',
+  'last_error',
+  'parsed_drafts_json',
+  'model_used',
+  'prompt_tokens',
+  'completion_tokens',
+  'cost_usd_micros',
+  'created_recipe_ids',
+  'selected_variant_id',
+  'needs_fallback',
+  'extra_storage_paths',
+  'updated_at',
+  'deleted',
+] as const;
+
+const IMPORT_ITEM_ATTEMPT_COLS = [
+  'id',
+  'item_id',
+  'owner_id',
+  'attempt_no',
+  'provider',
+  'model',
+  'raw_response_path',
+  'error_kind',
+  'error_message',
+  'prompt_tokens',
+  'completion_tokens',
+  'cost_usd_micros',
+  'latency_ms',
+  'started_at',
+  'finished_at',
+  'updated_at',
+  'deleted',
+] as const;
+
+const IMPORT_TOC_COLS = [
+  'id',
+  'batch_id',
+  'item_id',
+  'owner_id',
+  'title',
+  'page_number',
+  'confidence',
+  'updated_at',
+  'deleted',
+] as const;
+
+function conversionRuleToParams(row: ConversionRuleRow): readonly unknown[] {
+  return [
+    row.id,
+    row.owner_id,
+    row.recipe_id,
+    row.from_unit,
+    row.to_unit,
+    row.factor,
+    row.ingredient_name,
+    row.notes,
+    row.priority,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
+function rewriteJobToParams(row: RewriteJobRow): readonly unknown[] {
+  const resultText =
+    row.result_json === null || row.result_json === undefined
+      ? null
+      : JSON.stringify(row.result_json);
+  return [
+    row.id,
+    row.owner_id,
+    row.recipe_id,
+    row.status,
+    row.provider,
+    row.model,
+    row.prompt,
+    toMs(row.claim_expires_at),
+    row.attempts,
+    row.last_error,
+    resultText,
+    row.prompt_tokens,
+    row.completion_tokens,
+    row.cost_usd_micros,
+    row.latency_ms,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
+function importBatchToParams(row: ImportBatchRow): readonly unknown[] {
+  return [
+    row.id,
+    row.owner_id,
+    row.name,
+    row.batch_kind ?? 'STANDARD',
+    row.source_kind,
+    row.target_collection_id,
+    row.default_model,
+    row.default_provider,
+    row.fallback_model,
+    row.fallback_provider,
+    row.recitation_policy,
+    row.status,
+    row.total_items,
+    row.is_planner ? 1 : 0,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
+function importItemToParams(row: ImportItemRow): readonly unknown[] {
+  const driftsText =
+    row.parsed_drafts_json === null || row.parsed_drafts_json === undefined
+      ? null
+      : JSON.stringify(row.parsed_drafts_json);
+  const createdIdsText = JSON.stringify(row.created_recipe_ids ?? []);
+  const extrasText = JSON.stringify(row.extra_storage_paths ?? []);
+  return [
+    row.id,
+    row.batch_id,
+    row.owner_id,
+    row.page_index,
+    row.storage_path,
+    row.thumb_path,
+    row.source_pdf_path,
+    row.source_pdf_page,
+    row.assigned_collection_id,
+    row.assigned_page_number,
+    row.assigned_recipe_id ?? null,
+    row.is_toc ? 1 : 0,
+    row.status,
+    toMs(row.claim_expires_at),
+    row.attempts,
+    row.last_error,
+    driftsText,
+    row.model_used,
+    row.prompt_tokens,
+    row.completion_tokens,
+    row.cost_usd_micros,
+    createdIdsText,
+    row.selected_variant_id ?? null,
+    row.needs_fallback ? 1 : 0,
+    extrasText,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
+function importItemAttemptToParams(row: ImportItemAttemptRow): readonly unknown[] {
+  return [
+    row.id,
+    row.item_id,
+    row.owner_id,
+    row.attempt_no,
+    row.provider,
+    row.model,
+    row.raw_response_path,
+    row.error_kind,
+    row.error_message,
+    row.prompt_tokens,
+    row.completion_tokens,
+    row.cost_usd_micros,
+    row.latency_ms,
+    toMs(row.started_at),
+    row.finished_at ? toMs(row.finished_at) : null,
+    toMs(row.finished_at ?? row.started_at),
+    0,
+  ];
+}
+
+function importTocEntryToParams(row: ImportTocEntryRow): readonly unknown[] {
+  return [
+    row.id,
+    row.batch_id,
+    row.item_id,
+    row.owner_id,
+    row.title,
+    row.page_number,
+    row.confidence,
+    toMs(row.updated_at),
+    0,
+  ];
 }
 
 async function pullConversionRules(
@@ -482,11 +767,26 @@ async function pullConversionRules(
       .order('id', { ascending: true })
       .range(from, to),
   );
-  let max = await getWatermark(topic);
-  for (const row of rows) {
-    await upsertConversionRuleRow(row);
-    max = Math.max(max, toMs(row.updated_at));
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'conversion_rules',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['conversion_rules'], () =>
+        bulkInsertOnConflictId(
+          'conversion_rules',
+          CONVERSION_RULE_COLS,
+          fresh,
+          conversionRuleToParams,
+        ),
+      );
+    }
   }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
   return rows.length;
 }
@@ -507,11 +807,26 @@ async function pullRewriteJobs(
       .order('id', { ascending: true })
       .range(from, to),
   );
-  let max = await getWatermark(topic);
-  for (const row of rows) {
-    await upsertRewriteJobRow(row);
-    max = Math.max(max, toMs(row.updated_at));
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'rewrite_jobs',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['rewrite_jobs'], () =>
+        bulkInsertOnConflictId(
+          'rewrite_jobs',
+          REWRITE_JOB_COLS,
+          fresh,
+          rewriteJobToParams,
+        ),
+      );
+    }
   }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
   return rows.length;
 }
@@ -529,91 +844,145 @@ async function pullImports(
   client: CookbooksClient,
   ownerId: string,
 ): Promise<ImportPullCounts> {
-  const counts: ImportPullCounts = { batches: 0, items: 0, attempts: 0, tocEntries: 0 };
-
+  // Fetch all four import topics in parallel — independent network
+  // requests, no FK dependencies, so the slowest is the bottleneck
+  // instead of the sum.
   const batchTopic = `import_batches:${ownerId}`;
-  const batchSince = new Date(await getWatermark(batchTopic)).toISOString();
-  const batches = await fetchAllPages<ImportBatchRow>((from, to) =>
-    client
-      .from('import_batches')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', batchSince)
-      .order('updated_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to),
-  );
-  let maxBatchTs = await getWatermark(batchTopic);
-  for (const row of batches) {
-    await upsertImportBatchRow(row);
-    maxBatchTs = Math.max(maxBatchTs, toMs(row.updated_at));
-    counts.batches += 1;
-  }
-  if (maxBatchTs > 0) await bumpWatermark(batchTopic, maxBatchTs);
-
   const itemTopic = `import_items:${ownerId}`;
-  const itemSince = new Date(await getWatermark(itemTopic)).toISOString();
-  const items = await fetchAllPages<ImportItemRow>((from, to) =>
-    client
-      .from('import_items')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', itemSince)
-      .order('updated_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to),
-  );
-  let maxItemTs = await getWatermark(itemTopic);
-  for (const row of items) {
-    await upsertImportItemRow(row);
-    maxItemTs = Math.max(maxItemTs, toMs(row.updated_at));
-    counts.items += 1;
-  }
-  if (maxItemTs > 0) await bumpWatermark(itemTopic, maxItemTs);
-
-  // Attempts are append-only on the server (no updated_at). Watermark on
-  // started_at instead so each pull only fetches new rows.
   const attemptTopic = `import_item_attempts:${ownerId}`;
-  const attemptSince = new Date(await getWatermark(attemptTopic)).toISOString();
-  const attempts = await fetchAllPages<ImportItemAttemptRow>((from, to) =>
-    client
-      .from('import_item_attempts')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('started_at', attemptSince)
-      .order('started_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to),
-  );
-  let maxAttemptTs = await getWatermark(attemptTopic);
-  for (const row of attempts) {
-    await upsertImportItemAttemptRow(row);
-    maxAttemptTs = Math.max(maxAttemptTs, toMs(row.started_at));
-    counts.attempts += 1;
-  }
-  if (maxAttemptTs > 0) await bumpWatermark(attemptTopic, maxAttemptTs);
-
   const tocTopic = `import_toc_entries:${ownerId}`;
-  const tocSince = new Date(await getWatermark(tocTopic)).toISOString();
-  const tocs = await fetchAllPages<ImportTocEntryRow>((from, to) =>
-    client
-      .from('import_toc_entries')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', tocSince)
-      .order('updated_at', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to),
-  );
-  let maxTocTs = await getWatermark(tocTopic);
-  for (const row of tocs) {
-    await upsertImportTocEntryRow(row);
-    maxTocTs = Math.max(maxTocTs, toMs(row.updated_at));
-    counts.tocEntries += 1;
-  }
-  if (maxTocTs > 0) await bumpWatermark(tocTopic, maxTocTs);
+  const [batchSinceMs, itemSinceMs, attemptSinceMs, tocSinceMs] = await Promise.all([
+    getWatermark(batchTopic),
+    getWatermark(itemTopic),
+    getWatermark(attemptTopic),
+    getWatermark(tocTopic),
+  ]);
+  const [batches, items, attempts, tocs] = await Promise.all([
+    fetchAllPages<ImportBatchRow>((from, to) =>
+      client
+        .from('import_batches')
+        .select('*')
+        .eq('owner_id', ownerId)
+        .gte('updated_at', new Date(batchSinceMs).toISOString())
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllPages<ImportItemRow>((from, to) =>
+      client
+        .from('import_items')
+        .select('*')
+        .eq('owner_id', ownerId)
+        .gte('updated_at', new Date(itemSinceMs).toISOString())
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllPages<ImportItemAttemptRow>((from, to) =>
+      client
+        .from('import_item_attempts')
+        .select('*')
+        .eq('owner_id', ownerId)
+        .gte('started_at', new Date(attemptSinceMs).toISOString())
+        .order('started_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllPages<ImportTocEntryRow>((from, to) =>
+      client
+        .from('import_toc_entries')
+        .select('*')
+        .eq('owner_id', ownerId)
+        .gte('updated_at', new Date(tocSinceMs).toISOString())
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+  ]);
 
-  return counts;
+  // One trigger-suspension covers all four tables. Bulk INSERTs run
+  // serially under the SQLite mutex, but they're now ⌈N/chunk⌉
+  // statements instead of N.
+  await withSuppressedCrrTriggers(
+    ['import_batches', 'import_items', 'import_item_attempts', 'import_toc_entries'],
+    async () => {
+      if (batches.length > 0) {
+        const fresh = await filterFresherIncoming(
+          'import_batches',
+          batches,
+          (r) => r.id,
+          (r) => toMs(r.updated_at),
+        );
+        await bulkInsertOnConflictId(
+          'import_batches',
+          IMPORT_BATCH_COLS,
+          fresh,
+          importBatchToParams,
+        );
+      }
+      if (items.length > 0) {
+        const fresh = await filterFresherIncoming(
+          'import_items',
+          items,
+          (r) => r.id,
+          (r) => toMs(r.updated_at),
+        );
+        await bulkInsertOnConflictId(
+          'import_items',
+          IMPORT_ITEM_COLS,
+          fresh,
+          importItemToParams,
+        );
+      }
+      if (attempts.length > 0) {
+        // Append-only on the server — local upsert tolerates re-arrival
+        // with `on conflict do nothing` since attempt rows are immutable.
+        await bulkInsertIgnoreId(
+          'import_item_attempts',
+          IMPORT_ITEM_ATTEMPT_COLS,
+          attempts,
+          importItemAttemptToParams,
+        );
+      }
+      if (tocs.length > 0) {
+        const fresh = await filterFresherIncoming(
+          'import_toc_entries',
+          tocs,
+          (r) => r.id,
+          (r) => toMs(r.updated_at),
+        );
+        await bulkInsertOnConflictId(
+          'import_toc_entries',
+          IMPORT_TOC_COLS,
+          fresh,
+          importTocEntryToParams,
+        );
+      }
+    },
+  );
+
+  // Bump watermarks (in parallel — independent rows in sync_state).
+  let maxBatchTs = batchSinceMs;
+  for (const r of batches) maxBatchTs = Math.max(maxBatchTs, toMs(r.updated_at));
+  let maxItemTs = itemSinceMs;
+  for (const r of items) maxItemTs = Math.max(maxItemTs, toMs(r.updated_at));
+  let maxAttemptTs = attemptSinceMs;
+  for (const r of attempts) maxAttemptTs = Math.max(maxAttemptTs, toMs(r.started_at));
+  let maxTocTs = tocSinceMs;
+  for (const r of tocs) maxTocTs = Math.max(maxTocTs, toMs(r.updated_at));
+  await Promise.all([
+    maxBatchTs > 0 ? bumpWatermark(batchTopic, maxBatchTs) : Promise.resolve(),
+    maxItemTs > 0 ? bumpWatermark(itemTopic, maxItemTs) : Promise.resolve(),
+    maxAttemptTs > 0 ? bumpWatermark(attemptTopic, maxAttemptTs) : Promise.resolve(),
+    maxTocTs > 0 ? bumpWatermark(tocTopic, maxTocTs) : Promise.resolve(),
+  ]);
+
+  return {
+    batches: batches.length,
+    items: items.length,
+    attempts: attempts.length,
+    tocEntries: tocs.length,
+  };
 }
 
 // ---------- local upserts for import rows ----------

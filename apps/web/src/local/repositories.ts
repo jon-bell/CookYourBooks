@@ -87,6 +87,84 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
   );
 }
 
+const COLLECTION_COLS = [
+  'id',
+  'owner_id',
+  'title',
+  'source_type',
+  'author',
+  'isbn',
+  'publisher',
+  'publication_year',
+  'description',
+  'notes',
+  'source_url',
+  'date_accessed',
+  'site_name',
+  'is_public',
+  'forked_from',
+  'cover_image_path',
+  'moderation_state',
+  'moderation_reason',
+  'updated_at',
+  'deleted',
+] as const;
+
+function collectionToParams(row: CollectionRow): readonly unknown[] {
+  const rowX = row as CollectionRow & {
+    moderation_state?: string | null;
+    moderation_reason?: string | null;
+  };
+  return [
+    row.id,
+    row.owner_id,
+    row.title,
+    row.source_type,
+    row.author,
+    row.isbn,
+    row.publisher,
+    row.publication_year,
+    row.description,
+    row.notes,
+    row.source_url,
+    row.date_accessed,
+    row.site_name,
+    row.is_public ? 1 : 0,
+    row.forked_from,
+    row.cover_image_path,
+    rowX.moderation_state ?? 'ACTIVE',
+    rowX.moderation_reason ?? null,
+    tsToMs(row.updated_at),
+    0,
+  ];
+}
+
+/**
+ * Bulk-upsert many collection rows. Same pattern as upsertRecipesBatch:
+ * pre-filter by existing updated_at, suppress CRR triggers, multi-row
+ * INSERT.
+ */
+export async function upsertCollectionsBatch(
+  rows: readonly CollectionRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const fresh = await filterFresherIncoming(
+    'recipe_collections',
+    rows,
+    (r) => r.id,
+    (r) => tsToMs(r.updated_at),
+  );
+  if (fresh.length === 0) return;
+  await withSuppressedCrrTriggers(['recipe_collections'], async () => {
+    await bulkInsertOnConflictId(
+      'recipe_collections',
+      COLLECTION_COLS,
+      fresh,
+      collectionToParams,
+    );
+  });
+}
+
 /** Upsert a recipe row and replace its child ingredients/instructions + step refs. */
 export async function upsertRecipeRow(
   recipeRow: RecipeRow,
@@ -299,6 +377,79 @@ const PULL_CRR_TABLES = [
   'recipes',
 ] as const;
 
+/**
+ * Run `fn` with cr-sqlite's per-row change-tracking triggers suspended
+ * on `tables`. cr-sqlite's crsql_begin_alter / crsql_commit_alter pair
+ * drops the row triggers for the duration and recreates them on
+ * commit_alter — exactly the property a pull needs, since pulled rows
+ * are server-canonical and don't need to be re-propagated as outbound
+ * CRDT changes. On iPad WASM SQLite each trigger fire is ~10–15ms;
+ * disabling them is the single biggest win on bulk inserts. Must run
+ * at the top level (not inside a SAVEPOINT / db.tx callback) so the
+ * triggers re-attach cleanly even on caller failure.
+ */
+export async function withSuppressedCrrTriggers<T>(
+  tables: readonly string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  const db = await getLocalDb();
+  const altered: string[] = [];
+  try {
+    for (const t of tables) {
+      await db.exec(`select crsql_begin_alter('${t}')`);
+      altered.push(t);
+    }
+    return await fn();
+  } finally {
+    // Always reattach triggers, even if fn threw, so subsequent local
+    // writes are tracked normally. Reverse order so the recreated
+    // triggers don't see ghost pre-images.
+    for (let i = altered.length - 1; i >= 0; i -= 1) {
+      try {
+        await db.exec(`select crsql_commit_alter('${altered[i]}')`);
+      } catch {
+        // Swallow so we don't mask the original error.
+      }
+    }
+  }
+}
+
+/**
+ * Pre-filter an upsert batch by reading each row's existing local
+ * `updated_at` in one IN-list SELECT and dropping rows whose local
+ * copy is strictly newer. Preserves the "refuse to regress a fresher
+ * local row" invariant when we want to write multi-row INSERTs that
+ * can't easily express the guard in `ON CONFLICT WHERE`.
+ *
+ * Returns the rows that should actually be written.
+ */
+export async function filterFresherIncoming<T>(
+  table: string,
+  rows: readonly T[],
+  idOf: (row: T) => string,
+  incomingTsMs: (row: T) => number,
+): Promise<T[]> {
+  if (rows.length === 0) return [];
+  const db = await getLocalDb();
+  const existingMap = new Map<string, number>();
+  // SQLite host-parameter ceiling — chunk to stay safe.
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const slice = rows.slice(i, i + CHUNK);
+    const ids = slice.map(idOf);
+    const placeholders = ids.map(() => '?').join(',');
+    const found = (await db.execO(
+      `select id, updated_at from ${table} where id in (${placeholders})`,
+      ids,
+    )) as { id: string; updated_at: number }[];
+    for (const r of found) existingMap.set(r.id, r.updated_at);
+  }
+  return rows.filter((row) => {
+    const local = existingMap.get(idOf(row));
+    return !local || local <= incomingTsMs(row);
+  });
+}
+
 export async function upsertRecipesBatch(
   batch: ReadonlyArray<{
     recipe: RecipeRow;
@@ -311,18 +462,7 @@ export async function upsertRecipesBatch(
   if (batch.length === 0) return;
   if (signal?.aborted) return;
   const db = await getLocalDb();
-  // crsql_begin_alter / crsql_commit_alter must run at the top level —
-  // inside a SAVEPOINT (which is what db.tx wraps the callback in)
-  // they can leave the change-tracking state mid-flight if the SAVEPOINT
-  // rolls back. Run them as separate db.exec calls so they execute
-  // outside any nested transaction.
-  const altered: string[] = [];
-  try {
-    for (const t of PULL_CRR_TABLES) {
-      await db.exec(`select crsql_begin_alter('${t}')`);
-      altered.push(t);
-    }
-
+  await withSuppressedCrrTriggers(PULL_CRR_TABLES, async () => {
     await db.tx(async (tx) => {
       const ids = batch.map((b) => b.recipe.id);
       const existingMap = new Map<string, number>();
@@ -359,23 +499,7 @@ export async function upsertRecipesBatch(
       await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
       await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
     });
-  } finally {
-    // Always reattach the triggers, even if the writes threw, so
-    // subsequent local writes are tracked normally. Run in reverse so
-    // the recreated triggers don't see ghost pre-images.
-    for (let i = altered.length - 1; i >= 0; i -= 1) {
-      const t = altered[i]!;
-      try {
-        await db.exec(`select crsql_commit_alter('${t}')`);
-      } catch {
-        // Surfacing this would mask the original error from the try
-        // block. The next sync cycle will retry; if commit_alter truly
-        // failed, the table will just keep its disabled triggers,
-        // which surfaces as "local writes don't sync" — a noisy
-        // failure mode we can fix later.
-      }
-    }
-  }
+  });
 }
 
 interface RecipeTx {
@@ -389,6 +513,85 @@ interface RecipeTx {
 // under the cap. For libraries up to ~1500 recipes this is one INSERT
 // statement per table.
 const MAX_ROWS_PER_INSERT = 1500;
+
+/**
+ * Generic multi-row INSERT ... ON CONFLICT(id) DO UPDATE helper for
+ * tail tables (imports, conversion_rules, rewrite_jobs, etc). Builds
+ * one statement per chunk of `MAX_ROWS_PER_INSERT / cols.length` rows
+ * to stay under SQLite's host-parameter ceiling. Use with
+ * `withSuppressedCrrTriggers` for the CRR-trigger-disable speedup.
+ *
+ * Caller is responsible for pre-filtering via `filterFresherIncoming`
+ * if the table has an `updated_at` regress guard — replicating that
+ * guard inside `ON CONFLICT WHERE` is supported by SQLite, but the
+ * pre-filter shape composes better with the read-once-per-batch
+ * pattern the recipe path uses.
+ */
+export async function bulkInsertOnConflictId<T>(
+  table: string,
+  cols: readonly string[],
+  rows: readonly T[],
+  toParams: (row: T) => readonly unknown[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getLocalDb();
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  const setClause = cols
+    .filter((c) => c !== 'id')
+    .map((c) => `${c}=excluded.${c}`)
+    .join(', ');
+  const rowsPerChunk = Math.max(1, Math.floor(MAX_ROWS_PER_INSERT / cols.length));
+  for (let i = 0; i < rows.length; i += rowsPerChunk) {
+    const chunk = rows.slice(i, i + rowsPerChunk);
+    const params: unknown[] = [];
+    for (const row of chunk) {
+      const vals = toParams(row);
+      if (vals.length !== cols.length) {
+        throw new Error(
+          `bulkInsertOnConflictId(${table}): row produced ${vals.length} params, expected ${cols.length}`,
+        );
+      }
+      for (const v of vals) params.push(v);
+    }
+    const placeholders = chunk.map(() => tuple).join(',');
+    await db.exec(
+      `insert into ${table} (${cols.join(',')}) values ${placeholders}
+       on conflict(id) do update set ${setClause}`,
+      params as never[],
+    );
+  }
+}
+
+/**
+ * Variant for append-only tables that have no `id` conflict pattern
+ * worth updating — used by `import_item_attempts` which is server-side
+ * append-only and uses `INSERT ... ON CONFLICT DO NOTHING` semantically.
+ */
+export async function bulkInsertIgnoreId<T>(
+  table: string,
+  cols: readonly string[],
+  rows: readonly T[],
+  toParams: (row: T) => readonly unknown[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getLocalDb();
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  const rowsPerChunk = Math.max(1, Math.floor(MAX_ROWS_PER_INSERT / cols.length));
+  for (let i = 0; i < rows.length; i += rowsPerChunk) {
+    const chunk = rows.slice(i, i + rowsPerChunk);
+    const params: unknown[] = [];
+    for (const row of chunk) {
+      const vals = toParams(row);
+      for (const v of vals) params.push(v);
+    }
+    const placeholders = chunk.map(() => tuple).join(',');
+    await db.exec(
+      `insert into ${table} (${cols.join(',')}) values ${placeholders}
+       on conflict(id) do nothing`,
+      params as never[],
+    );
+  }
+}
 
 async function execInChunks(
   tx: RecipeTx,

@@ -197,7 +197,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         logSync('info', 'cycle: pushOutbox returned', pushRes);
         logSync('info', 'cycle: invoking pullAll');
         await withTimeout(
-          pullAll(supabase, ownerId, ac.signal),
+          pullAll(supabase, ownerId, ac.signal, {
+            // Invalidate React Query incrementally so the library card
+            // grid hydrates the moment recipes land, instead of waiting
+            // for imports / conversion_rules / rewrite_jobs to finish.
+            // Skip the 'collections' key from each invalidate (it's
+            // expensive — see scheduleInvalidate predicate).
+            onPhaseComplete: () => scheduleInvalidate(),
+          }),
           CYCLE_TIMEOUT_MS,
           'pull',
           () => ac.abort(),
