@@ -159,6 +159,22 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Install fastlane plugins (via bundler)
+        # Brew-installed fastlane doesn't carry plugin gems on its path,
+        # so we vendor them per-job via Gemfile + Gemfile.lock. Bundler
+        # itself ships with brew Ruby — system Ruby 2.6 is too old for
+        # modern fastlane (>=2.7).
+        working-directory: apps/mobile/ios
+        run: |
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle config set --local path 'vendor/bundle'
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle install --jobs 4
+
       - name: Build web + cap sync
         # `cap sync` runs `pod install` against the committed ios/ project.
         # `env -u` strips RVM vars so brew's pod doesn't follow them into
@@ -211,7 +227,8 @@ jobs:
         run: |
           env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
               -u IRBRC -u rvm_path \
-            fastlane beta
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle exec fastlane beta
 
       - name: Dispatch=ios-release — fastlane release (App Store submit)
         if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios-release'
@@ -219,7 +236,8 @@ jobs:
         run: |
           env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
               -u IRBRC -u rvm_path \
-            fastlane release
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle exec fastlane release
 
       - name: Clean up decoded ASC key
         if: always()

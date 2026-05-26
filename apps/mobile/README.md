@@ -34,8 +34,13 @@ sudo xcodebuild -runFirstLaunch
 # iOS platform components — multi-GB, only needed once per Xcode upgrade.
 xcodebuild -downloadPlatform iOS
 
-# CocoaPods + fastlane
-brew install cocoapods fastlane
+# CocoaPods + fastlane + a modern Ruby (system Ruby 2.6 is too old for
+# fastlane plugins; brew Ruby ships bundler).
+brew install cocoapods fastlane ruby
+
+# Fastlane plugins (fastlane-plugin-sentry for dSYM upload) are
+# vendored via bundler — install them once per machine:
+(cd apps/mobile/ios && PATH="/usr/local/opt/ruby/bin:$PATH" bundle install)
 ```
 
 If RVM is in your shell init, it pollutes `GEM_PATH` and breaks the
@@ -45,6 +50,9 @@ sub-shell or unset RVM vars per session:
 ```bash
 unset GEM_PATH GEM_HOME RUBY_VERSION MY_RUBY_HOME IRBRC rvm_path
 ```
+
+Then call `bundle exec fastlane <lane>` instead of `fastlane <lane>` so
+the vendored plugin gems are on the load path.
 
 ## Day-to-day
 

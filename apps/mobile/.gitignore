@@ -7,6 +7,11 @@
 # Capacitor transient state
 .capacitor/
 
+# Bundler vendored gems (Gemfile / Gemfile.lock are committed; the
+# gem payload they install isn't — `bundle install` materializes it).
+ios/vendor/
+ios/.bundle/
+
 # Fastlane local-only state
 ios/fastlane/.env
 ios/fastlane/.env.*
