@@ -42,7 +42,7 @@ export async function enqueue(entry: {
   );
 }
 
-export async function listPending(limit = 50): Promise<OutboxEntry[]> {
+export async function listPending(limit = 1000): Promise<OutboxEntry[]> {
   const db = await getLocalDb();
   const rows = (await db.execO<OutboxEntry>(
     `select id, kind, entity_id, collection_id, enqueued_at, attempts, last_error

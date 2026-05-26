@@ -1110,7 +1110,33 @@ export async function pushOutbox(
   const pending = await listPending();
   let ok = 0;
   let failed = 0;
-  for (const entry of pending) {
+  let i = 0;
+  while (i < pending.length) {
+    const entry = pending[i]!;
+    // Coalesce a contiguous run of import_item_insert entries into a
+    // single chunked bulk upsert. 200-page uploads otherwise mean 200
+    // sequential PostgREST round-trips, which trip the cycle timeout.
+    if (entry.kind === 'import_item_insert') {
+      let j = i;
+      while (j < pending.length && pending[j]!.kind === 'import_item_insert') j += 1;
+      const run = pending.slice(i, j);
+      try {
+        await pushImportItemsBulk(
+          client,
+          run.map((e) => e.entity_id),
+        );
+        for (const e of run) await markDone(e.id);
+        ok += run.length;
+        i = j;
+        continue;
+      } catch (err) {
+        // Attribute the failure to the first entry so its attempts/error
+        // surface in the UI; leave the rest queued for the next cycle.
+        await markFailed(run[0]!.id, (err as Error).message);
+        failed += 1;
+        break;
+      }
+    }
     try {
       await pushOne(client, ownerId, entry);
       await markDone(entry.id);
@@ -1122,8 +1148,50 @@ export async function pushOutbox(
       // entry; the caller's retry schedule will pick it up.
       break;
     }
+    i += 1;
   }
   return { ok, failed };
+}
+
+// Server max-rows cap is 1000; supabase-js encodes the upsert body in
+// the request, so keep chunks well below the gateway's body limit.
+const IMPORT_ITEM_PUSH_CHUNK = 100;
+
+async function pushImportItemsBulk(
+  client: CookbooksClient,
+  ids: readonly string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await getLocalDb();
+  type ItemInsert = Database['public']['Tables']['import_items']['Insert'];
+  for (let offset = 0; offset < ids.length; offset += IMPORT_ITEM_PUSH_CHUNK) {
+    const slice = ids.slice(offset, offset + IMPORT_ITEM_PUSH_CHUNK);
+    const placeholders = slice.map(() => '?').join(',');
+    const rows = (await db.execO<Record<string, unknown>>(
+      `select * from import_items where id in (${placeholders})`,
+      slice as unknown as string[],
+    )) as Record<string, unknown>[];
+    if (rows.length === 0) continue;
+    const payload: ItemInsert[] = rows.map((local) => ({
+      id: local.id as string,
+      batch_id: local.batch_id as string,
+      owner_id: local.owner_id as string,
+      page_index: local.page_index as number,
+      storage_path: local.storage_path as string,
+      thumb_path: (local.thumb_path as string | null) ?? null,
+      source_pdf_path: (local.source_pdf_path as string | null) ?? null,
+      source_pdf_page: (local.source_pdf_page as number | null) ?? null,
+      assigned_collection_id: (local.assigned_collection_id as string | null) ?? null,
+      assigned_page_number: (local.assigned_page_number as number | null) ?? null,
+      assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
+      is_toc: local.is_toc === 1 || local.is_toc === true,
+      status: local.status as ItemInsert['status'],
+    }));
+    const { error } = await client
+      .from('import_items')
+      .upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
+  }
 }
 
 async function pushOne(
@@ -1267,9 +1335,10 @@ export async function pushImportBatchGraph(
     `select id from import_items where batch_id = ? and deleted = 0 order by page_index`,
     [batchId],
   )) as { id: string }[];
-  for (const row of rows) {
-    await pushImportItemInsert(client, row.id);
-  }
+  await pushImportItemsBulk(
+    client,
+    rows.map((r) => r.id),
+  );
   // The direct push above supersedes any still-pending outbox entries
   // for this batch graph — drop them so a later full sync doesn't
   // retry redundant upserts.
