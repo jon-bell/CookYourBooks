@@ -22,6 +22,12 @@ export function UserMenu() {
         </Link>
       )}
       <Link
+        to="/household"
+        className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+      >
+        Household
+      </Link>
+      <Link
         to="/settings"
         className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
       >

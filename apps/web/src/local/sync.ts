@@ -112,6 +112,37 @@ export interface PullResult {
   importTocEntries: number;
   conversionRules: number;
   rewriteJobs: number;
+  /** Collections + their children pulled because they're shared into the user's household. */
+  householdSharedCollections: number;
+  /** The user's active household id at pull time (null if none). */
+  householdId: string | null;
+}
+
+/**
+ * Look up the user's currently-active household. Households live on the
+ * server only — they don't replicate through cr-sqlite — so sync code
+ * has to ask the server each time. Cheap: one row at most.
+ */
+async function getCurrentHouseholdId(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<string | null> {
+  // `household_members` was added in the household-sharing wave; the
+  // committed `database.types.ts` predates it, so we cast through `any`
+  // for these table refs. The runtime shape is `{ household_id: string }`.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const untyped = client as unknown as { from: (t: string) => any };
+  const { data, error } = await untyped
+    .from('household_members')
+    .select('household_id')
+    .eq('user_id', ownerId)
+    .is('left_at', null)
+    .maybeSingle();
+  if (error) {
+    logSync('error', 'household lookup failed', { error: error.message });
+    return null;
+  }
+  return (data?.household_id as string | undefined) ?? null;
 }
 
 interface ConversionRuleRow {
@@ -430,6 +461,23 @@ export async function pullAll(
     'info',
     `pull rewrite_jobs: ${rewriteJobsPulled} rows in ${Date.now() - rewritePhase}ms`,
   );
+
+  // Household-shared content from other members. Done as a separate
+  // phase so the watermark for owned content stays clean and so the
+  // sync invariant "I'm pulling things I own" doesn't get mixed up
+  // with "I'm pulling things shared with me". When the user isn't in
+  // a household this is a no-op.
+  const householdPhase = Date.now();
+  const householdId = await getCurrentHouseholdId(client, ownerId);
+  const householdSharedCollections = householdId
+    ? await pullHouseholdSharedContent(client, ownerId, householdId)
+    : 0;
+  logSync(
+    'info',
+    `pull household-shared: ${householdSharedCollections} collections in ${Date.now() - householdPhase}ms`,
+    { householdId },
+  );
+
   logSync('info', `pull complete in ${Date.now() - pullStart}ms`);
 
   return {
@@ -443,7 +491,140 @@ export async function pullAll(
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
     rewriteJobs: rewriteJobsPulled,
+    householdSharedCollections,
+    householdId,
   };
+}
+
+/**
+ * Pull collections that another member of the user's household has
+ * shared with us, plus their recipes / ingredients / instructions /
+ * refs. Skips collections the user already owns (those came down in
+ * the main collections pass).
+ *
+ * Watermarked on a per-household topic so a user who joins a new
+ * household doesn't unnecessarily re-pull from the old one — switching
+ * households produces a topic miss and a fresh pull, which is what we
+ * want.
+ */
+async function pullHouseholdSharedContent(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<number> {
+  // The household-sharing columns (`shared_with_household_id`) weren't
+  // present when database.types.ts was last generated. The runtime
+  // PostgREST schema knows about them, so cast through `any` rather
+  // than diverging the committed types file from the rest of the repo.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const c = client as unknown as { from: (t: string) => any };
+
+  const collectionTopic = `household_collections:${ownerId}:${householdId}`;
+  const recipeTopic = `household_recipes:${ownerId}:${householdId}`;
+
+  const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
+  const collections = await fetchAllPages<CollectionRow>((from, to) =>
+    c
+      .from('recipe_collections')
+      .select('*')
+      .eq('shared_with_household_id', householdId)
+      .neq('owner_id', ownerId)
+      .gte('updated_at', collectionsSince)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  let maxCollectionTs = await getWatermark(collectionTopic);
+  for (const row of collections) {
+    await upsertCollectionRow(row);
+    maxCollectionTs = Math.max(maxCollectionTs, toMs(row.updated_at));
+  }
+  if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
+
+  // Recipes for those collections. The inner-join filter scopes the
+  // child query to recipes inside collections shared into our
+  // household. Pagination identical to the owned-content path.
+  const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
+  const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
+    (from, to) =>
+      c
+        .from('recipes')
+        .select('*, recipe_collections!inner(shared_with_household_id)')
+        .eq('recipe_collections.shared_with_household_id', householdId)
+        .gte('updated_at', recipesSince)
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+  );
+  const recipes: RecipeRow[] = recipeRowsRaw.map((row) => {
+    const { recipe_collections: _rc, ...rest } = row;
+    return rest as RecipeRow;
+  });
+
+  if (recipes.length > 0) {
+    const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
+      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
+        c
+          .from('ingredients')
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id))')
+          .eq('recipes.recipe_collections.shared_with_household_id', householdId)
+          .gte('recipes.updated_at', recipesSince)
+          .order('recipe_id', { ascending: true })
+          .order('sort_order', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
+        c
+          .from('instructions')
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id))')
+          .eq('recipes.recipe_collections.shared_with_household_id', householdId)
+          .gte('recipes.updated_at', recipesSince)
+          .order('recipe_id', { ascending: true })
+          .order('step_number', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
+        (from, to) =>
+          c
+            .from('instruction_ingredient_refs')
+            .select(
+              '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id)))',
+            )
+            .eq('instructions.recipes.recipe_collections.shared_with_household_id', householdId)
+            .gte('instructions.recipes.updated_at', recipesSince)
+            .order('instruction_id', { ascending: true })
+            .range(from, to),
+      ),
+    ]);
+
+    const ings = stripEmbedded(ingsRaw, 'recipes');
+    const steps = stripEmbedded(stepsRaw, 'recipes');
+    const ingByRecipe = groupBy(ings, (i) => i.recipe_id);
+    const stepsByRecipe = groupBy(steps, (s) => s.recipe_id);
+    const refsByRecipe = new Map<string, InstructionRefRow[]>();
+    for (const row of refsRaw) {
+      const recipeId = row.instructions?.recipe_id ?? '';
+      const { instructions: _i, ...refOnly } = row;
+      if (!recipeId) continue;
+      const arr = refsByRecipe.get(recipeId) ?? [];
+      arr.push(refOnly as InstructionRefRow);
+      refsByRecipe.set(recipeId, arr);
+    }
+
+    let maxRecipeTs = await getWatermark(recipeTopic);
+    for (const r of recipes) {
+      await upsertRecipeRow(
+        r,
+        ingByRecipe.get(r.id) ?? [],
+        stepsByRecipe.get(r.id) ?? [],
+        refsByRecipe.get(r.id) ?? [],
+      );
+      maxRecipeTs = Math.max(maxRecipeTs, toMs(r.updated_at));
+    }
+    if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
+  }
+
+  return collections.length;
 }
 
 async function pullConversionRules(
@@ -925,6 +1106,7 @@ export function subscribeRealtime(
   client: CookbooksClient,
   ownerId: string,
   callbacks: RealtimeCallbacks,
+  householdId?: string | null,
 ): RealtimeHandle {
   const { onLocalUpdate, onNeedsPull } = callbacks;
   const channel: RealtimeChannel = client
@@ -1013,8 +1195,49 @@ export function subscribeRealtime(
         if (evt?.status === 'DONE') onNeedsPull();
         onLocalUpdate();
       },
-    )
-    .subscribe();
+    );
+
+  // Subscribe to household-shared collection changes so members see
+  // each other's shares without waiting for a periodic pull. The
+  // child tables (recipes/ingredients/instructions) ride on the
+  // shared subscription used for owned content above — those filters
+  // are table-wide, so an event on someone else's recipe row also
+  // reaches us as long as RLS lets us read it.
+  if (householdId) {
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'recipe_collections',
+        filter: `shared_with_household_id=eq.${householdId}`,
+      },
+      async (payload) => {
+        await handleCollectionEvent(payload);
+        // Owner / member additions on the parent require a fresh recipe
+        // pull to fill in the child rows — the collection event alone
+        // doesn't carry them.
+        onNeedsPull();
+      },
+    );
+    // Membership churn (someone joined or left) doesn't change recipe
+    // data immediately but it changes which collections we can see, so
+    // schedule a pull on any household_members change for our household.
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'household_members',
+        filter: `household_id=eq.${householdId}`,
+      },
+      () => {
+        onNeedsPull();
+      },
+    );
+  }
+
+  channel.subscribe();
 
   return {
     unsubscribe: async () => {

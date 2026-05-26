@@ -135,6 +135,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setStatus(next);
   }
 
+  const householdIdRef = useRef<string | null>(null);
+
   async function cycle(ownerId: string) {
     if (inFlight.current) {
       pullPending.current = true;
@@ -160,7 +162,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         );
         logSync('info', 'cycle: pushOutbox returned', pushRes);
         logSync('info', 'cycle: invoking pullAll');
-        await withTimeout(pullAll(supabase, ownerId), CYCLE_TIMEOUT_MS, 'pull');
+        const pullRes = await withTimeout(pullAll(supabase, ownerId), CYCLE_TIMEOUT_MS, 'pull');
+        householdIdRef.current = pullRes.householdId;
         logSync('info', 'cycle: pullAll returned');
         setLastSyncedAt(Date.now());
         setSettled('idle');
@@ -250,10 +253,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       await cycle(user.id);
       if (cancelled) return;
       setHydrated(true);
-      handle = subscribeRealtime(supabase, user.id, {
-        onLocalUpdate: scheduleInvalidate,
-        onNeedsPull: () => schedulePull(user.id),
-      });
+      handle = subscribeRealtime(
+        supabase,
+        user.id,
+        {
+          onLocalUpdate: scheduleInvalidate,
+          onNeedsPull: () => schedulePull(user.id),
+        },
+        householdIdRef.current,
+      );
     })();
     return () => {
       cancelled = true;
