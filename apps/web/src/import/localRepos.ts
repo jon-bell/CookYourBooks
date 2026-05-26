@@ -307,6 +307,29 @@ export class LocalImportItemRepository {
     return row ? rowToItem(row) : undefined;
   }
 
+  /**
+   * Find every import_item whose OCR run produced this recipe.
+   * Owner-scoped: a user viewing a public collection they didn't
+   * import will get an empty list, which is exactly the gate the
+   * recipe page uses to decide whether to show "View original scan".
+   *
+   * `created_recipe_ids` is stored as a JSON text array. Matching the
+   * quoted UUID avoids accidental prefix collisions.
+   */
+  async listByCreatedRecipeId(recipeId: string): Promise<ImportItem[]> {
+    const db = await getLocalDb();
+    const needle = `%"${recipeId}"%`;
+    const rows = (await db.execO<ImportItemSqlRow>(
+      `select * from import_items
+       where owner_id = ?
+         and deleted = 0
+         and created_recipe_ids like ?
+       order by page_index asc`,
+      [this.ownerId, needle],
+    )) as ImportItemSqlRow[];
+    return rows.map(rowToItem);
+  }
+
   async listAttempts(itemId: string): Promise<ImportItemAttempt[]> {
     const db = await getLocalDb();
     const rows = (await db.execO<ImportItemAttemptSqlRow>(

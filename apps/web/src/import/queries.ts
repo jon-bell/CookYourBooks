@@ -43,6 +43,17 @@ export function useImportItems(batchId: string | undefined) {
   });
 }
 
+export function useImportItemsForRecipe(recipeId: string | undefined) {
+  const { user } = useAuth();
+  const enabled = useLocalQueryEnabled();
+  return useQuery<ImportItem[]>({
+    queryKey: ['import-items-for-recipe', recipeId, user?.id],
+    enabled: enabled && !!recipeId,
+    queryFn: () =>
+      new LocalImportItemRepository(user!.id).listByCreatedRecipeId(recipeId!),
+  });
+}
+
 export function useImportItem(itemId: string | undefined) {
   const { user } = useAuth();
   const enabled = useLocalQueryEnabled();

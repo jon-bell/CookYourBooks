@@ -41,6 +41,8 @@ import {
   DEFAULT_REWRITE_MODEL_BY_PROVIDER,
   DEFAULT_REWRITE_PROMPT,
 } from '../settings/rewriteSettings.js';
+import { useImportItemsForRecipe } from '../import/queries.js';
+import { RecipeScanDialog } from '../components/RecipeScanDialog.js';
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
@@ -55,7 +57,9 @@ export function RecipePage() {
   const [scale, setScale] = useState(1);
   const [targetUnit, setTargetUnit] = useState<string>('');
   const [rewriteError, setRewriteError] = useState<string | undefined>();
+  const [showScan, setShowScan] = useState(false);
   const { job: rewriteJob, refresh: refreshRewriteJob } = useRewriteJob(recipeId);
+  const { data: importItems = [] } = useImportItemsForRecipe(recipeId);
 
   async function startImprove() {
     setRewriteError(undefined);
@@ -146,6 +150,9 @@ export function RecipePage() {
 
   return (
     <div className="space-y-6">
+      {showScan && (
+        <RecipeScanDialog items={importItems} onClose={() => setShowScan(false)} />
+      )}
       <div>
         <Link to={`/collections/${collection.id}`} className="text-sm text-stone-600 dark:text-stone-400 hover:underline">
           ← {collection.title}
@@ -175,6 +182,17 @@ export function RecipePage() {
               ? `p. ${recipe.pageNumbers.join(', ')}`
               : ''}
           </p>
+        )}
+        {importItems.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowScan(true)}
+            className="mt-1 text-sm text-stone-600 underline-offset-2 hover:text-stone-900 hover:underline dark:text-stone-400 dark:hover:text-stone-100"
+            title="See the original photo(s) that this recipe was imported from"
+          >
+            📷 View original scan ({importItems.length} page
+            {importItems.length === 1 ? '' : 's'})
+          </button>
         )}
         {parent && (
           <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
