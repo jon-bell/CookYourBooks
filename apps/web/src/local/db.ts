@@ -93,8 +93,51 @@ function labelFor(sql: string): string {
   return trimmed.slice(0, 80);
 }
 
+interface DbInitState {
+  startedAt: number | null;
+  finishedAt: number | null;
+  step: string;
+  error: string | null;
+}
+const initState: DbInitState = {
+  startedAt: null,
+  finishedAt: null,
+  step: 'not started',
+  error: null,
+};
+
+export function snapshotDbInit(): Readonly<DbInitState> {
+  return { ...initState };
+}
+
+function setInitStep(step: string): void {
+  initState.step = step;
+  logSync('info', `db init: ${step}`);
+}
+
 export function getLocalDb(): Promise<LocalDb> {
-  if (!initPromise) initPromise = initialize();
+  if (!initPromise) {
+    initState.startedAt = Date.now();
+    initState.step = 'starting';
+    logSync('info', 'db init: starting (this should appear once per page load)');
+    initPromise = initialize()
+      .then((db) => {
+        initState.finishedAt = Date.now();
+        initState.step = 'ready';
+        logSync(
+          'info',
+          `db init: ready in ${initState.finishedAt - (initState.startedAt ?? 0)}ms`,
+        );
+        return db;
+      })
+      .catch((err) => {
+        const msg = (err as Error).message;
+        initState.error = msg;
+        initState.step = `failed (${msg})`;
+        logSync('error', `db init: FAILED — ${msg}`);
+        throw err;
+      });
+  }
   return initPromise;
 }
 
@@ -109,37 +152,30 @@ export function getLocalDb(): Promise<LocalDb> {
 const CRR_TRIGGER_HEAL_VERSION = 1;
 
 async function initialize(): Promise<LocalDb> {
+  setInitStep('init wasm');
   const sqlite = await initWasm(() => wasmUrl);
+  setInitStep('opening cookyourbooks.db');
   const db = await sqlite.open('cookyourbooks.db');
 
-  // Apply schema (idempotent) — `CREATE TABLE IF NOT EXISTS`.
+  setInitStep('applying schema');
   for (const stmt of SCHEMA_STATEMENTS) {
     await db.exec(stmt);
   }
 
-  // Run post-schema migrations BEFORE promoting tables to CRR. Once a
-  // table is a CRR, cr-sqlite blocks plain `ALTER TABLE` ("table %s may
-  // not be altered") — you have to bracket it with crsql_begin_alter /
-  // crsql_commit_alter. On a user's existing browser DB the tables are
-  // already CRR from a previous boot, so we use the bracketed form for
-  // anything touching a CRR table.
+  setInitStep('post-schema migrations');
   for (const stmt of POST_SCHEMA_MIGRATIONS) {
     await applyPostSchemaMigration(db, stmt);
   }
 
-  // Promote tables to CRRs. crsql_as_crr is idempotent — safe to re-run.
+  setInitStep('promoting tables to CRR');
   for (const table of CRR_TABLES) {
     await db.exec(`select crsql_as_crr('${table}')`);
   }
 
-  // One-time heal for users whose previous boots added columns without
-  // bracketing the ALTER. Those triggers describe an older column list
-  // and any subsequent INSERT fails. Forcing a begin/commit_alter
-  // cycle on each CRR table rebuilds the triggers against the current
-  // schema. Gated on a stored marker so we don't churn metadata on
-  // every load once a given user has been healed.
+  setInitStep('CRR trigger heal');
   await maybeHealCrrTriggers(db);
 
+  setInitStep('done (wrapping in lock)');
   return lockDb(db);
 }
 
@@ -218,4 +254,39 @@ export async function resetLocalDb(): Promise<void> {
   // We leave the persisted IndexedDB alone — callers that really want a
   // fresh start can clear browser storage manually. Closing the handle is
   // enough for test flows.
+}
+
+/**
+ * Emergency reset: nuke the persisted SQLite (the IndexedDB the
+ * cr-sqlite VFS sits on top of) and reload. Used from the sync
+ * diagnostics dialog when init wedges. Doesn't touch Supabase — the
+ * next pull rehydrates from the server.
+ */
+export async function emergencyResetLocalDb(): Promise<void> {
+  logSync('warn', 'emergencyResetLocalDb: deleting idb-batch-atomic');
+  try {
+    if (initPromise) {
+      try {
+        const db = await Promise.race([
+          initPromise,
+          new Promise<null>((r) => setTimeout(() => r(null), 1000)),
+        ]);
+        if (db) await db.close();
+      } catch {
+        // Init is wedged — proceed to delete anyway.
+      }
+      initPromise = undefined;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.deleteDatabase('idb-batch-atomic');
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error ?? new Error('deleteDatabase failed'));
+      req.onblocked = () => {
+        logSync('warn', 'emergencyResetLocalDb: delete blocked — close other tabs');
+      };
+    });
+    logSync('info', 'emergencyResetLocalDb: deleted; reloading');
+  } finally {
+    location.reload();
+  }
 }

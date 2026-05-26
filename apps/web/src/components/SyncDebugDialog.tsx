@@ -8,7 +8,7 @@ import {
 } from '../local/syncLog.js';
 import { listOutboxForDebug, outboxKindCounts } from '../local/outbox.js';
 import { listWatermarks } from '../local/sync.js';
-import { snapshotDbOps } from '../local/db.js';
+import { snapshotDbOps, snapshotDbInit, emergencyResetLocalDb } from '../local/db.js';
 import type { OutboxEntry } from '../local/outbox.js';
 
 interface DbOpView {
@@ -34,6 +34,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
   const [refreshing, setRefreshing] = useState(false);
   const [pushed, setPushed] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -190,6 +191,42 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
               v={lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString() : '—'}
             />
             <KV k="last error" v={lastError ?? '—'} mono />
+          </Section>
+
+          <DbInitSection now={now} />
+
+          <Section title="Emergency reset" className="md:col-span-2">
+            <p className="mb-2 text-xs text-stone-600 dark:text-stone-400">
+              If <code>db init</code> is stuck, the persisted SQLite database is wedged.
+              This deletes the local <code>idb-batch-atomic</code> IndexedDB and reloads —
+              the next pull rehydrates from Supabase. Pending offline writes will be lost.
+            </p>
+            {!confirmReset ? (
+              <button
+                type="button"
+                onClick={() => setConfirmReset(true)}
+                className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-950/30 dark:text-red-400"
+              >
+                Reset local database…
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void emergencyResetLocalDb()}
+                  className="rounded bg-red-700 px-3 py-1 text-xs font-medium text-white hover:bg-red-800"
+                >
+                  Confirm wipe + reload
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmReset(false)}
+                  className="text-xs text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </Section>
 
           <Section title={`SQLite ops in flight (${snap.dbOps.length})`}>
@@ -370,4 +407,23 @@ function relMs(ms: number): string {
   if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
   return `${Math.floor(ms / 3_600_000)}h`;
+}
+
+function DbInitSection({ now }: { now: number }) {
+  const init = snapshotDbInit();
+  const elapsed = init.startedAt
+    ? (init.finishedAt ?? now) - init.startedAt
+    : null;
+  const stuck = !init.finishedAt && elapsed !== null && elapsed > 3000;
+  return (
+    <Section title="Local DB init">
+      <KV k="step" v={init.step} mono />
+      <KV
+        k="elapsed"
+        v={elapsed === null ? '—' : `${relMs(elapsed)}${stuck ? ' (stuck)' : ''}`}
+      />
+      <KV k="ready" v={init.finishedAt ? 'yes' : 'no'} />
+      {init.error && <KV k="error" v={init.error} mono />}
+    </Section>
+  );
 }
