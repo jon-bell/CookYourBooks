@@ -128,6 +128,43 @@ The web app reads Supabase credentials from `apps/web/.env.local`. On `supabase
 start` the CLI prints the publishable key — update `.env.local` if it ever
 changes.
 
+## Sentry (self-hosted)
+
+Errors + perf tracing + error-only session replay land in the
+self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud`.
+
+- **Web/iOS bundle:** DSN is baked in (`apps/web/src/sentry.ts`).
+  Override with `VITE_SENTRY_DSN` if you point a build at a different
+  project. Replay is opt-in only via error (no baseline session
+  sampling). `maskAllText`/`blockAllMedia` are on, so recipe contents
+  and photos are scrubbed even when replays do fire. The platform tag
+  (`web`, `capacitor-ios`, `capacitor-android`) is auto-detected.
+- **Edge Function (`import-worker`):** reads `SENTRY_DSN` at boot —
+  no-op if unset. Set with:
+
+  ```bash
+  # Hosted
+  ./.bin/supabase secrets set --project-ref <ref> \
+    SENTRY_DSN='https://…@sentry-cyb.work.ripley.cloud/2'
+  # Local dev (no secrets store; pass via env when serving the fn)
+  SENTRY_DSN='…' ./.bin/supabase functions serve import-worker --no-verify-jwt
+  ```
+
+- **Build-time source map upload (web):** Vite's `@sentry/vite-plugin`
+  uploads source maps when `SENTRY_AUTH_TOKEN` is in the build env.
+  Skipped silently otherwise. Other knobs (`SENTRY_URL`, `SENTRY_ORG`,
+  `SENTRY_PROJECT`, `VITE_SENTRY_RELEASE`) have sane defaults — see
+  `apps/web/vite.config.ts`. On Vercel set `SENTRY_AUTH_TOKEN` as a
+  secret and the plugin self-activates on every deploy.
+- **User identity:** `setSentryUser` is wired through `AuthProvider`,
+  sending the Supabase user UUID only. No email/display name.
+- **Dev-only events:** disabled by default. Set
+  `VITE_SENTRY_ENABLE_DEV=1` to opt a local build in to ingest.
+- **Power-user debug:** set
+  `localStorage.cookyourbooks.sync.consoleMirror = '1'` in the
+  browser console to re-enable info-level sync log mirroring (off by
+  default to save IPC cost on iPad / under Playwright).
+
 ## Setting up the OCR worker
 
 The bulk OCR pipeline (`/import`) relies on a Supabase Edge Function

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../supabase.js';
+import { setSentryUser } from '../sentry.js';
 
 interface AuthState {
   session: Session | null;
@@ -20,10 +21,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     supabase.auth.getSession().then(({ data }) => {
       if (cancelled) return;
       setSession(data.session ?? null);
+      setSentryUser(data.session?.user?.id ?? null);
       setLoading(false);
     });
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
+      // Identify the user to Sentry for every subsequent event. UUID
+      // only — no email — see sentry.ts:setSentryUser.
+      setSentryUser(next?.user?.id ?? null);
     });
     return () => {
       cancelled = true;
