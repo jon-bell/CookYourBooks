@@ -40,6 +40,15 @@ interface SyncState {
   lastError: string | null;
   /** Trigger an immediate pull + push cycle. Safe to call concurrently — overlapping calls coalesce. */
   syncNow: () => Promise<void>;
+  /**
+   * Flush the outbox directly, bypassing `cycle()`'s in-flight gate.
+   * Use when a server-side action needs to see a locally-enqueued row
+   * *now* and can't tolerate the race where syncNow returns an
+   * in-flight cycle that already started its push before the new
+   * outbox entry was added (e.g. ImportBakeoffNewPage seeding variants
+   * for a freshly-uploaded batch).
+   */
+  flushOutbox: () => Promise<void>;
 }
 
 const SyncContext = createContext<SyncState | undefined>(undefined);
@@ -260,6 +269,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     lastError,
     syncNow: async () => {
       if (user) await cycle(user.id);
+    },
+    flushOutbox: async () => {
+      if (!user) return;
+      try {
+        await pushOutbox(supabase, user.id);
+      } finally {
+        await refreshPendingCount();
+      }
     },
   };
 

@@ -22,7 +22,7 @@ type Step = 'source' | 'review' | 'uploading';
  */
 export function ImportBakeoffNewPage() {
   const { user } = useAuth();
-  const { syncNow, status: syncStatus } = useSync();
+  const { syncNow, flushOutbox, status: syncStatus } = useSync();
   const navigate = useNavigate();
   const { data: pickerOptions = [] } = useCollectionPickerOptions();
   const { data: ocrKeys = [] } = useOcrKeys();
@@ -95,7 +95,12 @@ export function ImportBakeoffNewPage() {
         },
         setProgress,
       );
-      await syncNow();
+      // Push the new batch row to the server before seeding variants.
+      // `syncNow()` returns the in-flight cycle if one is already
+      // running, which can resolve before our just-enqueued
+      // `import_batch_insert` outbox entry has actually flushed.
+      // `flushOutbox` is a direct push that bypasses the cycle gate.
+      await flushOutbox();
       await seedBakeoffBatch(
         result.batchId,
         variants.map((v) => ({
