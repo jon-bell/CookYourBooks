@@ -89,6 +89,11 @@ jobs:
       # We can't blank these at the job level (empty string ≠ unset; an
       # empty GEM_PATH stops Ruby from finding minitest under cocoapods).
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      # Sentry dSYM upload. Org slug is `cyb` — the Fastfile's default
+      # is `sentry` (a leftover from the sentry-cli docs), so we set it
+      # explicitly here. Org isn't sensitive; only the auth token is.
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: cyb
       CYB_ASC_KEY_ID: ${{ secrets.CYB_ASC_KEY_ID }}
       CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
