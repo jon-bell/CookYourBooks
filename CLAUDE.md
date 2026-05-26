@@ -131,35 +131,64 @@ changes.
 ## Sentry (self-hosted)
 
 Errors + perf tracing + error-only session replay land in the
-self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud`.
+self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud`, split
+across three projects so each surface has its own release tracking,
+symbolication artifacts, and quota:
 
-- **Web/iOS bundle:** DSN is baked in (`apps/web/src/sentry.ts`).
-  Override with `VITE_SENTRY_DSN` if you point a build at a different
-  project. Replay is opt-in only via error (no baseline session
-  sampling). `maskAllText`/`blockAllMedia` are on, so recipe contents
-  and photos are scrubbed even when replays do fire. The platform tag
-  (`web`, `capacitor-ios`, `capacitor-android`) is auto-detected.
-- **Edge Function (`import-worker`):** reads `SENTRY_DSN` at boot —
-  no-op if unset. Set with:
+| Surface | Project | DSN suffix | SDK |
+| --- | --- | --- | --- |
+| Web (Vercel) | `cookyourbooks-web` | `…/2` | `@sentry/react` |
+| iOS via Capacitor | `cookyourbooks-mobile` | `…/4` | `@sentry/capacitor` (wraps `@sentry/react` + native Cocoa SDK) |
+| Edge function (Deno) | `cookyourbooks-edge` | `…/3` | `@sentry/deno` via esm.sh |
 
-  ```bash
-  # Hosted
-  ./.bin/supabase secrets set --project-ref <ref> \
-    SENTRY_DSN='https://…@sentry-cyb.work.ripley.cloud/2'
-  # Local dev (no secrets store; pass via env when serving the fn)
-  SENTRY_DSN='…' ./.bin/supabase functions serve import-worker --no-verify-jwt
-  ```
+The browser bundle picks its DSN at runtime via Capacitor platform
+detection (`apps/web/src/sentry.ts`): on iOS/Android it routes through
+`@sentry/capacitor` which initializes both the JS SDK and the native
+`@sentry/cocoa` SDK in one call. The native SDK is what captures
+crashes, ANRs, native plugin errors, and enriches JS events with
+device context (battery, free disk, OS patch level). The browser SDK
+is what captures JS/React errors, network breadcrumbs, and replay.
 
-- **Build-time source map upload (web):** Vite's `@sentry/vite-plugin`
-  uploads source maps when `SENTRY_AUTH_TOKEN` is in the build env.
-  Skipped silently otherwise. Other knobs (`SENTRY_URL`, `SENTRY_ORG`,
-  `SENTRY_PROJECT`, `VITE_SENTRY_RELEASE`) have sane defaults — see
-  `apps/web/vite.config.ts`. On Vercel set `SENTRY_AUTH_TOKEN` as a
-  secret and the plugin self-activates on every deploy.
+- **DSNs:** baked in as defaults (DSNs are public — they only authorize
+  ingest, not read). Override with `VITE_SENTRY_DSN` (web) /
+  `VITE_SENTRY_DSN_CAPACITOR` (Capacitor) at build time if you point a
+  build at a different project. The edge function reads `SENTRY_DSN`
+  from Supabase secrets and falls back to the baked-in `…/3` value if
+  unset.
+- **Replay:** errors-only (`replaysOnErrorSampleRate: 1.0`,
+  `replaysSessionSampleRate: 0`). `maskAllText` + `maskAllInputs` +
+  `blockAllMedia` keep recipe contents and photos out of the payload.
+- **Performance tracing:** 10% sampling for web/iOS, 100% for the edge
+  function (short-lived invocations).
 - **User identity:** `setSentryUser` is wired through `AuthProvider`,
   sending the Supabase user UUID only. No email/display name.
 - **Dev-only events:** disabled by default. Set
   `VITE_SENTRY_ENABLE_DEV=1` to opt a local build in to ingest.
+- **Native pod (iOS):** `@sentry/capacitor` registers as a Capacitor
+  plugin (`Podfile` updated by `cap sync`). The Sentry Cocoa pod is
+  installed by `pod install` inside the fastlane build step on the
+  macOS runner — Linux dev boxes skip the install but the JS side
+  still works.
+- **Edge function setup:** the DSN is baked in but can be overridden
+  by setting the `SENTRY_DSN` secret:
+
+  ```bash
+  # Hosted
+  ./.bin/supabase secrets set --project-ref <ref> \
+    SENTRY_DSN='https://…@sentry-cyb.work.ripley.cloud/3'
+  # Local dev
+  SENTRY_DSN='…' ./.bin/supabase functions serve import-worker --no-verify-jwt
+  ```
+
+- **Source map upload (web):** Vite's `@sentry/vite-plugin` uploads
+  source maps when `SENTRY_AUTH_TOKEN` is in the build env. Skipped
+  silently otherwise. Other knobs (`SENTRY_URL`, `SENTRY_ORG`,
+  `SENTRY_PROJECT`, `VITE_SENTRY_RELEASE`) have sane defaults — see
+  `apps/web/vite.config.ts`. On Vercel set `SENTRY_AUTH_TOKEN` as a
+  secret and the plugin self-activates on every deploy.
+- **dSYM upload (iOS):** TODO — add a fastlane lane that runs the
+  Sentry CLI's `sentry-cli upload-dif --org … --project cookyourbooks-mobile`
+  after each TestFlight build so native crashes get symbolicated.
 - **Power-user debug:** set
   `localStorage.cookyourbooks.sync.consoleMirror = '1'` in the
   browser console to re-enable info-level sync log mirroring (off by

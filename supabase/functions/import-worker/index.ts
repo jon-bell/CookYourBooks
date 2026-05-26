@@ -20,12 +20,14 @@ import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
 import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
 
-// Self-hosted Sentry for the import worker. Optional — the worker
-// runs fine without it, but unhandled errors only show up in Supabase
-// function logs which are awkward to grep. Set `SENTRY_DSN` via
-// `./.bin/supabase secrets set SENTRY_DSN=...` (or the prod Vault) to
-// enable.
-const SENTRY_DSN = Deno.env.get('SENTRY_DSN');
+// Self-hosted Sentry for the import worker. Reports to the dedicated
+// cookyourbooks-edge project (/3) so edge-runtime events don't share
+// release tracking / quotas with the web + iOS surfaces. Set
+// `SENTRY_DSN` via `./.bin/supabase secrets set SENTRY_DSN=...` (or
+// the prod Vault) to enable; the SDK no-ops cleanly when unset.
+const SENTRY_DSN =
+  Deno.env.get('SENTRY_DSN') ??
+  'https://21890fed80bff992c7c0e48d97b868f4@sentry-cyb.work.ripley.cloud/3';
 if (SENTRY_DSN) {
   Sentry.init({
     dsn: SENTRY_DSN,
