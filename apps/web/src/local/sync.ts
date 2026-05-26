@@ -1654,8 +1654,8 @@ async function pushConversionRule(client: CookbooksClient, id: string): Promise<
     p_from_unit: local.from_unit as string,
     p_to_unit: local.to_unit as string,
     p_factor: local.factor as number,
-    p_ingredient_name: (local.ingredient_name as string | null) ?? null,
-    p_notes: (local.notes as string | null) ?? null,
+    p_ingredient_name: (local.ingredient_name as string | null) ?? undefined,
+    p_notes: (local.notes as string | null) ?? undefined,
   });
   if (error) throw error;
 }
