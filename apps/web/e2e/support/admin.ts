@@ -102,6 +102,102 @@ export async function adminGet<T>(path: string): Promise<T> {
   return (await resp.json()) as T;
 }
 
+/**
+ * Seed a private collection for the given user with `recipeCount` recipes,
+ * each with a handful of ingredients + instructions. Used by sync perf
+ * tests to ensure the first pull has real work to do without driving the
+ * UI for every row.
+ */
+export async function seedUserLibrary(params: {
+  ownerId: string;
+  collectionTitle: string;
+  recipeCount: number;
+  ingredientsPerRecipe?: number;
+  instructionsPerRecipe?: number;
+}): Promise<{ collectionId: string }> {
+  const ingPer = params.ingredientsPerRecipe ?? 8;
+  const stepPer = params.instructionsPerRecipe ?? 5;
+  const colResp = await fetch(`${SUPABASE_URL}/rest/v1/recipe_collections`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
+      owner_id: params.ownerId,
+      title: params.collectionTitle,
+      source_type: 'PERSONAL',
+      is_public: false,
+    }),
+  });
+  if (!colResp.ok) throw new Error(`seedUserLibrary collection: ${await colResp.text()}`);
+  const [col] = (await colResp.json()) as { id: string }[];
+  if (!col) throw new Error('seedUserLibrary: no collection returned');
+
+  // Mint UUIDs locally so we can stitch FK rows in one round-trip per table.
+  const recipes: { id: string; collection_id: string; title: string; sort_order: number }[] =
+    [];
+  const ingredients: Record<string, unknown>[] = [];
+  const instructions: Record<string, unknown>[] = [];
+  for (let i = 0; i < params.recipeCount; i += 1) {
+    const recipeId = crypto.randomUUID();
+    recipes.push({
+      id: recipeId,
+      collection_id: col.id,
+      title: `Perf Recipe ${i + 1}`,
+      sort_order: i,
+    });
+    for (let j = 0; j < ingPer; j += 1) {
+      ingredients.push({
+        id: crypto.randomUUID(),
+        recipe_id: recipeId,
+        sort_order: j,
+        type: 'MEASURED',
+        name: `ingredient ${j + 1}`,
+        quantity_type: 'EXACT',
+        quantity_amount: j + 1,
+        quantity_unit: 'piece',
+      });
+    }
+    for (let j = 0; j < stepPer; j += 1) {
+      instructions.push({
+        id: crypto.randomUUID(),
+        recipe_id: recipeId,
+        step_number: j + 1,
+        text: `Step ${j + 1}: do the thing.`,
+      });
+    }
+  }
+
+  const bulk = async (table: string, rows: unknown[]) => {
+    if (rows.length === 0) return;
+    // PostgREST handles array bodies as bulk inserts. Chunk to stay under
+    // its default request body cap.
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const slice = rows.slice(i, i + CHUNK);
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+        method: 'POST',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(slice),
+      });
+      if (!resp.ok) throw new Error(`seed ${table}: ${resp.status} ${await resp.text()}`);
+    }
+  };
+  await bulk('recipes', recipes);
+  await bulk('ingredients', ingredients);
+  await bulk('instructions', instructions);
+
+  return { collectionId: col.id };
+}
+
 /** Insert a public demo collection owned by the admin for Discover tests. */
 export async function seedPublicCollection(params: {
   title: string;

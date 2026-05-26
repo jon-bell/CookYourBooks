@@ -417,7 +417,7 @@ export async function pullAll(
       instructions: stepsByRecipe.get(r.id) ?? [],
       refs: refsByRecipe.get(r.id) ?? [],
     }));
-    await upsertRecipesBatch(batch);
+    await upsertRecipesBatch(batch, signal);
     for (const { recipe, ingredients, instructions } of batch) {
       ingTotal += ingredients.length;
       stepTotal += instructions.length;

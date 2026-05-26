@@ -283,6 +283,22 @@ export async function upsertRecipeRow(
  * writes — preserving the "refuse to regress a fresher local row"
  * semantic without paying for a separate round-trip per recipe.
  */
+/**
+ * The CRR tables we write to during a pull. Wrapping the bulk-insert
+ * tx with crsql_begin_alter / crsql_commit_alter on each suppresses
+ * cr-sqlite's per-row change-tracking triggers for the duration —
+ * pulls are server-canonical and don't need to be re-propagated as
+ * outbound CRDT changes, so the trigger work is pure overhead. On
+ * iPad WASM SQLite each trigger fire is ~10–15ms; disabling them
+ * collapses an 87-recipe pull from ~38s to seconds.
+ */
+const PULL_CRR_TABLES = [
+  'instruction_ingredient_refs',
+  'instructions',
+  'ingredients',
+  'recipes',
+] as const;
+
 export async function upsertRecipesBatch(
   batch: ReadonlyArray<{
     recipe: RecipeRow;
@@ -290,48 +306,76 @@ export async function upsertRecipesBatch(
     instructions: InstructionRow[];
     refs: InstructionRefRow[];
   }>,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (batch.length === 0) return;
+  if (signal?.aborted) return;
   const db = await getLocalDb();
-  await db.tx(async (tx) => {
-    // Pre-check: pull all existing updated_ats in one shot.
-    const ids = batch.map((b) => b.recipe.id);
-    const existingMap = new Map<string, number>();
-    if (ids.length > 0) {
+  // crsql_begin_alter / crsql_commit_alter must run at the top level —
+  // inside a SAVEPOINT (which is what db.tx wraps the callback in)
+  // they can leave the change-tracking state mid-flight if the SAVEPOINT
+  // rolls back. Run them as separate db.exec calls so they execute
+  // outside any nested transaction.
+  const altered: string[] = [];
+  try {
+    for (const t of PULL_CRR_TABLES) {
+      await db.exec(`select crsql_begin_alter('${t}')`);
+      altered.push(t);
+    }
+
+    await db.tx(async (tx) => {
+      const ids = batch.map((b) => b.recipe.id);
+      const existingMap = new Map<string, number>();
       const placeholders = ids.map(() => '?').join(',');
       const rows = (await tx.execO(
         `select id, updated_at from recipes where id in (${placeholders})`,
         ids,
       )) as { id: string; updated_at: number }[];
       for (const r of rows) existingMap.set(r.id, r.updated_at);
-    }
-    const fresh = batch.filter((b) => {
-      const local = existingMap.get(b.recipe.id);
-      return !local || local <= tsToMs(b.recipe.updated_at);
+
+      const fresh = batch.filter((b) => {
+        const local = existingMap.get(b.recipe.id);
+        return !local || local <= tsToMs(b.recipe.updated_at);
+      });
+      if (fresh.length === 0) return;
+
+      const freshIds = fresh.map((b) => b.recipe.id);
+      await execInChunks(tx, freshIds, (chunk, ph) => [
+        `delete from instruction_ingredient_refs
+         where instruction_id in (select id from instructions where recipe_id in (${ph}))`,
+        chunk,
+      ]);
+      await execInChunks(tx, freshIds, (chunk, ph) => [
+        `delete from ingredients where recipe_id in (${ph})`,
+        chunk,
+      ]);
+      await execInChunks(tx, freshIds, (chunk, ph) => [
+        `delete from instructions where recipe_id in (${ph})`,
+        chunk,
+      ]);
+
+      await bulkUpsertRecipes(tx, fresh.map((b) => b.recipe));
+      await bulkInsertIngredients(tx, fresh.flatMap((b) => b.ingredients));
+      await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
+      await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
     });
-    if (fresh.length === 0) return;
-
-    const freshIds = fresh.map((b) => b.recipe.id);
-    // Batched deletes: replace 3 deletes per recipe with 3 deletes total.
-    await execInChunks(tx, freshIds, (chunk, ph) => [
-      `delete from instruction_ingredient_refs
-       where instruction_id in (select id from instructions where recipe_id in (${ph}))`,
-      chunk,
-    ]);
-    await execInChunks(tx, freshIds, (chunk, ph) => [
-      `delete from ingredients where recipe_id in (${ph})`,
-      chunk,
-    ]);
-    await execInChunks(tx, freshIds, (chunk, ph) => [
-      `delete from instructions where recipe_id in (${ph})`,
-      chunk,
-    ]);
-
-    await bulkUpsertRecipes(tx, fresh.map((b) => b.recipe));
-    await bulkInsertIngredients(tx, fresh.flatMap((b) => b.ingredients));
-    await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
-    await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
-  });
+  } finally {
+    // Always reattach the triggers, even if the writes threw, so
+    // subsequent local writes are tracked normally. Run in reverse so
+    // the recreated triggers don't see ghost pre-images.
+    for (let i = altered.length - 1; i >= 0; i -= 1) {
+      const t = altered[i]!;
+      try {
+        await db.exec(`select crsql_commit_alter('${t}')`);
+      } catch {
+        // Surfacing this would mask the original error from the try
+        // block. The next sync cycle will retry; if commit_alter truly
+        // failed, the table will just keep its disabled triggers,
+        // which surfaces as "local writes don't sync" — a noisy
+        // failure mode we can fix later.
+      }
+    }
+  }
 }
 
 interface RecipeTx {
@@ -339,10 +383,12 @@ interface RecipeTx {
   execO: (sql: string, bind?: unknown[]) => Promise<unknown[]>;
 }
 
-// SQLite's compiled-in SQLITE_MAX_VARIABLE_NUMBER defaults to 32766 in
-// modern builds, but cr-sqlite ships its own wasm; stay well below to
-// be safe across cols × rows combinations. 16 cols × 100 rows = 1600.
-const MAX_ROWS_PER_INSERT = 100;
+// Multi-row INSERT chunk size — only here to stay under SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER (32766 in modern builds). With the widest
+// table (recipes, 18 cols), 1500 rows × 18 cols = 27000 params, safely
+// under the cap. For libraries up to ~1500 recipes this is one INSERT
+// statement per table.
+const MAX_ROWS_PER_INSERT = 1500;
 
 async function execInChunks(
   tx: RecipeTx,

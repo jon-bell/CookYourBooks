@@ -13,6 +13,25 @@ import {
   type TabRole,
 } from './tabLeader.js';
 
+function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>;
+    const parts: string[] = [];
+    if (typeof e.message === 'string' && e.message.length > 0) parts.push(e.message);
+    if (typeof e.code === 'string') parts.push(`code=${e.code}`);
+    if (typeof e.hint === 'string') parts.push(`hint=${e.hint}`);
+    if (parts.length > 0) return parts.join(' · ');
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
 function withTimeout<T>(
   p: Promise<T>,
   ms: number,
@@ -31,7 +50,12 @@ function withTimeout<T>(
       },
       (e) => {
         clearTimeout(t);
-        reject(e instanceof Error ? e : new Error(String(e)));
+        // Preserve the original error so the outer catch can extract
+        // shape (.message / .code / .hint on PostgrestErrors, etc).
+        // Earlier this wrapped non-Errors in `new Error(String(e))`,
+        // which collapses an object into "[object Object]" and hides
+        // what actually went wrong.
+        reject(e);
       },
     );
   });
@@ -183,7 +207,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         setSettled('idle');
         logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
       } catch (err) {
-        const msg = (err as Error).message;
+        // Some thrown values (notably PostgrestError-shaped objects)
+        // aren't Error instances, so `.message` is undefined and the
+        // badge ends up showing "[object Object]". Stringify whatever
+        // we got and prefer fields commonly populated by errors.
+        const msg = stringifyError(err);
+        // Dump the raw shape to the console so a debug session can see
+        // what actually came back — useful when the stringified version
+        // collapses an interesting object into something like
+        // "PostgrestError" with no hint of the underlying cause.
+        console.error('[sync] cycle threw:', err);
         setSettled('error', msg);
         logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
       } finally {
@@ -220,7 +253,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if (!cancelled) {
           setStatus('error');
-          setLastError((err as Error).message);
+          setLastError(stringifyError(err));
         }
         return;
       }
