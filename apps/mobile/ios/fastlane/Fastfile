@@ -145,6 +145,30 @@ platform :ios do
     )
   end
 
+  desc "Upload dSYM debug symbols to self-hosted Sentry so native iOS crashes get symbolicated. No-op when SENTRY_AUTH_TOKEN isn't set so dev / unconfigured machines don't fail. Called automatically from `beta` post-gym; expose as its own lane so a missed upload can be re-run without rebuilding."
+  private_lane :upload_dsyms_to_sentry do
+    unless ENV["SENTRY_AUTH_TOKEN"]
+      UI.important "SENTRY_AUTH_TOKEN not set — skipping Sentry dSYM upload."
+      next
+    end
+    dsym = lane_context[SharedValues::DSYM_OUTPUT_PATH]
+    if dsym.nil? || !File.exist?(dsym)
+      UI.important "No dSYM at lane_context[:DSYM_OUTPUT_PATH] — skipping Sentry upload."
+      next
+    end
+    sentry_debug_files_upload(
+      url: ENV["SENTRY_URL"] || "https://sentry-cyb.work.ripley.cloud",
+      auth_token: ENV["SENTRY_AUTH_TOKEN"],
+      org_slug: ENV["SENTRY_ORG"] || "sentry",
+      project_slug: ENV["SENTRY_PROJECT_MOBILE"] || "cookyourbooks-mobile",
+      path: dsym,
+      # The Capacitor wrapper's Swift surface is tiny; symbol names
+      # alone are enough for stack traces. Skip source upload to keep
+      # the artifact small and avoid checking in build outputs.
+      include_sources: false,
+    )
+  end
+
   desc "Build a signed Release archive and upload it to TestFlight. Requires ASC API key env vars + a match-provisioned profile."
   lane :beta do
     certs
@@ -178,6 +202,12 @@ platform :ios do
       output_name: "CookYourBooks.ipa",
       clean: true
     )
+    # Upload dSYMs to Sentry before pilot so a TestFlight upload failure
+    # doesn't strand the symbols. Sentry symbolicates by dSYM UUID; the
+    # dSYMs don't need to be tied to any particular release to be
+    # useful — every future crash matching these UUIDs gets
+    # symbolicated automatically.
+    upload_dsyms_to_sentry
     pilot(
       api_key: asc_api_key,
       ipa: "build/CookYourBooks.ipa",
@@ -185,6 +215,21 @@ platform :ios do
       # Beta groups + changelog can be filled in later via App Store Connect UI.
       changelog: ENV["BETA_CHANGELOG"] || "Internal build"
     )
+  end
+
+  desc "Re-upload dSYMs to Sentry without rebuilding. Pass `path:/Library/...App.xcarchive/dSYMs` to target a specific archive; otherwise grabs the most recent gym output or the newest Xcode archive on disk."
+  lane :upload_dsyms do |options|
+    if options[:path]
+      lane_context[SharedValues::DSYM_OUTPUT_PATH] = options[:path]
+    elsif lane_context[SharedValues::DSYM_OUTPUT_PATH].nil?
+      archive = Dir["#{ENV['HOME']}/Library/Developer/Xcode/Archives/**/*.xcarchive"]
+                  .max_by { |p| File.mtime(p) }
+      UI.user_error!("No `path:` given and no Xcode archives found in ~/Library/Developer/Xcode/Archives") unless archive
+      dsym_dir = File.join(archive, "dSYMs")
+      UI.user_error!("Archive #{archive} has no dSYMs dir") unless File.directory?(dsym_dir)
+      lane_context[SharedValues::DSYM_OUTPUT_PATH] = dsym_dir
+    end
+    upload_dsyms_to_sentry
   end
 
   desc "Build + upload to TestFlight + submit the build for App Store review. Use only when you actually want a public release."

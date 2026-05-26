@@ -153,11 +153,26 @@ What `beta` does:
    build number is currently on TestFlight. Avoids the "build number
    already used" upload rejection.
 3. `gym` — builds a signed Release archive (`.ipa`) into `build/`.
-4. `pilot` — uploads the IPA to TestFlight via the ASC API key.
+4. `upload_dsyms_to_sentry` — pushes the build's dSYM debug symbols
+   to the self-hosted Sentry (`cookyourbooks-mobile` project) so
+   native iOS crashes get symbolicated. No-op when `SENTRY_AUTH_TOKEN`
+   isn't set, so unconfigured machines just skip it.
+5. `pilot` — uploads the IPA to TestFlight via the ASC API key.
 
 The build is then visible at <https://appstoreconnect.apple.com/apps> →
 CookYourBooks → TestFlight. Add it to a test group (internal testing
 needs no review and ships in ~10 minutes).
+
+If the dSYM upload failed (or was skipped because the env var was
+missing) you can re-run it without rebuilding:
+
+```bash
+cd apps/mobile/ios
+SENTRY_AUTH_TOKEN=sntrys_... fastlane upload_dsyms
+# Or target an older archive explicitly:
+SENTRY_AUTH_TOKEN=... fastlane upload_dsyms \
+  path:~/Library/Developer/Xcode/Archives/2026-05-26/CookYourBooks.xcarchive/dSYMs
+```
 
 ### Submit for App Store review
 

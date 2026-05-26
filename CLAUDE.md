@@ -186,9 +186,13 @@ is what captures JS/React errors, network breadcrumbs, and replay.
   `SENTRY_PROJECT`, `VITE_SENTRY_RELEASE`) have sane defaults — see
   `apps/web/vite.config.ts`. On Vercel set `SENTRY_AUTH_TOKEN` as a
   secret and the plugin self-activates on every deploy.
-- **dSYM upload (iOS):** TODO — add a fastlane lane that runs the
-  Sentry CLI's `sentry-cli upload-dif --org … --project cookyourbooks-mobile`
-  after each TestFlight build so native crashes get symbolicated.
+- **dSYM upload (iOS):** wired into the `beta` fastlane lane via
+  `fastlane-plugin-sentry` (see
+  `apps/mobile/ios/fastlane/Fastfile:upload_dsyms_to_sentry`). The
+  upload runs after `gym` and before `pilot`, gated on
+  `SENTRY_AUTH_TOKEN` so unconfigured / dev machines no-op cleanly.
+  A standalone `upload_dsyms` lane re-uploads from the most recent
+  Xcode archive (or a `path:` override) without rebuilding.
 - **Power-user debug:** set
   `localStorage.cookyourbooks.sync.consoleMirror = '1'` in the
   browser console to re-enable info-level sync log mirroring (off by
