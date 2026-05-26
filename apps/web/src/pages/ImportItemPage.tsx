@@ -538,6 +538,22 @@ export function ImportItemPage() {
         nextId={nextItem?.id}
         position={pageNumberInBatch}
         currentPageIndex={item.pageIndex + 1}
+        save={
+          !item.isToc &&
+          !(batch.batchKind === 'BAKEOFF' &&
+            (item.status === 'BAKEOFF_READY' || item.status === 'BAKEOFF_PENDING'))
+            ? {
+                onSave: () => void saveAsRecipe(),
+                disabled: !currentDraft || !targetCollectionId || saveRecipe.isPending,
+                saving: saveRecipe.isPending,
+                label: plannedRecipe
+                  ? `Fill "${plannedRecipe.title}"`
+                  : matchedExisting
+                    ? `Update "${matchedExisting.title}"`
+                    : 'Save as recipe',
+              }
+            : undefined
+        }
       />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1182,6 +1198,7 @@ function NavBanner({
   nextId,
   position,
   currentPageIndex,
+  save,
 }: {
   batchName: string;
   batchId: string;
@@ -1189,12 +1206,33 @@ function NavBanner({
   nextId: string | undefined;
   position: { current: number; total: number } | undefined;
   currentPageIndex: number;
+  save?: {
+    onSave: () => void;
+    disabled: boolean;
+    saving: boolean;
+    label: string;
+  };
 }) {
   return (
     <div className="sticky top-0 z-20 -mx-4 flex items-center gap-3 border-b border-stone-200 dark:border-stone-700 bg-white/95 px-4 py-2 text-sm backdrop-blur">
       <Link to={`/import/${batchId}`} className="truncate text-stone-700 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100">
         ← {batchName}
       </Link>
+      {save && (
+        <button
+          type="button"
+          onClick={save.onSave}
+          disabled={save.disabled}
+          title={
+            save.disabled && !save.saving
+              ? 'Pick a cookbook below before saving'
+              : save.label
+          }
+          className="ml-2 truncate rounded-md bg-emerald-700 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+        >
+          {save.saving ? 'Saving…' : save.label}
+        </button>
+      )}
       <div className="ml-auto flex items-center gap-1">
         {prevId ? (
           <Link
