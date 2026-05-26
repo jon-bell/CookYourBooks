@@ -274,11 +274,20 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
 export async function pullAll(
   client: CookbooksClient,
   ownerId: string,
+  signal?: AbortSignal,
 ): Promise<PullResult> {
   const pullStart = Date.now();
   logSync('info', 'pullAll: entered');
   await maybeResetWatermarks(ownerId);
   logSync('info', 'pull: start');
+  function checkAbort(phase: string) {
+    if (signal?.aborted) {
+      const err = new Error(`pullAll aborted before ${phase}`);
+      logSync('warn', `pullAll: aborted before ${phase}`);
+      throw err;
+    }
+  }
+  checkAbort('collections');
   const collectionTopic = `collections:${ownerId}`;
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
 
@@ -302,6 +311,7 @@ export async function pullAll(
   }
   if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
 
+  checkAbort('recipes');
   const recipeTopic = `recipes:${ownerId}`;
   const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
   const recipesPhase = Date.now();
@@ -413,17 +423,20 @@ export async function pullAll(
     `pull recipes: ${recipesFetched.length} rows in ${Date.now() - recipesPhase}ms`,
   );
 
+  checkAbort('imports');
   const importPhase = Date.now();
   const importCounts = await pullImports(client, ownerId);
   logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, {
     ...importCounts,
   });
+  checkAbort('conversion_rules');
   const convPhase = Date.now();
   const conversionRulesPulled = await pullConversionRules(client, ownerId);
   logSync(
     'info',
     `pull conversion_rules: ${conversionRulesPulled} rows in ${Date.now() - convPhase}ms`,
   );
+  checkAbort('rewrite_jobs');
   const rewritePhase = Date.now();
   const rewriteJobsPulled = await pullRewriteJobs(client, ownerId);
   logSync(
@@ -1140,6 +1153,7 @@ async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
 export async function pushOutbox(
   client: CookbooksClient,
   ownerId: string,
+  signal?: AbortSignal,
 ): Promise<{ ok: number; failed: number }> {
   logSync('info', 'pushOutbox: entered');
   const pending = await listPending();
@@ -1150,6 +1164,10 @@ export async function pushOutbox(
   let failed = 0;
   let i = 0;
   while (i < pending.length) {
+    if (signal?.aborted) {
+      logSync('warn', `pushOutbox: aborted at index ${i}/${pending.length}`);
+      break;
+    }
     const entry = pending[i]!;
     // Coalesce a contiguous run of import_item_insert entries into a
     // single chunked bulk upsert. 200-page uploads otherwise mean 200

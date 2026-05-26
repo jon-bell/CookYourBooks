@@ -13,12 +13,17 @@ import {
   type TabRole,
 } from './tabLeader.js';
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  label: string,
+  onTimeout?: () => void,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(
-      () => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)),
-      ms,
-    );
+    const t = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+    }, ms);
     p.then(
       (v) => {
         clearTimeout(t);
@@ -94,6 +99,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
+  const currentAbort = useRef<AbortController | null>(null);
   const pullPending = useRef(false);
   const pullDebounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const invalidateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -141,6 +147,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       logSync('info', 'cycle: coalesced into in-flight run');
       return inFlight.current;
     }
+    const ac = new AbortController();
+    currentAbort.current = ac;
     const run = (async () => {
       const cycleStart = Date.now();
       logSync('info', 'cycle: start');
@@ -150,17 +158,26 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // Push first so the pull sees our own changes reflected as
         // server-acknowledged state (avoids echo-induced overwrites).
         // Wrap in a hard timeout so a single hung request can't trap
-        // the user on "Syncing…" forever — the actual fetch keeps
-        // running, we just stop awaiting it.
+        // the user on "Syncing…" forever — when the timeout fires we
+        // also abort the AbortController so the inner drain loop
+        // bails out instead of continuing to hit the network behind
+        // our back (which would race a later cycle and trip
+        // duplicate-key / FK violations on recipe pushes).
         logSync('info', 'cycle: invoking pushOutbox');
         const pushRes = await withTimeout(
-          pushOutbox(supabase, ownerId),
+          pushOutbox(supabase, ownerId, ac.signal),
           CYCLE_TIMEOUT_MS,
           'push',
+          () => ac.abort(),
         );
         logSync('info', 'cycle: pushOutbox returned', pushRes);
         logSync('info', 'cycle: invoking pullAll');
-        await withTimeout(pullAll(supabase, ownerId), CYCLE_TIMEOUT_MS, 'pull');
+        await withTimeout(
+          pullAll(supabase, ownerId, ac.signal),
+          CYCLE_TIMEOUT_MS,
+          'pull',
+          () => ac.abort(),
+        );
         logSync('info', 'cycle: pullAll returned');
         setLastSyncedAt(Date.now());
         setSettled('idle');
@@ -170,6 +187,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         setSettled('error', msg);
         logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
       } finally {
+        if (currentAbort.current === ac) currentAbort.current = null;
         await refreshPendingCount();
         scheduleInvalidate();
       }
@@ -281,10 +299,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const startedAt = syncingStartedAt.current;
       if (!startedAt) return;
       if (Date.now() - startedAt <= CYCLE_TIMEOUT_MS) return;
-      // Clear inFlight so the next syncNow / realtime nudge can start
-      // a fresh cycle instead of joining the wedged promise.
+      // Clear inFlight AND abort the cycle's signal so the inner
+      // drain loop bails. Without the abort, the in-flight pushOutbox
+      // / pullAll keep running in the background and race against the
+      // next cycle (concurrent recipe pushes manifested as duplicate
+      // PK / FK violations on instruction_ingredient_refs).
+      currentAbort.current?.abort();
       inFlight.current = null;
-      logSync('error', 'watchdog: cycle stalled, clearing inFlight');
+      logSync('error', 'watchdog: cycle stalled, aborting + clearing inFlight');
       setSettled(
         'error',
         'Sync stalled — click "Syncing…" or refresh to retry.',
