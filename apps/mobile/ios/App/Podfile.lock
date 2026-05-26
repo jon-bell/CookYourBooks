@@ -10,6 +10,12 @@ PODS:
     - Capacitor
   - CapacitorShare (6.0.4):
     - Capacitor
+  - Sentry (9.8.0):
+    - Sentry/Core (= 9.8.0)
+  - Sentry/Core (9.8.0)
+  - SentryCapacitor (4.0.0):
+    - Capacitor
+    - Sentry (= 9.8.0)
 
 DEPENDENCIES:
   - "Capacitor (from `../../../../node_modules/.pnpm/@capacitor+ios@6.2.1_@capacitor+core@6.2.1/node_modules/@capacitor/ios`)"
@@ -18,6 +24,11 @@ DEPENDENCIES:
   - "CapacitorCordova (from `../../../../node_modules/.pnpm/@capacitor+ios@6.2.1_@capacitor+core@6.2.1/node_modules/@capacitor/ios`)"
   - "CapacitorHaptics (from `../../../../node_modules/.pnpm/@capacitor+haptics@6.0.3_@capacitor+core@6.2.1/node_modules/@capacitor/haptics`)"
   - "CapacitorShare (from `../../../../node_modules/.pnpm/@capacitor+share@6.0.4_@capacitor+core@6.2.1/node_modules/@capacitor/share`)"
+  - "SentryCapacitor (from `../../../../node_modules/.pnpm/@sentry+capacitor@4.0.0_@capacitor+core@6.2.1_@sentry+react@10.43.0_react@19.2.5_/node_modules/@sentry/capacitor`)"
+
+SPEC REPOS:
+  trunk:
+    - Sentry
 
 EXTERNAL SOURCES:
   Capacitor:
@@ -32,6 +43,8 @@ EXTERNAL SOURCES:
     :path: "../../../../node_modules/.pnpm/@capacitor+haptics@6.0.3_@capacitor+core@6.2.1/node_modules/@capacitor/haptics"
   CapacitorShare:
     :path: "../../../../node_modules/.pnpm/@capacitor+share@6.0.4_@capacitor+core@6.2.1/node_modules/@capacitor/share"
+  SentryCapacitor:
+    :path: "../../../../node_modules/.pnpm/@sentry+capacitor@4.0.0_@capacitor+core@6.2.1_@sentry+react@10.43.0_react@19.2.5_/node_modules/@sentry/capacitor"
 
 SPEC CHECKSUMS:
   Capacitor: c95400d761e376be9da6be5a05f226c0e865cebf
@@ -40,7 +53,9 @@ SPEC CHECKSUMS:
   CapacitorCordova: 8d93e14982f440181be7304aa9559ca631d77fff
   CapacitorHaptics: 40f83026feeee9cfe36e89e9c98a3baaaf20c450
   CapacitorShare: 77ff779e3b7c6ae9fb5461e52cf7ef805d429491
+  Sentry: 88746bf877eff714bc45315a39ad1d1efea2cdda
+  SentryCapacitor: 1d620200b850ef6f4e7056f5e20d7860e7c04572
 
-PODFILE CHECKSUM: ac4b39b7123d5f4f9956b3141ec7300bff526156
+PODFILE CHECKSUM: f6d974bf1dbd757bf61a52316f88860376336ea4
 
 COCOAPODS: 1.16.2
