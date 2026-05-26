@@ -227,7 +227,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       await refreshPendingCount();
       if (!cancelled) {
         setLocalReady(true);
-        setStatus('idle');
+        // Only flip to 'idle' if no cycle has already moved us to
+        // 'syncing'. Without this, db init resolving AFTER the cycle
+        // started (cycle awaits the same getLocalDb promise) lets the
+        // boot effect clobber status back to 'idle' mid-pull — the
+        // badge says "Synced" while pull is still draining and other
+        // pages contend on the SQLite mutex.
+        setStatus((s) => (s === 'initializing' ? 'idle' : s));
       }
     })();
     return () => {

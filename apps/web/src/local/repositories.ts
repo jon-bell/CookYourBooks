@@ -272,6 +272,213 @@ export async function upsertRecipeRow(
 }
 
 /**
+ * Bulk-upsert many recipes (and their children) in a single SQLite
+ * transaction. Used by the sync pull path so a library with 100+
+ * recipes doesn't pay the per-recipe tx start/commit cost over and
+ * over — on iPad's WASM SQLite, each tx boundary is ~50ms and pulling
+ * a fresh library can stretch into half a minute of "synced but
+ * empty" UI while every other reader queues for the lock between
+ * recipes.
+ *
+ * The per-recipe updated_at guard from upsertRecipeRow is inlined
+ * here so we don't have to take and release the lock per recipe to
+ * do the pre-check.
+ */
+export async function upsertRecipesBatch(
+  batch: ReadonlyArray<{
+    recipe: RecipeRow;
+    ingredients: IngredientRow[];
+    instructions: InstructionRow[];
+    refs: InstructionRefRow[];
+  }>,
+): Promise<void> {
+  if (batch.length === 0) return;
+  const db = await getLocalDb();
+  await db.tx(async (tx) => {
+    for (const { recipe, ingredients, instructions, refs } of batch) {
+      const incomingTs = tsToMs(recipe.updated_at);
+      const existing = (await tx.execO(
+        `select updated_at from recipes where id = ?`,
+        [recipe.id],
+      )) as { updated_at: number }[];
+      if (existing[0] && existing[0].updated_at > incomingTs) continue;
+      await writeRecipeAndChildren(tx, recipe, ingredients, instructions, refs, incomingTs);
+    }
+  });
+}
+
+interface RecipeTx {
+  exec: (sql: string, bind?: unknown[]) => Promise<unknown>;
+  execO: (sql: string, bind?: unknown[]) => Promise<unknown[]>;
+}
+
+async function writeRecipeAndChildren(
+  tx: RecipeTx,
+  recipeRow: RecipeRow,
+  ingredients: IngredientRow[],
+  instructions: InstructionRow[],
+  refs: InstructionRefRow[],
+  incomingTs: number,
+): Promise<void> {
+  const recipeRowX = recipeRow as RecipeRow & {
+    notes?: string | null;
+    parent_recipe_id?: string | null;
+    servings_amount_max?: number | null;
+    description?: string | null;
+    time_estimate?: string | null;
+    equipment?: unknown;
+    book_title?: string | null;
+    page_numbers?: unknown;
+    source_image_text?: string | null;
+    starred?: boolean | number | null;
+  };
+  const equipmentJson = toJsonText(recipeRowX.equipment);
+  const pageNumbersJson = toJsonText(recipeRowX.page_numbers);
+  const starredRaw: unknown = recipeRowX.starred;
+  const starredInt = starredRaw === true || starredRaw === 1 ? 1 : 0;
+  await tx.exec(
+    `insert into recipes
+       (id, collection_id, title, servings_amount, servings_description,
+        servings_amount_max, sort_order, notes, parent_recipe_id,
+        description, time_estimate, equipment, book_title, page_numbers,
+        source_image_text, starred, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     on conflict(id) do update set
+       collection_id=excluded.collection_id,
+       title=excluded.title,
+       servings_amount=excluded.servings_amount,
+       servings_description=excluded.servings_description,
+       servings_amount_max=excluded.servings_amount_max,
+       sort_order=excluded.sort_order,
+       notes=excluded.notes,
+       parent_recipe_id=excluded.parent_recipe_id,
+       description=excluded.description,
+       time_estimate=excluded.time_estimate,
+       equipment=excluded.equipment,
+       book_title=excluded.book_title,
+       page_numbers=excluded.page_numbers,
+       source_image_text=excluded.source_image_text,
+       starred=excluded.starred,
+       updated_at=excluded.updated_at,
+       deleted=0`,
+    [
+      recipeRow.id,
+      recipeRow.collection_id,
+      recipeRow.title,
+      recipeRow.servings_amount,
+      recipeRow.servings_description,
+      recipeRowX.servings_amount_max ?? null,
+      recipeRow.sort_order,
+      recipeRowX.notes ?? null,
+      recipeRowX.parent_recipe_id ?? null,
+      recipeRowX.description ?? null,
+      recipeRowX.time_estimate ?? null,
+      equipmentJson,
+      recipeRowX.book_title ?? null,
+      pageNumbersJson,
+      recipeRowX.source_image_text ?? null,
+      starredInt,
+      incomingTs,
+    ],
+  );
+  await tx.exec(
+    `delete from instruction_ingredient_refs
+     where instruction_id in (select id from instructions where recipe_id = ?)`,
+    [recipeRow.id],
+  );
+  await tx.exec(`delete from ingredients where recipe_id = ?`, [recipeRow.id]);
+  await tx.exec(`delete from instructions where recipe_id = ?`, [recipeRow.id]);
+  for (const ing of ingredients) {
+    const ingX = ing as IngredientRow & { description?: string | null };
+    await tx.exec(
+      `insert into ingredients
+         (id, recipe_id, sort_order, type, name, preparation, notes, description,
+          quantity_type, quantity_amount, quantity_whole, quantity_numerator,
+          quantity_denominator, quantity_min, quantity_max, quantity_unit)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        ing.id,
+        ing.recipe_id,
+        ing.sort_order,
+        ing.type,
+        ing.name,
+        ing.preparation,
+        ing.notes,
+        ingX.description ?? null,
+        ing.quantity_type,
+        ing.quantity_amount,
+        ing.quantity_whole,
+        ing.quantity_numerator,
+        ing.quantity_denominator,
+        ing.quantity_min,
+        ing.quantity_max,
+        ing.quantity_unit,
+      ],
+    );
+  }
+  for (const step of instructions) {
+    const stepX = step as InstructionRow & {
+      temperature_value?: number | null;
+      temperature_unit?: string | null;
+      sub_instructions?: unknown;
+      simplified_steps?: unknown;
+      notes?: string | null;
+    };
+    await tx.exec(
+      `insert into instructions
+         (id, recipe_id, step_number, text,
+          temperature_value, temperature_unit, sub_instructions,
+          simplified_steps, notes)
+       values (?,?,?,?,?,?,?,?,?)`,
+      [
+        step.id,
+        step.recipe_id,
+        step.step_number,
+        step.text,
+        stepX.temperature_value ?? null,
+        stepX.temperature_unit ?? null,
+        toJsonText(stepX.sub_instructions),
+        toJsonText(stepX.simplified_steps),
+        stepX.notes ?? null,
+      ],
+    );
+  }
+  for (const ref of refs) {
+    const refX = ref as InstructionRefRow & {
+      consumed_quantity_type?: string | null;
+      consumed_quantity_amount?: number | null;
+      consumed_quantity_whole?: number | null;
+      consumed_quantity_numerator?: number | null;
+      consumed_quantity_denominator?: number | null;
+      consumed_quantity_min?: number | null;
+      consumed_quantity_max?: number | null;
+      consumed_quantity_unit?: string | null;
+    };
+    await tx.exec(
+      `insert into instruction_ingredient_refs
+         (instruction_id, ingredient_id,
+          consumed_quantity_type, consumed_quantity_amount,
+          consumed_quantity_whole, consumed_quantity_numerator,
+          consumed_quantity_denominator, consumed_quantity_min,
+          consumed_quantity_max, consumed_quantity_unit)
+       values (?,?,?,?,?,?,?,?,?,?) on conflict do nothing`,
+      [
+        ref.instruction_id,
+        ref.ingredient_id,
+        refX.consumed_quantity_type ?? null,
+        refX.consumed_quantity_amount ?? null,
+        refX.consumed_quantity_whole ?? null,
+        refX.consumed_quantity_numerator ?? null,
+        refX.consumed_quantity_denominator ?? null,
+        refX.consumed_quantity_min ?? null,
+        refX.consumed_quantity_max ?? null,
+        refX.consumed_quantity_unit ?? null,
+      ],
+    );
+  }
+}
+
+/**
  * Normalize an array-ish column value to JSON text suitable for a
  * local SQLite TEXT column. Accepts an already-stringified JSON blob
  * (pass-through), a native array (JSON-encode), or null/undefined.

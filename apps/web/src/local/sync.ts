@@ -13,6 +13,7 @@ import {
   purgeRecipe,
   upsertCollectionRow,
   upsertRecipeRow,
+  upsertRecipesBatch,
 } from './repositories.js';
 import {
   listPending,
@@ -405,16 +406,22 @@ export async function pullAll(
       refsByRecipe.set(recipeId, arr);
     }
 
-    for (const r of recipesFetched) {
-      await upsertRecipeRow(
-        r,
-        ingByRecipe.get(r.id) ?? [],
-        stepsByRecipe.get(r.id) ?? [],
-        refsByRecipe.get(r.id) ?? [],
-      );
-      ingTotal += ingByRecipe.get(r.id)?.length ?? 0;
-      stepTotal += stepsByRecipe.get(r.id)?.length ?? 0;
-      maxRecipeTs = Math.max(maxRecipeTs, toMs(r.updated_at));
+    // Bulk-upsert the entire recipe batch in one SQLite transaction.
+    // Per-recipe upsertRecipeRow each pays a lock + tx start/commit;
+    // on iPad WASM SQLite that's ~50ms per recipe, so a 100-recipe
+    // pull can take ~30s with the UI deceptively "Synced" and all
+    // other readers stuck behind the recipe loop's lock churn.
+    const batch = recipesFetched.map((r) => ({
+      recipe: r,
+      ingredients: ingByRecipe.get(r.id) ?? [],
+      instructions: stepsByRecipe.get(r.id) ?? [],
+      refs: refsByRecipe.get(r.id) ?? [],
+    }));
+    await upsertRecipesBatch(batch);
+    for (const { recipe, ingredients, instructions } of batch) {
+      ingTotal += ingredients.length;
+      stepTotal += instructions.length;
+      maxRecipeTs = Math.max(maxRecipeTs, toMs(recipe.updated_at));
     }
     if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
   }
