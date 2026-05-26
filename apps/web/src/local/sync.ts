@@ -20,6 +20,7 @@ import {
   markFailed,
   type OutboxEntry,
 } from './outbox.js';
+import { logSync } from './syncLog.js';
 
 type CookbooksClient = SupabaseClient<Database>;
 
@@ -32,6 +33,14 @@ export async function getWatermark(topic: string): Promise<number> {
     [topic],
   )) as { high_water_mark: number }[];
   return rows[0]?.high_water_mark ?? 0;
+}
+
+/** Debug helper: enumerate every sync watermark for the diagnostics panel. */
+export async function listWatermarks(): Promise<{ topic: string; high_water_mark: number }[]> {
+  const db = await getLocalDb();
+  return (await db.execO<{ topic: string; high_water_mark: number }>(
+    `select topic, high_water_mark from sync_state order by topic`,
+  )) as { topic: string; high_water_mark: number }[];
 }
 
 export async function bumpWatermark(topic: string, value: number): Promise<void> {
@@ -266,10 +275,13 @@ export async function pullAll(
   client: CookbooksClient,
   ownerId: string,
 ): Promise<PullResult> {
+  const pullStart = Date.now();
+  logSync('info', 'pull: start');
   await maybeResetWatermarks(ownerId);
   const collectionTopic = `collections:${ownerId}`;
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
 
+  const collectionsPhase = Date.now();
   const collections = await fetchAllPages<CollectionRow>((from, to) =>
     client
       .from('recipe_collections')
@@ -280,6 +292,7 @@ export async function pullAll(
       .order('id', { ascending: true })
       .range(from, to),
   );
+  logSync('info', `pull collections: ${collections.length} rows in ${Date.now() - collectionsPhase}ms`);
 
   let maxCollectionTs = await getWatermark(collectionTopic);
   for (const row of collections) {
@@ -290,6 +303,7 @@ export async function pullAll(
 
   const recipeTopic = `recipes:${ownerId}`;
   const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
+  const recipesPhase = Date.now();
 
   // Recipes (+ their ingredients / instructions / refs) are scoped via
   // PostgREST embedded-resource inner joins. The old approach assembled
@@ -393,10 +407,29 @@ export async function pullAll(
     }
     if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
   }
+  logSync(
+    'info',
+    `pull recipes: ${recipesFetched.length} rows in ${Date.now() - recipesPhase}ms`,
+  );
 
+  const importPhase = Date.now();
   const importCounts = await pullImports(client, ownerId);
+  logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, {
+    ...importCounts,
+  });
+  const convPhase = Date.now();
   const conversionRulesPulled = await pullConversionRules(client, ownerId);
+  logSync(
+    'info',
+    `pull conversion_rules: ${conversionRulesPulled} rows in ${Date.now() - convPhase}ms`,
+  );
+  const rewritePhase = Date.now();
   const rewriteJobsPulled = await pullRewriteJobs(client, ownerId);
+  logSync(
+    'info',
+    `pull rewrite_jobs: ${rewriteJobsPulled} rows in ${Date.now() - rewritePhase}ms`,
+  );
+  logSync('info', `pull complete in ${Date.now() - pullStart}ms`);
 
   return {
     collections: collections.length,
@@ -1108,6 +1141,9 @@ export async function pushOutbox(
   ownerId: string,
 ): Promise<{ ok: number; failed: number }> {
   const pending = await listPending();
+  logSync('info', `push: ${pending.length} pending`, {
+    kinds: summarizeKinds(pending),
+  });
   let ok = 0;
   let failed = 0;
   let i = 0;
@@ -1120,6 +1156,8 @@ export async function pushOutbox(
       let j = i;
       while (j < pending.length && pending[j]!.kind === 'import_item_insert') j += 1;
       const run = pending.slice(i, j);
+      const started = Date.now();
+      logSync('info', `push import_item_insert run: ${run.length} items`);
       try {
         await pushImportItemsBulk(
           client,
@@ -1127,30 +1165,53 @@ export async function pushOutbox(
         );
         for (const e of run) await markDone(e.id);
         ok += run.length;
+        logSync('info', `push import_item_insert done in ${Date.now() - started}ms`, {
+          count: run.length,
+        });
         i = j;
         continue;
       } catch (err) {
         // Attribute the failure to the first entry so its attempts/error
         // surface in the UI; leave the rest queued for the next cycle.
-        await markFailed(run[0]!.id, (err as Error).message);
+        const msg = (err as Error).message;
+        await markFailed(run[0]!.id, msg);
         failed += 1;
+        logSync('error', `push import_item_insert FAILED after ${Date.now() - started}ms`, {
+          count: run.length,
+          error: msg,
+        });
         break;
       }
     }
+    const started = Date.now();
+    logSync('info', `push ${entry.kind}`, { id: entry.entity_id });
     try {
       await pushOne(client, ownerId, entry);
       await markDone(entry.id);
       ok += 1;
+      logSync('info', `push ${entry.kind} done in ${Date.now() - started}ms`);
     } catch (err) {
-      await markFailed(entry.id, (err as Error).message);
+      const msg = (err as Error).message;
+      await markFailed(entry.id, msg);
       failed += 1;
+      logSync('error', `push ${entry.kind} FAILED after ${Date.now() - started}ms`, {
+        id: entry.entity_id,
+        error: msg,
+      });
       // Stop on first failure so we don't batter the server with a broken
       // entry; the caller's retry schedule will pick it up.
       break;
     }
     i += 1;
   }
+  logSync('info', `push complete: ${ok} ok, ${failed} failed`);
   return { ok, failed };
+}
+
+function summarizeKinds(entries: readonly OutboxEntry[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const e of entries) counts[e.kind] = (counts[e.kind] ?? 0) + 1;
+  return counts;
 }
 
 // Server max-rows cap is 1000; supabase-js encodes the upsert body in

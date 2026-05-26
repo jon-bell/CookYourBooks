@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useSync } from '../local/SyncProvider.js';
+import { SyncDebugDialog } from './SyncDebugDialog.js';
 
 const LABEL: Record<string, { text: string; tone: string }> = {
   initializing: { text: 'Starting…', tone: 'bg-stone-100 text-stone-600' },
@@ -9,8 +11,9 @@ const LABEL: Record<string, { text: string; tone: string }> = {
 };
 
 export function SyncBadge() {
-  const { status, pendingWrites, lastSyncedAt, lastError, syncNow } = useSync();
+  const { status, pendingWrites, lastSyncedAt, lastError } = useSync();
   const { text, tone } = LABEL[status] ?? LABEL.idle!;
+  const [open, setOpen] = useState(false);
   const errorHint = status === 'error' ? shortError(lastError) : '';
   const suffix =
     errorHint
@@ -21,16 +24,19 @@ export function SyncBadge() {
           ? ` · ${relativeTime(lastSyncedAt)}`
           : '';
   return (
-    <button
-      onClick={() => void syncNow()}
-      title={lastError ?? 'Click to sync now'}
-      aria-live="polite"
-      aria-label={`Sync status: ${text}${suffix ? `, ${suffix.replace(/^ · /, '')}` : ''}. Activate to sync now.`}
-      className={`max-w-xs truncate rounded-full px-2.5 py-1 text-xs font-medium transition ${tone} hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600`}
-    >
-      {text}
-      {suffix}
-    </button>
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title={lastError ?? 'Open sync diagnostics'}
+        aria-live="polite"
+        aria-label={`Sync status: ${text}${suffix ? `, ${suffix.replace(/^ · /, '')}` : ''}. Open diagnostics.`}
+        className={`max-w-xs truncate rounded-full px-2.5 py-1 text-xs font-medium transition ${tone} hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600`}
+      >
+        {text}
+        {suffix}
+      </button>
+      <SyncDebugDialog open={open} onClose={() => setOpen(false)} />
+    </>
   );
 }
 

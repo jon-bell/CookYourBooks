@@ -74,3 +74,19 @@ export async function countPending(): Promise<number> {
   }[];
   return rows[0]?.c ?? 0;
 }
+
+/** Debug helper: read the full outbox queue for the diagnostics panel. */
+export async function listOutboxForDebug(limit = 2000): Promise<OutboxEntry[]> {
+  return listPending(limit);
+}
+
+/** Debug helper: counts grouped by kind, for at-a-glance triage. */
+export async function outboxKindCounts(): Promise<Record<string, number>> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ kind: string; c: number }>(
+    `select kind, count(*) as c from outbox group by kind`,
+  )) as { kind: string; c: number }[];
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.kind] = r.c;
+  return out;
+}

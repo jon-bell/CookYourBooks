@@ -5,6 +5,7 @@ import { supabase } from '../supabase.js';
 import { getLocalDb } from './db.js';
 import { countPending } from './outbox.js';
 import { pullAll, pushOutbox, subscribeRealtime, type RealtimeHandle } from './sync.js';
+import { logSync } from './syncLog.js';
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -109,9 +110,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   async function cycle(ownerId: string) {
     if (inFlight.current) {
       pullPending.current = true;
+      logSync('info', 'cycle: coalesced into in-flight run');
       return inFlight.current;
     }
     const run = (async () => {
+      const cycleStart = Date.now();
+      logSync('info', 'cycle: start');
       setSyncing();
       setLastError(null);
       try {
@@ -124,8 +128,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         await withTimeout(pullAll(supabase, ownerId), CYCLE_TIMEOUT_MS, 'pull');
         setLastSyncedAt(Date.now());
         setSettled('idle');
+        logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
       } catch (err) {
-        setSettled('error', (err as Error).message);
+        const msg = (err as Error).message;
+        setSettled('error', msg);
+        logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
       } finally {
         await refreshPendingCount();
         scheduleInvalidate();
@@ -222,6 +229,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       // Clear inFlight so the next syncNow / realtime nudge can start
       // a fresh cycle instead of joining the wedged promise.
       inFlight.current = null;
+      logSync('error', 'watchdog: cycle stalled, clearing inFlight');
       setSettled(
         'error',
         'Sync stalled — click "Syncing…" or refresh to retry.',
