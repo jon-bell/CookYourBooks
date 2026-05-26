@@ -8,22 +8,32 @@ import {
 } from '../local/syncLog.js';
 import { listOutboxForDebug, outboxKindCounts } from '../local/outbox.js';
 import { listWatermarks } from '../local/sync.js';
+import { snapshotDbOps } from '../local/db.js';
 import type { OutboxEntry } from '../local/outbox.js';
+
+interface DbOpView {
+  id: number;
+  label: string;
+  state: 'waiting' | 'running';
+  ageMs: number;
+}
 
 interface Snapshot {
   outbox: OutboxEntry[];
   kindCounts: Record<string, number>;
   watermarks: { topic: string; high_water_mark: number }[];
+  dbOps: DbOpView[];
 }
 
-const EMPTY: Snapshot = { outbox: [], kindCounts: {}, watermarks: [] };
+const EMPTY: Snapshot = { outbox: [], kindCounts: {}, watermarks: [], dbOps: [] };
 
 export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { status, pendingWrites, lastSyncedAt, lastError, syncNow } = useSync();
+  const { status, pendingWrites, lastSyncedAt, lastError, syncingSince, syncNow } = useSync();
   const [logEntries, setLogEntries] = useState<readonly SyncLogEntry[]>(() => getSyncLog());
   const [snap, setSnap] = useState<Snapshot>(EMPTY);
   const [refreshing, setRefreshing] = useState(false);
   const [pushed, setPushed] = useState(false);
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     if (!open) return;
@@ -43,13 +53,25 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
 
   async function refreshSnapshot() {
     setRefreshing(true);
+    // Read dbOps synchronously so a wedged SQLite mutex doesn't hide
+    // the very state we're trying to diagnose. The outbox / watermark
+    // reads go through the lock and will simply not resolve while it's
+    // wedged — that's the diagnostic signal.
+    const nowTs = Date.now();
+    const dbOps: DbOpView[] = snapshotDbOps().map((o) => ({
+      id: o.id,
+      label: o.label,
+      state: o.state,
+      ageMs: nowTs - o.startedAt,
+    }));
+    setSnap((s) => ({ ...s, dbOps }));
     try {
       const [outbox, kindCounts, watermarks] = await Promise.all([
         listOutboxForDebug(),
         outboxKindCounts(),
         listWatermarks(),
       ]);
-      setSnap({ outbox, kindCounts, watermarks });
+      setSnap({ outbox, kindCounts, watermarks, dbOps });
     } catch (err) {
       console.error('SyncDebugDialog refresh failed', err);
     } finally {
@@ -64,6 +86,12 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
     return () => clearInterval(id);
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [open]);
+
   const summary = useMemo(
     () =>
       JSON.stringify(
@@ -72,15 +100,17 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
           pendingWrites,
           lastSyncedAt,
           lastError,
+          syncingForMs: syncingSince ? Date.now() - syncingSince : null,
           kindCounts: snap.kindCounts,
           watermarks: snap.watermarks,
+          dbOps: snap.dbOps,
           outbox: snap.outbox,
           log: logEntries.slice(-200),
         },
         null,
         2,
       ),
-    [status, pendingWrites, lastSyncedAt, lastError, snap, logEntries],
+    [status, pendingWrites, lastSyncedAt, lastError, syncingSince, snap, logEntries],
   );
 
   function copySummary() {
@@ -150,12 +180,41 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
         <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-5 md:grid-cols-2">
           <Section title="Status">
             <KV k="state" v={status} />
+            <KV
+              k="syncing for"
+              v={syncingSince ? relMs(now - syncingSince) : '—'}
+            />
             <KV k="pending writes" v={String(pendingWrites)} />
             <KV
               k="last synced"
               v={lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString() : '—'}
             />
             <KV k="last error" v={lastError ?? '—'} mono />
+          </Section>
+
+          <Section title={`SQLite ops in flight (${snap.dbOps.length})`}>
+            {snap.dbOps.length === 0 ? (
+              <p className="text-sm text-stone-500">None.</p>
+            ) : (
+              <ul className="space-y-1 text-xs font-mono">
+                {snap.dbOps.map((op) => (
+                  <li
+                    key={op.id}
+                    className={
+                      op.ageMs > 3000
+                        ? 'text-red-700 dark:text-red-400'
+                        : op.state === 'waiting'
+                          ? 'text-amber-700 dark:text-amber-400'
+                          : 'text-stone-700 dark:text-stone-300'
+                    }
+                  >
+                    <span className="text-stone-400">#{op.id}</span>{' '}
+                    <span className="uppercase">[{op.state}]</span> {relMs(op.ageMs)}{' '}
+                    <span className="text-stone-500">{op.label}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Section>
 
           <Section title={`Outbox kinds (${snap.outbox.length} total)`}>

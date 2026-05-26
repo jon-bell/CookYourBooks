@@ -276,8 +276,9 @@ export async function pullAll(
   ownerId: string,
 ): Promise<PullResult> {
   const pullStart = Date.now();
-  logSync('info', 'pull: start');
+  logSync('info', 'pullAll: entered');
   await maybeResetWatermarks(ownerId);
+  logSync('info', 'pull: start');
   const collectionTopic = `collections:${ownerId}`;
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
 
@@ -1140,6 +1141,7 @@ export async function pushOutbox(
   client: CookbooksClient,
   ownerId: string,
 ): Promise<{ ok: number; failed: number }> {
+  logSync('info', 'pushOutbox: entered');
   const pending = await listPending();
   logSync('info', `push: ${pending.length} pending`, {
     kinds: summarizeKinds(pending),

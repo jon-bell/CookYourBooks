@@ -1,6 +1,7 @@
 import initWasm, { DB } from '@vlcn.io/crsqlite-wasm';
 import wasmUrl from '@vlcn.io/crsqlite-wasm/crsqlite.wasm?url';
 import { CRR_TABLES, POST_SCHEMA_MIGRATIONS, SCHEMA_STATEMENTS } from './schema.js';
+import { logSync } from './syncLog.js';
 
 export type LocalDb = DB;
 
@@ -9,30 +10,87 @@ let initPromise: Promise<LocalDb> | undefined;
 /** Serializes WASM SQLite access — concurrent exec from sync + import deadlocks. */
 let dbLockTail: Promise<void> = Promise.resolve();
 
-async function withDbLock<T>(fn: () => Promise<T>): Promise<T> {
+interface DbLockOp {
+  id: number;
+  label: string;
+  startedAt: number;
+  state: 'waiting' | 'running';
+}
+let dbOpSeq = 1;
+const liveOps = new Map<number, DbLockOp>();
+const SLOW_LOCK_WARN_MS = 3_000;
+
+export function snapshotDbOps(): DbLockOp[] {
+  return [...liveOps.values()].sort((a, b) => a.id - b.id);
+}
+
+async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
   const prev = dbLockTail;
   dbLockTail = prev.then(() => held);
-  await prev;
+  const op: DbLockOp = {
+    id: dbOpSeq++,
+    label,
+    startedAt: Date.now(),
+    state: 'waiting',
+  };
+  liveOps.set(op.id, op);
+  // If we're not first in line, warn after a few seconds — likeliest
+  // cause of a stuck cycle is an earlier op that never resolved.
+  const waitTimer = setTimeout(() => {
+    if (op.state === 'waiting') {
+      logSync('warn', `db lock: still waiting after ${Date.now() - op.startedAt}ms`, {
+        label,
+        opId: op.id,
+        liveOps: [...liveOps.values()].map((o) => ({
+          id: o.id,
+          label: o.label,
+          state: o.state,
+          ageMs: Date.now() - o.startedAt,
+        })),
+      });
+    }
+  }, SLOW_LOCK_WARN_MS);
+  try {
+    await prev;
+  } finally {
+    clearTimeout(waitTimer);
+  }
+  op.state = 'running';
+  op.startedAt = Date.now();
+  const runTimer = setTimeout(() => {
+    if (op.state === 'running') {
+      logSync('warn', `db op slow: ${label} still running after ${Date.now() - op.startedAt}ms`, {
+        opId: op.id,
+      });
+    }
+  }, SLOW_LOCK_WARN_MS);
   try {
     return await fn();
   } finally {
+    clearTimeout(runTimer);
+    liveOps.delete(op.id);
     release();
   }
 }
 
 function lockDb(db: DB): LocalDb {
   return {
-    exec: (sql, bind) => withDbLock(() => db.exec(sql, bind)),
-    execO: (sql, bind) => withDbLock(() => db.execO(sql, bind)),
-    execA: (sql, bind) => withDbLock(() => db.execA(sql, bind)),
+    exec: (sql, bind) => withDbLock(() => db.exec(sql, bind), labelFor(sql)),
+    execO: (sql, bind) => withDbLock(() => db.execO(sql, bind), labelFor(sql)),
+    execA: (sql, bind) => withDbLock(() => db.execA(sql, bind), labelFor(sql)),
     // Hold the mutex for the whole transaction — tx.exec runs on the raw handle.
-    tx: (fn) => withDbLock(() => db.tx(fn)),
+    tx: (fn) => withDbLock(() => db.tx(fn), 'tx'),
     close: () => db.close(),
   } as LocalDb;
+}
+
+function labelFor(sql: string): string {
+  const trimmed = sql.trim().replace(/\s+/g, ' ');
+  return trimmed.slice(0, 80);
 }
 
 export function getLocalDb(): Promise<LocalDb> {

@@ -39,6 +39,8 @@ interface SyncState {
   pendingWrites: number;
   lastSyncedAt: number | null;
   lastError: string | null;
+  /** Wall-clock when the current 'syncing' cycle started, or null. */
+  syncingSince: number | null;
   /** Trigger an immediate pull + push cycle. Safe to call concurrently — overlapping calls coalesce. */
   syncNow: () => Promise<void>;
 }
@@ -66,6 +68,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const [localReady, setLocalReady] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [pendingWrites, setPendingWrites] = useState(0);
+  const [syncingSince, setSyncingSince] = useState<number | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
@@ -97,12 +100,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   }
 
   function setSyncing() {
-    syncingStartedAt.current = Date.now();
+    const now = Date.now();
+    syncingStartedAt.current = now;
+    setSyncingSince(now);
     setStatus('syncing');
   }
 
   function setSettled(next: SyncStatus, error?: string) {
     syncingStartedAt.current = null;
+    setSyncingSince(null);
     if (error !== undefined) setLastError(error);
     setStatus(next);
   }
@@ -124,8 +130,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // Wrap in a hard timeout so a single hung request can't trap
         // the user on "Syncing…" forever — the actual fetch keeps
         // running, we just stop awaiting it.
-        await withTimeout(pushOutbox(supabase, ownerId), CYCLE_TIMEOUT_MS, 'push');
+        logSync('info', 'cycle: invoking pushOutbox');
+        const pushRes = await withTimeout(
+          pushOutbox(supabase, ownerId),
+          CYCLE_TIMEOUT_MS,
+          'push',
+        );
+        logSync('info', 'cycle: pushOutbox returned', pushRes);
+        logSync('info', 'cycle: invoking pullAll');
         await withTimeout(pullAll(supabase, ownerId), CYCLE_TIMEOUT_MS, 'pull');
+        logSync('info', 'cycle: pullAll returned');
         setLastSyncedAt(Date.now());
         setSettled('idle');
         logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
@@ -266,6 +280,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     pendingWrites,
     lastSyncedAt,
     lastError,
+    syncingSince,
     syncNow: async () => {
       if (user) await cycle(user.id);
     },
