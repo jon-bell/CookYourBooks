@@ -86,9 +86,7 @@ Violations are taken seriously. See the
 - A user may belong to at most one household at a time.
 - A household may contain at most 6 active members.
 - After leaving or being removed from a household, there is a 7-day
-  cooldown before joining or creating another. The cooldown exists to
-  prevent the household feature from being used as a back-door for
-  content distribution.
+  cooldown before joining or creating another.
 - Sharing a collection with a household requires an attestation that
   you have the right to do so. The attestation is logged with your
   account ID and a timestamp, and is available to the platform for
@@ -370,8 +368,8 @@ contract with them directly and data flows from your browser to them.
 | Data | Retention |
 |---|---|
 | Active account data | Held for the lifetime of your account |
-| Deleted account — content and sync data | **[CONFIRM: tombstone duration required for cr-sqlite CRDT convergence]** |
-| Audit log | Indefinitely |
+| Deleted account — content and sync data | Hard-deleted immediately when you delete your account in-app. The auth identity, profile, recipe collections, recipes, import history, conversion rules, household memberships, and all related rows cascade-delete in the same database transaction. |
+| Audit log | Retained indefinitely with the actor link set to NULL after deletion (legitimate-interest carve-out for takedown defense and abuse investigation). |
 | Sentry telemetry events | **[CONFIRM: 30 or 90 days per your Sentry project settings]** |
 | OCR import artifacts (uploaded images) | **[CONFIRM: retention policy for Storage bucket]** |
 
