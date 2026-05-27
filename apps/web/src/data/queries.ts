@@ -10,6 +10,7 @@ import {
   type RecipeSummary,
 } from '../local/repositories.js';
 import { collectionRepo, recipeRepo } from './repos.js';
+import { embedAndPushRecipe } from '../search/saveHook.js';
 
 export function useCollections() {
   const { user } = useAuth();
@@ -111,6 +112,14 @@ export function useSaveRecipe(collectionId: string) {
       qc.invalidateQueries({ queryKey: ['adaptations'] });
       qc.invalidateQueries({ queryKey: ['recipe-summary', recipe.id] });
       void syncNow();
+      // Fire-and-forget: compute the embedding locally and queue an
+      // upsert to pgvector. Heavy on the first call (~30 MB model
+      // download) so deliberately not awaited — search remains usable
+      // via the substring fallback in the meantime.
+      void embedAndPushRecipe(recipe).catch(() => {
+        // The worker will compute the canonical vector regardless; a
+        // failed local short-circuit is recoverable.
+      });
     },
   });
 }

@@ -19,6 +19,15 @@ import pricingCard from './pricing.json' with { type: 'json' };
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
 import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
+import {
+  buildRecipeEmbedText,
+  embedBatch,
+  EMBEDDING_DIM,
+  EMBEDDING_MODEL_ID,
+  hashEmbedText,
+  preloadEmbedder,
+  type EmbedRecipeInput,
+} from './embed.ts';
 
 // Self-hosted Sentry for the import worker. Reports to the dedicated
 // cookyourbooks-edge project (/3) so edge-runtime events don't share
@@ -263,7 +272,7 @@ Deno.serve(async (req) => {
       });
       return json({ error: 'unauthorized' }, 401);
     }
-    let body: { batch_id?: string | null } = {};
+    let body: { batch_id?: string | null; embed?: boolean } = {};
     try {
       const text = await req.text();
       if (text.length > 0) body = JSON.parse(text);
@@ -285,6 +294,10 @@ Deno.serve(async (req) => {
     // up the slack if anything is still queued.
     const rewriteSummary = await runRewriteLoop(workerId, wLog);
     const importVariantSummary = await runImportVariantLoop(workerId, wLog);
+    // Drain pending recipe embedding jobs. Same shape as rewrite — a
+    // single claim per invocation; the cron tick + save-side kicks
+    // pick up any tail.
+    const embedSummary = await runEmbedLoop(workerId, wLog);
     wLog.info('invocation end', {
       ...summary,
       bakeoff_processed: bakeoffSummary.processed,
@@ -293,6 +306,8 @@ Deno.serve(async (req) => {
       rewrite_failed: rewriteSummary.failed,
       import_variant_processed: importVariantSummary.processed,
       import_variant_failed: importVariantSummary.failed,
+      embed_processed: embedSummary.processed,
+      embed_failed: embedSummary.failed,
     });
 
     if (summary.remaining > 0) {
@@ -1623,6 +1638,252 @@ async function failImportVariantResult(
     log.error('import_variant_fail rpc error', { code: error.code, message: error.message });
   }
 }
+
+// ---------- recipe embedding pipeline ----------
+//
+// Claims jobs from recipe_embedding_jobs, loads each recipe + its
+// ingredients, hashes the embed text, and either short-circuits (when
+// the hash already matches the cached row) or runs BGE-small to
+// generate a fresh vector. Mirrors the rewrite loop's discipline:
+// one claim per invocation, cron + save-side kicks pick up the rest.
+
+interface EmbedJob {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  attempts: number;
+}
+
+const MAX_EMBED_RETRIES = 3;
+
+async function runEmbedLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  const { data, error } = await supabase.rpc('embed_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+  });
+  if (error) {
+    log.error('embed_claim_next failed', { code: error.code, message: error.message });
+    return { processed, failed };
+  }
+  const jobs = (data ?? []) as EmbedJob[];
+  if (jobs.length === 0) return { processed, failed };
+  log.info('claimed embed jobs', { count: jobs.length });
+
+  // Load the BGE pipeline once for the whole invocation. Cold start
+  // pays the model download (~30 MB, cached in /tmp); warm starts
+  // reuse the same in-memory pipeline.
+  try {
+    await preloadEmbedder();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('embed pipeline preload failed', { error: msg });
+    // Fail every claimed job back to PENDING so a future invocation
+    // (maybe on a healthier instance) can retry them.
+    for (const job of jobs) {
+      await supabase.rpc('embed_fail', {
+        p_job_id: job.id,
+        p_claim_token: workerId,
+        p_error: `pipeline load: ${msg}`,
+        p_next_state: 'PENDING',
+      });
+    }
+    return { processed, failed: jobs.length };
+  }
+
+  for (const job of jobs) {
+    const outcome = await processEmbedJob(
+      job,
+      workerId,
+      log.child({ item: shortId(job.id) }),
+    );
+    if (outcome === 'DONE') processed++;
+    else failed++;
+  }
+  return { processed, failed };
+}
+
+interface EmbedRecipeRow {
+  id: string;
+  title: string;
+  description: string | null;
+  notes: string | null;
+  book_title: string | null;
+  equipment: string[] | null;
+  deleted: boolean;
+}
+
+interface EmbedIngredientRow {
+  recipe_id: string;
+  name: string;
+  preparation: string | null;
+  description: string | null;
+  type: string;
+  sort_order: number;
+}
+
+async function processEmbedJob(
+  job: EmbedJob,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  log.info('embed start', { recipe: shortId(job.recipe_id), attempts: job.attempts });
+
+  const { data: recipeRow, error: rErr } = await supabase
+    .from('recipes')
+    .select('id, title, description, notes, book_title, equipment, deleted')
+    .eq('id', job.recipe_id)
+    .maybeSingle();
+  if (rErr) {
+    log.error('embed: load recipe failed', { code: rErr.code, message: rErr.message });
+    await failEmbedJob(job, workerId, `load recipe: ${rErr.message}`, 'PENDING');
+    return 'FAILED';
+  }
+  if (!recipeRow) {
+    // Recipe was deleted out from under us — mark the job DONE so it
+    // stops re-queueing on every cron tick.
+    await failEmbedJob(job, workerId, 'recipe missing', 'FAILED');
+    return 'FAILED';
+  }
+  const recipe = recipeRow as EmbedRecipeRow;
+  if (recipe.deleted) {
+    await failEmbedJob(job, workerId, 'recipe deleted', 'FAILED');
+    return 'FAILED';
+  }
+
+  const { data: ingRows, error: iErr } = await supabase
+    .from('ingredients')
+    .select('recipe_id, name, preparation, description, type, sort_order')
+    .eq('recipe_id', job.recipe_id)
+    .order('sort_order', { ascending: true });
+  if (iErr) {
+    log.error('embed: load ingredients failed', { code: iErr.code, message: iErr.message });
+    await failEmbedJob(job, workerId, `load ingredients: ${iErr.message}`, 'PENDING');
+    return 'FAILED';
+  }
+  const ingredients = (ingRows ?? []) as EmbedIngredientRow[];
+
+  const embedInput: EmbedRecipeInput = {
+    title: recipe.title,
+    description: recipe.description,
+    notes: recipe.notes,
+    book_title: recipe.book_title,
+    equipment: recipe.equipment,
+    ingredients: ingredients.map((i) => ({
+      name: i.name,
+      preparation: i.preparation,
+      description: i.description,
+      type: i.type,
+    })),
+  };
+  const text = buildRecipeEmbedText(embedInput);
+  const textHash = await hashEmbedText(text);
+
+  // Short-circuit when the cached row matches.
+  const { data: existing } = await supabase
+    .from('recipe_embeddings')
+    .select('text_hash, model')
+    .eq('recipe_id', job.recipe_id)
+    .maybeSingle();
+  if (
+    existing &&
+    (existing as { text_hash: string }).text_hash === textHash &&
+    (existing as { model: string }).model === EMBEDDING_MODEL_ID
+  ) {
+    log.info('embed cache hit', { recipe: shortId(job.recipe_id) });
+    // Mark the job done with the existing vector — embed_complete needs
+    // a vector, so we fetch the previous one and pass it back as the
+    // "new" payload. Cheaper than fetching the canonical pgvector
+    // representation; we know it hasn't changed.
+    const { data: vecRow } = await supabase
+      .from('recipe_embeddings')
+      .select('embedding')
+      .eq('recipe_id', job.recipe_id)
+      .maybeSingle();
+    if (vecRow) {
+      const v = (vecRow as { embedding: number[] | string }).embedding;
+      const vec = decodeServerVector(v);
+      if (vec) {
+        await completeEmbedJob(job, workerId, textHash, vec, log);
+        return 'DONE';
+      }
+    }
+    // Fall through to a re-embed if we somehow couldn't read it back.
+  }
+
+  let vec: Float32Array;
+  try {
+    const [embedded] = await embedBatch([text]);
+    if (!embedded) throw new Error('Embedder returned no vector.');
+    vec = embedded;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('embed inference failed', { error: msg });
+    const next = job.attempts < MAX_EMBED_RETRIES ? 'PENDING' : 'FAILED';
+    await failEmbedJob(job, workerId, msg, next);
+    return 'FAILED';
+  }
+
+  await completeEmbedJob(job, workerId, textHash, vec, log);
+  return 'DONE';
+}
+
+async function completeEmbedJob(
+  job: EmbedJob,
+  workerId: string,
+  textHash: string,
+  vec: Float32Array,
+  log: ReturnType<typeof makeLog>,
+): Promise<void> {
+  const { error } = await supabase.rpc('embed_complete', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_text_hash: textHash,
+    p_embedding: Array.from(vec) as unknown as number[],
+    p_model: EMBEDDING_MODEL_ID,
+  });
+  if (error) {
+    log.error('embed_complete rpc error', { code: error.code, message: error.message });
+  }
+}
+
+async function failEmbedJob(
+  job: EmbedJob,
+  workerId: string,
+  message: string,
+  nextState: 'PENDING' | 'FAILED',
+): Promise<void> {
+  await supabase.rpc('embed_fail', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_error: message,
+    p_next_state: nextState,
+  });
+}
+
+function decodeServerVector(v: number[] | string | null): Float32Array | null {
+  if (!v) return null;
+  if (Array.isArray(v)) return Float32Array.from(v);
+  if (typeof v === 'string') {
+    try {
+      const parsed = JSON.parse(v);
+      if (Array.isArray(parsed)) return Float32Array.from(parsed as number[]);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// Suppress unused warnings for the dimension constant — kept for
+// symmetry with the browser path and useful for assertions if we ever
+// add per-batch sanity checks here.
+void EMBEDDING_DIM;
 
 // ---------- helpers ----------
 

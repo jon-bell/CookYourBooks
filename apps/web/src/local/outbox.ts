@@ -18,7 +18,11 @@ export type OutboxKind =
   // Per-user HOUSE conversion rules. Pushed via the
   // house_conversion_upsert / house_conversion_delete RPCs.
   | 'conversion_rule_save'
-  | 'conversion_rule_delete';
+  | 'conversion_rule_delete'
+  // Browser-computed recipe embedding ready to push to pgvector via the
+  // embed_upsert_client RPC. The entity_id is the recipe id; the
+  // payload lives in the local recipe_embeddings row.
+  | 'embedding_push';
 
 export interface OutboxEntry {
   id: number;

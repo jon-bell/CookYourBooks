@@ -1505,6 +1505,95 @@ export type Database = {
         }
         Relationships: []
       }
+      recipe_embeddings: {
+        Row: {
+          recipe_id: string
+          embedding: string
+          text_hash: string
+          model: string
+          embedded_at: string
+          updated_at: string
+        }
+        Insert: {
+          recipe_id: string
+          embedding: string
+          text_hash: string
+          model: string
+          embedded_at?: string
+          updated_at?: string
+        }
+        Update: {
+          recipe_id?: string
+          embedding?: string
+          text_hash?: string
+          model?: string
+          embedded_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_embeddings_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: true
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_embedding_jobs: {
+        Row: {
+          id: string
+          owner_id: string
+          recipe_id: string
+          status: string
+          claim_token: string | null
+          claim_expires_at: string
+          attempts: number
+          last_error: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          owner_id: string
+          recipe_id: string
+          status?: string
+          claim_token?: string | null
+          claim_expires_at?: string
+          attempts?: number
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          owner_id?: string
+          recipe_id?: string
+          status?: string
+          claim_token?: string | null
+          claim_expires_at?: string
+          attempts?: number
+          last_error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_embedding_jobs_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_embedding_jobs_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rewrite_jobs: {
         Row: {
           attempts: number
@@ -1786,6 +1875,16 @@ export type Database = {
         Args: { p_provider: string; p_model: string; p_prompt: string }
         Returns: undefined
       }
+      embed_upsert_client: {
+        Args: {
+          p_recipe_id: string
+          p_text_hash: string
+          p_embedding: number[]
+          p_model: string
+        }
+        Returns: boolean
+      }
+      embed_kick: { Args: Record<string, never>; Returns: undefined }
       cli_add_shopping: {
         Args: {
           name: string

@@ -433,4 +433,17 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   )`,
   `create index if not exists rewrite_jobs_recipe_idx on rewrite_jobs(recipe_id)`,
   `create index if not exists rewrite_jobs_owner_idx on rewrite_jobs(owner_id, status)`,
+  // ---------- Recipe embeddings cache (2026-06-05) ----------
+  // Mirrors public.recipe_embeddings. Stored as a BLOB of packed
+  // little-endian float32s (Float32Array.buffer). Local-only mirror —
+  // not CRR, derived data that the worker / browser regenerate from the
+  // canonical Postgres row.
+  `create table if not exists recipe_embeddings (
+    recipe_id text primary key not null default '',
+    embedding blob not null,
+    text_hash text not null default '',
+    model text not null default '',
+    updated_at integer not null default 0
+  )`,
+  `create index if not exists recipe_embeddings_updated_idx on recipe_embeddings(updated_at)`,
 ];

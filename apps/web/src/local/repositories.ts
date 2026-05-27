@@ -1320,3 +1320,258 @@ function tsToMs(ts: string | number | null | undefined): number {
   const parsed = Date.parse(ts);
   return Number.isFinite(parsed) ? parsed : now();
 }
+
+// ------------- Recipe embeddings (local mirror) -------------
+
+export interface LocalEmbeddingRow {
+  recipeId: string;
+  embedding: Float32Array;
+  textHash: string;
+  model: string;
+  updatedAtMs: number;
+}
+
+/**
+ * Pack a Float32Array into a byte view safe to write as a SQLite BLOB.
+ * Endianness: we never round-trip the bytes off-device, so the host's
+ * native little-endian layout is fine — both the browser and the
+ * sqlite VFS see the same machine.
+ */
+export function packEmbedding(vec: Float32Array): Uint8Array {
+  return new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
+}
+
+/**
+ * Unpack a SQLite BLOB back into a Float32Array. Copies into a fresh
+ * buffer so callers don't have to worry about the underlying storage
+ * lifetime (cr-sqlite hands us a borrowed view that the VFS may reuse).
+ */
+export function unpackEmbedding(bytes: Uint8Array): Float32Array {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return new Float32Array(copy);
+}
+
+export async function upsertLocalEmbedding(row: LocalEmbeddingRow): Promise<void> {
+  const db = await getLocalDb();
+  await db.exec(
+    `insert into recipe_embeddings (recipe_id, embedding, text_hash, model, updated_at)
+     values (?,?,?,?,?)
+     on conflict(recipe_id) do update set
+       embedding=excluded.embedding,
+       text_hash=excluded.text_hash,
+       model=excluded.model,
+       updated_at=excluded.updated_at
+     where excluded.updated_at >= recipe_embeddings.updated_at`,
+    [
+      row.recipeId,
+      packEmbedding(row.embedding),
+      row.textHash,
+      row.model,
+      row.updatedAtMs,
+    ],
+  );
+}
+
+export async function upsertLocalEmbeddingsBatch(
+  rows: readonly LocalEmbeddingRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  // Filter out stale incoming rows first, mirroring the recipes path.
+  const db = await getLocalDb();
+  const ids = rows.map((r) => r.recipeId);
+  const existing = new Map<string, number>();
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const ph = slice.map(() => '?').join(',');
+    const found = (await db.execO<{ recipe_id: string; updated_at: number }>(
+      `select recipe_id, updated_at from recipe_embeddings where recipe_id in (${ph})`,
+      slice,
+    )) as { recipe_id: string; updated_at: number }[];
+    for (const f of found) existing.set(f.recipe_id, f.updated_at);
+  }
+  for (const row of rows) {
+    const local = existing.get(row.recipeId);
+    if (local && local > row.updatedAtMs) continue;
+    await upsertLocalEmbedding(row);
+  }
+}
+
+/** Drop a single row — used when the canonical Postgres row is deleted. */
+export async function deleteLocalEmbedding(recipeId: string): Promise<void> {
+  const db = await getLocalDb();
+  await db.exec(`delete from recipe_embeddings where recipe_id = ?`, [recipeId]);
+}
+
+/**
+ * Look up the cached row for a recipe. Returns undefined when the
+ * worker / save path hasn't computed one yet.
+ */
+export async function getLocalEmbedding(
+  recipeId: string,
+): Promise<LocalEmbeddingRow | undefined> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{
+    recipe_id: string;
+    embedding: Uint8Array;
+    text_hash: string;
+    model: string;
+    updated_at: number;
+  }>(
+    `select recipe_id, embedding, text_hash, model, updated_at
+       from recipe_embeddings where recipe_id = ?`,
+    [recipeId],
+  )) as {
+    recipe_id: string;
+    embedding: Uint8Array;
+    text_hash: string;
+    model: string;
+    updated_at: number;
+  }[];
+  const r = rows[0];
+  if (!r) return undefined;
+  return {
+    recipeId: r.recipe_id,
+    embedding: unpackEmbedding(r.embedding),
+    textHash: r.text_hash,
+    model: r.model,
+    updatedAtMs: r.updated_at,
+  };
+}
+
+/**
+ * Walk every embedding the caller is allowed to search — joined to
+ * recipes + recipe_collections so we can filter soft-deletes and (when
+ * an owner id is supplied) restrict to that owner's library. Returns
+ * lightweight rows: title + collection metadata enough to render a
+ * result row without recipe hydration.
+ */
+export interface SearchableEmbedding {
+  recipeId: string;
+  collectionId: string;
+  collectionTitle: string;
+  collectionSourceType: string;
+  title: string;
+  embedding: Float32Array;
+}
+
+export async function listSearchableEmbeddings(
+  ownerId: string,
+): Promise<SearchableEmbedding[]> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{
+    recipe_id: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: string;
+    title: string;
+    embedding: Uint8Array;
+  }>(
+    `select e.recipe_id, r.collection_id, r.title,
+            c.title as collection_title, c.source_type
+       from recipe_embeddings e
+       join recipes r on r.id = e.recipe_id and r.deleted = 0
+       join recipe_collections c on c.id = r.collection_id
+              and c.owner_id = ? and c.deleted = 0`,
+    [ownerId],
+  )) as {
+    recipe_id: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: string;
+    title: string;
+    embedding: Uint8Array;
+  }[];
+  return rows.map((r) => ({
+    recipeId: r.recipe_id,
+    collectionId: r.collection_id,
+    collectionTitle: r.collection_title,
+    collectionSourceType: r.source_type,
+    title: r.title,
+    embedding: unpackEmbedding(r.embedding),
+  }));
+}
+
+/**
+ * Lightweight, SQL-only substring search used as the offline /
+ * cold-cache fallback. Covers the same six fields the embedding text
+ * does. Returns at most `limit` rows, lightly ranked: title hit beats
+ * description hit beats ingredient hit beats notes/equipment.
+ */
+export interface SubstringHit {
+  recipeId: string;
+  collectionId: string;
+  collectionTitle: string;
+  collectionSourceType: string;
+  title: string;
+}
+
+export async function searchRecipesLocalSubstring(
+  ownerId: string,
+  q: string,
+  limit = 50,
+): Promise<SubstringHit[]> {
+  const trimmed = q.trim().toLowerCase();
+  if (!trimmed) return [];
+  const db = await getLocalDb();
+  const needle = `%${trimmed}%`;
+  const rows = (await db.execO<{
+    recipe_id: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: string;
+    title: string;
+    rank: number;
+  }>(
+    `select r.id as recipe_id,
+            r.collection_id,
+            c.title as collection_title,
+            c.source_type,
+            r.title,
+            case
+              when lower(r.title) like ? then 0
+              when lower(coalesce(r.description, '')) like ? then 1
+              when exists (select 1 from ingredients i where i.recipe_id = r.id and lower(i.name) like ?) then 2
+              when lower(coalesce(r.notes, '')) like ? then 3
+              when lower(coalesce(r.book_title, '')) like ? then 3
+              when lower(coalesce(r.equipment, '')) like ? then 3
+              else 4
+            end as rank
+       from recipes r
+       join recipe_collections c on c.id = r.collection_id
+       where r.deleted = 0
+         and c.owner_id = ?
+         and c.deleted = 0
+         and (
+           lower(r.title) like ?
+           or lower(coalesce(r.description, '')) like ?
+           or lower(coalesce(r.notes, '')) like ?
+           or lower(coalesce(r.book_title, '')) like ?
+           or lower(coalesce(r.equipment, '')) like ?
+           or exists (select 1 from ingredients i where i.recipe_id = r.id and lower(i.name) like ?)
+         )
+       order by rank asc, lower(r.title) asc
+       limit ?`,
+    [
+      needle, needle, needle, needle, needle, needle,
+      ownerId,
+      needle, needle, needle, needle, needle, needle,
+      limit,
+    ],
+  )) as {
+    recipe_id: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: string;
+    title: string;
+    rank: number;
+  }[];
+  return rows.map((r) => ({
+    recipeId: r.recipe_id,
+    collectionId: r.collection_id,
+    collectionTitle: r.collection_title,
+    collectionSourceType: r.source_type,
+    title: r.title,
+  }));
+}

@@ -19,6 +19,11 @@ import {
   filterFresherIncoming,
   bulkInsertOnConflictId,
   bulkInsertIgnoreId,
+  upsertLocalEmbeddingsBatch,
+  upsertLocalEmbedding,
+  deleteLocalEmbedding,
+  getLocalEmbedding,
+  type LocalEmbeddingRow,
 } from './repositories.js';
 import {
   listPending,
@@ -118,6 +123,7 @@ export interface PullResult {
   importTocEntries: number;
   conversionRules: number;
   rewriteJobs: number;
+  recipeEmbeddings: number;
 }
 
 interface ConversionRuleRow {
@@ -230,6 +236,17 @@ interface ImportTocEntryRow {
   updated_at: string;
 }
 
+interface RecipeEmbeddingRow {
+  recipe_id: string;
+  /** Postgres `vector(384)` returns as either a numeric[] (when the
+   *  PostgREST cast handler is configured) or a textual `[1.23,...]`
+   *  representation. We accept both. */
+  embedding: number[] | string;
+  text_hash: string;
+  model: string;
+  updated_at: string;
+}
+
 interface RewriteJobRow {
   id: string;
   owner_id: string;
@@ -254,7 +271,7 @@ interface RewriteJobRow {
 // first pull after the user upgrades, every per-topic watermark is
 // reset to 0 so missed rows get a chance to flow in. Increment when
 // fixing a pull bug that could have stranded server rows.
-const SYNC_RESET_VERSION = 4;
+const SYNC_RESET_VERSION = 5;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
   const versionTopic = `sync_reset_version:${ownerId}`;
@@ -262,7 +279,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -272,6 +289,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `import_toc_entries:${ownerId}`,
       `conversion_rules:${ownerId}`,
       `rewrite_jobs:${ownerId}`,
+      `recipe_embeddings:${ownerId}`,
     ],
   );
   await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
@@ -283,7 +301,15 @@ export interface PullCallbacks {
    * invalidate React Query keys incrementally so the UI hydrates as
    * each topic lands instead of waiting for the whole pull to finish.
    */
-  onPhaseComplete?: (phase: 'collections' | 'recipes' | 'imports' | 'conversion_rules' | 'rewrite_jobs') => void;
+  onPhaseComplete?: (
+    phase:
+      | 'collections'
+      | 'recipes'
+      | 'imports'
+      | 'conversion_rules'
+      | 'rewrite_jobs'
+      | 'recipe_embeddings',
+  ) => void;
 }
 
 export async function pullAll(
@@ -447,38 +473,49 @@ export async function pullAll(
   );
   callbacks?.onPhaseComplete?.('recipes');
 
-  // Tail topics (imports, conversion_rules, rewrite_jobs) have no FK
-  // or RLS dependency on each other. Run them in parallel so network
-  // fetches overlap; their local-write phases still serialize on the
-  // SQLite mutex, but each phase is now O(few statements) thanks to
-  // bulk INSERTs + trigger suppression, so the contention is small.
+  // Tail topics (imports, conversion_rules, rewrite_jobs, embeddings)
+  // have no FK or RLS dependency on each other. Run them in parallel
+  // so network fetches overlap; their local-write phases still
+  // serialize on the SQLite mutex, but each phase is now O(few
+  // statements) thanks to bulk INSERTs + trigger suppression, so the
+  // contention is small.
   checkAbort('imports');
   const importPhase = Date.now();
   const convPhase = Date.now();
   const rewritePhase = Date.now();
-  const [importCounts, conversionRulesPulled, rewriteJobsPulled] = await Promise.all([
-    pullImports(client, ownerId).then((c) => {
-      logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, { ...c });
-      callbacks?.onPhaseComplete?.('imports');
-      return c;
-    }),
-    pullConversionRules(client, ownerId).then((n) => {
-      logSync(
-        'info',
-        `pull conversion_rules: ${n} rows in ${Date.now() - convPhase}ms`,
-      );
-      callbacks?.onPhaseComplete?.('conversion_rules');
-      return n;
-    }),
-    pullRewriteJobs(client, ownerId).then((n) => {
-      logSync(
-        'info',
-        `pull rewrite_jobs: ${n} rows in ${Date.now() - rewritePhase}ms`,
-      );
-      callbacks?.onPhaseComplete?.('rewrite_jobs');
-      return n;
-    }),
-  ]);
+  const embedPhase = Date.now();
+  const [importCounts, conversionRulesPulled, rewriteJobsPulled, recipeEmbeddingsPulled] =
+    await Promise.all([
+      pullImports(client, ownerId).then((c) => {
+        logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, { ...c });
+        callbacks?.onPhaseComplete?.('imports');
+        return c;
+      }),
+      pullConversionRules(client, ownerId).then((n) => {
+        logSync(
+          'info',
+          `pull conversion_rules: ${n} rows in ${Date.now() - convPhase}ms`,
+        );
+        callbacks?.onPhaseComplete?.('conversion_rules');
+        return n;
+      }),
+      pullRewriteJobs(client, ownerId).then((n) => {
+        logSync(
+          'info',
+          `pull rewrite_jobs: ${n} rows in ${Date.now() - rewritePhase}ms`,
+        );
+        callbacks?.onPhaseComplete?.('rewrite_jobs');
+        return n;
+      }),
+      pullRecipeEmbeddings(client, ownerId).then((n) => {
+        logSync(
+          'info',
+          `pull recipe_embeddings: ${n} rows in ${Date.now() - embedPhase}ms`,
+        );
+        callbacks?.onPhaseComplete?.('recipe_embeddings');
+        return n;
+      }),
+    ]);
   logSync('info', `pull complete in ${Date.now() - pullStart}ms`);
 
   return {
@@ -492,6 +529,7 @@ export async function pullAll(
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
     rewriteJobs: rewriteJobsPulled,
+    recipeEmbeddings: recipeEmbeddingsPulled,
   };
 }
 
@@ -829,6 +867,73 @@ async function pullRewriteJobs(
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
   return rows.length;
+}
+
+// ---------- pull: recipe embeddings ----------
+
+/**
+ * Postgres `vector(N)` round-trips through PostgREST as a string like
+ * "[0.123,-0.456,...]" by default. Some deployments cast it to a
+ * numeric array. Tolerate both: if we already got an array, just
+ * convert numbers; otherwise parse the JSON-ish bracketed form.
+ */
+function decodeVector(raw: number[] | string | null | undefined): Float32Array | null {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return Float32Array.from(raw);
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return Float32Array.from(parsed as number[]);
+    } catch {
+      // Fall through; pgvector text format is always JSON-array shape,
+      // so a parse failure means something else broke.
+    }
+  }
+  return null;
+}
+
+async function pullRecipeEmbeddings(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `recipe_embeddings:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  // Scope through the recipe → collection join — same trick we use for
+  // ingredients (the embeddings table doesn't carry an owner_id).
+  const rows = await fetchAllPages<RecipeEmbeddingRow & { recipes?: unknown }>(
+    (from, to) =>
+      client
+        .from('recipe_embeddings')
+        .select('*, recipes!inner(recipe_collections!inner(owner_id))')
+        .eq('recipes.recipe_collections.owner_id', ownerId)
+        .gte('updated_at', since)
+        .order('updated_at', { ascending: true })
+        .order('recipe_id', { ascending: true })
+        .range(from, to),
+  );
+  const stripped = rows.map((row) => {
+    const { recipes: _r, ...rest } = row;
+    return rest as RecipeEmbeddingRow;
+  });
+  const local: LocalEmbeddingRow[] = [];
+  for (const r of stripped) {
+    const vec = decodeVector(r.embedding);
+    if (!vec) continue;
+    local.push({
+      recipeId: r.recipe_id,
+      embedding: vec,
+      textHash: r.text_hash,
+      model: r.model,
+      updatedAtMs: toMs(r.updated_at),
+    });
+  }
+  await upsertLocalEmbeddingsBatch(local);
+  let max = await getWatermark(topic);
+  for (const r of stripped) max = Math.max(max, toMs(r.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return stripped.length;
 }
 
 // ---------- pull: bulk OCR imports ----------
@@ -1403,6 +1508,14 @@ export function subscribeRealtime(
         onLocalUpdate();
       },
     )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'recipe_embeddings' },
+      async (payload) => {
+        await handleRecipeEmbeddingEvent(payload);
+        onLocalUpdate();
+      },
+    )
     .subscribe();
 
   return {
@@ -1522,6 +1635,24 @@ async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
     return;
   }
   await upsertRewriteJobRow(payload.new as unknown as RewriteJobRow);
+}
+
+async function handleRecipeEmbeddingEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { recipe_id?: string }).recipe_id;
+    if (id) await deleteLocalEmbedding(id);
+    return;
+  }
+  const row = payload.new as unknown as RecipeEmbeddingRow;
+  const vec = decodeVector(row.embedding);
+  if (!vec) return;
+  await upsertLocalEmbedding({
+    recipeId: row.recipe_id,
+    embedding: vec,
+    textHash: row.text_hash,
+    model: row.model,
+    updatedAtMs: toMs(row.updated_at),
+  });
 }
 
 // ---------- push ----------
@@ -1694,7 +1825,33 @@ async function pushOne(
       if (error) throw error;
       return;
     }
+    case 'embedding_push':
+      return pushRecipeEmbedding(client, entry.entity_id);
   }
+}
+
+async function pushRecipeEmbedding(
+  client: CookbooksClient,
+  recipeId: string,
+): Promise<void> {
+  const local = await getLocalEmbedding(recipeId);
+  if (!local) {
+    // The save flow already deleted it (e.g. recipe purge), or the
+    // embedder never finished. Treat as a no-op — better than failing
+    // an outbox entry the user can't retry by hand.
+    return;
+  }
+  // Vector goes over the wire as a plain number[]; the RPC casts to
+  // vector(384). PostgREST happily serializes Float32Array as JSON
+  // numbers via Array.from.
+  const payload = Array.from(local.embedding);
+  const { error } = await client.rpc('embed_upsert_client', {
+    p_recipe_id: recipeId,
+    p_text_hash: local.textHash,
+    p_embedding: payload as unknown as number[],
+    p_model: local.model,
+  });
+  if (error) throw error;
 }
 
 // ---------- push: bulk OCR imports ----------
