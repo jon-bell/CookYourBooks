@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 
 // Vite only exposes `VITE_*`-prefixed env vars to `import.meta.env`.
 // Vercel's Supabase integration ships unprefixed names (`SUPABASE_URL`,
@@ -20,8 +21,43 @@ export default defineConfig(({ mode }) => {
     env.SUPABASE_ANON_KEY ??
     '';
 
+  // Source-map upload to self-hosted Sentry. Skip the plugin unless
+  // SENTRY_AUTH_TOKEN is set in the build env so dev builds don't
+  // try to upload (and don't fail when the token is absent).
+  const sentryAuthToken = env.SENTRY_AUTH_TOKEN ?? '';
+  const sentryUrl = env.SENTRY_URL ?? 'https://sentry-cyb.work.ripley.cloud';
+  const sentryOrg = env.SENTRY_ORG ?? 'sentry';
+  const sentryProject = env.SENTRY_PROJECT ?? 'cookyourbooks-web';
+  const sentryRelease =
+    env.VITE_SENTRY_RELEASE ?? env.VERCEL_GIT_COMMIT_SHA ?? undefined;
+
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      ...(sentryAuthToken
+        ? [
+            sentryVitePlugin({
+              authToken: sentryAuthToken,
+              url: sentryUrl,
+              org: sentryOrg,
+              project: sentryProject,
+              release: sentryRelease ? { name: sentryRelease } : undefined,
+              sourcemaps: { assets: './dist/**' },
+              // Quiet output on Vercel so build logs stay readable.
+              silent: true,
+              // Self-hosted Sentry doesn't have an org-level telemetry
+              // ping; disable so we don't probe their servers.
+              telemetry: false,
+            }),
+          ]
+        : []),
+    ],
+    build: {
+      // Required for source-map upload — Sentry's symbolicator needs
+      // the .map files alongside the .js. We delete them post-upload
+      // via deleteFilesAfterUpload below if we ever care to.
+      sourcemap: true,
+    },
     server: {
       port: 5173,
       strictPort: false,

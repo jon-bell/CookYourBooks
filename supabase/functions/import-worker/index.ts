@@ -14,10 +14,34 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
+import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
 import pricingCard from './pricing.json' with { type: 'json' };
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
 import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
+
+// Self-hosted Sentry for the import worker. Reports to the dedicated
+// cookyourbooks-edge project (/3) so edge-runtime events don't share
+// release tracking / quotas with the web + iOS surfaces. Set
+// `SENTRY_DSN` via `./.bin/supabase secrets set SENTRY_DSN=...` (or
+// the prod Vault) to enable; the SDK no-ops cleanly when unset.
+const SENTRY_DSN =
+  Deno.env.get('SENTRY_DSN') ??
+  'https://21890fed80bff992c7c0e48d97b868f4@sentry-cyb.work.ripley.cloud/3';
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    release: Deno.env.get('SENTRY_RELEASE') ?? undefined,
+    environment: Deno.env.get('SENTRY_ENVIRONMENT') ?? 'production',
+    // Edge function invocations are short-lived; sample every trace so
+    // we get end-to-end timing for the worker loop. Adjust if volume
+    // climbs.
+    tracesSampleRate: 1.0,
+    // Tag every event so issues land under a dedicated component on
+    // the dashboard.
+    initialScope: { tags: { component: 'import-worker' } },
+  });
+}
 
 interface ImportItem {
   id: string;
@@ -223,53 +247,65 @@ function authorized(req: Request): boolean {
 }
 
 Deno.serve(async (req) => {
-  if (req.method !== 'POST') {
-    return json({ error: 'POST only' }, 405);
-  }
-  if (!authorized(req)) {
-    logLine('warn', 'unauthorized request', {}, {
-      auth_header_present: req.headers.has('authorization'),
-    });
-    return json({ error: 'unauthorized' }, 401);
-  }
-  let body: { batch_id?: string | null } = {};
+  // Capture any unhandled exception or rejection from inside the
+  // handler — `Deno.serve` swallows them by default which makes the
+  // function look "fine" to Supabase while it's actually 500ing for
+  // users. Caught errors that we return as JSON 4xx/5xx do NOT flow
+  // here; those should be reported manually if they're worth a
+  // notification (e.g. unexpected provider failures).
   try {
-    const text = await req.text();
-    if (text.length > 0) body = JSON.parse(text);
-  } catch {
-    return json({ error: 'invalid JSON body' }, 400);
+    if (req.method !== 'POST') {
+      return json({ error: 'POST only' }, 405);
+    }
+    if (!authorized(req)) {
+      logLine('warn', 'unauthorized request', {}, {
+        auth_header_present: req.headers.has('authorization'),
+      });
+      return json({ error: 'unauthorized' }, 401);
+    }
+    let body: { batch_id?: string | null } = {};
+    try {
+      const text = await req.text();
+      if (text.length > 0) body = JSON.parse(text);
+    } catch {
+      return json({ error: 'invalid JSON body' }, 400);
+    }
+    const batchId = body.batch_id ?? null;
+
+    const workerId = `edge:${crypto.randomUUID()}`;
+    const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
+    wLog.info('invocation start');
+    const summary = await runLoop(workerId, batchId, wLog);
+    // Drain any pending bakeoff variants in the same invocation. Variants
+    // are per-user, so we don't filter by batch — the page that just
+    // started the bakeoff kicks us, and we pull anything queued.
+    const bakeoffSummary = await runBakeoffLoop(workerId, wLog);
+    // Drain pending instruction-rewrite jobs too. Same loop discipline:
+    // claim once per invocation, the next user kick or cron tick picks
+    // up the slack if anything is still queued.
+    const rewriteSummary = await runRewriteLoop(workerId, wLog);
+    const importVariantSummary = await runImportVariantLoop(workerId, wLog);
+    wLog.info('invocation end', {
+      ...summary,
+      bakeoff_processed: bakeoffSummary.processed,
+      bakeoff_failed: bakeoffSummary.failed,
+      rewrite_processed: rewriteSummary.processed,
+      rewrite_failed: rewriteSummary.failed,
+      import_variant_processed: importVariantSummary.processed,
+      import_variant_failed: importVariantSummary.failed,
+    });
+
+    if (summary.remaining > 0) {
+      wLog.info('self-invoke (queue not drained)', { remaining: summary.remaining });
+      fireSelfInvoke(batchId);
+    }
+
+    return json(summary, 200);
+  } catch (err) {
+    if (SENTRY_DSN) Sentry.captureException(err);
+    logLine('error', 'unhandled invocation error', {}, { error: String(err) });
+    return json({ error: 'internal' }, 500);
   }
-  const batchId = body.batch_id ?? null;
-
-  const workerId = `edge:${crypto.randomUUID()}`;
-  const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
-  wLog.info('invocation start');
-  const summary = await runLoop(workerId, batchId, wLog);
-  // Drain any pending bakeoff variants in the same invocation. Variants
-  // are per-user, so we don't filter by batch — the page that just
-  // started the bakeoff kicks us, and we pull anything queued.
-  const bakeoffSummary = await runBakeoffLoop(workerId, wLog);
-  // Drain pending instruction-rewrite jobs too. Same loop discipline:
-  // claim once per invocation, the next user kick or cron tick picks
-  // up the slack if anything is still queued.
-  const rewriteSummary = await runRewriteLoop(workerId, wLog);
-  const importVariantSummary = await runImportVariantLoop(workerId, wLog);
-  wLog.info('invocation end', {
-    ...summary,
-    bakeoff_processed: bakeoffSummary.processed,
-    bakeoff_failed: bakeoffSummary.failed,
-    rewrite_processed: rewriteSummary.processed,
-    rewrite_failed: rewriteSummary.failed,
-    import_variant_processed: importVariantSummary.processed,
-    import_variant_failed: importVariantSummary.failed,
-  });
-
-  if (summary.remaining > 0) {
-    wLog.info('self-invoke (queue not drained)', { remaining: summary.remaining });
-    fireSelfInvoke(batchId);
-  }
-
-  return json(summary, 200);
 });
 
 // ---------- main loop ----------

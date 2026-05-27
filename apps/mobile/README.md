@@ -34,8 +34,13 @@ sudo xcodebuild -runFirstLaunch
 # iOS platform components — multi-GB, only needed once per Xcode upgrade.
 xcodebuild -downloadPlatform iOS
 
-# CocoaPods + fastlane
-brew install cocoapods fastlane
+# CocoaPods + fastlane + a modern Ruby (system Ruby 2.6 is too old for
+# fastlane plugins; brew Ruby ships bundler).
+brew install cocoapods fastlane ruby
+
+# Fastlane plugins (fastlane-plugin-sentry for dSYM upload) are
+# vendored via bundler — install them once per machine:
+(cd apps/mobile/ios && PATH="/usr/local/opt/ruby/bin:$PATH" bundle install)
 ```
 
 If RVM is in your shell init, it pollutes `GEM_PATH` and breaks the
@@ -45,6 +50,9 @@ sub-shell or unset RVM vars per session:
 ```bash
 unset GEM_PATH GEM_HOME RUBY_VERSION MY_RUBY_HOME IRBRC rvm_path
 ```
+
+Then call `bundle exec fastlane <lane>` instead of `fastlane <lane>` so
+the vendored plugin gems are on the load path.
 
 ## Day-to-day
 
@@ -153,11 +161,26 @@ What `beta` does:
    build number is currently on TestFlight. Avoids the "build number
    already used" upload rejection.
 3. `gym` — builds a signed Release archive (`.ipa`) into `build/`.
-4. `pilot` — uploads the IPA to TestFlight via the ASC API key.
+4. `upload_dsyms_to_sentry` — pushes the build's dSYM debug symbols
+   to the self-hosted Sentry (`cookyourbooks-mobile` project) so
+   native iOS crashes get symbolicated. No-op when `SENTRY_AUTH_TOKEN`
+   isn't set, so unconfigured machines just skip it.
+5. `pilot` — uploads the IPA to TestFlight via the ASC API key.
 
 The build is then visible at <https://appstoreconnect.apple.com/apps> →
 CookYourBooks → TestFlight. Add it to a test group (internal testing
 needs no review and ships in ~10 minutes).
+
+If the dSYM upload failed (or was skipped because the env var was
+missing) you can re-run it without rebuilding:
+
+```bash
+cd apps/mobile/ios
+SENTRY_AUTH_TOKEN=sntrys_... fastlane upload_dsyms
+# Or target an older archive explicitly:
+SENTRY_AUTH_TOKEN=... fastlane upload_dsyms \
+  path:~/Library/Developer/Xcode/Archives/2026-05-26/CookYourBooks.xcarchive/dSYMs
+```
 
 ### Submit for App Store review
 

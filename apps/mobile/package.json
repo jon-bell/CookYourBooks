@@ -20,7 +20,8 @@
     "@capacitor/core": "^6.2.1",
     "@capacitor/haptics": "^6.0.2",
     "@capacitor/ios": "^6.2.0",
-    "@capacitor/share": "^6.0.3"
+    "@capacitor/share": "^6.0.3",
+    "@sentry/capacitor": "^4.0.0"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

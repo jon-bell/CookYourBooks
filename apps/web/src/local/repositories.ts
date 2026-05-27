@@ -90,6 +90,87 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
   );
 }
 
+const COLLECTION_COLS = [
+  'id',
+  'owner_id',
+  'title',
+  'source_type',
+  'author',
+  'isbn',
+  'publisher',
+  'publication_year',
+  'description',
+  'notes',
+  'source_url',
+  'date_accessed',
+  'site_name',
+  'is_public',
+  'forked_from',
+  'cover_image_path',
+  'moderation_state',
+  'moderation_reason',
+  'shared_with_household_id',
+  'updated_at',
+  'deleted',
+] as const;
+
+function collectionToParams(row: CollectionRow): readonly unknown[] {
+  const rowX = row as CollectionRow & {
+    moderation_state?: string | null;
+    moderation_reason?: string | null;
+    shared_with_household_id?: string | null;
+  };
+  return [
+    row.id,
+    row.owner_id,
+    row.title,
+    row.source_type,
+    row.author,
+    row.isbn,
+    row.publisher,
+    row.publication_year,
+    row.description,
+    row.notes,
+    row.source_url,
+    row.date_accessed,
+    row.site_name,
+    row.is_public ? 1 : 0,
+    row.forked_from,
+    row.cover_image_path,
+    rowX.moderation_state ?? 'ACTIVE',
+    rowX.moderation_reason ?? null,
+    rowX.shared_with_household_id ?? null,
+    tsToMs(row.updated_at),
+    0,
+  ];
+}
+
+/**
+ * Bulk-upsert many collection rows. Same pattern as upsertRecipesBatch:
+ * pre-filter by existing updated_at, suppress CRR triggers, multi-row
+ * INSERT.
+ */
+export async function upsertCollectionsBatch(
+  rows: readonly CollectionRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const fresh = await filterFresherIncoming(
+    'recipe_collections',
+    rows,
+    (r) => r.id,
+    (r) => tsToMs(r.updated_at),
+  );
+  if (fresh.length === 0) return;
+  await withSuppressedCrrTriggers(['recipe_collections'], async () => {
+    await bulkInsertOnConflictId(
+      'recipe_collections',
+      COLLECTION_COLS,
+      fresh,
+      collectionToParams,
+    );
+  });
+}
+
 /** Upsert a recipe row and replace its child ingredients/instructions + step refs. */
 export async function upsertRecipeRow(
   recipeRow: RecipeRow,
@@ -272,6 +353,495 @@ export async function upsertRecipeRow(
       );
     }
   });
+}
+
+/**
+ * Bulk-upsert many recipes (and their children) using multi-row VALUES
+ * inserts and batched IN-list deletes. The per-row WASM round-trip cost
+ * is the dominant factor on iPad SQLite, so collapsing thousands of
+ * single-row INSERTs into a handful of multi-row statements cuts a
+ * fresh-library pull from tens of seconds down to seconds.
+ *
+ * The per-recipe updated_at guard is applied via a single SELECT-IN
+ * lookup at the top, then stale rows are filtered out before any
+ * writes — preserving the "refuse to regress a fresher local row"
+ * semantic without paying for a separate round-trip per recipe.
+ */
+/**
+ * The CRR tables we write to during a pull. Wrapping the bulk-insert
+ * tx with crsql_begin_alter / crsql_commit_alter on each suppresses
+ * cr-sqlite's per-row change-tracking triggers for the duration —
+ * pulls are server-canonical and don't need to be re-propagated as
+ * outbound CRDT changes, so the trigger work is pure overhead. On
+ * iPad WASM SQLite each trigger fire is ~10–15ms; disabling them
+ * collapses an 87-recipe pull from ~38s to seconds.
+ */
+const PULL_CRR_TABLES = [
+  'instruction_ingredient_refs',
+  'instructions',
+  'ingredients',
+  'recipes',
+] as const;
+
+/**
+ * Run `fn` with cr-sqlite's per-row change-tracking triggers suspended
+ * on `tables`. cr-sqlite's crsql_begin_alter / crsql_commit_alter pair
+ * drops the row triggers for the duration and recreates them on
+ * commit_alter — exactly the property a pull needs, since pulled rows
+ * are server-canonical and don't need to be re-propagated as outbound
+ * CRDT changes. On iPad WASM SQLite each trigger fire is ~10–15ms;
+ * disabling them is the single biggest win on bulk inserts. Must run
+ * at the top level (not inside a SAVEPOINT / db.tx callback) so the
+ * triggers re-attach cleanly even on caller failure.
+ */
+export async function withSuppressedCrrTriggers<T>(
+  tables: readonly string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  const db = await getLocalDb();
+  const altered: string[] = [];
+  try {
+    for (const t of tables) {
+      await db.exec(`select crsql_begin_alter('${t}')`);
+      altered.push(t);
+    }
+    return await fn();
+  } finally {
+    // Always reattach triggers, even if fn threw, so subsequent local
+    // writes are tracked normally. Reverse order so the recreated
+    // triggers don't see ghost pre-images.
+    for (let i = altered.length - 1; i >= 0; i -= 1) {
+      try {
+        await db.exec(`select crsql_commit_alter('${altered[i]}')`);
+      } catch {
+        // Swallow so we don't mask the original error.
+      }
+    }
+  }
+}
+
+/**
+ * Pre-filter an upsert batch by reading each row's existing local
+ * `updated_at` in one IN-list SELECT and dropping rows whose local
+ * copy is strictly newer. Preserves the "refuse to regress a fresher
+ * local row" invariant when we want to write multi-row INSERTs that
+ * can't easily express the guard in `ON CONFLICT WHERE`.
+ *
+ * Returns the rows that should actually be written.
+ */
+export async function filterFresherIncoming<T>(
+  table: string,
+  rows: readonly T[],
+  idOf: (row: T) => string,
+  incomingTsMs: (row: T) => number,
+): Promise<T[]> {
+  if (rows.length === 0) return [];
+  const db = await getLocalDb();
+  const existingMap = new Map<string, number>();
+  // SQLite host-parameter ceiling — chunk to stay safe.
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const slice = rows.slice(i, i + CHUNK);
+    const ids = slice.map(idOf);
+    const placeholders = ids.map(() => '?').join(',');
+    const found = (await db.execO(
+      `select id, updated_at from ${table} where id in (${placeholders})`,
+      ids,
+    )) as { id: string; updated_at: number }[];
+    for (const r of found) existingMap.set(r.id, r.updated_at);
+  }
+  return rows.filter((row) => {
+    const local = existingMap.get(idOf(row));
+    return !local || local <= incomingTsMs(row);
+  });
+}
+
+export async function upsertRecipesBatch(
+  batch: ReadonlyArray<{
+    recipe: RecipeRow;
+    ingredients: IngredientRow[];
+    instructions: InstructionRow[];
+    refs: InstructionRefRow[];
+  }>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (batch.length === 0) return;
+  if (signal?.aborted) return;
+  const db = await getLocalDb();
+  await withSuppressedCrrTriggers(PULL_CRR_TABLES, async () => {
+    await db.tx(async (tx) => {
+      const ids = batch.map((b) => b.recipe.id);
+      const existingMap = new Map<string, number>();
+      const placeholders = ids.map(() => '?').join(',');
+      const rows = (await tx.execO(
+        `select id, updated_at from recipes where id in (${placeholders})`,
+        ids,
+      )) as { id: string; updated_at: number }[];
+      for (const r of rows) existingMap.set(r.id, r.updated_at);
+
+      const fresh = batch.filter((b) => {
+        const local = existingMap.get(b.recipe.id);
+        return !local || local <= tsToMs(b.recipe.updated_at);
+      });
+      if (fresh.length === 0) return;
+
+      const freshIds = fresh.map((b) => b.recipe.id);
+      await execInChunks(tx, freshIds, (chunk, ph) => [
+        `delete from instruction_ingredient_refs
+         where instruction_id in (select id from instructions where recipe_id in (${ph}))`,
+        chunk,
+      ]);
+      await execInChunks(tx, freshIds, (chunk, ph) => [
+        `delete from ingredients where recipe_id in (${ph})`,
+        chunk,
+      ]);
+      await execInChunks(tx, freshIds, (chunk, ph) => [
+        `delete from instructions where recipe_id in (${ph})`,
+        chunk,
+      ]);
+
+      await bulkUpsertRecipes(tx, fresh.map((b) => b.recipe));
+      await bulkInsertIngredients(tx, fresh.flatMap((b) => b.ingredients));
+      await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
+      await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
+    });
+  });
+}
+
+interface RecipeTx {
+  exec: (sql: string, bind?: unknown[]) => Promise<unknown>;
+  execO: (sql: string, bind?: unknown[]) => Promise<unknown[]>;
+}
+
+// Multi-row INSERT chunk size — only here to stay under SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER (32766 in modern builds). With the widest
+// table (recipes, 18 cols), 1500 rows × 18 cols = 27000 params, safely
+// under the cap. For libraries up to ~1500 recipes this is one INSERT
+// statement per table.
+const MAX_ROWS_PER_INSERT = 1500;
+
+/**
+ * Generic multi-row INSERT ... ON CONFLICT(id) DO UPDATE helper for
+ * tail tables (imports, conversion_rules, rewrite_jobs, etc). Builds
+ * one statement per chunk of `MAX_ROWS_PER_INSERT / cols.length` rows
+ * to stay under SQLite's host-parameter ceiling. Use with
+ * `withSuppressedCrrTriggers` for the CRR-trigger-disable speedup.
+ *
+ * Caller is responsible for pre-filtering via `filterFresherIncoming`
+ * if the table has an `updated_at` regress guard — replicating that
+ * guard inside `ON CONFLICT WHERE` is supported by SQLite, but the
+ * pre-filter shape composes better with the read-once-per-batch
+ * pattern the recipe path uses.
+ */
+export async function bulkInsertOnConflictId<T>(
+  table: string,
+  cols: readonly string[],
+  rows: readonly T[],
+  toParams: (row: T) => readonly unknown[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getLocalDb();
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  const setClause = cols
+    .filter((c) => c !== 'id')
+    .map((c) => `${c}=excluded.${c}`)
+    .join(', ');
+  const rowsPerChunk = Math.max(1, Math.floor(MAX_ROWS_PER_INSERT / cols.length));
+  for (let i = 0; i < rows.length; i += rowsPerChunk) {
+    const chunk = rows.slice(i, i + rowsPerChunk);
+    const params: unknown[] = [];
+    for (const row of chunk) {
+      const vals = toParams(row);
+      if (vals.length !== cols.length) {
+        throw new Error(
+          `bulkInsertOnConflictId(${table}): row produced ${vals.length} params, expected ${cols.length}`,
+        );
+      }
+      for (const v of vals) params.push(v);
+    }
+    const placeholders = chunk.map(() => tuple).join(',');
+    await db.exec(
+      `insert into ${table} (${cols.join(',')}) values ${placeholders}
+       on conflict(id) do update set ${setClause}`,
+      params as never[],
+    );
+  }
+}
+
+/**
+ * Variant for append-only tables that have no `id` conflict pattern
+ * worth updating — used by `import_item_attempts` which is server-side
+ * append-only and uses `INSERT ... ON CONFLICT DO NOTHING` semantically.
+ */
+export async function bulkInsertIgnoreId<T>(
+  table: string,
+  cols: readonly string[],
+  rows: readonly T[],
+  toParams: (row: T) => readonly unknown[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getLocalDb();
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  const rowsPerChunk = Math.max(1, Math.floor(MAX_ROWS_PER_INSERT / cols.length));
+  for (let i = 0; i < rows.length; i += rowsPerChunk) {
+    const chunk = rows.slice(i, i + rowsPerChunk);
+    const params: unknown[] = [];
+    for (const row of chunk) {
+      const vals = toParams(row);
+      for (const v of vals) params.push(v);
+    }
+    const placeholders = chunk.map(() => tuple).join(',');
+    await db.exec(
+      `insert into ${table} (${cols.join(',')}) values ${placeholders}
+       on conflict(id) do nothing`,
+      params as never[],
+    );
+  }
+}
+
+async function execInChunks(
+  tx: RecipeTx,
+  ids: readonly string[],
+  build: (chunk: string[], placeholders: string) => [string, unknown[]],
+): Promise<void> {
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const ph = chunk.map(() => '?').join(',');
+    const [sql, bind] = build(chunk, ph);
+    await tx.exec(sql, bind);
+  }
+}
+
+async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): Promise<void> {
+  if (recipes.length === 0) return;
+  const cols = [
+    'id',
+    'collection_id',
+    'title',
+    'servings_amount',
+    'servings_description',
+    'servings_amount_max',
+    'sort_order',
+    'notes',
+    'parent_recipe_id',
+    'description',
+    'time_estimate',
+    'equipment',
+    'book_title',
+    'page_numbers',
+    'source_image_text',
+    'starred',
+    'updated_at',
+    'deleted',
+  ];
+  const valuesTuple = `(${cols.map(() => '?').join(',')})`;
+  const setClause = cols
+    .filter((c) => c !== 'id')
+    .map((c) => `${c}=excluded.${c}`)
+    .join(',\n      ');
+  for (let i = 0; i < recipes.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = recipes.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const r of chunk) {
+      const rx = r as RecipeRow & {
+        notes?: string | null;
+        parent_recipe_id?: string | null;
+        servings_amount_max?: number | null;
+        description?: string | null;
+        time_estimate?: string | null;
+        equipment?: unknown;
+        book_title?: string | null;
+        page_numbers?: unknown;
+        source_image_text?: string | null;
+        starred?: boolean | number | null;
+      };
+      const starredRaw: unknown = rx.starred;
+      params.push(
+        r.id,
+        r.collection_id,
+        r.title,
+        r.servings_amount,
+        r.servings_description,
+        rx.servings_amount_max ?? null,
+        r.sort_order,
+        rx.notes ?? null,
+        rx.parent_recipe_id ?? null,
+        rx.description ?? null,
+        rx.time_estimate ?? null,
+        toJsonText(rx.equipment),
+        rx.book_title ?? null,
+        toJsonText(rx.page_numbers),
+        rx.source_image_text ?? null,
+        starredRaw === true || starredRaw === 1 ? 1 : 0,
+        tsToMs(r.updated_at),
+        0,
+      );
+    }
+    const placeholders = chunk.map(() => valuesTuple).join(',');
+    await tx.exec(
+      `insert into recipes (${cols.join(',')}) values ${placeholders}
+       on conflict(id) do update set
+       ${setClause}`,
+      params,
+    );
+  }
+}
+
+async function bulkInsertIngredients(
+  tx: RecipeTx,
+  ingredients: readonly IngredientRow[],
+): Promise<void> {
+  if (ingredients.length === 0) return;
+  const cols = [
+    'id',
+    'recipe_id',
+    'sort_order',
+    'type',
+    'name',
+    'preparation',
+    'notes',
+    'description',
+    'quantity_type',
+    'quantity_amount',
+    'quantity_whole',
+    'quantity_numerator',
+    'quantity_denominator',
+    'quantity_min',
+    'quantity_max',
+    'quantity_unit',
+  ];
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  for (let i = 0; i < ingredients.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = ingredients.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const ing of chunk) {
+      const ingX = ing as IngredientRow & { description?: string | null };
+      params.push(
+        ing.id,
+        ing.recipe_id,
+        ing.sort_order,
+        ing.type,
+        ing.name,
+        ing.preparation,
+        ing.notes,
+        ingX.description ?? null,
+        ing.quantity_type,
+        ing.quantity_amount,
+        ing.quantity_whole,
+        ing.quantity_numerator,
+        ing.quantity_denominator,
+        ing.quantity_min,
+        ing.quantity_max,
+        ing.quantity_unit,
+      );
+    }
+    await tx.exec(
+      `insert into ingredients (${cols.join(',')}) values ${chunk.map(() => tuple).join(',')}`,
+      params,
+    );
+  }
+}
+
+async function bulkInsertInstructions(
+  tx: RecipeTx,
+  steps: readonly InstructionRow[],
+): Promise<void> {
+  if (steps.length === 0) return;
+  const cols = [
+    'id',
+    'recipe_id',
+    'step_number',
+    'text',
+    'temperature_value',
+    'temperature_unit',
+    'sub_instructions',
+    'simplified_steps',
+    'notes',
+  ];
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  for (let i = 0; i < steps.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = steps.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const step of chunk) {
+      const sx = step as InstructionRow & {
+        temperature_value?: number | null;
+        temperature_unit?: string | null;
+        sub_instructions?: unknown;
+        simplified_steps?: unknown;
+        notes?: string | null;
+      };
+      params.push(
+        step.id,
+        step.recipe_id,
+        step.step_number,
+        step.text,
+        sx.temperature_value ?? null,
+        sx.temperature_unit ?? null,
+        toJsonText(sx.sub_instructions),
+        toJsonText(sx.simplified_steps),
+        sx.notes ?? null,
+      );
+    }
+    await tx.exec(
+      `insert into instructions (${cols.join(',')}) values ${chunk.map(() => tuple).join(',')}`,
+      params,
+    );
+  }
+}
+
+async function bulkInsertRefs(
+  tx: RecipeTx,
+  refs: readonly InstructionRefRow[],
+): Promise<void> {
+  if (refs.length === 0) return;
+  const cols = [
+    'instruction_id',
+    'ingredient_id',
+    'consumed_quantity_type',
+    'consumed_quantity_amount',
+    'consumed_quantity_whole',
+    'consumed_quantity_numerator',
+    'consumed_quantity_denominator',
+    'consumed_quantity_min',
+    'consumed_quantity_max',
+    'consumed_quantity_unit',
+  ];
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  for (let i = 0; i < refs.length; i += MAX_ROWS_PER_INSERT) {
+    const chunk = refs.slice(i, i + MAX_ROWS_PER_INSERT);
+    const params: unknown[] = [];
+    for (const ref of chunk) {
+      const rx = ref as InstructionRefRow & {
+        consumed_quantity_type?: string | null;
+        consumed_quantity_amount?: number | null;
+        consumed_quantity_whole?: number | null;
+        consumed_quantity_numerator?: number | null;
+        consumed_quantity_denominator?: number | null;
+        consumed_quantity_min?: number | null;
+        consumed_quantity_max?: number | null;
+        consumed_quantity_unit?: string | null;
+      };
+      params.push(
+        ref.instruction_id,
+        ref.ingredient_id,
+        rx.consumed_quantity_type ?? null,
+        rx.consumed_quantity_amount ?? null,
+        rx.consumed_quantity_whole ?? null,
+        rx.consumed_quantity_numerator ?? null,
+        rx.consumed_quantity_denominator ?? null,
+        rx.consumed_quantity_min ?? null,
+        rx.consumed_quantity_max ?? null,
+        rx.consumed_quantity_unit ?? null,
+      );
+    }
+    await tx.exec(
+      `insert into instruction_ingredient_refs (${cols.join(',')}) values ${chunk
+        .map(() => tuple)
+        .join(',')} on conflict do nothing`,
+      params,
+    );
+  }
 }
 
 /**

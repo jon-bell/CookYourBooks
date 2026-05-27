@@ -13,12 +13,36 @@ import {
   type TabRole,
 } from './tabLeader.js';
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>;
+    const parts: string[] = [];
+    if (typeof e.message === 'string' && e.message.length > 0) parts.push(e.message);
+    if (typeof e.code === 'string') parts.push(`code=${e.code}`);
+    if (typeof e.hint === 'string') parts.push(`hint=${e.hint}`);
+    if (parts.length > 0) return parts.join(' · ');
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  label: string,
+  onTimeout?: () => void,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(
-      () => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)),
-      ms,
-    );
+    const t = setTimeout(() => {
+      onTimeout?.();
+      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+    }, ms);
     p.then(
       (v) => {
         clearTimeout(t);
@@ -26,7 +50,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
       },
       (e) => {
         clearTimeout(t);
-        reject(e instanceof Error ? e : new Error(String(e)));
+        // Preserve the original error so the outer catch can extract
+        // shape (.message / .code / .hint on PostgrestErrors, etc).
+        // Earlier this wrapped non-Errors in `new Error(String(e))`,
+        // which collapses an object into "[object Object]" and hides
+        // what actually went wrong.
+        reject(e);
       },
     );
   });
@@ -94,6 +123,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
+  const currentAbort = useRef<AbortController | null>(null);
   const pullPending = useRef(false);
   const pullDebounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const invalidateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -143,6 +173,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       logSync('info', 'cycle: coalesced into in-flight run');
       return inFlight.current;
     }
+    const ac = new AbortController();
+    currentAbort.current = ac;
     const run = (async () => {
       const cycleStart = Date.now();
       logSync('info', 'cycle: start');
@@ -152,27 +184,53 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // Push first so the pull sees our own changes reflected as
         // server-acknowledged state (avoids echo-induced overwrites).
         // Wrap in a hard timeout so a single hung request can't trap
-        // the user on "Syncing…" forever — the actual fetch keeps
-        // running, we just stop awaiting it.
+        // the user on "Syncing…" forever — when the timeout fires we
+        // also abort the AbortController so the inner drain loop
+        // bails out instead of continuing to hit the network behind
+        // our back (which would race a later cycle and trip
+        // duplicate-key / FK violations on recipe pushes).
         logSync('info', 'cycle: invoking pushOutbox');
         const pushRes = await withTimeout(
-          pushOutbox(supabase, ownerId),
+          pushOutbox(supabase, ownerId, ac.signal),
           CYCLE_TIMEOUT_MS,
           'push',
+          () => ac.abort(),
         );
         logSync('info', 'cycle: pushOutbox returned', pushRes);
         logSync('info', 'cycle: invoking pullAll');
-        const pullRes = await withTimeout(pullAll(supabase, ownerId), CYCLE_TIMEOUT_MS, 'pull');
+        const pullRes = await withTimeout(
+          pullAll(supabase, ownerId, ac.signal, {
+            // Invalidate React Query incrementally so the library card
+            // grid hydrates the moment recipes land, instead of waiting
+            // for imports / conversion_rules / rewrite_jobs to finish.
+            // Skip the 'collections' key from each invalidate (it's
+            // expensive — see scheduleInvalidate predicate).
+            onPhaseComplete: () => scheduleInvalidate(),
+          }),
+          CYCLE_TIMEOUT_MS,
+          'pull',
+          () => ac.abort(),
+        );
         householdIdRef.current = pullRes.householdId;
         logSync('info', 'cycle: pullAll returned');
         setLastSyncedAt(Date.now());
         setSettled('idle');
         logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
       } catch (err) {
-        const msg = (err as Error).message;
+        // Some thrown values (notably PostgrestError-shaped objects)
+        // aren't Error instances, so `.message` is undefined and the
+        // badge ends up showing "[object Object]". Stringify whatever
+        // we got and prefer fields commonly populated by errors.
+        const msg = stringifyError(err);
+        // Dump the raw shape to the console so a debug session can see
+        // what actually came back — useful when the stringified version
+        // collapses an interesting object into something like
+        // "PostgrestError" with no hint of the underlying cause.
+        console.error('[sync] cycle threw:', err);
         setSettled('error', msg);
         logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
       } finally {
+        if (currentAbort.current === ac) currentAbort.current = null;
         await refreshPendingCount();
         scheduleInvalidate();
       }
@@ -205,14 +263,20 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if (!cancelled) {
           setStatus('error');
-          setLastError((err as Error).message);
+          setLastError(stringifyError(err));
         }
         return;
       }
       await refreshPendingCount();
       if (!cancelled) {
         setLocalReady(true);
-        setStatus('idle');
+        // Only flip to 'idle' if no cycle has already moved us to
+        // 'syncing'. Without this, db init resolving AFTER the cycle
+        // started (cycle awaits the same getLocalDb promise) lets the
+        // boot effect clobber status back to 'idle' mid-pull — the
+        // badge says "Synced" while pull is still draining and other
+        // pages contend on the SQLite mutex.
+        setStatus((s) => (s === 'initializing' ? 'idle' : s));
       }
     })();
     return () => {
@@ -289,10 +353,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const startedAt = syncingStartedAt.current;
       if (!startedAt) return;
       if (Date.now() - startedAt <= CYCLE_TIMEOUT_MS) return;
-      // Clear inFlight so the next syncNow / realtime nudge can start
-      // a fresh cycle instead of joining the wedged promise.
+      // Clear inFlight AND abort the cycle's signal so the inner
+      // drain loop bails. Without the abort, the in-flight pushOutbox
+      // / pullAll keep running in the background and race against the
+      // next cycle (concurrent recipe pushes manifested as duplicate
+      // PK / FK violations on instruction_ingredient_refs).
+      currentAbort.current?.abort();
       inFlight.current = null;
-      logSync('error', 'watchdog: cycle stalled, clearing inFlight');
+      logSync('error', 'watchdog: cycle stalled, aborting + clearing inFlight');
       setSettled(
         'error',
         'Sync stalled — click "Syncing…" or refresh to retry.',

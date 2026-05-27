@@ -89,6 +89,14 @@ jobs:
       # We can't blank these at the job level (empty string ≠ unset; an
       # empty GEM_PATH stops Ruby from finding minitest under cocoapods).
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      # Sentry dSYM upload. Org + project slugs aren't sensitive — only
+      # the auth token is. The Fastfile defaults to `sentry` /
+      # `cookyourbooks-mobile` which don't exist on our instance; the
+      # real org is `cyb` and the iOS/Capacitor project is
+      # `cyb-capacitor`.
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: cyb
+      SENTRY_PROJECT_MOBILE: cyb-capacitor
       CYB_ASC_KEY_ID: ${{ secrets.CYB_ASC_KEY_ID }}
       CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -154,6 +162,22 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Install fastlane plugins (via bundler)
+        # Brew-installed fastlane doesn't carry plugin gems on its path,
+        # so we vendor them per-job via Gemfile + Gemfile.lock. Bundler
+        # itself ships with brew Ruby — system Ruby 2.6 is too old for
+        # modern fastlane (>=2.7).
+        working-directory: apps/mobile/ios
+        run: |
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle config set --local path 'vendor/bundle'
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle install --jobs 4
+
       - name: Build web + cap sync
         # `cap sync` runs `pod install` against the committed ios/ project.
         # `env -u` strips RVM vars so brew's pod doesn't follow them into
@@ -206,7 +230,8 @@ jobs:
         run: |
           env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
               -u IRBRC -u rvm_path \
-            fastlane beta
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle exec fastlane beta
 
       - name: Dispatch=ios-release — fastlane release (App Store submit)
         if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios-release'
@@ -214,7 +239,8 @@ jobs:
         run: |
           env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
               -u IRBRC -u rvm_path \
-            fastlane release
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            bundle exec fastlane release
 
       - name: Clean up decoded ASC key
         if: always()

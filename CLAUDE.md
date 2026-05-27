@@ -130,6 +130,76 @@ The web app reads Supabase credentials from `apps/web/.env.local`. On `supabase
 start` the CLI prints the publishable key — update `.env.local` if it ever
 changes.
 
+## Sentry (self-hosted)
+
+Errors + perf tracing + error-only session replay land in the
+self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud`, split
+across three projects so each surface has its own release tracking,
+symbolication artifacts, and quota:
+
+| Surface | Project | DSN suffix | SDK |
+| --- | --- | --- | --- |
+| Web (Vercel) | `cookyourbooks-web` | `…/2` | `@sentry/react` |
+| iOS via Capacitor | `cookyourbooks-mobile` | `…/4` | `@sentry/capacitor` (wraps `@sentry/react` + native Cocoa SDK) |
+| Edge function (Deno) | `cookyourbooks-edge` | `…/3` | `@sentry/deno` via esm.sh |
+
+The browser bundle picks its DSN at runtime via Capacitor platform
+detection (`apps/web/src/sentry.ts`): on iOS/Android it routes through
+`@sentry/capacitor` which initializes both the JS SDK and the native
+`@sentry/cocoa` SDK in one call. The native SDK is what captures
+crashes, ANRs, native plugin errors, and enriches JS events with
+device context (battery, free disk, OS patch level). The browser SDK
+is what captures JS/React errors, network breadcrumbs, and replay.
+
+- **DSNs:** baked in as defaults (DSNs are public — they only authorize
+  ingest, not read). Override with `VITE_SENTRY_DSN` (web) /
+  `VITE_SENTRY_DSN_CAPACITOR` (Capacitor) at build time if you point a
+  build at a different project. The edge function reads `SENTRY_DSN`
+  from Supabase secrets and falls back to the baked-in `…/3` value if
+  unset.
+- **Replay:** errors-only (`replaysOnErrorSampleRate: 1.0`,
+  `replaysSessionSampleRate: 0`). `maskAllText` + `maskAllInputs` +
+  `blockAllMedia` keep recipe contents and photos out of the payload.
+- **Performance tracing:** 10% sampling for web/iOS, 100% for the edge
+  function (short-lived invocations).
+- **User identity:** `setSentryUser` is wired through `AuthProvider`,
+  sending the Supabase user UUID only. No email/display name.
+- **Dev-only events:** disabled by default. Set
+  `VITE_SENTRY_ENABLE_DEV=1` to opt a local build in to ingest.
+- **Native pod (iOS):** `@sentry/capacitor` registers as a Capacitor
+  plugin (`Podfile` updated by `cap sync`). The Sentry Cocoa pod is
+  installed by `pod install` inside the fastlane build step on the
+  macOS runner — Linux dev boxes skip the install but the JS side
+  still works.
+- **Edge function setup:** the DSN is baked in but can be overridden
+  by setting the `SENTRY_DSN` secret:
+
+  ```bash
+  # Hosted
+  ./.bin/supabase secrets set --project-ref <ref> \
+    SENTRY_DSN='https://…@sentry-cyb.work.ripley.cloud/3'
+  # Local dev
+  SENTRY_DSN='…' ./.bin/supabase functions serve import-worker --no-verify-jwt
+  ```
+
+- **Source map upload (web):** Vite's `@sentry/vite-plugin` uploads
+  source maps when `SENTRY_AUTH_TOKEN` is in the build env. Skipped
+  silently otherwise. Other knobs (`SENTRY_URL`, `SENTRY_ORG`,
+  `SENTRY_PROJECT`, `VITE_SENTRY_RELEASE`) have sane defaults — see
+  `apps/web/vite.config.ts`. On Vercel set `SENTRY_AUTH_TOKEN` as a
+  secret and the plugin self-activates on every deploy.
+- **dSYM upload (iOS):** wired into the `beta` fastlane lane via
+  `fastlane-plugin-sentry` (see
+  `apps/mobile/ios/fastlane/Fastfile:upload_dsyms_to_sentry`). The
+  upload runs after `gym` and before `pilot`, gated on
+  `SENTRY_AUTH_TOKEN` so unconfigured / dev machines no-op cleanly.
+  A standalone `upload_dsyms` lane re-uploads from the most recent
+  Xcode archive (or a `path:` override) without rebuilding.
+- **Power-user debug:** set
+  `localStorage.cookyourbooks.sync.consoleMirror = '1'` in the
+  browser console to re-enable info-level sync log mirroring (off by
+  default to save IPC cost on iPad / under Playwright).
+
 ## Setting up the OCR worker
 
 The bulk OCR pipeline (`/import`) relies on a Supabase Edge Function
