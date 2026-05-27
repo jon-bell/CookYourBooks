@@ -97,11 +97,26 @@ test.describe('OCR uploaded-image deletion', () => {
       });
 
       await signIn(page, u);
-      // Drive the RPC + storage delete via the in-page supabase client
-      // — exercises the same path the UI button does.
+      // Drive the RPC + storage delete via the in-page supabase client.
+      // `await import('/src/...')` works under `pnpm dev` (Vite serves
+      // TS source) but breaks under `vite preview` (production build,
+      // no TS files in the dist). Inline the same call sequence the
+      // helper makes so CI's preview-server setup matches dev.
       const removed = await page.evaluate(async (itemId) => {
-        const { deleteOcrStorage } = await import('/src/import/deleteStorage.ts');
-        return deleteOcrStorage({ kind: 'item', itemId });
+        const client = window.__cybSupabase!;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: paths, error } = await (client as any).rpc(
+          'clear_my_import_storage',
+          { p_scope: 'item', p_id: itemId },
+        );
+        if (error) throw new Error(error.message);
+        const list = (paths as string[]) ?? [];
+        if (list.length === 0) return 0;
+        const { error: storageError } = await client.storage
+          .from('imports')
+          .remove(list);
+        if (storageError) throw new Error(storageError.message);
+        return list.length;
       }, itemIds[0]!);
       expect(removed).toBeGreaterThanOrEqual(1);
 
@@ -140,8 +155,19 @@ test.describe('OCR uploaded-image deletion', () => {
 
       await signIn(page, u);
       await page.evaluate(async (batchId) => {
-        const { deleteOcrStorage } = await import('/src/import/deleteStorage.ts');
-        return deleteOcrStorage({ kind: 'batch', batchId });
+        const client = window.__cybSupabase!;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: paths, error } = await (client as any).rpc(
+          'clear_my_import_storage',
+          { p_scope: 'batch', p_id: batchId },
+        );
+        if (error) throw new Error(error.message);
+        const list = (paths as string[]) ?? [];
+        if (list.length === 0) return;
+        const { error: storageError } = await client.storage
+          .from('imports')
+          .remove(list);
+        if (storageError) throw new Error(storageError.message);
       }, b1);
 
       expect(await bucketObjectExists(u.id, 'b1-a.jpg')).toBe(false);
