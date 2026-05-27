@@ -40,6 +40,7 @@ import { useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
+import { deleteOcrStorage } from '../import/deleteStorage.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -929,6 +930,7 @@ export function ImportItemPage() {
                 >
                   Discard entire item
                 </button>
+                <ItemDeleteStorageButton itemId={item.id} hasImage={!!item.storagePath} />
               </div>
 
               {(actionError || saveRecipe.isError) && (
@@ -2031,5 +2033,57 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">{label}</span>
       {children}
     </label>
+  );
+}
+
+/**
+ * Per-item "Delete uploaded image" button. Wipes the storage paths
+ * (primary, thumb, source PDF, extra merged pages) for one item.
+ * Recipes promoted from this item stay; only the source picture goes
+ * away. The button is hidden when `hasImage` is false because there's
+ * nothing left to delete.
+ */
+function ItemDeleteStorageButton({ itemId, hasImage }: { itemId: string; hasImage: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { syncNow } = useSync();
+
+  if (!hasImage) return null;
+
+  async function onClick() {
+    if (
+      !confirm(
+        'Delete the uploaded image for this item? The OCR result and any recipes promoted from it will stay. This cannot be undone.',
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteOcrStorage({ kind: 'item', itemId });
+      await syncNow();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void onClick()}
+        disabled={busy}
+        data-testid="item-delete-storage"
+        className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-60"
+      >
+        {busy ? 'Deleting image…' : 'Delete uploaded image'}
+      </button>
+      {error && (
+        <span className="text-xs text-red-700 dark:text-red-300">{error}</span>
+      )}
+    </>
   );
 }
