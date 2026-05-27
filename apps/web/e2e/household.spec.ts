@@ -389,9 +389,14 @@ test.describe('Household sharing', () => {
     await expect(page.getByRole('heading', { name: 'Legal' })).toBeVisible();
     await page.getByRole('link', { name: 'Terms of Service' }).click();
     await expect(page.getByTestId('legal-terms')).toBeVisible();
-    await expect(page.getByText('CookYourBooks complies with')).toHaveCount(0);
+    // The Terms page links to /legal/dmca but doesn't quote the
+    // agent contact — that lives only on the DMCA page itself.
+    await expect(page.getByText('cyb-dmca@copybyte.com')).toHaveCount(0);
     await page.goto('/legal/dmca');
     await expect(page.getByTestId('legal-dmca')).toBeVisible();
-    await expect(page.getByText('CookYourBooks complies with the')).toBeVisible();
+    // Registered Copyright Agent block (DMCA-1073402, CopyByte) is the
+    // load-bearing thing on this page — assert against it specifically.
+    await expect(page.getByText('Jonathan Bailey')).toBeVisible();
+    await expect(page.getByText('cyb-dmca@copybyte.com')).toBeVisible();
   });
 });

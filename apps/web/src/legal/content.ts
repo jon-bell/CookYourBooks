@@ -2,10 +2,8 @@
 //
 // These are *first drafts* meant to ship with the household-sharing
 // feature. They need legal review before going to production. The
-// language is plain-English where possible — the DMCA section in
-// particular is structured to track 17 U.S.C. §512(c) so that as soon
-// as a DMCA agent is registered (separate workstream owned by Jon),
-// the only update needed here is the agent's name + contact.
+// DMCA section is verbatim from the registered Copyright Agent
+// (CopyByte, DMCA registration DMCA-1073402); the rest is house-drafted.
 //
 // Versioning:
 //   - Bump CURRENT_TOS_VERSION in `household/api.ts` AND
@@ -14,7 +12,7 @@
 //     require a bump (and shouldn't, because the bump invalidates every
 //     user's acceptance and forces them through the gate again).
 
-export const LEGAL_LAST_UPDATED = '2026-05-26';
+export const LEGAL_LAST_UPDATED = '2026-05-27';
 
 export interface LegalDoc {
   slug: 'terms' | 'aup' | 'dmca' | 'privacy';
@@ -128,8 +126,8 @@ and personal-use functionality remain available without re-acceptance.
 ## 10. Contact
 
 Questions about these Terms: legal@cookyourbooks.app.
-Copyright notices: dmca@cookyourbooks.app (see
-[DMCA notice page](/legal/dmca)).
+Copyright notices: see [DMCA notice page](/legal/dmca) for the
+registered Copyright Agent's address and the required notice format.
 `.trim(),
 };
 
@@ -229,91 +227,33 @@ export const DMCA: LegalDoc = {
   slug: 'dmca',
   title: 'DMCA notice & takedown',
   summary:
-    'How to send a DMCA notice or counter-notice. Our designated agent for copyright notices.',
+    'How to send a DMCA notice. Our designated Copyright Agent for §512 notices.',
   body: `
 # DMCA notice and takedown
 
 **Last updated:** ${LEGAL_LAST_UPDATED}
 
-CookYourBooks complies with the U.S. Digital Millennium Copyright Act
-(DMCA), 17 U.S.C. §512. If you believe content on the Service
-infringes a copyright you own or are authorized to enforce, you may
-send a DMCA notice to our designated agent.
+Cook Your Books respects the intellectual property rights of others. Per the DMCA, we will respond expeditiously to claims of copyright infringement on the Site if submitted to our Copyright Agent as described below. Upon receipt of a notice alleging copyright infringement, We will take whatever action it deems appropriate within its sole discretion, including removal of the allegedly infringing materials and termination of access for repeat infringers of copyright-protected content.
 
-## Designated agent
+If you believe that your intellectual property rights have been violated by us or by a third party who has uploaded materials to our website, please provide the following information to the designated Copyright Agent listed below:
 
-> **Note:** Agent registration with the U.S. Copyright Office is in
-> progress as part of the household-sharing release. The contact
-> address below is operational. The registered-agent record on
-> https://www.copyright.gov/dmca-directory will be updated as soon as
-> the registration is complete.
+- A description of the copyrighted work or other intellectual property that you claim has been infringed;
+- A description of where the material that you claim is infringing is located on the Site;
+- An address, telephone number, and email address where we can contact you and, if different, an email address where the alleged infringing party, if not we, can contact you;
+- A statement that you have a good-faith belief that the use is not authorized by the copyright owner or other intellectual property rights owner, by its agent, or by law;
+- A statement by you under penalty of perjury that the information in your notice is accurate and that you are the copyright or intellectual property owner or are authorized to act on the owner's behalf;
+- Your electronic or physical signature.
 
-| | |
-|---|---|
-| **Agent** | DMCA Agent, CookYourBooks |
-| **Email** | dmca@cookyourbooks.app |
-| **Postal** | (TBD — added on registration) |
+Cook Your Books may request additional information before removing any allegedly infringing material. In the event we remove the allegedly infringing materials, we will immediately notify the person responsible for posting such materials that we removed or disabled access to the materials. We may also provide the responsible person with your email address so that the person may respond to your allegations.
 
-## What to include in a notice
+Pursuant to 17 U.S.C. 512(c). Cook Your Books designated Copyright Agent is:
 
-To be effective under §512(c)(3), your notice must include:
-
-1. A physical or electronic signature of the copyright owner or an
-   authorized representative.
-2. Identification of the copyrighted work claimed to be infringed (or,
-   for multiple works, a representative list).
-3. Identification of the material that is claimed to be infringing,
-   with information reasonably sufficient to permit us to locate it —
-   ideally including a URL to the offending collection or recipe.
-4. Your contact information: address, telephone number, and email.
-5. A statement that you have a **good faith belief** that the use is
-   not authorized by the copyright owner, its agent, or the law.
-6. A statement that the information in the notice is **accurate**,
-   and **under penalty of perjury**, that you are authorized to act
-   on behalf of the owner of the copyright.
-
-Templates that don't meet these elements may not qualify for §512
-treatment and we may not be able to act on them. We respond to
-properly-formed notices within 10 business days.
-
-## Counter-notice procedure
-
-If your content was removed in response to a notice and you believe
-the removal was in error, you may send a counter-notice. A
-counter-notice must include:
-
-1. Your physical or electronic signature.
-2. Identification of the material and its location before removal.
-3. A statement under penalty of perjury that you have a good-faith
-   belief that the material was removed as a result of mistake or
-   misidentification.
-4. Your name, address, and telephone number.
-5. A statement that you consent to the jurisdiction of the federal
-   court in the district where you reside (or, if you reside outside
-   the U.S., the Northern District of California), and that you will
-   accept service of process from the notifier or its agent.
-
-If we receive a valid counter-notice, we forward it to the original
-notifier. If the notifier does not file suit within 10–14 business
-days, we may restore the content.
-
-## Repeat-infringer policy
-
-We maintain a repeat-infringer policy as required by §512(i). Accounts
-with multiple confirmed infringement reports — or any single willful
-infringement — are subject to permanent termination. We log every
-DMCA action against an account in our audit trail.
-
-## False notices
-
-Knowingly making a materially false statement in a DMCA notice or
-counter-notice may subject the sender to liability under §512(f) for
-the rights holder's or user's damages, costs, and attorney fees.
-
-## Trademark and other IP
-
-DMCA covers copyright. For trademark or other IP claims, email
-legal@cookyourbooks.app.
+Jonathan Bailey
+CopyByte
+3157 Gentilly Blvd Suite # 2254
+New Orleans, LA 70122
+Phone: 1-504-356-4555
+Email: cyb-dmca@copybyte.com
 `.trim(),
 };
 
