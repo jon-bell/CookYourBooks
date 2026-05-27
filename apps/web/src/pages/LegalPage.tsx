@@ -1,6 +1,10 @@
 import type React from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { DOCS, LEGAL_LAST_UPDATED } from '../legal/content.js';
+import { DOCS, LEGAL_LAST_UPDATED, type LegalDoc } from '../legal/content.js';
+
+function isLegalSlug(s: string): s is LegalDoc['slug'] {
+  return s in DOCS;
+}
 
 /**
  * Renders one of the legal documents (Terms, AUP, DMCA, Privacy) as a
@@ -36,7 +40,7 @@ export function LegalPage() {
       </section>
     );
   }
-  const found = DOCS[doc];
+  const found = isLegalSlug(doc) ? DOCS[doc] : undefined;
   if (!found) {
     return (
       <p className="text-stone-600 dark:text-stone-400">
@@ -75,6 +79,19 @@ function MarkdownView({ body }: { body: string }) {
   );
 }
 
+/**
+ * Split a markdown list block into cleaned item strings.
+ * Splits only at lines that start a new marker (`- ` or `N. `), so
+ * wrapped continuation lines (indented with spaces) stay with their item.
+ * Exported for unit testing.
+ */
+export function splitListItems(block: string): string[] {
+  return block
+    .split(/\n(?=\s*(?:\d+\.|-)\s)/)
+    .map((item) => item.replace(/^(?:\d+\.|-)\s+/, '').replace(/\n\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
 function renderBlock(block: string, key: number): React.ReactElement | null {
   if (!block) return null;
   if (block.startsWith('# ')) return <h1 key={key}>{inline(block.slice(2))}</h1>;
@@ -93,27 +110,50 @@ function renderBlock(block: string, key: number): React.ReactElement | null {
     );
   }
   if (/^\|.*\|$/.test(block.split('\n')[0] ?? '')) {
-    const rows = block.split('\n').map((r) => r.split('|').slice(1, -1).map((c) => c.trim()));
+    const lines = block.split('\n');
+    const rows = lines.map((r) => r.split('|').slice(1, -1).map((c) => c.trim()));
     if (rows.length < 2) return <p key={key}>{inline(block)}</p>;
+    const hasDivider = rows[1]?.every((c) => /^-+$/.test(c));
+    const bodyRows = rows.filter((row) => !row.every((c) => /^-+$/.test(c)));
+    const [headRow, ...dataRows] = bodyRows;
     return (
       <table key={key}>
-        <tbody>
-          {rows
-            .filter((row) => !row.every((c) => /^-+$/.test(c)))
-            .map((row, j) => (
+        {hasDivider && headRow ? (
+          <>
+            <thead>
+              <tr>
+                {headRow.map((cell, k) => (
+                  <th key={k}>{inline(cell)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {dataRows.map((row, j) => (
+                <tr key={j}>
+                  {row.map((cell, k) => (
+                    <td key={k}>{inline(cell)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </>
+        ) : (
+          <tbody>
+            {bodyRows.map((row, j) => (
               <tr key={j}>
                 {row.map((cell, k) => (
                   <td key={k}>{inline(cell)}</td>
                 ))}
               </tr>
             ))}
-        </tbody>
+          </tbody>
+        )}
       </table>
     );
   }
   if (block.startsWith('- ') || block.startsWith('1. ')) {
     const ordered = block.startsWith('1. ');
-    const items = block.split('\n').map((line) => line.replace(/^(\d+\.|-)\s+/, ''));
+    const items = splitListItems(block);
     return ordered ? (
       <ol key={key}>
         {items.map((it, j) => (

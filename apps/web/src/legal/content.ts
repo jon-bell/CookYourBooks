@@ -6,11 +6,19 @@
 // (CopyByte, DMCA registration DMCA-1073402); the rest is house-drafted.
 //
 // Versioning:
-//   - Bump CURRENT_TOS_VERSION in `household/api.ts` AND
-//     `current_tos_version()` in supabase/migrations/*_tos.sql in lockstep
-//     when the substantive obligations change. Cosmetic edits don't
-//     require a bump (and shouldn't, because the bump invalidates every
-//     user's acceptance and forces them through the gate again).
+//   - When substantive obligations change, bump ALL THREE in lockstep:
+//       1. CURRENT_TOS_VERSION (below)
+//       2. LEGAL_LAST_UPDATED (below)
+//       3. current_tos_version() in supabase/migrations/*_tos.sql
+//   - Cosmetic edits don't require a bump (and shouldn't, because the
+//     bump invalidates every user's acceptance and forces them through
+//     the gate again).
+
+/** Current ToS version number. Bump together with LEGAL_LAST_UPDATED and
+ *  the `current_tos_version()` Postgres function whenever substantive
+ *  obligations change. Re-exported from `household/api.ts` for callers
+ *  that only need the version number. */
+export const CURRENT_TOS_VERSION = 1;
 
 export const LEGAL_LAST_UPDATED = '2026-05-27';
 
@@ -29,7 +37,7 @@ export const TERMS: LegalDoc = {
   body: `
 # Terms of Service
 
-**Last updated:** ${LEGAL_LAST_UPDATED}
+**Last updated:** ${LEGAL_LAST_UPDATED} · **Version:** ${CURRENT_TOS_VERSION}
 
 These Terms of Service (the "Terms") govern your use of CookYourBooks
 (the "Service"). By using the Service, you agree to these Terms.
@@ -90,7 +98,8 @@ Violations are taken seriously. See the
 
 Public publishing requires:
 - A separate, fresh attestation if the collection was previously only
-  household-shared.
+  household-shared. Attestations expire after 5 minutes; if the Service
+  prompts you to re-attest before completing a publish action, this is why.
 - That the collection is not a cookbook with an ISBN — these are
   treated by the Service as published works subject to publisher
   copyright, and cannot be made public.
@@ -104,10 +113,12 @@ infringement may be permanently banned.
 
 ## 7. Termination
 
-You may delete your account at any time. We may suspend or terminate
-your account for: violation of these Terms, violation of the
-[Acceptable Use Policy](/legal/aup), repeated or willful copyright
-infringement, or activity that materially harms other users.
+You may delete your account at any time. Retention periods after
+deletion are described in the [Privacy Policy](/legal/privacy). We may
+suspend or terminate your account for: violation of these Terms,
+violation of the [Acceptable Use Policy](/legal/aup), repeated or
+willful copyright infringement, or activity that materially harms
+other users.
 
 ## 8. Disclaimers and liability
 
@@ -119,9 +130,12 @@ be limited under applicable law.
 
 ## 9. Changes to these Terms
 
-We will give notice of substantive changes by requiring you to
-re-accept the Terms before performing share / publish actions. Reading
-and personal-use functionality remain available without re-acceptance.
+Substantive changes — those that alter your obligations or ours — will
+increment the Terms version number shown at the top of this page. When
+the version changes, the Service will require you to re-accept before
+performing share / publish actions. Reading and personal-use
+functionality remain available without re-acceptance. Cosmetic edits
+(grammar, formatting) do not change the version.
 
 ## 10. Contact
 
@@ -139,7 +153,7 @@ export const AUP: LegalDoc = {
   body: `
 # Acceptable Use Policy
 
-**Last updated:** ${LEGAL_LAST_UPDATED}
+**Last updated:** ${LEGAL_LAST_UPDATED} · **Version:** ${CURRENT_TOS_VERSION}
 
 This Acceptable Use Policy (the "AUP") describes content and behavior
 that is not allowed on CookYourBooks. The AUP supplements the
@@ -165,12 +179,12 @@ Confirmed copyright violations result in:
 3. Cooperation with the rights holder's DMCA process where
    applicable.
 
-The legal facts: bare lists of ingredients are not copyrightable
-(*Publications International v. Meredith*, 7th Cir. 1996), but the
-expressive prose around recipes — headnotes, descriptions, the
-instructions as written, photographs, and the cookbook's
-selection-and-arrangement — is copyrightable. If you didn't write it
-and don't have explicit permission, don't publish it.
+A note on what is and isn't copyrightable: bare lists of ingredients
+are generally not protected by copyright, but the expressive prose
+around recipes — headnotes, descriptions, the instructions as written,
+photographs, and the cookbook's overall selection and arrangement — is.
+If you didn't write it and don't have explicit permission from the
+rights holder, don't publish it.
 
 ## 2. Household sharing — what counts as a household
 
@@ -260,62 +274,193 @@ Email: cyb-dmca@copybyte.com
 export const PRIVACY: LegalDoc = {
   slug: 'privacy',
   title: 'Privacy policy',
-  summary: 'What we collect, what we do with it, what we don\'t do.',
+  summary: 'What we collect, what we do with it, and your rights under GDPR and CCPA.',
   body: `
 # Privacy policy
 
 **Last updated:** ${LEGAL_LAST_UPDATED}
 
-> This policy is a first draft. It needs review against the actual
-> data-flow audit before going to production. The household feature
-> doesn't change the privacy posture materially — household members
-> see each other's *display name* and *email* (the latter only if used
-> as the display name) and any content explicitly shared into the
-> household.
+> **[CONFIRM before launch]** The placeholders marked \`[CONFIRM: …]\` below
+> require a human decision (legal entity name/address, retention durations,
+> DPO/EU-rep appointment). Replace them before bumping CURRENT_TOS_VERSION.
 
-## What we collect
+## Who we are
 
-- **Account data**: email, password hash, display name.
-- **Content you create**: recipes, collections, photos, notes.
-- **Sync metadata**: last-synced timestamps so we don't refetch
-  everything every time.
-- **Audit log**: every household / sharing / attestation / ToS action,
-  used to defend takedowns and investigate abuse. Retained
-  indefinitely.
+CookYourBooks ("we", "us", "our") is the data controller for personal data
+processed through this Service. **[CONFIRM: legal entity name, registered
+address, and jurisdiction.]** Questions about this policy:
+privacy@cookyourbooks.app.
 
-## What we don't collect
+## What we collect and why
 
-- Third-party analytics. (No GA, no Mixpanel, no Heap.)
-- Behavioral targeting profiles.
+We collect only what we need to run the Service. The table below lists each
+category, what we use it for, and the legal basis under the GDPR.
+
+| Category | Examples | Purpose | GDPR lawful basis |
+|---|---|---|---|
+| Account data | Email, password hash, display name, Google OAuth subject | Creating and securing your account | Performance of contract |
+| Content | Recipes, collections, photos, notes, OCR upload images | Delivering the Service | Performance of contract |
+| Sync metadata | Last-sync timestamps per topic | Efficient incremental sync so we don't refetch everything | Performance of contract |
+| Audit log | Household / sharing / attestation / ToS actions with timestamps | Defending takedowns; investigating abuse | Legitimate interest |
+| Telemetry | Sentry error events, 10%-sampled performance traces, error-only session replay (Supabase user UUID only; text/inputs/media masked) | Debugging and reliability | Legitimate interest |
+| Google OAuth token | Issued by Google at sign-in | Authenticating your account via Google | Consent (you initiate the OAuth flow) |
+
+**What we do not collect:**
+- Third-party analytics or behavioral profiling (no GA, Mixpanel, Heap, etc.).
 - Your physical address.
+- Any data from the OCR feature that you process yourself (see below).
+
+## OCR / photo import
+
+When you use the import-from-photo feature, images are sent **directly from
+your browser to the LLM provider you configure** (e.g., Google Gemini or an
+OpenAI-compatible endpoint). Your images and your API key do not transit our
+infrastructure. Your provider's own privacy policy governs how they handle
+that data. We store only the structured recipe data that comes back.
+
+## Local storage and browser data
+
+The Service stores data locally in your browser:
+
+- **IndexedDB** — your recipe library, synced from Supabase, for offline access.
+- **localStorage** — OCR settings (provider, model, prompt) under
+  \`cookyourbooks.ocr.v1\`; a debug flag under \`cookyourbooks.sync.consoleMirror\`.
+- **Session storage / cookies** — your Supabase auth session token.
+
+No advertising or analytics cookies are used. The cookies we set are strictly
+necessary for the Service to function; no cookie banner is legally required.
 
 ## Household sharing visibility
 
-When you join a household, other active members of that household can
-see:
+When you join a household, other active members can see:
 - Your display name.
 - The collections you have explicitly shared with the household.
 - The fact that you are a member (with your role and join date).
 
-They cannot see your email, your private (un-shared) collections, or
-your activity outside the household.
+They cannot see your email, your private (un-shared) collections, or your
+activity outside the household.
 
 ## Audit log
 
-The audit log records every state-changing action you take in the
-household feature: creating a household, accepting an invite, sharing
-or unsharing a collection, accepting the ToS. The audit log is
-visible to you (your own actions), to other members of your household
-(actions in your shared household), and to platform admins. It is not
-exposed to the public.
+The audit log records every state-changing action you take in the household
+feature: creating a household, accepting an invite, sharing or unsharing a
+collection, and accepting the Terms. The log is visible to you (your own
+actions), to other members of your household (actions in your shared
+household), and to platform admins. It is not exposed to the public.
+
+Audit logs are retained **indefinitely** as required for takedown defense and
+abuse investigation.
+
+## Subprocessors
+
+We share data only with the vendors listed below. All are US-based.
+
+| Vendor | Role | Transfer basis (EEA users) |
+|---|---|---|
+| Supabase | Database, file storage, auth, realtime, edge functions | Standard Contractual Clauses (Supabase DPA) |
+| Vercel | Web hosting | EU-US Data Privacy Framework (Vercel is DPF-certified) |
+| Google | OAuth sign-in only | EU-US Data Privacy Framework (Google is DPF-certified) |
+| CookYourBooks (self-hosted Sentry) | Error events, performance traces, error-only session replay | Controller-to-controller SCCs between us and EEA users |
+
+The user-configured LLM provider for OCR is not our subprocessor — you
+contract with them directly and data flows from your browser to them.
+
+## Data retention
+
+| Data | Retention |
+|---|---|
+| Active account data | Held for the lifetime of your account |
+| Deleted account — content and sync data | **[CONFIRM: tombstone duration required for cr-sqlite CRDT convergence]** |
+| Audit log | Indefinitely |
+| Sentry telemetry events | **[CONFIRM: 30 or 90 days per your Sentry project settings]** |
+| OCR import artifacts (uploaded images) | **[CONFIRM: retention policy for Storage bucket]** |
+
+## International data transfers
+
+All subprocessors are based in the United States. If you are in the
+European Economic Area, the United Kingdom, or Switzerland, your data is
+transferred to the US on the bases listed in the subprocessor table above
+(DPF certification or SCCs). For the self-hosted Sentry instance, which
+operates on infrastructure we control, the applicable transfer mechanism is
+Standard Contractual Clauses between us and you as the data subject.
+
+## Your rights under GDPR
+
+If you are in the EEA, UK, or Switzerland, you have the right to:
+
+- **Access** the personal data we hold about you.
+- **Rectify** inaccurate data.
+- **Erase** your data ("right to be forgotten") — in-app account deletion
+  initiates erasure subject to the retention periods above.
+- **Portability** — export your recipe library via the in-app export.
+- **Restrict** processing in certain circumstances.
+- **Object** to processing based on legitimate interest.
+- **Withdraw consent** for consent-based processing (Google OAuth, OCR).
+- **Lodge a complaint** with your national supervisory authority.
+
+To exercise these rights, use the in-app account settings or email
+privacy@cookyourbooks.app. We respond within 30 days per Art. 12(3) GDPR.
+
+**[CONFIRM: DPO appointment — either appoint a DPO and provide contact
+details here, or confirm that Art. 37 GDPR does not require one (i.e., the
+processing is not large-scale, systematic, or of special categories).]**
+
+**[CONFIRM: EU Representative — if you have no establishment in the EEA,
+Art. 27 GDPR may require appointing an EU representative. Confirm whether
+this applies and, if so, add their details here.]**
+
+## Your rights under CCPA / CPRA
+
+If you are a California resident, you have the right to:
+
+- **Know** what personal information we collect, use, and share.
+- **Delete** your personal information (subject to exceptions, e.g., the
+  audit log retained for legal defense).
+- **Correct** inaccurate personal information.
+- **Opt out of sale or sharing** — we do not sell personal information, and
+  we do not share it for cross-context behavioral advertising.
+
+To exercise these rights, email privacy@cookyourbooks.app or use in-app
+account deletion. We will not discriminate against you for exercising them.
+
+*California Shine the Light (Cal. Civ. Code § 1798.83):* We do not disclose
+personal information to third parties for their own direct marketing purposes.
+
+## Children's privacy
+
+You must be at least 13 years old to use the Service (per the [Terms of
+Service](/legal/terms)). In EU member states where the applicable minimum age
+under Art. 8 GDPR is 16, you must be at least 16. If we become aware that an
+account holder is below the applicable minimum age, we will delete the account
+and its data promptly.
+
+## Security and breach notification
+
+We implement appropriate technical and organisational measures to protect your
+data, including row-level security on all database tables, encryption at rest
+via Supabase, and TLS for all data in transit.
+
+In the event of a personal data breach, we will notify the relevant supervisory
+authority within 72 hours where feasible (GDPR Art. 33), and will notify
+affected users without undue delay where the breach is likely to result in high
+risk to their rights and freedoms (GDPR Art. 34 / CCPA § 1798.82).
+
+## Changes to this policy
+
+Material changes — those that affect how we collect or use your data — will
+update the **Last updated** date above. We will give you reasonable notice
+of significant changes (e.g., by email or an in-app notice) before they take
+effect. Continued use of the Service after the effective date constitutes
+acceptance of the revised policy.
 
 ## Contact
 
+For privacy-related questions, requests, or complaints:
 privacy@cookyourbooks.app.
 `.trim(),
 };
 
-export const DOCS: Record<string, LegalDoc> = {
+export const DOCS: Record<LegalDoc['slug'], LegalDoc> = {
   terms: TERMS,
   aup: AUP,
   dmca: DMCA,

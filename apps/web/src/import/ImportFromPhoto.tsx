@@ -90,7 +90,22 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
     if (!photo || !user) return;
     setBusy(true);
     try {
-      if (hasKey === false) {
+      // Initial mount fires listOcrKeys() async. If the user clicks
+      // "Take photo" before that resolves, hasKey is undefined and we
+      // can't tell whether OCR is configured. Re-fetch synchronously
+      // here so the "OCR not configured" surface is deterministic.
+      let resolvedHasKey = hasKey;
+      if (resolvedHasKey === undefined) {
+        try {
+          const keys = await listOcrKeys();
+          resolvedHasKey = keys.length > 0;
+          setHasKey(resolvedHasKey);
+        } catch {
+          resolvedHasKey = false;
+          setHasKey(false);
+        }
+      }
+      if (resolvedHasKey === false) {
         setError(
           <>
             OCR not configured.{' '}
