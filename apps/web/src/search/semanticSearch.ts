@@ -1,5 +1,6 @@
 import { listSearchableEmbeddings, searchRecipesLocalSubstring } from '../local/repositories.js';
 import { embedText } from './embedder.js';
+import SearchWorker from './searchWorker.ts?worker';
 
 export interface SearchHit {
   recipeId: string;
@@ -11,14 +12,68 @@ export interface SearchHit {
   score?: number;
 }
 
+// BGE-small dim. Hard-coded here too rather than imported from domain
+// so the worker file can stay framework-free.
+const DIM = 384;
+
+// BGE cosine on totally-unrelated text lands around 0.30–0.35; ramen
+// versus "ramen" is closer to 0.85. A modest floor keeps the tail of
+// 5000-recipe libraries from drowning real matches with off-topic
+// noise. Tune downward if real matches feel missing.
+const FLOOR = 0.35;
+
+// Singleton worker. Created lazily so /search-less sessions don't pay
+// for the worker boot, and reused across queries to avoid re-create
+// churn on every keystroke. Workers in Vite are module-scoped to the
+// dev server / dist bundle.
+let workerSingleton: Worker | undefined;
+let nextRequestId = 1;
+const pending = new Map<number, (scores: number[]) => void>();
+
+function getWorker(): Worker {
+  if (!workerSingleton) {
+    workerSingleton = new SearchWorker();
+    workerSingleton.onmessage = (e: MessageEvent<{ id: number; scores: number[] }>) => {
+      const resolve = pending.get(e.data.id);
+      if (resolve) {
+        pending.delete(e.data.id);
+        resolve(e.data.scores);
+      }
+    };
+  }
+  return workerSingleton;
+}
+
 /**
- * Brute-force cosine search in JS over the locally cached vectors.
- *
- * Both sides are L2-normalized at write time (recipe vectors come from
- * @huggingface/transformers with `normalize: true`, query vectors
- * likewise), so the dot product *is* the cosine similarity. Math
- * fits in <10 ms for libraries up to a few thousand recipes; no need
- * for ANN structures locally.
+ * Score every candidate against the query vector off-thread. Posts the
+ * embeddings as a flat Float32Array (`count * dim` floats) so the
+ * buffer transfers in O(1) instead of being structured-cloned per
+ * vector — matters once the library is in the thousands of recipes.
+ */
+function scoreOffMainThread(
+  queryVec: Float32Array,
+  embeddings: Float32Array,
+  count: number,
+): Promise<number[]> {
+  return new Promise((resolve) => {
+    const id = nextRequestId++;
+    pending.set(id, resolve);
+    // The query vector is small (1.5 KB) — copy is fine. The flat
+    // embeddings buffer is transferred so we don't pay the
+    // structured-clone copy on the hot path.
+    getWorker().postMessage(
+      { id, queryVec, embeddings, count, dim: DIM },
+      [embeddings.buffer],
+    );
+  });
+}
+
+/**
+ * Semantic search over the locally cached embeddings. Both sides are
+ * L2-normalized at write time (recipe vectors via @huggingface/
+ * transformers with `normalize: true`, query likewise), so the dot
+ * product is the cosine similarity directly. The math runs in a Web
+ * Worker so a 50k-recipe library doesn't stall the input box.
  */
 export async function searchSemantic(
   ownerId: string,
@@ -33,24 +88,26 @@ export async function searchSemantic(
   ]);
   if (candidates.length === 0) return [];
 
-  type Scored = { idx: number; score: number };
-  const scored: Scored[] = new Array(candidates.length);
+  // Pack candidate vectors into a single flat Float32Array so the
+  // worker postMessage can transfer the buffer instead of copying N
+  // separate typed arrays. Each candidate occupies `DIM` floats
+  // starting at `idx * DIM`. The metadata stays on the main thread —
+  // we map back by index after the worker returns scores.
+  const flat = new Float32Array(candidates.length * DIM);
   for (let i = 0; i < candidates.length; i += 1) {
-    const vec = candidates[i]!.embedding;
-    let dot = 0;
-    for (let j = 0; j < vec.length; j += 1) {
-      dot += vec[j]! * queryVec[j]!;
-    }
-    scored[i] = { idx: i, score: dot };
+    flat.set(candidates[i]!.embedding, i * DIM);
+  }
+
+  const scores = await scoreOffMainThread(queryVec, flat, candidates.length);
+
+  type Scored = { idx: number; score: number };
+  const scored: Scored[] = new Array(scores.length);
+  for (let i = 0; i < scores.length; i += 1) {
+    scored[i] = { idx: i, score: scores[i]! };
   }
   scored.sort((a, b) => b.score - a.score);
 
   const out: SearchHit[] = [];
-  // BGE cosine on totally-unrelated text lands around 0.30–0.35; ramen
-  // versus "ramen" is closer to 0.85. A modest floor keeps the tail of
-  // 5000-recipe libraries from drowning real matches with off-topic
-  // noise. Tune downward if real matches feel missing.
-  const FLOOR = 0.35;
   for (let i = 0; i < scored.length && out.length < limit; i += 1) {
     const s = scored[i]!;
     if (s.score < FLOOR) break;

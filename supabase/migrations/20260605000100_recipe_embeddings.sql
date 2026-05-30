@@ -114,14 +114,17 @@ set search_path = public
 as $$
 declare
   v_owner uuid;
-  v_deleted boolean;
 begin
-  select c.owner_id, r.deleted
-    into v_owner, v_deleted
+  -- `recipes.deleted` doesn't exist server-side; tombstones are a
+  -- cr-sqlite local concern. Server-side deletion is a hard DELETE
+  -- statement which fires the cascade and removes the row entirely,
+  -- so absence == deleted from this function's point of view.
+  select c.owner_id
+    into v_owner
     from public.recipes r
     join public.recipe_collections c on c.id = r.collection_id
     where r.id = p_recipe_id;
-  if v_owner is null or v_deleted then
+  if v_owner is null then
     return;
   end if;
 
@@ -149,7 +152,6 @@ begin
     -- Skip if nothing the embed text cares about changed. The text
     -- helper consumes title/description/notes/book_title/equipment
     -- from this table.
-    if NEW.deleted then return NEW; end if;
     if NEW.title is distinct from OLD.title
        or NEW.description is distinct from OLD.description
        or NEW.notes is distinct from OLD.notes
@@ -247,9 +249,19 @@ as $$
 declare
   v_recipe uuid;
 begin
+  -- Match BOTH the claim token AND the current CLAIMED status. A lease
+  -- can expire between claim and complete; if a second worker reclaimed
+  -- the job (status flipped CLAIMED → reclaim → CLAIMED with a new
+  -- token, or CLAIMED → expired → PENDING), the original worker's
+  -- completion must no-op so its stale embedding can't overwrite the
+  -- newer one. Locking via `for update` makes the read-modify-write
+  -- atomic against the embed_claim_next lease-reclaim block above.
   select recipe_id into v_recipe
     from public.recipe_embedding_jobs
-    where id = p_job_id and claim_token = p_claim_token;
+    where id = p_job_id
+      and claim_token = p_claim_token
+      and status = 'CLAIMED'
+    for update;
   if v_recipe is null then
     return false;
   end if;
@@ -296,12 +308,17 @@ begin
   if p_next_state not in ('PENDING', 'FAILED') then
     raise exception 'Invalid next state %', p_next_state using errcode = '22023';
   end if;
+  -- Same race posture as embed_complete: don't unwind a job that's
+  -- already been reclaimed by a second worker (its status would have
+  -- moved off CLAIMED and the claim_token would no longer match).
   update public.recipe_embedding_jobs set
     status = p_next_state,
     last_error = p_error,
     claim_token = null,
     updated_at = now()
-    where id = p_job_id and claim_token = p_claim_token;
+    where id = p_job_id
+      and claim_token = p_claim_token
+      and status = 'CLAIMED';
   return found;
 end;
 $$;
@@ -454,9 +471,11 @@ alter publication supabase_realtime add table public.recipe_embedding_jobs;
 -- Enqueue every existing recipe. The unique partial index keeps repeat
 -- migration runs idempotent.
 
+-- `recipes.deleted` is a cr-sqlite local tombstone column; server-side
+-- the row simply doesn't exist when "deleted", so an unfiltered SELECT
+-- already excludes them.
 insert into public.recipe_embedding_jobs (owner_id, recipe_id)
   select c.owner_id, r.id
     from public.recipes r
     join public.recipe_collections c on c.id = r.collection_id
-    where r.deleted = false
     on conflict (recipe_id) where status in ('PENDING', 'CLAIMED') do nothing;
