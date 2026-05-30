@@ -1818,6 +1818,24 @@ export type Database = {
       }
     }
     Functions: {
+      admin_nutrition_upsert_fact: {
+        Args: {
+          p_brand?: string
+          p_calories_kcal?: number
+          p_carbs_g?: number
+          p_description: string
+          p_fat_g?: number
+          p_fiber_g?: number
+          p_portions?: Json
+          p_protein_g?: number
+          p_saturated_fat_g?: number
+          p_sodium_mg?: number
+          p_source: string
+          p_source_id: string
+          p_sugar_g?: number
+        }
+        Returns: undefined
+      }
       bakeoff_claim_next: {
         Args: {
           p_lease_seconds?: number

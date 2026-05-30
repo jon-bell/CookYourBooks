@@ -1,5 +1,6 @@
 import { supabase } from '../supabase.js';
 import type { NutritionFact, NutritionSource } from '@cookyourbooks/domain';
+import { readLocalFact, writeLocalFact, writeLocalFacts } from './localCache.js';
 
 /**
  * Talks to the `nutrition` Edge Function for live USDA / Open Food Facts
@@ -40,21 +41,45 @@ export interface SearchResponse {
 }
 
 /** Live search through the edge function. The function caches each hit
- *  into `nutrition_facts_cache` before returning, so subsequent calls
- *  via {@link readCached} are network-free. */
+ *  into `nutrition_facts_cache` before returning. We mirror the same
+ *  hits into the local SQLite cache so subsequent reads short-circuit
+ *  the round-trip even before sync runs. */
 export async function searchNutrition(q: string, limit = 10): Promise<NutritionFact[]> {
   if (!q.trim()) return [];
   const { hits } = await callNutrition<SearchResponse>('search', { q, limit });
+  // Best-effort local mirror; never throw out a search result if the
+  // local DB isn't ready (e.g. very first session before SyncProvider
+  // has opened the file).
+  try {
+    await writeLocalFacts(hits);
+  } catch (e) {
+    console.warn('nutrition local cache write failed', e);
+  }
   return hits;
 }
 
-/** Cache read. Returns the row if present, null otherwise. Used when
- *  we've already resolved a mapping for the ingredient and just want
- *  the latest facts. */
+/**
+ * Local-first cache read. Returns the row if present locally, falling
+ * back to the server's `nutrition_facts_cache` table (and mirroring the
+ * server hit back into local). null on cache miss in both layers.
+ *
+ * Bypassing the local read with `forceRemote: true` is useful for the
+ * admin UI when an admin has just edited a cache row server-side and
+ * wants to see the change reflected immediately.
+ */
 export async function readCachedFact(
   source: NutritionSource,
   sourceId: string,
+  opts: { forceRemote?: boolean } = {},
 ): Promise<NutritionFact | null> {
+  if (!opts.forceRemote) {
+    try {
+      const local = await readLocalFact(source, sourceId);
+      if (local) return local;
+    } catch (e) {
+      console.warn('nutrition local cache read failed', e);
+    }
+  }
   const { data, error } = await supabase
     .from('nutrition_facts_cache')
     .select('*')
@@ -66,7 +91,13 @@ export async function readCachedFact(
   // the edge function and the migration both guarantee the
   // `{ unit, grams }[]` shape, so cast through `unknown` to match
   // the domain interface.
-  return data as unknown as NutritionFact;
+  const fact = data as unknown as NutritionFact;
+  try {
+    await writeLocalFact(fact);
+  } catch (e) {
+    console.warn('nutrition local cache write failed', e);
+  }
+  return fact;
 }
 
 // ---------- Mapping resolution + writes ----------

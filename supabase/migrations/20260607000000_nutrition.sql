@@ -84,8 +84,12 @@ create table public.ingredient_nutrition_mappings (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   -- A given user has at most one mapping per ingredient_key; the
-  -- platform default has at most one too (owner_id NULL).
-  unique (owner_id, ingredient_key)
+  -- platform default has at most one too. `nulls not distinct` is the
+  -- key piece — without it Postgres treats (NULL, 'flour') vs (NULL,
+  -- 'flour') as distinct, and the platform-default uniqueness invariant
+  -- silently breaks the moment two admins / two `upsert`s land for the
+  -- same ingredient_key.
+  unique nulls not distinct (owner_id, ingredient_key)
 );
 
 create index ingredient_nutrition_mappings_owner_key_idx
