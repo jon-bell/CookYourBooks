@@ -2031,6 +2031,10 @@ export type Database = {
         }
         Returns: string
       }
+      clear_my_import_storage: {
+        Args: { p_id?: string; p_scope: string }
+        Returns: string[]
+      }
       cli_add_shopping: {
         Args: {
           name: string
@@ -2089,6 +2093,7 @@ export type Database = {
       current_household_id: { Args: { p_user_id: string }; Returns: string }
       current_tos_version: { Args: never; Returns: number }
       delete_household: { Args: { p_household_id: string }; Returns: undefined }
+      delete_my_account: { Args: never; Returns: undefined }
       fork_collection: {
         Args: { source_collection_id: string }
         Returns: string

@@ -133,12 +133,7 @@ async function getCurrentHouseholdId(
   client: CookbooksClient,
   ownerId: string,
 ): Promise<string | null> {
-  // `household_members` was added in the household-sharing wave; the
-  // committed `database.types.ts` predates it, so we cast through `any`
-  // for these table refs. The runtime shape is `{ household_id: string }`.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const untyped = client as unknown as { from: (t: string) => any };
-  const { data, error } = await untyped
+  const { data, error } = await client
     .from('household_members')
     .select('household_id')
     .eq('user_id', ownerId)
@@ -148,7 +143,7 @@ async function getCurrentHouseholdId(
     logSync('error', 'household lookup failed', { error: error.message });
     return null;
   }
-  return (data?.household_id as string | undefined) ?? null;
+  return data?.household_id ?? null;
 }
 
 interface ConversionRuleRow {
@@ -562,19 +557,12 @@ async function pullHouseholdSharedContent(
   ownerId: string,
   householdId: string,
 ): Promise<number> {
-  // The household-sharing columns (`shared_with_household_id`) weren't
-  // present when database.types.ts was last generated. The runtime
-  // PostgREST schema knows about them, so cast through `any` rather
-  // than diverging the committed types file from the rest of the repo.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const c = client as unknown as { from: (t: string) => any };
-
   const collectionTopic = `household_collections:${ownerId}:${householdId}`;
   const recipeTopic = `household_recipes:${ownerId}:${householdId}`;
 
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
   const collections = await fetchAllPages<CollectionRow>((from, to) =>
-    c
+    client
       .from('recipe_collections')
       .select('*')
       .eq('shared_with_household_id', householdId)
@@ -597,7 +585,7 @@ async function pullHouseholdSharedContent(
   const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
   const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
     (from, to) =>
-      c
+      client
         .from('recipes')
         .select('*, recipe_collections!inner(shared_with_household_id)')
         .eq('recipe_collections.shared_with_household_id', householdId)
@@ -614,7 +602,7 @@ async function pullHouseholdSharedContent(
   if (recipes.length > 0) {
     const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
       fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
-        c
+        client
           .from('ingredients')
           .select('*, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id))')
           .eq('recipes.recipe_collections.shared_with_household_id', householdId)
@@ -624,7 +612,7 @@ async function pullHouseholdSharedContent(
           .range(from, to),
       ),
       fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
-        c
+        client
           .from('instructions')
           .select('*, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id))')
           .eq('recipes.recipe_collections.shared_with_household_id', householdId)
@@ -635,7 +623,7 @@ async function pullHouseholdSharedContent(
       ),
       fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
         (from, to) =>
-          c
+          client
             .from('instruction_ingredient_refs')
             .select(
               '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id)))',

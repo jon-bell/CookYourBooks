@@ -28,23 +28,30 @@ export function DangerZoneSection() {
     setError(null);
     setBusy(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: rpcError } = await (supabase as any).rpc('delete_my_account');
+      const { error: rpcError } = await supabase.rpc('delete_my_account');
       if (rpcError) {
         // Likely cause: owner of a household with other active members.
         // The RPC raises with the actionable message; surface it.
         throw new Error(rpcError.message);
       }
-      // The auth.users row is gone; the session is now invalid. Sign
-      // out locally so the AuthProvider clears its state and the local
-      // IndexedDB / Supabase session cookie are wiped.
-      await signOut();
-      navigate('/', { replace: true });
     } catch (e) {
       setError((e as Error).message);
-    } finally {
       setBusy(false);
+      return;
     }
+    // RPC succeeded — the auth.users row is gone. The session token
+    // the browser holds is now invalid; we MUST clear local state and
+    // get the user out of the authenticated UI no matter what
+    // signOut() does. Catch + force-navigate so a transient signOut
+    // failure can't leave the user staring at a stale session.
+    try {
+      await signOut();
+    } catch {
+      // The session is already invalid server-side; localStorage is
+      // the only thing left and the navigate-with-replace below will
+      // unmount everything that reads from it.
+    }
+    navigate('/', { replace: true });
   }
 
   return (

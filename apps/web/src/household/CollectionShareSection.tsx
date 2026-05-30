@@ -32,8 +32,7 @@ export function CollectionShareSection({
   const sharedQuery = useQuery({
     queryKey: ['collection', 'household-share', collectionId],
     queryFn: async (): Promise<string | null> => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from('recipe_collections')
         .select('shared_with_household_id')
         .eq('id', collectionId)

@@ -25,10 +25,9 @@ export async function deleteOcrStorage(scope: StorageDeleteScope): Promise<numbe
         ? scope.batchId
         : null;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: paths, error: rpcError } = await (supabase as any).rpc(
+  const { data: paths, error: rpcError } = await supabase.rpc(
     'clear_my_import_storage',
-    { p_scope: scopeText, p_id: id },
+    { p_scope: scopeText, p_id: id ?? undefined },
   );
   if (rpcError) throw new Error(rpcError.message);
 
