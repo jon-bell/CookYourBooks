@@ -101,7 +101,15 @@ export type Database = {
           task_kind?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "bakeoff_runs_input_recipe_id_fkey"
+            columns: ["input_recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       bakeoff_variants: {
         Row: {
@@ -440,6 +448,56 @@ export type Database = {
           },
         ]
       }
+      import_batch_variants: {
+        Row: {
+          base_url: string | null
+          batch_id: string
+          created_at: string
+          id: string
+          model: string
+          name: string
+          owner_id: string
+          prompt: string
+          provider: string
+          sort_index: number
+          updated_at: string
+        }
+        Insert: {
+          base_url?: string | null
+          batch_id: string
+          created_at?: string
+          id?: string
+          model: string
+          name?: string
+          owner_id: string
+          prompt: string
+          provider: string
+          sort_index?: number
+          updated_at?: string
+        }
+        Update: {
+          base_url?: string | null
+          batch_id?: string
+          created_at?: string
+          id?: string
+          model?: string
+          name?: string
+          owner_id?: string
+          prompt?: string
+          provider?: string
+          sort_index?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_batch_variants_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "import_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       import_batches: {
         Row: {
           batch_kind: string
@@ -529,111 +587,6 @@ export type Database = {
           },
         ]
       }
-      import_batch_variants: {
-        Row: {
-          base_url: string | null
-          batch_id: string
-          created_at: string
-          id: string
-          model: string
-          name: string
-          owner_id: string
-          prompt: string
-          provider: string
-          sort_index: number
-          updated_at: string
-        }
-        Insert: {
-          base_url?: string | null
-          batch_id: string
-          created_at?: string
-          id?: string
-          model: string
-          name?: string
-          owner_id: string
-          prompt: string
-          provider: string
-          sort_index?: number
-          updated_at?: string
-        }
-        Update: {
-          base_url?: string | null
-          batch_id?: string
-          created_at?: string
-          id?: string
-          model?: string
-          name?: string
-          owner_id?: string
-          prompt?: string
-          provider?: string
-          sort_index?: number
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      import_item_variant_results: {
-        Row: {
-          attempts: number
-          claim_expires_at: string
-          claim_token: string | null
-          completion_tokens: number | null
-          cost_usd_micros: number | null
-          created_at: string
-          drafts: Json | null
-          error_kind: string | null
-          error_message: string | null
-          id: string
-          item_id: string
-          latency_ms: number | null
-          owner_id: string
-          prompt_tokens: number | null
-          raw_text: string | null
-          status: string
-          updated_at: string
-          variant_id: string
-        }
-        Insert: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number | null
-          cost_usd_micros?: number | null
-          created_at?: string
-          drafts?: Json | null
-          error_kind?: string | null
-          error_message?: string | null
-          id?: string
-          item_id: string
-          latency_ms?: number | null
-          owner_id: string
-          prompt_tokens?: number | null
-          raw_text?: string | null
-          status?: string
-          updated_at?: string
-          variant_id: string
-        }
-        Update: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number | null
-          cost_usd_micros?: number | null
-          created_at?: string
-          drafts?: Json | null
-          error_kind?: string | null
-          error_message?: string | null
-          id?: string
-          item_id?: string
-          latency_ms?: number | null
-          owner_id?: string
-          prompt_tokens?: number | null
-          raw_text?: string | null
-          status?: string
-          updated_at?: string
-          variant_id?: string
-        }
-        Relationships: []
-      }
       import_item_attempts: {
         Row: {
           attempt_no: number
@@ -699,6 +652,84 @@ export type Database = {
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      import_item_variant_results: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string
+          drafts: Json | null
+          error_kind: string | null
+          error_message: string | null
+          id: string
+          item_id: string
+          latency_ms: number | null
+          owner_id: string
+          prompt_tokens: number | null
+          raw_text: string | null
+          status: string
+          updated_at: string
+          variant_id: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          item_id: string
+          latency_ms?: number | null
+          owner_id: string
+          prompt_tokens?: number | null
+          raw_text?: string | null
+          status?: string
+          updated_at?: string
+          variant_id: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          item_id?: string
+          latency_ms?: number | null
+          owner_id?: string
+          prompt_tokens?: number | null
+          raw_text?: string | null
+          status?: string
+          updated_at?: string
+          variant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_item_variant_results_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "import_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_item_variant_results_variant_id_fkey"
+            columns: ["variant_id"]
+            isOneToOne: false
+            referencedRelation: "import_batch_variants"
             referencedColumns: ["id"]
           },
         ]
@@ -817,6 +848,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "import_items_assigned_recipe_id_fkey"
+            columns: ["assigned_recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "import_items_batch_id_fkey"
             columns: ["batch_id"]
             isOneToOne: false
@@ -828,6 +866,13 @@ export type Database = {
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_items_selected_variant_fkey"
+            columns: ["selected_variant_id"]
+            isOneToOne: false
+            referencedRelation: "import_batch_variants"
             referencedColumns: ["id"]
           },
         ]
@@ -883,6 +928,47 @@ export type Database = {
           },
           {
             foreignKeyName: "import_toc_entries_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingredient_nutrition_mappings: {
+        Row: {
+          created_at: string
+          custom_grams_per_unit: Json
+          id: string
+          ingredient_key: string
+          owner_id: string | null
+          source: string
+          source_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          custom_grams_per_unit?: Json
+          id?: string
+          ingredient_key: string
+          owner_id?: string | null
+          source: string
+          source_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          custom_grams_per_unit?: Json
+          id?: string
+          ingredient_key?: string
+          owner_id?: string | null
+          source?: string
+          source_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_nutrition_mappings_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -1090,6 +1176,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      nutrition_facts_cache: {
+        Row: {
+          brand: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          description: string
+          fat_g: number | null
+          fetched_at: string
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          raw_response: Json | null
+          saturated_fat_g: number | null
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+        }
+        Insert: {
+          brand?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          description: string
+          fat_g?: number | null
+          fetched_at?: string
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          raw_response?: Json | null
+          saturated_fat_g?: number | null
+          sodium_mg?: number | null
+          source: string
+          source_id: string
+          sugar_g?: number | null
+        }
+        Update: {
+          brand?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          description?: string
+          fat_g?: number | null
+          fetched_at?: string
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          raw_response?: Json | null
+          saturated_fat_g?: number | null
+          sodium_mg?: number | null
+          source?: string
+          source_id?: string
+          sugar_g?: number | null
+        }
+        Relationships: []
       }
       ocr_test_fixtures: {
         Row: {
@@ -1392,6 +1532,114 @@ export type Database = {
           },
         ]
       }
+      rewrite_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          id: string
+          last_error: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number
+          provider: string
+          recipe_id: string
+          result_json: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id?: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id?: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rewrite_jobs_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rewrite_jobs_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rewrite_test_fixtures: {
+        Row: {
+          created_at: string
+          error_kind: string | null
+          latency_ms: number
+          model: string
+          provider: string
+          recipe_id: string
+          response_json: Json
+        }
+        Insert: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Update: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Relationships: []
+      }
       shopping_list_items: {
         Row: {
           checked: boolean
@@ -1505,84 +1753,6 @@ export type Database = {
         }
         Relationships: []
       }
-      rewrite_jobs: {
-        Row: {
-          attempts: number
-          claim_expires_at: string
-          claim_token: string | null
-          completion_tokens: number
-          cost_usd_micros: number
-          created_at: string
-          id: string
-          last_error: string | null
-          latency_ms: number
-          model: string
-          owner_id: string
-          prompt: string
-          prompt_tokens: number
-          provider: string
-          recipe_id: string
-          result_json: Json | null
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number
-          cost_usd_micros?: number
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          latency_ms?: number
-          model?: string
-          owner_id: string
-          prompt?: string
-          prompt_tokens?: number
-          provider?: string
-          recipe_id: string
-          result_json?: Json | null
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number
-          cost_usd_micros?: number
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          latency_ms?: number
-          model?: string
-          owner_id?: string
-          prompt?: string
-          prompt_tokens?: number
-          provider?: string
-          recipe_id?: string
-          result_json?: Json | null
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rewrite_jobs_owner_id_fkey"
-            columns: ["owner_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rewrite_jobs_recipe_id_fkey"
-            columns: ["recipe_id"]
-            isOneToOne: false
-            referencedRelation: "recipes"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       user_rewrite_prefs: {
         Row: {
           model: string
@@ -1604,36 +1774,6 @@ export type Database = {
           prompt?: string
           provider?: string
           updated_at?: string
-        }
-        Relationships: []
-      }
-      rewrite_test_fixtures: {
-        Row: {
-          created_at: string
-          error_kind: string | null
-          latency_ms: number
-          model: string
-          provider: string
-          recipe_id: string
-          response_json: Json
-        }
-        Insert: {
-          created_at?: string
-          error_kind?: string | null
-          latency_ms?: number
-          model?: string
-          provider?: string
-          recipe_id?: string
-          response_json?: Json
-        }
-        Update: {
-          created_at?: string
-          error_kind?: string | null
-          latency_ms?: number
-          model?: string
-          provider?: string
-          recipe_id?: string
-          response_json?: Json
         }
         Relationships: []
       }
@@ -1730,61 +1870,15 @@ export type Database = {
         }
         Returns: boolean
       }
-      import_bakeoff_promote: { Args: { p_variant_id: string }; Returns: undefined }
-      import_bakeoff_seed: {
-        Args: { p_batch_id: string; p_variants: Json }
-        Returns: undefined
-      }
-      import_bakeoff_select_winner: {
-        Args: { p_item_id: string; p_variant_id: string }
-        Returns: undefined
-      }
-      import_variant_claim_next: {
-        Args: {
-          p_lease_seconds?: number
-          p_limit?: number
-          p_worker_id: string
-        }
-        Returns: Json[]
-      }
-      import_variant_complete: {
-        Args: { p_claim_token: string; p_payload: Json; p_result_id: string }
-        Returns: boolean
-      }
-      import_variant_fail: {
-        Args: {
-          p_claim_token: string
-          p_error_kind: string
-          p_error_message: string
-          p_latency_ms: number
-          p_result_id: string
-        }
-        Returns: boolean
-      }
       bakeoff_promote: { Args: { p_variant_id: string }; Returns: undefined }
       bakeoff_start: {
         Args: {
-          p_image_storage_path: string | null
-          p_variants: Json
+          p_image_storage_path: string
+          p_input_recipe_id?: string
           p_task_kind?: string
-          p_input_recipe_id?: string | null
+          p_variants: Json
         }
         Returns: string
-      }
-      rewrite_start: {
-        Args: {
-          p_recipe_id: string
-          p_provider: string
-          p_model: string
-          p_prompt: string
-        }
-        Returns: string
-      }
-      rewrite_cancel: { Args: { p_job_id: string }; Returns: boolean }
-      rewrite_kick: { Args: { p_recipe_id?: string | null }; Returns: undefined }
-      user_rewrite_prefs_set: {
-        Args: { p_provider: string; p_model: string; p_prompt: string }
-        Returns: undefined
       }
       cli_add_shopping: {
         Args: {
@@ -1849,9 +1943,9 @@ export type Database = {
         Args: {
           p_factor: number
           p_from_unit: string
-          p_id: string | null
-          p_ingredient_name: string | null
-          p_notes: string | null
+          p_id: string
+          p_ingredient_name: string
+          p_notes: string
           p_to_unit: string
         }
         Returns: string
@@ -1874,11 +1968,23 @@ export type Database = {
           p_factor: number
           p_from_unit: string
           p_id: string
-          p_ingredient_name: string | null
-          p_notes?: string | null
+          p_ingredient_name: string
+          p_notes?: string
           p_to_unit: string
         }
         Returns: string
+      }
+      import_bakeoff_promote: {
+        Args: { p_variant_id: string }
+        Returns: undefined
+      }
+      import_bakeoff_seed: {
+        Args: { p_batch_id: string; p_variants: Json }
+        Returns: undefined
+      }
+      import_bakeoff_select_winner: {
+        Args: { p_item_id: string; p_variant_id: string }
+        Returns: undefined
       }
       import_claim_next: {
         Args: {
@@ -1890,6 +1996,7 @@ export type Database = {
         Returns: {
           assigned_collection_id: string | null
           assigned_page_number: number | null
+          assigned_recipe_id: string | null
           attempts: number
           batch_id: string
           claim_expires_at: string
@@ -1908,6 +2015,7 @@ export type Database = {
           page_index: number
           parsed_drafts_json: Json | null
           prompt_tokens: number
+          selected_variant_id: string | null
           source_pdf_page: number | null
           source_pdf_path: string | null
           status: string
@@ -1962,6 +2070,53 @@ export type Database = {
         Args: { p_batch_id: string; p_policy: string }
         Returns: undefined
       }
+      import_variant_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string
+          drafts: Json | null
+          error_kind: string | null
+          error_message: string | null
+          id: string
+          item_id: string
+          latency_ms: number | null
+          owner_id: string
+          prompt_tokens: number | null
+          raw_text: string | null
+          status: string
+          updated_at: string
+          variant_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "import_item_variant_results"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      import_variant_complete: {
+        Args: { p_claim_token: string; p_payload: Json; p_result_id: string }
+        Returns: boolean
+      }
+      import_variant_fail: {
+        Args: {
+          p_claim_token: string
+          p_error_kind: string
+          p_error_message: string
+          p_latency_ms: number
+          p_result_id: string
+        }
+        Returns: boolean
+      }
       is_admin: { Args: { uid: string }; Returns: boolean }
       moderation_ban_user: {
         Args: { reason: string; target_user_id: string }
@@ -1992,6 +2147,7 @@ export type Database = {
         Returns: undefined
       }
       normalize_isbn: { Args: { raw: string }; Returns: string }
+      nutrition_health: { Args: never; Returns: boolean }
       ocr_key_delete: { Args: { p_provider: string }; Returns: undefined }
       ocr_key_set: {
         Args: { p_base_url?: string; p_provider: string; p_raw_key: string }
@@ -2005,7 +2161,82 @@ export type Database = {
           base_url: string
         }[]
       }
+      resolve_nutrition_mapping: {
+        Args: { p_ingredient_key: string }
+        Returns: {
+          custom_grams_per_unit: Json
+          origin: string
+          source: string
+          source_id: string
+        }[]
+      }
+      rewrite_cancel: { Args: { p_job_id: string }; Returns: boolean }
+      rewrite_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          id: string
+          last_error: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number
+          provider: string
+          recipe_id: string
+          result_json: Json | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "rewrite_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rewrite_complete: {
+        Args: {
+          p_attempt: Json
+          p_claim_token: string
+          p_job_id: string
+          p_result: Json
+        }
+        Returns: boolean
+      }
+      rewrite_fail: {
+        Args: {
+          p_attempt: Json
+          p_claim_token: string
+          p_job_id: string
+          p_next_state: string
+        }
+        Returns: boolean
+      }
+      rewrite_kick: { Args: { p_recipe_id?: string }; Returns: undefined }
+      rewrite_start: {
+        Args: {
+          p_model: string
+          p_prompt: string
+          p_provider: string
+          p_recipe_id: string
+        }
+        Returns: string
+      }
       user_ocr_prefs_set: {
+        Args: { p_model: string; p_prompt: string; p_provider: string }
+        Returns: undefined
+      }
+      user_rewrite_prefs_set: {
         Args: { p_model: string; p_prompt: string; p_provider: string }
         Returns: undefined
       }

@@ -236,12 +236,19 @@ export async function upsertGlobalConversion(input: {
   notes: string | null;
 }): Promise<string> {
   const { data, error } = await supabase.rpc('global_conversion_upsert', {
-    p_id: input.id ?? null,
+    // global_conversion_upsert.p_id is declared `uuid` (no `default
+    // null`) but the body branches on `p_id is null` to choose
+    // insert vs update. The typed surface forces non-null but the
+    // runtime contract needs literal null. Sidestep via unknown — the
+    // PR #19 nullability fix (`20260606000500_rpc_arg_nullability.sql`)
+    // adds `default null` and lets this be `?? undefined` cleanly.
+    p_id: (input.id ?? null) as unknown as string,
     p_from_unit: input.fromUnit,
     p_to_unit: input.toUnit,
     p_factor: input.factor,
-    p_ingredient_name: input.ingredientName,
-    p_notes: input.notes,
+    // Body coalesces empty-string → null, so '' is a safe sentinel.
+    p_ingredient_name: input.ingredientName ?? '',
+    p_notes: input.notes ?? '',
   });
   if (error) throw error;
   return data as string;

@@ -17,6 +17,7 @@ export * from './services/search.js';
 export * from './services/shoppingList.js';
 export * from './services/parseIngredient.js';
 export * from './services/parseRecipeText.js';
+export * from './services/nutritionMath.js';
 
 // Export
 export * from './export/markdown.js';
