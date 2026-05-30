@@ -35,6 +35,7 @@ cookyourbooks/
 - **OCR import:** `apps/web/src/import/ocr.ts` calls a multimodal LLM (Gemini or any OpenAI-compatible vision model) to convert a photo straight into JSON matching our domain shape. The validator in `apps/web/src/import/llm.ts` is tolerant — malformed ingredients fall into `leftover` instead of throwing. Settings (provider / key / model / prompt) live in `localStorage` under `cookyourbooks.ocr.v1` and never sync through Supabase. Tests override via `window.__cybOcrShim`.
 - **Mobile:** `apps/mobile` is a Capacitor shell over `apps/web/dist`. Native surfaces are camera (`@capacitor/camera`) and haptics (`@capacitor/haptics`). Both code paths live in `apps/web` and feature-detect Capacitor at runtime, so no code forks by platform. The iOS native project (`apps/mobile/ios/`) is committed; release flow is fastlane-driven from `apps/mobile/ios/fastlane/` (`fastlane beta` → TestFlight, `fastlane release` → App Store). Bundle ID `app.cookyourbooks`, team `YNDYJ3A9CQ`, signing material in the private `jon-bell/cookyourbooks-certs` repo via `fastlane match`. See `apps/mobile/README.md` for the full workflow.
 - **Keyboard shortcuts:** `apps/web/src/keyboard/shortcuts.ts` binds `/`, `n`, `e`, `c`, `?`, and `g l`/`g d`/`g s` chords. The global listener ignores keystrokes originating inside `input`/`textarea`/`contenteditable`.
+- **Nutrition analysis:** Per-recipe nutrition uses USDA FoodData Central as the primary source and Open Food Facts as the fallback. Lookups go through the `nutrition` Edge Function (Vault secret `nutrition_worker_config` holds `{ function_url, service_role_key, usda_fdc_key }`), which writes every hit into `nutrition_facts_cache` keyed by `(source, source_id)` so the second view of any recipe is network-free. `ingredient_nutrition_mappings` is the per-user (with platform-default fallback) "this ingredient string → that USDA entry" override table; the `resolve_nutrition_mapping` RPC handles the user-row-then-platform-row lookup. The math lives in `packages/domain/src/services/nutritionMath.ts` (pure functions: `quantityToGrams` for unit conversion, `totalNutrition` to aggregate per-100g facts × grams, `scaleToServing` with proportion-of-yield and by-weight modes). UI sits on the recipe page via `RecipeNutritionPanel` + `IngredientMatchOverrideDialog`.
 
 ## Domain model overview
 
@@ -197,6 +198,37 @@ is what captures JS/React errors, network breadcrumbs, and replay.
   `localStorage.cookyourbooks.sync.consoleMirror = '1'` in the
   browser console to re-enable info-level sync log mirroring (off by
   default to save IPC cost on iPad / under Playwright).
+
+## Setting up the nutrition worker
+
+The `nutrition` Edge Function calls USDA FoodData Central (primary, free
+key, https://fdc.nal.usda.gov/api-key-signup.html) and Open Food Facts
+(fallback, no key). Setup mirrors the OCR worker — the key lives in
+Vault, never in the client bundle.
+
+### Local development
+
+```bash
+# 1. Start Supabase, serve the nutrition function alongside import-worker.
+./.bin/supabase start
+./.bin/supabase functions serve nutrition --no-verify-jwt
+
+# 2. Register the secret. Service-role key from `./.bin/supabase status`.
+./.bin/supabase db psql <<'SQL'
+select vault.create_secret(
+  json_build_object(
+    'function_url', 'http://host.docker.internal:54321/functions/v1/nutrition',
+    'service_role_key', 'PASTE_FROM_supabase_status',
+    'usda_fdc_key', 'YOUR_USDA_FDC_KEY'
+  )::text,
+  'nutrition_worker_config',
+  'Nutrition lookup endpoint + USDA key'
+);
+SQL
+```
+
+The Open Food Facts fallback fires automatically when USDA returns no
+hits; no extra config required.
 
 ## Setting up the OCR worker
 

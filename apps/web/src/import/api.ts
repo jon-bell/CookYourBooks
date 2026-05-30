@@ -85,12 +85,16 @@ export async function startBakeoff(
   opts: { taskKind?: 'OCR' | 'REWRITE'; inputRecipeId?: string | null } = {},
 ): Promise<string> {
   const { data, error } = await supabase.rpc('bakeoff_start', {
-    p_image_storage_path: imageStoragePath,
+    // bakeoff_start's p_image_storage_path is declared `text` (not
+    // `text default null`) but the body accepts null on the REWRITE
+    // task. Coerce null → '' so we match the typed contract while
+    // preserving the runtime contract.
+    p_image_storage_path: imageStoragePath ?? '',
     // PostgREST's typed Json parameter accepts arrays-of-objects fine at
     // runtime, but the generated type alias is too narrow for it.
     p_variants: variants as unknown as never,
     p_task_kind: opts.taskKind ?? 'OCR',
-    p_input_recipe_id: opts.inputRecipeId ?? null,
+    p_input_recipe_id: opts.inputRecipeId ?? undefined,
   });
   if (error) throw error;
   return data as string;
@@ -384,7 +388,7 @@ export async function cancelRewrite(jobId: string): Promise<void> {
 
 export async function kickRewrite(recipeId?: string): Promise<void> {
   const { error } = await supabase.rpc('rewrite_kick', {
-    p_recipe_id: recipeId ?? null,
+    p_recipe_id: recipeId ?? undefined,
   });
   if (error) {
     // Same error class as kickOcr — the underlying vault secret is shared,

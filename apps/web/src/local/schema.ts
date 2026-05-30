@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -227,6 +227,49 @@ export const SCHEMA_STATEMENTS: string[] = [
   )`,
   `create index if not exists conversion_rules_owner_idx on conversion_rules(owner_id)`,
 
+  // ---------- Nutrition cache (2026-06-07) ----------
+  //
+  // Lazy mirror of `nutrition_facts_cache`. Populated opportunistically
+  // when the nutrition hook resolves a fact (either via the local-table
+  // read path or the edge-function search). Not CRR — these are
+  // system-wide reference rows that the server is the canonical
+  // owner of; the local copy is purely an offline read cache.
+  `create table if not exists nutrition_facts (
+    source text not null default '',
+    source_id text not null default '',
+    description text not null default '',
+    brand text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    fetched_at integer not null default 0,
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_facts_description_idx
+    on nutrition_facts(description)`,
+
+  // Per-user mapping mirror. The server holds owner_id NULL rows
+  // (platform defaults) plus owner_id = me rows; we mirror both so
+  // the resolver matches the server's user-then-platform fallback.
+  `create table if not exists nutrition_mappings (
+    -- '' for platform-default rows, the user's uuid otherwise.
+    owner_id text not null default '',
+    ingredient_key text not null default '',
+    source text not null default '',
+    source_id text not null default '',
+    custom_grams_per_unit text not null default '{}',
+    updated_at integer not null default 0,
+    primary key (owner_id, ingredient_key)
+  )`,
+  `create index if not exists nutrition_mappings_key_idx
+    on nutrition_mappings(ingredient_key)`,
+
   // Sync metadata — a singleton row per logical topic holding the
   // latest-seen remote `updated_at` (ms since epoch). Local-only, not CRR.
   `create table if not exists sync_state (
@@ -433,4 +476,35 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   )`,
   `create index if not exists rewrite_jobs_recipe_idx on rewrite_jobs(recipe_id)`,
   `create index if not exists rewrite_jobs_owner_idx on rewrite_jobs(owner_id, status)`,
+  // ---------- Nutrition cache (2026-06-07) — idempotent post-schema migration ----------
+  `create table if not exists nutrition_facts (
+    source text not null default '',
+    source_id text not null default '',
+    description text not null default '',
+    brand text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    fetched_at integer not null default 0,
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_facts_description_idx
+    on nutrition_facts(description)`,
+  `create table if not exists nutrition_mappings (
+    owner_id text not null default '',
+    ingredient_key text not null default '',
+    source text not null default '',
+    source_id text not null default '',
+    custom_grams_per_unit text not null default '{}',
+    updated_at integer not null default 0,
+    primary key (owner_id, ingredient_key)
+  )`,
+  `create index if not exists nutrition_mappings_key_idx
+    on nutrition_mappings(ingredient_key)`,
 ];
