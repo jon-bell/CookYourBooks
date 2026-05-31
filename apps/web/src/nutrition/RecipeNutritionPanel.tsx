@@ -69,21 +69,82 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
   }
   if (!data || !totals || !perServing) return null;
 
+  // Three failure modes worth surfacing separately:
+  //   unmatched — no fact at all (USDA / OFF didn't return anything)
+  //   missing_kcal — fact found but USDA's energy row was missing
+  //   missing_grams — fact found but unit→g conversion failed
+  // Totals are computed only from rows that have BOTH a fact and grams,
+  // so any of these three undercounts the recipe.
+  const unmatched = data.rows.filter((r) => r.fact == null);
+  const missingKcal = data.rows.filter(
+    (r) => r.fact != null && r.fact.calories_kcal == null,
+  );
+  const missingGrams = data.rows.filter(
+    (r) => r.fact != null && r.grams == null,
+  );
+  const hasGaps = unmatched.length + missingKcal.length + missingGrams.length > 0;
+
   return (
     <section
       data-testid="recipe-nutrition-panel"
       className="space-y-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4"
     >
-      <header className="flex items-baseline justify-between">
+      <header className="flex items-baseline justify-between gap-3">
         <h2 className="text-lg font-semibold">Nutrition</h2>
         <span className="text-xs text-stone-500 dark:text-stone-400">
-          Based on {totals.resolved_count} of{' '}
-          {totals.resolved_count + totals.unresolved_count} ingredients
+          <span
+            className={
+              unmatched.length > 0
+                ? 'font-semibold text-amber-700 dark:text-amber-400'
+                : ''
+            }
+          >
+            {totals.resolved_count} of{' '}
+            {totals.resolved_count + totals.unresolved_count}
+          </span>{' '}
+          ingredients
           {totals.approximate_count > 0 && (
             <> · {totals.approximate_count} approximate</>
           )}
         </span>
       </header>
+
+      {hasGaps && (
+        <div
+          data-testid="nutrition-gaps-banner"
+          className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-100"
+        >
+          <div className="font-medium">
+            Totals are incomplete — {unmatched.length + missingKcal.length + missingGrams.length}{' '}
+            ingredient
+            {unmatched.length + missingKcal.length + missingGrams.length === 1 ? '' : 's'} aren't
+            contributing.
+          </div>
+          <ul className="mt-1.5 space-y-0.5 text-xs">
+            {unmatched.length > 0 && (
+              <li>
+                <span className="font-medium">No match:</span>{' '}
+                {unmatched.map((r) => r.ingredientName).join(', ')}
+              </li>
+            )}
+            {missingKcal.length > 0 && (
+              <li>
+                <span className="font-medium">Match has no calorie data:</span>{' '}
+                {missingKcal.map((r) => r.ingredientName).join(', ')}
+              </li>
+            )}
+            {missingGrams.length > 0 && (
+              <li>
+                <span className="font-medium">Couldn't convert to grams:</span>{' '}
+                {missingGrams.map((r) => r.ingredientName).join(', ')}
+              </li>
+            )}
+          </ul>
+          <p className="mt-1.5 text-xs">
+            Click an ingredient in the breakdown below to pick a different match.
+          </p>
+        </div>
+      )}
 
       {/* ----- Totals + per-serving side-by-side on wider screens ----- */}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -177,7 +238,9 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
       </fieldset>
 
       {/* ----- Per-ingredient breakdown (click a row to override) ----- */}
-      <details className="text-sm">
+      {/* Auto-open when there are gaps so the unmatched rows are
+          immediately scannable without an extra click. */}
+      <details className="text-sm" open={hasGaps}>
         <summary className="cursor-pointer text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100">
           Per-ingredient breakdown
         </summary>
@@ -191,42 +254,102 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
             </tr>
           </thead>
           <tbody>
-            {data.rows.map((row) => (
-              <tr
-                key={row.ingredientId}
-                className="border-t border-stone-200 dark:border-stone-700"
-                data-testid={`nutrition-row-${row.ingredientId}`}
-              >
-                <td className="py-1 pr-2">{row.ingredientName}</td>
-                <td className="py-1 text-right">
-                  {row.fact ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOverrideIngredient({ id: row.ingredientId, name: row.ingredientName })
-                      }
-                      className="text-stone-600 dark:text-stone-400 hover:underline truncate inline-block max-w-[12rem]"
-                      data-testid={`nutrition-match-${row.ingredientId}`}
-                      title={row.fact.description}
-                    >
-                      {row.fact.description}
-                    </button>
-                  ) : (
-                    <span className="italic text-stone-400 dark:text-stone-500">no match</span>
-                  )}
-                </td>
-                <td className="py-1 text-right tabular-nums">
-                  {row.grams == null
-                    ? '—'
-                    : `${Math.round(row.grams)} g${row.approximate ? '*' : ''}`}
-                </td>
-                <td className="py-1 text-right tabular-nums">
-                  {row.fact?.calories_kcal != null && row.grams != null
-                    ? Math.round((row.fact.calories_kcal * row.grams) / 100)
-                    : '—'}
-                </td>
-              </tr>
-            ))}
+            {data.rows.map((row) => {
+              const noMatch = row.fact == null;
+              const noKcal = row.fact != null && row.fact.calories_kcal == null;
+              const noGrams = row.fact != null && row.grams == null;
+              // Pick the worst incomplete state for the row tint. No
+              // match is the most severe (totals get nothing from this
+              // ingredient); kcal/grams missing means a fact is there
+              // but the math can't run.
+              const rowTint = noMatch
+                ? 'bg-amber-50 dark:bg-amber-950/40'
+                : noKcal || noGrams
+                ? 'bg-yellow-50 dark:bg-yellow-950/30'
+                : '';
+              return (
+                <tr
+                  key={row.ingredientId}
+                  className={`border-t border-stone-200 dark:border-stone-700 ${rowTint}`}
+                  data-testid={`nutrition-row-${row.ingredientId}`}
+                >
+                  <td className="py-1 pr-2">{row.ingredientName}</td>
+                  <td className="py-1 text-right">
+                    {row.fact ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOverrideIngredient({
+                            id: row.ingredientId,
+                            name: row.ingredientName,
+                          })
+                        }
+                        className="text-stone-600 dark:text-stone-400 hover:underline truncate inline-block max-w-[12rem]"
+                        data-testid={`nutrition-match-${row.ingredientId}`}
+                        title={row.fact.description}
+                      >
+                        {row.fact.description}
+                      </button>
+                    ) : (
+                      // Clickable so the user can open the search
+                      // dialog and pick something. Bright amber so the
+                      // gap is unmissable against the row tint.
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOverrideIngredient({
+                            id: row.ingredientId,
+                            name: row.ingredientName,
+                          })
+                        }
+                        data-testid={`nutrition-match-${row.ingredientId}`}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                        title="Search for a match"
+                      >
+                        <span aria-hidden="true">⚠</span>
+                        no match — search
+                      </button>
+                    )}
+                  </td>
+                  <td className="py-1 text-right tabular-nums">
+                    {row.grams == null ? (
+                      <span
+                        className={
+                          noGrams
+                            ? 'text-yellow-700 dark:text-yellow-300'
+                            : 'text-stone-400 dark:text-stone-500'
+                        }
+                        title={noGrams ? 'No gram conversion available' : undefined}
+                      >
+                        —
+                      </span>
+                    ) : (
+                      `${Math.round(row.grams)} g${row.approximate ? '*' : ''}`
+                    )}
+                  </td>
+                  <td className="py-1 text-right tabular-nums">
+                    {row.fact?.calories_kcal != null && row.grams != null ? (
+                      Math.round((row.fact.calories_kcal * row.grams) / 100)
+                    ) : (
+                      <span
+                        className={
+                          noKcal
+                            ? 'text-yellow-700 dark:text-yellow-300'
+                            : 'text-stone-400 dark:text-stone-500'
+                        }
+                        title={
+                          noKcal
+                            ? 'Match has no calorie data — pick a different match'
+                            : undefined
+                        }
+                      >
+                        —
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {totals.approximate_count > 0 && (

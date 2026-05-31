@@ -495,6 +495,149 @@ export async function pullAll(
   };
 }
 
+// ---------- nutrition essentials (USDA Foundation + SR Legacy) ----------
+//
+// Pulled separately from pullAll because it's reference data, not user
+// data — slow first load shouldn't block the recipes from appearing.
+// Run once per device on first sign-in; refresh monthly to pick up
+// upstream changes. Branded stays server-only (500k rows is too much
+// to mirror to every client).
+const NUTRITION_ESSENTIALS_TOPIC = 'nutrition_essentials';
+const NUTRITION_ESSENTIALS_REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface EssentialsRow {
+  source: string;
+  source_id: string;
+  data_type: string;
+  description: string;
+  brand: string | null;
+  brand_owner: string | null;
+  calories_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  saturated_fat_g: number | null;
+  carbs_g: number | null;
+  sugar_g: number | null;
+  fiber_g: number | null;
+  sodium_mg: number | null;
+  portions: { unit: string; grams: number }[] | null;
+}
+
+export async function pullNutritionEssentials(
+  client: CookbooksClient,
+  opts: { force?: boolean } = {},
+): Promise<number> {
+  const watermark = await getWatermark(NUTRITION_ESSENTIALS_TOPIC);
+  const fresh = watermark > 0 && Date.now() - watermark < NUTRITION_ESSENTIALS_REFRESH_MS;
+  if (fresh && !opts.force) {
+    logSync('info', `nutrition essentials: fresh (last pull ${new Date(watermark).toISOString()})`);
+    return 0;
+  }
+
+  const t0 = Date.now();
+  logSync('info', 'nutrition essentials: pulling Foundation + SR Legacy');
+
+  // gen-types hasn't seen 20260608000100_nutrition_foods_master yet,
+  // so the literal-union .from() overload rejects the table name. Cast
+  // around it until the next type regen.
+  const untyped = client as unknown as {
+    from: (
+      table: string,
+    ) => {
+      select: (cols: string) => {
+        in: (
+          col: string,
+          vals: string[],
+        ) => {
+          order: (
+            col: string,
+            opts: { ascending: boolean },
+          ) => {
+            range: (from: number, to: number) => PromiseLike<PageResult>;
+          };
+        };
+      };
+    };
+  };
+  const rows = await fetchAllPages<EssentialsRow>((from, to) =>
+    untyped
+      .from('nutrition_foods_master')
+      .select(
+        'source,source_id,data_type,description,brand,brand_owner,' +
+          'calories_kcal,protein_g,fat_g,saturated_fat_g,carbs_g,sugar_g,fiber_g,sodium_mg,portions',
+      )
+      .in('data_type', ['Foundation', 'SR Legacy'])
+      .order('source_id', { ascending: true })
+      .range(from, to),
+  );
+
+  await upsertEssentialsBatch(rows);
+  await bumpWatermark(NUTRITION_ESSENTIALS_TOPIC, Date.now());
+  logSync(
+    'info',
+    `nutrition essentials: ${rows.length} rows in ${Date.now() - t0}ms`,
+  );
+  return rows.length;
+}
+
+async function upsertEssentialsBatch(rows: EssentialsRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getLocalDb();
+  // Chunk so a 7k-row pull doesn't hold the db-lock queue for several
+  // seconds in one go — other ops can interleave between chunks.
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    await db.tx(async (tx) => {
+      for (const r of chunk) {
+        const blob = [r.description, r.brand ?? '', r.brand_owner ?? '']
+          .join(' ')
+          .toLowerCase();
+        await tx.exec(
+          `insert into nutrition_foods_essentials
+             (source, source_id, data_type, description, brand, brand_owner,
+              calories_kcal, protein_g, fat_g, saturated_fat_g,
+              carbs_g, sugar_g, fiber_g, sodium_mg, portions, search_blob)
+           values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           on conflict(source, source_id) do update set
+             data_type = excluded.data_type,
+             description = excluded.description,
+             brand = excluded.brand,
+             brand_owner = excluded.brand_owner,
+             calories_kcal = excluded.calories_kcal,
+             protein_g = excluded.protein_g,
+             fat_g = excluded.fat_g,
+             saturated_fat_g = excluded.saturated_fat_g,
+             carbs_g = excluded.carbs_g,
+             sugar_g = excluded.sugar_g,
+             fiber_g = excluded.fiber_g,
+             sodium_mg = excluded.sodium_mg,
+             portions = excluded.portions,
+             search_blob = excluded.search_blob`,
+          [
+            r.source,
+            r.source_id,
+            r.data_type,
+            r.description,
+            r.brand,
+            r.brand_owner,
+            r.calories_kcal,
+            r.protein_g,
+            r.fat_g,
+            r.saturated_fat_g,
+            r.carbs_g,
+            r.sugar_g,
+            r.fiber_g,
+            r.sodium_mg,
+            JSON.stringify(r.portions ?? []),
+            blob,
+          ],
+        );
+      }
+    });
+  }
+}
+
 // Column lists for the tail tables' bulk INSERTs. Keep these in sync
 // with the local SQLite schema in `schema.ts` and the per-row upsert
 // builders below (the per-row paths are still used by the realtime

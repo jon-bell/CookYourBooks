@@ -118,10 +118,8 @@ export function IngredientMatchOverrideDialog({
                   <div className="text-xs text-stone-500 dark:text-stone-400">
                     {hit.brand ? `${hit.brand} · ` : ''}
                     {hit.source === 'USDA_FDC' ? 'USDA FoodData Central' : 'Open Food Facts'}
-                    {hit.calories_kcal != null && (
-                      <> · {Math.round(hit.calories_kcal)} kcal / 100 g</>
-                    )}
                   </div>
+                  <MacroPreview hit={hit} />
                 </button>
               </li>
             ))}
@@ -151,4 +149,37 @@ export function IngredientMatchOverrideDialog({
       </div>
     </div>
   );
+}
+
+/** Per-100g calories + macros for one search hit. Mirrors the units the
+ *  USDA / OFF data is reported in — kcal, g, mg — so the user can
+ *  compare entries before committing. */
+function MacroPreview({ hit }: { hit: NutritionFact }) {
+  const cells: { label: string; value: string }[] = [];
+  if (hit.calories_kcal != null) {
+    cells.push({ label: 'kcal', value: String(Math.round(hit.calories_kcal)) });
+  }
+  if (hit.protein_g != null) cells.push({ label: 'protein', value: `${round1(hit.protein_g)} g` });
+  if (hit.fat_g != null) cells.push({ label: 'fat', value: `${round1(hit.fat_g)} g` });
+  if (hit.carbs_g != null) cells.push({ label: 'carbs', value: `${round1(hit.carbs_g)} g` });
+  if (hit.fiber_g != null) cells.push({ label: 'fiber', value: `${round1(hit.fiber_g)} g` });
+  if (hit.sugar_g != null) cells.push({ label: 'sugar', value: `${round1(hit.sugar_g)} g` });
+  if (hit.sodium_mg != null) cells.push({ label: 'sodium', value: `${Math.round(hit.sodium_mg)} mg` });
+  if (cells.length === 0) return null;
+  return (
+    <div className="mt-1 text-[11px] text-stone-600 dark:text-stone-400">
+      <span className="text-stone-400 dark:text-stone-500">per 100 g · </span>
+      {cells.map((c, i) => (
+        <span key={c.label}>
+          {i > 0 && <span className="text-stone-300 dark:text-stone-600"> · </span>}
+          <span className="font-medium text-stone-700 dark:text-stone-300">{c.value}</span>{' '}
+          <span>{c.label}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }

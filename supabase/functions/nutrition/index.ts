@@ -20,10 +20,28 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
+import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+
+// Self-hosted Sentry, dedicated project `cookyourbooks-nutrition` (/5)
+// so this function's events don't share quota/release tracking with
+// the import-worker (/3) or the web (/2) projects. DSN comes from
+// `SENTRY_DSN` (set via `./.bin/supabase secrets set` or the hosted
+// Vault) — unset = no-op. Not baked in so the function never reports
+// when no one has opted in.
+const SENTRY_DSN = Deno.env.get('SENTRY_DSN');
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    release: Deno.env.get('SENTRY_RELEASE') ?? undefined,
+    environment: Deno.env.get('SENTRY_ENVIRONMENT') ?? 'production',
+    tracesSampleRate: 1.0,
+    initialScope: { tags: { component: 'nutrition' } },
+  });
+}
 
 const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -47,149 +65,79 @@ interface CachedFact {
   portions: { unit: string; grams: number }[];
 }
 
-// ---------- Vault config ----------
+// ---------- USDA (via local snapshot) ----------
+//
+// We no longer hit USDA's HTTP API per query. The full Foundation,
+// SR Legacy, Survey (FNDDS), and Branded datasets are loaded into
+// `nutrition_foods_master` by `scripts/load-usda-foods.ts` and served
+// from there. `search_nutrition_foods` does the FTS + tier-sort
+// server-side so the function just shapes rows for the client.
+//
+// Removed:
+//   - getUsdaKey() / vault lookup    — no API key needed
+//   - usdaSearch over HTTP            — replaced by RPC
+//   - nutrientsPer100g / portions     — done at load time, stored
+//   - USDA_PRIORITY                   — pushed into the RPC's ORDER BY
 
-let usdaKeyMemo: string | undefined;
-
-async function getUsdaKey(): Promise<string | null> {
-  if (usdaKeyMemo) return usdaKeyMemo;
-  const { data, error } = await sb
-    .from('vault.decrypted_secrets')
-    .select('decrypted_secret')
-    .eq('name', 'nutrition_worker_config')
-    .maybeSingle();
-  if (error || !data) return null;
-  try {
-    const cfg = JSON.parse((data as any).decrypted_secret);
-    if (typeof cfg.usda_fdc_key === 'string') {
-      usdaKeyMemo = cfg.usda_fdc_key;
-      return usdaKeyMemo!;
-    }
-  } catch {
-    /* fall through to null */
-  }
-  return null;
-}
-
-// ---------- USDA FDC ----------
-
-interface UsdaNutrient {
-  nutrientId: number;
-  value: number;
-  unitName?: string;
-}
-interface UsdaFoodPortion {
-  modifier?: string;
-  measureUnit?: { name: string };
-  portionDescription?: string;
-  gramWeight: number;
-}
-interface UsdaFood {
-  fdcId: number;
+interface MasterRow {
+  source: string;
+  source_id: string;
+  data_type: string;
   description: string;
-  brandName?: string;
-  brandOwner?: string;
-  foodNutrients?: UsdaNutrient[];
-  foodPortions?: UsdaFoodPortion[];
-  servingSize?: number;
-  servingSizeUnit?: string;
+  brand: string | null;
+  brand_owner: string | null;
+  calories_kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  saturated_fat_g: number | null;
+  carbs_g: number | null;
+  sugar_g: number | null;
+  fiber_g: number | null;
+  sodium_mg: number | null;
+  portions: { unit: string; grams: number }[];
 }
 
-// USDA nutrient ids we care about. Per
-// https://fdc.nal.usda.gov/portal-data/external/dataDictionary
-const NID = {
-  CALORIES: 1008, // Energy (kcal)
-  PROTEIN: 1003,
-  FAT: 1004,
-  SAT_FAT: 1258,
-  CARBS: 1005,
-  SUGAR: 2000,
-  FIBER: 1079,
-  SODIUM: 1093, // mg
-} as const;
-
-function pickNutrient(food: UsdaFood, id: number): number | null {
-  const n = food.foodNutrients?.find((x) => x.nutrientId === id);
-  return n?.value ?? null;
+// Strip recipe-ese that confuses the FTS matcher without changing the
+// nutritional identity. Removes parentheticals ("(chopped)"), trailing
+// prep notes after a comma (", diced", ", to taste"), and surrounding
+// punctuation. Nutrition-relevant modifiers (raw vs cooked, whole-wheat
+// vs all-purpose, low-fat vs full-fat) pass through unchanged.
+function normalizeForSearch(q: string): string {
+  return q
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/,.*$/, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s"'.-]+|[\s"'.-]+$/g, '')
+    .trim();
 }
 
-// USDA Foundation / SR Legacy nutrients are reported per 100 g of the
-// food as eaten. Branded Foods uses an arbitrary serving size — convert
-// to per-100g via the servingSize + servingSizeUnit pair when present.
-function nutrientsPer100g(food: UsdaFood): Pick<
-  CachedFact,
-  | 'calories_kcal'
-  | 'protein_g'
-  | 'fat_g'
-  | 'saturated_fat_g'
-  | 'carbs_g'
-  | 'sugar_g'
-  | 'fiber_g'
-  | 'sodium_mg'
-> {
-  let scale = 1;
-  if (
-    typeof food.servingSize === 'number' &&
-    food.servingSize > 0 &&
-    food.servingSizeUnit?.toLowerCase() === 'g'
-  ) {
-    scale = 100 / food.servingSize;
-  }
-  const s = (v: number | null) => (v == null ? null : v * scale);
-  return {
-    calories_kcal: s(pickNutrient(food, NID.CALORIES)),
-    protein_g: s(pickNutrient(food, NID.PROTEIN)),
-    fat_g: s(pickNutrient(food, NID.FAT)),
-    saturated_fat_g: s(pickNutrient(food, NID.SAT_FAT)),
-    carbs_g: s(pickNutrient(food, NID.CARBS)),
-    sugar_g: s(pickNutrient(food, NID.SUGAR)),
-    fiber_g: s(pickNutrient(food, NID.FIBER)),
-    sodium_mg: s(pickNutrient(food, NID.SODIUM)),
-  };
-}
-
-function portionsFromUsda(food: UsdaFood): { unit: string; grams: number }[] {
-  const out: { unit: string; grams: number }[] = [];
-  for (const p of food.foodPortions ?? []) {
-    const unit = p.measureUnit?.name?.toLowerCase() ?? p.portionDescription ?? '';
-    if (!unit || unit === 'undetermined' || !p.gramWeight) continue;
-    out.push({ unit, grams: p.gramWeight });
-  }
-  return out;
-}
-
-async function usdaSearch(q: string, limit: number, key: string): Promise<UsdaFood[]> {
-  const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(key)}`;
-  const body = {
-    query: q,
-    pageSize: Math.min(limit, 25),
-    // Prefer Foundation Foods (highest-quality reference data); SR
-    // Legacy fills gaps; Branded as last resort because the per-item
-    // variance is huge.
-    dataType: ['Foundation', 'SR Legacy', 'Branded'],
-    requireAllWords: false,
-  };
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+async function masterSearch(q: string, limit: number): Promise<CachedFact[]> {
+  const normalized = normalizeForSearch(q);
+  if (!normalized) return [];
+  const { data, error } = await sb.rpc('search_nutrition_foods', {
+    p_query: normalized,
+    p_limit: limit,
   });
-  if (!resp.ok) {
-    throw new Error(`USDA search ${resp.status}: ${await resp.text()}`);
-  }
-  const json = (await resp.json()) as { foods?: UsdaFood[] };
-  return json.foods ?? [];
-}
-
-function usdaToCache(food: UsdaFood): CachedFact {
-  return {
-    source: 'USDA_FDC',
-    source_id: String(food.fdcId),
-    description: food.description,
-    brand: food.brandName ?? food.brandOwner ?? null,
-    ...nutrientsPer100g(food),
-    portions: portionsFromUsda(food),
-  };
+  if (error) throw new Error(`master search: ${error.message}`);
+  if (!Array.isArray(data)) return [];
+  return (data as MasterRow[]).map((r) => ({
+    source: r.source as CachedFact['source'],
+    source_id: r.source_id,
+    description: r.description,
+    // brand is the most user-meaningful label; brand_owner is the
+    // parent company (often less recognizable). Prefer the former.
+    brand: r.brand ?? r.brand_owner ?? null,
+    calories_kcal: r.calories_kcal,
+    protein_g: r.protein_g,
+    fat_g: r.fat_g,
+    saturated_fat_g: r.saturated_fat_g,
+    carbs_g: r.carbs_g,
+    sugar_g: r.sugar_g,
+    fiber_g: r.fiber_g,
+    sodium_mg: r.sodium_mg,
+    portions: Array.isArray(r.portions) ? r.portions : [],
+  }));
 }
 
 // ---------- Open Food Facts ----------
@@ -214,11 +162,23 @@ async function offSearch(q: string, limit: number): Promise<OffProduct[]> {
   );
   const resp = await fetch(url.toString(), {
     headers: {
-      'User-Agent': 'CookYourBooks/1.0 (https://cookyourbooks.app)',
+      // OFF's anon rate-limit pool is aggressive and frequently 503s.
+      // They want AppName/Version (contact) so they can reach a human.
+      'User-Agent': 'CookYourBooks/1.0 (jon@jonbell.net)',
+      Accept: 'application/json',
     },
   });
   if (!resp.ok) {
-    throw new Error(`OFF search ${resp.status}: ${await resp.text()}`);
+    // 429 / 5xx is OFF being unhappy with anon traffic; treat as "no
+    // hits" rather than throwing — the caller's already got nothing
+    // from USDA and a thrown error just spams the console with a
+    // 5KB HTML rate-limit page.
+    if (resp.status === 429 || resp.status >= 500) {
+      console.warn(`OFF unavailable (${resp.status}); returning no hits`);
+      return [];
+    }
+    const text = await resp.text();
+    throw new Error(`OFF search ${resp.status}: ${text.slice(0, 200)}`);
   }
   const json = (await resp.json()) as { products?: OffProduct[] };
   return (json.products ?? []).filter((p) => p.product_name && p.nutriments);
@@ -305,10 +265,20 @@ async function lookupCached(
 
 // ---------- HTTP handler ----------
 
+// Called directly from the browser (unlike import-worker, which is
+// reached server-side via pg_net), so we need to answer preflights and
+// echo CORS headers on every response.
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
+  'Access-Control-Max-Age': '86400',
+};
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   });
 }
 
@@ -330,6 +300,17 @@ async function requireAuth(req: Request): Promise<string | null> {
 }
 
 Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (err) {
+    if (SENTRY_DSN) Sentry.captureException(err);
+    console.error('unhandled invocation error', err);
+    return json({ error: 'internal' }, 500);
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/+nutrition\/?/, '/').replace(/^\/+/, '/');
@@ -344,22 +325,23 @@ Deno.serve(async (req) => {
     const limit = typeof body.limit === 'number' ? body.limit : 10;
     if (!q) return json({ hits: [] });
 
-    const usdaKey = await getUsdaKey();
     const facts: CachedFact[] = [];
-    if (usdaKey) {
-      try {
-        const foods = await usdaSearch(q, limit, usdaKey);
-        for (const f of foods) facts.push(usdaToCache(f));
-      } catch (e) {
-        console.error('USDA search failed', e);
-      }
+    try {
+      const hits = await masterSearch(q, limit);
+      console.log(`master search "${q}" → ${hits.length} hits`);
+      facts.push(...hits);
+    } catch (e) {
+      console.error('master search failed', e);
+      Sentry.captureException(e, { tags: { stage: 'master_search' }, extra: { q } });
     }
     if (facts.length === 0) {
       try {
         const products = await offSearch(q, limit);
+        console.log(`OFF search "${q}" → ${products.length} hits`);
         for (const p of products) facts.push(offToCache(p));
       } catch (e) {
         console.error('OFF search failed', e);
+        Sentry.captureException(e, { tags: { stage: 'off_search' }, extra: { q } });
       }
     }
     await persist(facts);
@@ -375,4 +357,4 @@ Deno.serve(async (req) => {
   }
 
   return json({ error: 'not found' }, 404);
-});
+}

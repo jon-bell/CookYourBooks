@@ -385,6 +385,14 @@ deno_version = 2
 [functions.import-worker]
 verify_jwt = false
 
+# nutrition is called from the browser. CORS preflights (`OPTIONS` with
+# no `Authorization` header) get rejected by the gateway when
+# verify_jwt is on, breaking the request before the function ever sees
+# it. The function does its own JWT validation in `requireAuth()` —
+# every caller must present a valid user JWT or the service-role key.
+[functions.nutrition]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427

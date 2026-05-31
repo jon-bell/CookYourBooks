@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ingredientLookupKey,
   quantityToGrams,
+  tokenizeIngredient,
   totalNutrition,
   type ConversionContext,
   type IngredientNutritionRow,
@@ -16,6 +17,7 @@ import {
   resolveMapping,
   searchNutrition,
 } from './api.js';
+import { searchLocalEssentials } from './localCache.js';
 import { listConversionRulesForOwner } from './conversions.js';
 
 /**
@@ -92,26 +94,42 @@ export function useRecipeNutrition(recipe: Recipe | undefined) {
           fact = await readCachedFact(mapping.source, mapping.source_id);
         }
         if (!fact) {
-          // No mapping yet OR cache miss. Live-search and take the top
-          // hit as the auto-match. We don't persist a mapping here
-          // because the auto-match might be wrong — the user confirms
-          // via the override UI.
+          // No mapping yet OR cache miss. Try the local Foundation/SR
+          // Legacy mirror first — sub-millisecond, no network. Almost
+          // every generic cooking ingredient resolves here. Only fall
+          // through to the edge function for cases the local snapshot
+          // doesn't cover (Branded, or items added to USDA after our
+          // last bulk-import refresh). Auto-match is provisional; the
+          // user confirms via the override UI, so we don't persist a
+          // mapping at this point.
           try {
-            const hits = await searchNutrition(ing.name, 5);
-            fact = hits[0] ?? null;
-            if (hits.length > 0) needsReview = true;
+            const localHits = await searchLocalEssentials(ing.name, 5);
+            if (localHits.length > 0) {
+              fact = localHits[0]!;
+              needsReview = true;
+            } else {
+              const hits = await searchNutrition(ing.name, 5);
+              fact = hits[0] ?? null;
+              if (hits.length > 0) needsReview = true;
+            }
           } catch (e) {
             console.warn('nutrition search failed', e);
           }
         }
 
+        // Pre-narrow: pass null-named generics through plus any rule
+        // whose name shares at least one token with the ingredient.
+        // The math layer (`quantityToGrams`) does the real subset-
+        // matching + most-specific selection; this filter just keeps
+        // its inner loop short.
+        const recipeTokens = new Set(tokenizeIngredient(ing.name));
         const ctx: ConversionContext = {
           densityRules: densityRules
-            .filter(
-              (r) =>
-                r.ingredientName == null ||
-                r.ingredientName.toLowerCase() === ing.name.trim().toLowerCase(),
-            )
+            .filter((r) => {
+              if (r.ingredientName == null) return true;
+              const ruleTokens = tokenizeIngredient(r.ingredientName);
+              return ruleTokens.some((t) => recipeTokens.has(t));
+            })
             .map((r) => ({
               fromUnit: r.fromUnit,
               factor: r.factor,

@@ -141,17 +141,50 @@ export function quantityToGrams(
     return { grams: amount * ctx.override[u]!, approximate: false, source: 'override' };
   }
 
-  // 2. Match a density rule whose ingredient_name matches OR is null
-  //    (null == applies to any ingredient at this unit). Prefer the
-  //    ingredient-specific row.
+  // 2. Match a density rule whose ingredient_name's tokens are all
+  //    present in the recipe ingredient name, OR is null (null ==
+  //    applies to any ingredient at this unit). Prefer the rule with
+  //    the most matching tokens (most specific):
+  //      rule "all-purpose flour" beats rule "flour" for recipe
+  //      "unbleached all-purpose flour, sifted"; rule "flour" still
+  //      beats the null-name generic.
+  //    Tokenization normalizes hyphens to whitespace, so "all-purpose"
+  //    and "all purpose" hash the same way.
   if (ctx.densityRules && ctx.densityRules.length > 0) {
-    const match =
-      ctx.densityRules.find(
-        (r) => normUnit(r.fromUnit) === u && r.ingredientName?.toLowerCase() === name,
-      ) ??
-      ctx.densityRules.find(
-        (r) => normUnit(r.fromUnit) === u && r.ingredientName == null,
-      );
+    const recipeTokens = new Set(tokenizeIngredient(name));
+    let bestSpecific: (typeof ctx.densityRules)[number] | null = null;
+    let bestScore = 0;
+    let bestGeneric: (typeof ctx.densityRules)[number] | null = null;
+    for (const r of ctx.densityRules) {
+      if (normUnit(r.fromUnit) !== u) continue;
+      if (r.ingredientName == null) {
+        bestGeneric = r;
+        continue;
+      }
+      const ruleTokens = tokenizeIngredient(r.ingredientName);
+      if (ruleTokens.length === 0) continue;
+      let ok = true;
+      for (const t of ruleTokens) {
+        if (!recipeTokens.has(t)) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      // Token count is the specificity score. Ties broken by raw-string
+      // length so "all-purpose flour" beats "all purpose" when both
+      // have 2 tokens (unlikely tie, but deterministic if it happens).
+      const score = ruleTokens.length;
+      if (
+        score > bestScore ||
+        (score === bestScore &&
+          r.ingredientName.length > (bestSpecific?.ingredientName?.length ?? 0))
+      ) {
+        bestScore = score;
+        bestSpecific = r;
+      }
+    }
+    const match = bestSpecific ?? bestGeneric;
     if (match) {
       return { grams: amount * match.factor, approximate: false, source: 'density' };
     }
@@ -328,4 +361,23 @@ export function fmtMg(m: number): string {
 /** Normalized ingredient lookup key. Lowercase, trimmed, single-spaced. */
 export function ingredientLookupKey(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Tokenize an ingredient name for substring matching against density
+ * rules. Hyphens, commas, and punctuation collapse to whitespace so
+ * "all-purpose flour, sifted" and "All Purpose Flour" tokenize the
+ * same way: ["all", "purpose", "flour"] (+ "sifted" in the first).
+ *
+ * Used in both quantityToGrams (rule selection) and the UI filter
+ * that pre-narrows the rule set per ingredient — keeping the logic in
+ * one place means both sides agree on whether a rule "applies".
+ */
+export function tokenizeIngredient(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
 }
