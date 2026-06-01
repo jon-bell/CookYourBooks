@@ -26,8 +26,11 @@ export default defineConfig(({ mode }) => {
   // try to upload (and don't fail when the token is absent).
   const sentryAuthToken = env.SENTRY_AUTH_TOKEN ?? '';
   const sentryUrl = env.SENTRY_URL ?? 'https://sentry-cyb.work.ripley.cloud';
-  const sentryOrg = env.SENTRY_ORG ?? 'sentry';
-  const sentryProject = env.SENTRY_PROJECT ?? 'cookyourbooks-web';
+  const sentryOrg = env.SENTRY_ORG ?? 'cyb';
+  // Web events report to the `cyb-react` project (DSN …/2). The mobile
+  // CI build overrides SENTRY_PROJECT to `cyb-capacitor` so the bundle
+  // shipped in the IPA uploads its maps to the project its events go to.
+  const sentryProject = env.SENTRY_PROJECT ?? 'cyb-react';
   const sentryRelease =
     env.VITE_SENTRY_RELEASE ?? env.VERCEL_GIT_COMMIT_SHA ?? undefined;
 
@@ -42,7 +45,14 @@ export default defineConfig(({ mode }) => {
               org: sentryOrg,
               project: sentryProject,
               release: sentryRelease ? { name: sentryRelease } : undefined,
-              sourcemaps: { assets: './dist/**' },
+              sourcemaps: {
+                assets: './dist/**',
+                // Delete the .map files after they're uploaded so the
+                // generated source maps don't ship publicly to Vercel
+                // (Debug IDs already let Sentry symbolicate without the
+                // maps being web-reachable).
+                filesToDeleteAfterUpload: ['./dist/**/*.map'],
+              },
               // Quiet output on Vercel so build logs stay readable.
               silent: true,
               // Self-hosted Sentry doesn't have an org-level telemetry
@@ -75,6 +85,16 @@ export default defineConfig(({ mode }) => {
       // host platform is using.
       'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),
       'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+      // Pin the runtime release tag to the SAME value the source-map
+      // uploader used above. Vercel only exposes the unprefixed
+      // VERCEL_GIT_COMMIT_SHA, which Vite can't surface to
+      // import.meta.env on its own — so without this inject, runtime
+      // events carried a null release while maps were uploaded under
+      // the commit SHA. Only define it when we actually resolved one,
+      // so local dev still lands events in the "dev" bucket.
+      ...(sentryRelease
+        ? { 'import.meta.env.VITE_SENTRY_RELEASE': JSON.stringify(sentryRelease) }
+        : {}),
     },
   };
 });

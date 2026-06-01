@@ -132,15 +132,29 @@ changes.
 ## Sentry (self-hosted)
 
 Errors + perf tracing + error-only session replay land in the
-self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud`, split
-across three projects so each surface has its own release tracking,
-symbolication artifacts, and quota:
+self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud` under the
+org slug `cyb`, split across projects so each surface has its own
+release tracking, symbolication artifacts, and quota. The DSN suffix is
+the numeric project id; the human-readable slug is what
+`@sentry/vite-plugin` / `sentry-cli` / fastlane upload against:
 
-| Surface | Project | DSN suffix | SDK |
+| Surface | Project slug | DSN suffix | SDK |
 | --- | --- | --- | --- |
-| Web (Vercel) | `cookyourbooks-web` | `…/2` | `@sentry/react` |
-| iOS via Capacitor | `cookyourbooks-mobile` | `…/4` | `@sentry/capacitor` (wraps `@sentry/react` + native Cocoa SDK) |
-| Edge function (Deno) | `cookyourbooks-edge` | `…/3` | `@sentry/deno` via esm.sh |
+| Web (Vercel) | `cyb-react` | `…/2` | `@sentry/react` |
+| iOS via Capacitor | `cyb-capacitor` | `…/4` | `@sentry/capacitor` (wraps `@sentry/react` + native Cocoa SDK) |
+| Edge functions (Deno) | `cyb-deno` | `…/3` | `@sentry/deno` via esm.sh |
+
+Both Deno edge functions (`import-worker`, `nutrition`) report to the
+single `cyb-deno` project via one shared `SENTRY_DSN` secret —
+edge-function secrets are global to the Supabase project, so there's one
+value for every function.
+
+> **Build defaults:** `vite.config.ts` defaults `SENTRY_ORG=cyb` /
+> `SENTRY_PROJECT=cyb-react`, so the Vercel build only needs
+> `SENTRY_AUTH_TOKEN` set to upload source maps (the plugin runs
+> `silent: true`, so a missing token / wrong slug fails quietly). The
+> mobile CI build overrides `SENTRY_PROJECT=cyb-capacitor` so the bundle
+> shipped in the IPA uploads its JS maps to the project its events go to.
 
 The browser bundle picks its DSN at runtime via Capacitor platform
 detection (`apps/web/src/sentry.ts`): on iOS/Android it routes through

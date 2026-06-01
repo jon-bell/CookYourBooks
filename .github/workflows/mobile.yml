@@ -90,13 +90,21 @@ jobs:
       # empty GEM_PATH stops Ruby from finding minitest under cocoapods).
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
       # Sentry dSYM upload. Org + project slugs aren't sensitive — only
-      # the auth token is. The Fastfile defaults to `sentry` /
-      # `cookyourbooks-mobile` which don't exist on our instance; the
-      # real org is `cyb` and the iOS/Capacitor project is
-      # `cyb-capacitor`.
+      # the auth token is. Org is `cyb`, the iOS/Capacitor project is
+      # `cyb-capacitor` (these match the Fastfile defaults; set here
+      # explicitly so the env is self-documenting).
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: cyb
       SENTRY_PROJECT_MOBILE: cyb-capacitor
+      # The web build feeding `cap sync` ships inside the IPA, and its JS
+      # errors report to the Capacitor project — so its source maps must
+      # upload there too, not to the web project. @sentry/vite-plugin
+      # reads SENTRY_PROJECT; point it at the Capacitor project for this
+      # build. (Native dSYMs use SENTRY_PROJECT_MOBILE above — same slug.)
+      SENTRY_PROJECT: cyb-capacitor
+      # Tag both the uploaded maps and the runtime JS events with the
+      # commit SHA so they line up by release as well as by Debug ID.
+      VITE_SENTRY_RELEASE: ${{ github.sha }}
       CYB_ASC_KEY_ID: ${{ secrets.CYB_ASC_KEY_ID }}
       CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}

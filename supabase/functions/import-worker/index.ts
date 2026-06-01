@@ -20,11 +20,12 @@ import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
 import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
 
-// Self-hosted Sentry for the import worker. Reports to the dedicated
-// cookyourbooks-edge project (/3) so edge-runtime events don't share
-// release tracking / quotas with the web + iOS surfaces. Set
-// `SENTRY_DSN` via `./.bin/supabase secrets set SENTRY_DSN=...` (or
-// the prod Vault) to enable; the SDK no-ops cleanly when unset.
+// Self-hosted Sentry for the import worker. Both Deno edge functions
+// report to the same `cyb-deno` project via the shared `SENTRY_DSN`
+// secret (edge-function secrets are global to the Supabase project, so
+// there's one value for all functions). The baked-in DSN below is the
+// /3 fallback for when the secret is unset; DSNs are public (ingest-
+// only), so it's safe to embed.
 const SENTRY_DSN =
   Deno.env.get('SENTRY_DSN') ??
   'https://21890fed80bff992c7c0e48d97b868f4@sentry-cyb.work.ripley.cloud/3';
@@ -33,9 +34,14 @@ if (SENTRY_DSN) {
     dsn: SENTRY_DSN,
     release: Deno.env.get('SENTRY_RELEASE') ?? undefined,
     environment: Deno.env.get('SENTRY_ENVIRONMENT') ?? 'production',
-    // Edge function invocations are short-lived; sample every trace so
-    // we get end-to-end timing for the worker loop. Adjust if volume
-    // climbs.
+    // @sentry/deno can't instrument Deno.serve, so a warm isolate shares
+    // one global scope across requests. Disabling the default
+    // integrations turns off the auto global error/breadcrumb handlers
+    // that would otherwise bleed one request's context into the next;
+    // we scope each request explicitly via Sentry.withScope below.
+    // (Trade-off: no automatic tracing spans — captureException still
+    // works, and these functions don't create manual spans.)
+    defaultIntegrations: false,
     tracesSampleRate: 1.0,
     // Tag every event so issues land under a dedicated component on
     // the dashboard.
@@ -247,6 +253,11 @@ function authorized(req: Request): boolean {
 }
 
 Deno.serve(async (req) => {
+  // Isolate Sentry scope to this request. Deno.serve isn't instrumented
+  // by the SDK, so without this a reused warm isolate would share tags /
+  // breadcrumbs across requests. withScope runs the callback against a
+  // fresh child scope and discards it on return.
+  return await Sentry.withScope(async () => {
   // Capture any unhandled exception or rejection from inside the
   // handler — `Deno.serve` swallows them by default which makes the
   // function look "fine" to Supabase while it's actually 500ing for
@@ -305,7 +316,14 @@ Deno.serve(async (req) => {
     if (SENTRY_DSN) Sentry.captureException(err);
     logLine('error', 'unhandled invocation error', {}, { error: String(err) });
     return json({ error: 'internal' }, 500);
+  } finally {
+    // The edge isolate can be frozen the instant we return a Response,
+    // which kills the async Sentry transport before it has POSTed the
+    // event. Block on the flush so captured exceptions actually ship.
+    // No-ops when Sentry was never initialized.
+    if (SENTRY_DSN) await Sentry.flush(2000);
   }
+  });
 });
 
 // ---------- main loop ----------

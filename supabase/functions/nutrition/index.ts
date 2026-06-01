@@ -26,18 +26,22 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-// Self-hosted Sentry, dedicated project `cookyourbooks-nutrition` (/5)
-// so this function's events don't share quota/release tracking with
-// the import-worker (/3) or the web (/2) projects. DSN comes from
-// `SENTRY_DSN` (set via `./.bin/supabase secrets set` or the hosted
-// Vault) — unset = no-op. Not baked in so the function never reports
-// when no one has opted in.
+// Self-hosted Sentry. Both Deno edge functions report to the shared
+// `cyb-deno` project via the single `SENTRY_DSN` secret (edge-function
+// secrets are global to the Supabase project). Nothing is baked in, so
+// an unset secret = clean no-op.
 const SENTRY_DSN = Deno.env.get('SENTRY_DSN');
 if (SENTRY_DSN) {
   Sentry.init({
     dsn: SENTRY_DSN,
     release: Deno.env.get('SENTRY_RELEASE') ?? undefined,
     environment: Deno.env.get('SENTRY_ENVIRONMENT') ?? 'production',
+    // @sentry/deno can't instrument Deno.serve, so a warm isolate shares
+    // one global scope across requests. Disable the default integrations
+    // (auto global error/breadcrumb handlers) to stop one request's
+    // context bleeding into the next; each request is scoped explicitly
+    // via Sentry.withScope below. Trade-off: no automatic tracing spans.
+    defaultIntegrations: false,
     tracesSampleRate: 1.0,
     initialScope: { tags: { component: 'nutrition' } },
   });
@@ -300,13 +304,24 @@ async function requireAuth(req: Request): Promise<string | null> {
 }
 
 Deno.serve(async (req) => {
-  try {
-    return await handle(req);
-  } catch (err) {
-    if (SENTRY_DSN) Sentry.captureException(err);
-    console.error('unhandled invocation error', err);
-    return json({ error: 'internal' }, 500);
-  }
+  // Isolate Sentry scope per request — Deno.serve isn't instrumented by
+  // the SDK, so a reused warm isolate would otherwise share scope across
+  // requests. withScope discards the child scope when the callback ends.
+  return await Sentry.withScope(async () => {
+    try {
+      return await handle(req);
+    } catch (err) {
+      if (SENTRY_DSN) Sentry.captureException(err);
+      console.error('unhandled invocation error', err);
+      return json({ error: 'internal' }, 500);
+    } finally {
+      // Flush before the isolate freezes on return — otherwise the async
+      // transport is killed mid-POST and events (including the per-stage
+      // captureException calls in `handle`, which fire on 200 responses)
+      // never reach Sentry. No-ops when Sentry was never initialized.
+      if (SENTRY_DSN) await Sentry.flush(2000);
+    }
+  });
 });
 
 async function handle(req: Request): Promise<Response> {
