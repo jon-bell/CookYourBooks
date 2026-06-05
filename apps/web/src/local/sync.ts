@@ -542,15 +542,22 @@ export async function pullAll(
 }
 
 /**
- * Pull collections that another member of the user's household has
- * shared with us, plus their recipes / ingredients / instructions /
- * refs. Skips collections the user already owns (those came down in
- * the main collections pass).
+ * Pull the libraries of the other members of the user's household.
  *
- * Watermarked on a per-household topic so a user who joins a new
- * household doesn't unnecessarily re-pull from the old one — switching
- * households produces a topic miss and a fresh pull, which is what we
- * want.
+ * Sharing is library-wide and membership-driven now: every collection
+ * (plus its recipes / ingredients / instructions / refs) owned by a
+ * co-member who shares their library is visible to us via RLS. We don't
+ * filter on a per-collection flag — we just fetch everything owned by
+ * *someone else* (`owner_id <> me`) and let RLS return only the rows we
+ * may read. New recipes a co-member adds later are picked up
+ * incrementally via the `updated_at` watermark, which is the fix for
+ * "shared a cookbook then added a recipe and it didn't propagate".
+ *
+ * Watermarked on a per-household topic so switching households forces a
+ * fresh pull. Each co-member collection is tagged locally with
+ * `shared_with_household_id = householdId` (a local-only marker — the
+ * server column is vestigial) so the library read surfaces it and the
+ * "Shared with household" badge renders.
  */
 async function pullHouseholdSharedContent(
   client: CookbooksClient,
@@ -565,7 +572,6 @@ async function pullHouseholdSharedContent(
     client
       .from('recipe_collections')
       .select('*')
-      .eq('shared_with_household_id', householdId)
       .neq('owner_id', ownerId)
       .gte('updated_at', collectionsSince)
       .order('updated_at', { ascending: true })
@@ -574,21 +580,24 @@ async function pullHouseholdSharedContent(
   );
   let maxCollectionTs = await getWatermark(collectionTopic);
   for (const row of collections) {
-    await upsertCollectionRow(row);
+    // Local-only marker so LocalRecipeCollectionRepository surfaces it
+    // as a household-shared collection.
+    await upsertCollectionRow({ ...row, shared_with_household_id: householdId });
     maxCollectionTs = Math.max(maxCollectionTs, toMs(row.updated_at));
   }
   if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
 
-  // Recipes for those collections. The inner-join filter scopes the
-  // child query to recipes inside collections shared into our
-  // household. Pagination identical to the owned-content path.
+  // Recipes inside co-members' collections. The inner-join filter on the
+  // collection's owner scopes us to other people's recipes; RLS narrows
+  // that to library-sharing co-members. Pagination identical to the
+  // owned-content path.
   const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
   const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
     (from, to) =>
       client
         .from('recipes')
-        .select('*, recipe_collections!inner(shared_with_household_id)')
-        .eq('recipe_collections.shared_with_household_id', householdId)
+        .select('*, recipe_collections!inner(owner_id)')
+        .neq('recipe_collections.owner_id', ownerId)
         .gte('updated_at', recipesSince)
         .order('updated_at', { ascending: true })
         .order('id', { ascending: true })
@@ -604,8 +613,8 @@ async function pullHouseholdSharedContent(
       fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
         client
           .from('ingredients')
-          .select('*, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id))')
-          .eq('recipes.recipe_collections.shared_with_household_id', householdId)
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+          .neq('recipes.recipe_collections.owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
           .order('recipe_id', { ascending: true })
           .order('sort_order', { ascending: true })
@@ -614,8 +623,8 @@ async function pullHouseholdSharedContent(
       fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
         client
           .from('instructions')
-          .select('*, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id))')
-          .eq('recipes.recipe_collections.shared_with_household_id', householdId)
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+          .neq('recipes.recipe_collections.owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
           .order('recipe_id', { ascending: true })
           .order('step_number', { ascending: true })
@@ -626,9 +635,9 @@ async function pullHouseholdSharedContent(
           client
             .from('instruction_ingredient_refs')
             .select(
-              '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(shared_with_household_id)))',
+              '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
             )
-            .eq('instructions.recipes.recipe_collections.shared_with_household_id', householdId)
+            .neq('instructions.recipes.recipe_collections.owner_id', ownerId)
             .gte('instructions.recipes.updated_at', recipesSince)
             .order('instruction_id', { ascending: true })
             .range(from, to),
@@ -1718,12 +1727,13 @@ export function subscribeRealtime(
       },
     );
 
-  // Subscribe to household-shared collection changes so members see
-  // each other's shares without waiting for a periodic pull. The
-  // child tables (recipes/ingredients/instructions) ride on the
-  // shared subscription used for owned content above — those filters
-  // are table-wide, so an event on someone else's recipe row also
-  // reaches us as long as RLS lets us read it.
+  // Household library sharing is membership-driven, so there's no
+  // per-collection flag to filter realtime on. Instead, watch all
+  // recipe_collections changes (RLS only lets co-members' rows through)
+  // and schedule a household re-pull — that re-applies the local marker
+  // and fetches any new recipes by watermark. The owner-filtered
+  // subscription above already handles our own rows; the duplicate
+  // events on our own collections are idempotent.
   if (householdId) {
     channel.on(
       'postgres_changes',
@@ -1731,13 +1741,8 @@ export function subscribeRealtime(
         event: '*',
         schema: 'public',
         table: 'recipe_collections',
-        filter: `shared_with_household_id=eq.${householdId}`,
       },
-      async (payload) => {
-        await handleCollectionEvent(payload);
-        // Owner / member additions on the parent require a fresh recipe
-        // pull to fill in the child rows — the collection event alone
-        // doesn't carry them.
+      () => {
         onNeedsPull();
       },
     );

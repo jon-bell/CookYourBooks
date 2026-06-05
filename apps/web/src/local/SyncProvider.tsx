@@ -116,6 +116,13 @@ const CYCLE_TIMEOUT_MS = 45_000;
 // dangling 'syncing' setState that no one comes back to clear. The
 // watchdog gives us a recovery path without a reload.
 const WATCHDOG_INTERVAL_MS = 5_000;
+// Co-members' libraries (other people's content) have no reliable
+// per-row realtime signal — a recipe someone adds to an already-shared
+// collection doesn't change any row we're subscribed to. So while we're
+// in a household we poll on a slow cadence (and on tab focus) to pull
+// their new content. Cheap: an incremental watermark pull returns
+// nothing when nothing changed.
+const HOUSEHOLD_POLL_MS = 30_000;
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -342,6 +349,29 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
       void handle?.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, tabRole]);
+
+  // Poll for co-members' new content while in a household: re-pull on
+  // tab focus and on a slow interval. This is what makes a recipe a
+  // co-member adds *after* sharing show up without a manual refresh —
+  // there's no per-row realtime event we can subscribe to for it.
+  useEffect(() => {
+    if (!user || tabRole !== 'leader') return;
+    const ownerId = user.id;
+    function repullHousehold() {
+      if (!householdIdRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void cycle(ownerId);
+    }
+    window.addEventListener('focus', repullHousehold);
+    document.addEventListener('visibilitychange', repullHousehold);
+    const poll = setInterval(repullHousehold, HOUSEHOLD_POLL_MS);
+    return () => {
+      window.removeEventListener('focus', repullHousehold);
+      document.removeEventListener('visibilitychange', repullHousehold);
+      clearInterval(poll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, tabRole]);
