@@ -85,10 +85,10 @@ export async function startBakeoff(
   opts: { taskKind?: 'OCR' | 'REWRITE'; inputRecipeId?: string | null } = {},
 ): Promise<string> {
   const { data, error } = await supabase.rpc('bakeoff_start', {
-    // bakeoff_start's p_image_storage_path is declared `text` (not
-    // `text default null`) but the body accepts null on the REWRITE
-    // task. Coerce null → '' so we match the typed contract while
-    // preserving the runtime contract.
+    // The OCR path requires a non-null string here; the REWRITE path
+    // accepts any value (the body inserts null into the column for
+    // REWRITE). Coerce null → '' so the type stays `string` without
+    // having to reorder args around the required p_variants.
     p_image_storage_path: imageStoragePath ?? '',
     // PostgREST's typed Json parameter accepts arrays-of-objects fine at
     // runtime, but the generated type alias is too narrow for it.

@@ -26,7 +26,7 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
   });
 
   test('scales to 0.5× with the custom input', async ({ authedPage: page }) => {
-    const scale = page.getByRole('spinbutton');
+    const scale = page.getByRole('spinbutton', { name: 'Scale' });
     await scale.fill('0.5');
     await expect(page.getByText(/Serves 6 cookies/)).toBeVisible();
   });

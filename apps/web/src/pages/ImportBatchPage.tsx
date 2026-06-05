@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { deleteOcrStorage } from '../import/deleteStorage.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
 import {
   useImportBatch,
@@ -568,7 +569,7 @@ export function ImportBatchPage() {
           <summary className="cursor-pointer list-none rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800">
             …
           </summary>
-          <div className="absolute right-0 mt-1 w-48 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-1 text-sm shadow-md">
+          <div className="absolute right-0 mt-1 w-64 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-1 text-sm shadow-md">
             <button
               type="button"
               onClick={() =>
@@ -581,6 +582,7 @@ export function ImportBatchPage() {
             >
               {batch.status === 'ARCHIVED' ? 'Unarchive batch' : 'Archive batch'}
             </button>
+            <BatchDeleteStorageButton batchId={batch.id} />
           </div>
         </details>
       </div>
@@ -870,4 +872,53 @@ function useTickingNow(active: boolean, intervalMs = 1000): number {
     return () => clearInterval(id);
   }, [active, intervalMs]);
   return now;
+}
+
+/**
+ * Menu item that wipes every uploaded image in this batch from storage
+ * (keeps the OCR'd drafts and any promoted recipes — only the source
+ * pictures go away). Shows a confirm dialog because the deletion is
+ * not reversible.
+ */
+function BatchDeleteStorageButton({ batchId }: { batchId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { syncNow } = useSync();
+
+  async function onClick() {
+    if (
+      !confirm(
+        'Delete every uploaded image in this batch? Recipes you already promoted will stay. This cannot be undone.',
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteOcrStorage({ kind: 'batch', batchId });
+      await syncNow();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void onClick()}
+        disabled={busy}
+        data-testid="batch-delete-storage"
+        className="block w-full rounded px-3 py-1.5 text-left text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-60"
+      >
+        {busy ? 'Deleting images…' : 'Delete all uploaded images'}
+      </button>
+      {error && (
+        <p className="px-3 py-1 text-xs text-red-700 dark:text-red-300">{error}</p>
+      )}
+    </>
+  );
 }

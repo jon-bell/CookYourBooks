@@ -34,15 +34,16 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
   const rowX = row as CollectionRow & {
     moderation_state?: string | null;
     moderation_reason?: string | null;
+    shared_with_household_id?: string | null;
   };
   await db.exec(
     `insert into recipe_collections
        (id, owner_id, title, source_type, author, isbn, publisher, publication_year,
         description, notes, source_url, date_accessed, site_name,
         is_public, forked_from, cover_image_path,
-        moderation_state, moderation_reason,
+        moderation_state, moderation_reason, shared_with_household_id,
         updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        title=excluded.title,
@@ -61,6 +62,7 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
        cover_image_path=excluded.cover_image_path,
        moderation_state=excluded.moderation_state,
        moderation_reason=excluded.moderation_reason,
+       shared_with_household_id=excluded.shared_with_household_id,
        updated_at=excluded.updated_at,
        deleted=0
      where excluded.updated_at >= recipe_collections.updated_at`,
@@ -83,6 +85,7 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
       row.cover_image_path,
       rowX.moderation_state ?? 'ACTIVE',
       rowX.moderation_reason ?? null,
+      rowX.shared_with_household_id ?? null,
       tsToMs(row.updated_at),
     ],
   );
@@ -107,6 +110,7 @@ const COLLECTION_COLS = [
   'cover_image_path',
   'moderation_state',
   'moderation_reason',
+  'shared_with_household_id',
   'updated_at',
   'deleted',
 ] as const;
@@ -115,6 +119,7 @@ function collectionToParams(row: CollectionRow): readonly unknown[] {
   const rowX = row as CollectionRow & {
     moderation_state?: string | null;
     moderation_reason?: string | null;
+    shared_with_household_id?: string | null;
   };
   return [
     row.id,
@@ -135,6 +140,7 @@ function collectionToParams(row: CollectionRow): readonly unknown[] {
     row.cover_image_path,
     rowX.moderation_state ?? 'ACTIVE',
     rowX.moderation_reason ?? null,
+    rowX.shared_with_household_id ?? null,
     tsToMs(row.updated_at),
     0,
   ];
@@ -1033,7 +1039,8 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
                   or exists (select 1 from instructions where recipe_id = r.id))
            group by r.collection_id
        ) fc on fc.collection_id = c.id
-       where c.owner_id = ? and c.deleted = 0
+       where (c.owner_id = ? or c.shared_with_household_id is not null)
+         and c.deleted = 0
        order by (filled_count > 0) desc, coalesce(c.updated_at, 0) desc`,
       [this.ownerId],
     )) as {
@@ -1062,9 +1069,12 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
 
   async list(): Promise<RecipeCollection[]> {
     const db = await getLocalDb();
+    // Includes household-shared collections from other members; pullAll
+    // only places visible-to-me collections in local SQLite so a simple
+    // OR is sufficient.
     const colRows = (await db.execO<CollectionRow>(
       `select * from recipe_collections
-       where owner_id = ? and deleted = 0
+       where (owner_id = ? or shared_with_household_id is not null) and deleted = 0
        order by coalesce(updated_at, 0) desc`,
       [this.ownerId],
     )) as CollectionRow[];

@@ -375,7 +375,7 @@ export function RecipePage() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <section className="md:col-span-1 space-y-2">
           <h2 className="text-lg font-semibold">Ingredients</h2>
-          <ul className="space-y-1.5">
+          <ul className="space-y-1.5" data-testid="ingredient-list">
             {scaled.ingredients.map((ing) => (
               <li key={ing.id} className="text-sm">
                 {isMeasured(ing) ? (
