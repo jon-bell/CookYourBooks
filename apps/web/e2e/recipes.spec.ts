@@ -36,8 +36,9 @@ test.describe('Recipes — CRUD + editor', () => {
     await page.getByRole('button', { name: 'Save recipe' }).click();
     await expect(page.getByRole('heading', { name: 'Pancakes' })).toBeVisible();
     await expect(page.getByText('Serves 4 pancakes')).toBeVisible();
-    await expect(page.getByText('2 cup flour')).toBeVisible();
-    await expect(page.getByText(/^salt$/)).toBeVisible();
+    const ingredients = page.getByTestId('ingredient-list');
+    await expect(ingredients.getByText('2 cup flour')).toBeVisible();
+    await expect(ingredients.getByText(/^salt$/)).toBeVisible();
     await waitForSynced(page);
   });
 
