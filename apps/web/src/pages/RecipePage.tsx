@@ -43,6 +43,7 @@ import {
 } from '../settings/rewriteSettings.js';
 import { useImportItemsForRecipe } from '../import/queries.js';
 import { RecipeScanDialog } from '../components/RecipeScanDialog.js';
+import { RecipeNutritionPanel } from '../nutrition/RecipeNutritionPanel.js';
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
@@ -447,6 +448,8 @@ export function RecipePage() {
           <p className="mt-1 whitespace-pre-wrap text-sm text-stone-700 dark:text-stone-300">{recipe.notes}</p>
         </section>
       )}
+
+      <RecipeNutritionPanel recipe={recipe} />
 
       {adaptations.length > 0 && (
         <section className="space-y-2">

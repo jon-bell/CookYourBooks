@@ -37,6 +37,7 @@ cookyourbooks/
 - **Keyboard shortcuts:** `apps/web/src/keyboard/shortcuts.ts` binds `/`, `n`, `e`, `c`, `?`, and `g l`/`g d`/`g s` chords. The global listener ignores keystrokes originating inside `input`/`textarea`/`contenteditable`.
 - **Household sharing:** A user can be in at most one household at a time (≤ 6 members), and can share recipe collections with the other household members for private cross-account access — distinct from public publishing. Schema lives in `supabase/migrations/20260606000000_households.sql` and its siblings. Server-side enforcement: a partial unique index on `household_members(user_id) where left_at is null` enforces one-active-membership; the `accept_household_invite` RPC enforces the 6-member cap and the 7-day cooldown after leaving/being removed; the `enforce_household_public_cascade` trigger blocks `is_public = true` on a household-shared collection unless `last_share_attested_at` is within 5 minutes (the `attest_public_share` RPC bumps it). Every state change goes through a `security definer` RPC that records an `audit_log` row in the same transaction via the `record_audit` helper. Frontend lives under `apps/web/src/household/` (api, queries, dialogs, audit-log view) plus `pages/HouseholdPage.tsx` and `pages/HouseholdJoinPage.tsx`.
 - **Terms of Service gate:** Sharing / publishing actions call `require_current_tos()` server-side. If the caller's `profiles.tos_version` is below `current_tos_version()`, the RPC raises with `TOS_NOT_ACCEPTED:` prefix; the frontend catches this in `isTosNotAcceptedError` and opens `AcceptTosGate`. Legal text lives in `apps/web/src/legal/content.ts`; the `LegalPage` component renders it under `/legal/{terms,aup,dmca,privacy}`. Bumping the version requires a follow-up migration so the legal record is checked into the schema.
+- **Nutrition analysis:** Per-recipe nutrition uses USDA FoodData Central as the primary source and Open Food Facts as the fallback. Lookups go through the `nutrition` Edge Function (Vault secret `nutrition_worker_config` holds `{ function_url, service_role_key, usda_fdc_key }`), which writes every hit into `nutrition_facts_cache` keyed by `(source, source_id)` so the second view of any recipe is network-free. `ingredient_nutrition_mappings` is the per-user (with platform-default fallback) "this ingredient string → that USDA entry" override table; the `resolve_nutrition_mapping` RPC handles the user-row-then-platform-row lookup. The math lives in `packages/domain/src/services/nutritionMath.ts` (pure functions: `quantityToGrams` for unit conversion, `totalNutrition` to aggregate per-100g facts × grams, `scaleToServing` with proportion-of-yield and by-weight modes). UI sits on the recipe page via `RecipeNutritionPanel` + `IngredientMatchOverrideDialog`.
 
 ## Domain model overview
 
@@ -199,6 +200,37 @@ is what captures JS/React errors, network breadcrumbs, and replay.
   `localStorage.cookyourbooks.sync.consoleMirror = '1'` in the
   browser console to re-enable info-level sync log mirroring (off by
   default to save IPC cost on iPad / under Playwright).
+
+## Setting up the nutrition worker
+
+The `nutrition` Edge Function calls USDA FoodData Central (primary, free
+key, https://fdc.nal.usda.gov/api-key-signup.html) and Open Food Facts
+(fallback, no key). Setup mirrors the OCR worker — the key lives in
+Vault, never in the client bundle.
+
+### Local development
+
+```bash
+# 1. Start Supabase, serve the nutrition function alongside import-worker.
+./.bin/supabase start
+./.bin/supabase functions serve nutrition --no-verify-jwt
+
+# 2. Register the secret. Service-role key from `./.bin/supabase status`.
+./.bin/supabase db psql <<'SQL'
+select vault.create_secret(
+  json_build_object(
+    'function_url', 'http://host.docker.internal:54321/functions/v1/nutrition',
+    'service_role_key', 'PASTE_FROM_supabase_status',
+    'usda_fdc_key', 'YOUR_USDA_FDC_KEY'
+  )::text,
+  'nutrition_worker_config',
+  'Nutrition lookup endpoint + USDA key'
+);
+SQL
+```
+
+The Open Food Facts fallback fires automatically when USDA returns no
+hits; no extra config required.
 
 ## Setting up the OCR worker
 

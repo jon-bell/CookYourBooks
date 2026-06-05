@@ -1153,6 +1153,47 @@ export type Database = {
           },
         ]
       }
+      ingredient_nutrition_mappings: {
+        Row: {
+          created_at: string
+          custom_grams_per_unit: Json
+          id: string
+          ingredient_key: string
+          owner_id: string | null
+          source: string
+          source_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          custom_grams_per_unit?: Json
+          id?: string
+          ingredient_key: string
+          owner_id?: string | null
+          source: string
+          source_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          custom_grams_per_unit?: Json
+          id?: string
+          ingredient_key?: string
+          owner_id?: string | null
+          source?: string
+          source_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_nutrition_mappings_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ingredients: {
         Row: {
           description: string | null
@@ -1353,6 +1394,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      nutrition_facts_cache: {
+        Row: {
+          brand: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          description: string
+          fat_g: number | null
+          fetched_at: string
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          raw_response: Json | null
+          saturated_fat_g: number | null
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+        }
+        Insert: {
+          brand?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          description: string
+          fat_g?: number | null
+          fetched_at?: string
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          raw_response?: Json | null
+          saturated_fat_g?: number | null
+          sodium_mg?: number | null
+          source: string
+          source_id: string
+          sugar_g?: number | null
+        }
+        Update: {
+          brand?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          description?: string
+          fat_g?: number | null
+          fetched_at?: string
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          raw_response?: Json | null
+          saturated_fat_g?: number | null
+          sodium_mg?: number | null
+          source?: string
+          source_id?: string
+          sugar_g?: number | null
+        }
+        Relationships: []
       }
       ocr_test_fixtures: {
         Row: {
@@ -1965,6 +2060,24 @@ export type Database = {
     Functions: {
       accept_household_invite: { Args: { p_token: string }; Returns: string }
       accept_tos: { Args: { p_version: number }; Returns: undefined }
+      admin_nutrition_upsert_fact: {
+        Args: {
+          p_brand?: string
+          p_calories_kcal?: number
+          p_carbs_g?: number
+          p_description: string
+          p_fat_g?: number
+          p_fiber_g?: number
+          p_portions?: Json
+          p_protein_g?: number
+          p_saturated_fat_g?: number
+          p_sodium_mg?: number
+          p_source: string
+          p_source_id: string
+          p_sugar_g?: number
+        }
+        Returns: undefined
+      }
       attest_public_share: {
         Args: { p_attestation: string; p_collection_id: string }
         Returns: undefined
@@ -2314,6 +2427,7 @@ export type Database = {
         Returns: undefined
       }
       normalize_isbn: { Args: { raw: string }; Returns: string }
+      nutrition_health: { Args: never; Returns: boolean }
       ocr_key_delete: { Args: { p_provider: string }; Returns: undefined }
       ocr_key_set: {
         Args: { p_base_url?: string; p_provider: string; p_raw_key: string }
@@ -2357,6 +2471,15 @@ export type Database = {
         Returns: undefined
       }
       require_current_tos: { Args: never; Returns: undefined }
+      resolve_nutrition_mapping: {
+        Args: { p_ingredient_key: string }
+        Returns: {
+          custom_grams_per_unit: Json
+          origin: string
+          source: string
+          source_id: string
+        }[]
+      }
       revoke_household_invite: {
         Args: { p_invite_id: string }
         Returns: undefined

@@ -9,6 +9,7 @@ import { NewCollectionPage } from './pages/NewCollectionPage.js';
 import { CookModePage } from './pages/CookModePage.js';
 import { AdminPage } from './pages/AdminPage.js';
 import { AdminGlobalTocPage } from './pages/AdminGlobalTocPage.js';
+import { AdminNutritionPage } from './pages/AdminNutritionPage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
 import { LandingPage } from './pages/LandingPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
@@ -266,6 +267,14 @@ export function App() {
             element={
               <RequireAuth>
                 <AdminGlobalTocPage mode="editor" />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/nutrition"
+            element={
+              <RequireAuth>
+                <AdminNutritionPage />
               </RequireAuth>
             }
           />
