@@ -63,6 +63,22 @@ async function recipesByTitle(title: string): Promise<RecipeRow[]> {
   );
 }
 
+// The save fires `void syncNow()` and navigates immediately, so the
+// outbox push lands shortly after the recipe page renders. Poll the REST
+// API rather than reading once — a single read can race the push.
+async function waitForRecipe(title: string): Promise<RecipeRow> {
+  await expect.poll(async () => (await recipesByTitle(title)).length, { timeout: 15_000 }).toBe(1);
+  return (await recipesByTitle(title))[0]!;
+}
+async function waitForWebCollectionTitled(userId: string, title: string): Promise<CollectionRow> {
+  await expect
+    .poll(async () => (await webCollections(userId)).filter((c) => c.title === title).length, {
+      timeout: 15_000,
+    })
+    .toBe(1);
+  return (await webCollections(userId)).find((c) => c.title === title)!;
+}
+
 test.describe('video link import', () => {
   test('imports a YouTube recipe into an auto-created YouTube collection', async ({
     authedPage: page,
@@ -77,12 +93,10 @@ test.describe('video link import', () => {
     await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
-    const cols = await webCollections(user.id);
-    expect(cols.filter((c) => c.title === 'YouTube')).toHaveLength(1);
-    const recipes = await recipesByTitle('Skillet Cornbread');
-    expect(recipes).toHaveLength(1);
-    expect(recipes[0]!.collection_id).toBe(cols.find((c) => c.title === 'YouTube')!.id);
-    expect(recipes[0]!.source_url).toBe(url);
+    const yt = await waitForWebCollectionTitled(user.id, 'YouTube');
+    const recipe = await waitForRecipe('Skillet Cornbread');
+    expect(recipe.collection_id).toBe(yt.id);
+    expect(recipe.source_url).toBe(url);
   });
 
   test('reuses one YouTube collection across multiple imports', async ({
@@ -101,13 +115,18 @@ test.describe('video link import', () => {
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
-    const cols = await webCollections(user.id);
-    expect(cols.filter((c) => c.title === 'YouTube')).toHaveLength(1);
-    const ytId = cols.find((c) => c.title === 'YouTube')!.id;
-    const all = await adminGet<RecipeRow[]>(
-      `/rest/v1/recipes?select=id,title,collection_id&collection_id=eq.${ytId}`,
-    );
-    expect(all).toHaveLength(2);
+    const yt = await waitForWebCollectionTitled(user.id, 'YouTube');
+    await expect
+      .poll(
+        async () =>
+          (
+            await adminGet<RecipeRow[]>(
+              `/rest/v1/recipes?select=id&collection_id=eq.${yt.id}`,
+            )
+          ).length,
+        { timeout: 15_000 },
+      )
+      .toBe(2);
   });
 
   test('imports a TikTok recipe from its caption', async ({ authedPage: page, user }) => {
@@ -118,8 +137,7 @@ test.describe('video link import', () => {
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
-    const cols = await webCollections(user.id);
-    expect(cols.filter((c) => c.title === 'TikTok')).toHaveLength(1);
+    await waitForWebCollectionTitled(user.id, 'TikTok');
   });
 
   test('Instagram falls back to a pasted caption', async ({ authedPage: page, user }) => {
@@ -135,8 +153,7 @@ test.describe('video link import', () => {
 
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
-    const cols = await webCollections(user.id);
-    expect(cols.filter((c) => c.title === 'Instagram')).toHaveLength(1);
+    await waitForWebCollectionTitled(user.id, 'Instagram');
   });
 
   test('lets the user pick when multiple recipes are found', async ({
@@ -156,7 +173,7 @@ test.describe('video link import', () => {
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
-    expect(await recipesByTitle('Recipe Two')).toHaveLength(1);
+    await waitForRecipe('Recipe Two');
     // The unpicked draft is not saved.
     expect(await recipesByTitle('Recipe One')).toHaveLength(0);
   });
@@ -181,10 +198,9 @@ test.describe('video link import', () => {
     await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
-    const recipes = await recipesByTitle('Shared Stew');
-    expect(recipes).toHaveLength(1);
-    expect(recipes[0]!.source_url).toBe(url);
-    const cols = await webCollections(user.id);
-    expect(recipes[0]!.collection_id).toBe(cols.find((c) => c.title === 'YouTube')!.id);
+    const yt = await waitForWebCollectionTitled(user.id, 'YouTube');
+    const recipe = await waitForRecipe('Shared Stew');
+    expect(recipe.source_url).toBe(url);
+    expect(recipe.collection_id).toBe(yt.id);
   });
 });
