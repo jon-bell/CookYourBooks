@@ -18,13 +18,13 @@ const DSN_CAPACITOR =
   'https://95f056bdf526b045e58cba49100bc71c@sentry-cyb.work.ripley.cloud/4';
 
 /**
- * Build-time release tag. Vercel exposes VERCEL_GIT_COMMIT_SHA;
- * locally we fall back to leaving it unset so events land in a "dev"
- * bucket on the Sentry dashboard.
+ * Build-time release tag. `vite.config.ts` resolves the release
+ * (VITE_SENTRY_RELEASE ?? VERCEL_GIT_COMMIT_SHA) and injects it here as
+ * VITE_SENTRY_RELEASE via `define`, so this value always matches the
+ * release the source maps were uploaded under. Unset locally → events
+ * land in the "dev" bucket on the Sentry dashboard.
  */
-const RELEASE =
-  (import.meta.env.VITE_SENTRY_RELEASE as string | undefined) ??
-  ((import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA as string | undefined) ?? null);
+const RELEASE = (import.meta.env.VITE_SENTRY_RELEASE as string | undefined) ?? null;
 
 /**
  * Detect Capacitor at runtime so we can route reports to the right

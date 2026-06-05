@@ -159,8 +159,8 @@ platform :ios do
     sentry_debug_files_upload(
       url: ENV["SENTRY_URL"] || "https://sentry-cyb.work.ripley.cloud",
       auth_token: ENV["SENTRY_AUTH_TOKEN"],
-      org_slug: ENV["SENTRY_ORG"] || "sentry",
-      project_slug: ENV["SENTRY_PROJECT_MOBILE"] || "cookyourbooks-mobile",
+      org_slug: ENV["SENTRY_ORG"] || "cyb",
+      project_slug: ENV["SENTRY_PROJECT_MOBILE"] || "cyb-capacitor",
       path: dsym,
       # The Capacitor wrapper's Swift surface is tiny; symbol names
       # alone are enough for stack traces. Skip source upload to keep

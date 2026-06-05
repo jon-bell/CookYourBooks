@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Sentry } from '../sentry.js';
 import { useSync } from '../local/SyncProvider.js';
 import {
   getSyncLog,
@@ -58,6 +59,12 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
   const [pushed, setPushed] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [confirmReset, setConfirmReset] = useState(false);
+  const [upload, setUpload] = useState<
+    | { state: 'idle' }
+    | { state: 'sending' }
+    | { state: 'sent'; eventId: string }
+    | { state: 'error'; message: string }
+  >({ state: 'idle' });
 
   useEffect(() => {
     if (!open) return;
@@ -160,6 +167,52 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
     });
   }
 
+  // Ship the same diagnostics blob "Copy debug" produces to Sentry as a
+  // file attachment, so we can pull a user's sync state without asking
+  // them to paste a wall of JSON. The summary can exceed Sentry's
+  // per-field truncation, hence an attachment rather than `extra`. The
+  // returned event id is shown so support can jump straight to it.
+  async function uploadLogs() {
+    setUpload({ state: 'sending' });
+    try {
+      const eventId = Sentry.withScope((scope) => {
+        scope.setTag('report', 'sync-logs');
+        // Small, queryable facets for triage in the issue list; the full
+        // detail rides along in the attachment below.
+        scope.setContext('sync', {
+          status,
+          pendingWrites,
+          tabRole,
+          lastError: lastError ?? null,
+          lastSyncedAt: lastSyncedAt ? new Date(lastSyncedAt).toISOString() : null,
+        });
+        scope.addAttachment({
+          filename: 'sync-diagnostics.json',
+          data: summary,
+          contentType: 'application/json',
+        });
+        return Sentry.captureMessage('Sync logs (user-initiated upload)', 'info');
+      });
+      if (!eventId) {
+        // No client / Sentry disabled (e.g. a local dev build without
+        // VITE_SENTRY_ENABLE_DEV=1) — captureMessage no-ops and returns
+        // undefined. Tell the user instead of faking success.
+        setUpload({
+          state: 'error',
+          message: 'Sentry is not enabled in this build.',
+        });
+        return;
+      }
+      // Block on the flush so we only report success once the envelope
+      // (event + attachment) has actually left the browser.
+      await Sentry.flush(3000);
+      setUpload({ state: 'sent', eventId });
+      setTimeout(() => setUpload({ state: 'idle' }), 6000);
+    } catch (err) {
+      setUpload({ state: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   if (!open) return null;
 
   return (
@@ -198,6 +251,31 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
               className="rounded border border-stone-300 px-3 py-1 text-xs hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
             >
               {pushed ? 'Copied ✓' : 'Copy debug'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void uploadLogs()}
+              disabled={upload.state === 'sending'}
+              title={
+                upload.state === 'sent'
+                  ? `Sent to Sentry — event ${upload.eventId}`
+                  : upload.state === 'error'
+                    ? upload.message
+                    : 'Send these diagnostics to Sentry as an attachment'
+              }
+              className={`rounded border px-3 py-1 text-xs disabled:opacity-50 ${
+                upload.state === 'error'
+                  ? 'border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/30'
+                  : 'border-stone-300 hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800'
+              }`}
+            >
+              {upload.state === 'sending'
+                ? 'Uploading…'
+                : upload.state === 'sent'
+                  ? `Sent ✓ ${upload.eventId.slice(0, 8)}`
+                  : upload.state === 'error'
+                    ? 'Upload failed'
+                    : 'Upload sync logs'}
             </button>
             <button
               type="button"

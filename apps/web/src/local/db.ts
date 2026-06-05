@@ -30,7 +30,11 @@ async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
     release = resolve;
   });
   const prev = dbLockTail;
-  dbLockTail = prev.then(() => held);
+  // Swallow `prev`'s rejection on the tail too — otherwise one thrown
+  // op turns `dbLockTail` into a rejected promise, and every future
+  // `await prev` throws before reaching release(), permanently wedging
+  // the queue.
+  dbLockTail = prev.then(() => held, () => held);
   const op: DbLockOp = {
     id: dbOpSeq++,
     label,
@@ -54,24 +58,26 @@ async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
       });
     }
   }, SLOW_LOCK_WARN_MS);
+  let runTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await prev;
-  } finally {
+    // `.catch(() => {})` so a failure in the previous op doesn't abort
+    // *this* op before we reach release() — we only care about taking
+    // our turn, not whether the predecessor succeeded.
+    await prev.catch(() => {});
     clearTimeout(waitTimer);
-  }
-  op.state = 'running';
-  op.startedAt = Date.now();
-  const runTimer = setTimeout(() => {
-    if (op.state === 'running') {
-      logSync('warn', `db op slow: ${label} still running after ${Date.now() - op.startedAt}ms`, {
-        opId: op.id,
-      });
-    }
-  }, SLOW_LOCK_WARN_MS);
-  try {
+    op.state = 'running';
+    op.startedAt = Date.now();
+    runTimer = setTimeout(() => {
+      if (op.state === 'running') {
+        logSync('warn', `db op slow: ${label} still running after ${Date.now() - op.startedAt}ms`, {
+          opId: op.id,
+        });
+      }
+    }, SLOW_LOCK_WARN_MS);
     return await fn();
   } finally {
-    clearTimeout(runTimer);
+    clearTimeout(waitTimer);
+    if (runTimer) clearTimeout(runTimer);
     liveOps.delete(op.id);
     release();
   }

@@ -4,7 +4,13 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { supabase } from '../supabase.js';
 import { getLocalDb } from './db.js';
 import { countPending } from './outbox.js';
-import { pullAll, pushOutbox, subscribeRealtime, type RealtimeHandle } from './sync.js';
+import {
+  pullAll,
+  pullNutritionEssentials,
+  pushOutbox,
+  subscribeRealtime,
+  type RealtimeHandle,
+} from './sync.js';
 import { logSync } from './syncLog.js';
 import {
   ensureLeaderElection,
@@ -213,6 +219,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         );
         householdIdRef.current = pullRes.householdId;
         logSync('info', 'cycle: pullAll returned');
+        // Fire-and-forget: reference data doesn't gate the UI, and
+        // failures shouldn't show up as a sync error to the user.
+        // Throttled internally — only refetches once a month.
+        pullNutritionEssentials(supabase).catch((err) => {
+          logSync('warn', 'nutrition essentials pull failed', { error: stringifyError(err) });
+        });
         setLastSyncedAt(Date.now());
         setSettled('idle');
         logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);

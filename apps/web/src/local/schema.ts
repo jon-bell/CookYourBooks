@@ -275,6 +275,39 @@ export const SCHEMA_STATEMENTS: string[] = [
   `create index if not exists nutrition_mappings_key_idx
     on nutrition_mappings(ingredient_key)`,
 
+  // Bulk-loaded snapshot of USDA Foundation + SR Legacy from
+  // `nutrition_foods_master` on the server. Pulled once per session on
+  // first boot (one-shot, not incremental — these update once or twice
+  // a year). Powers offline ingredient → USDA matching: ~8k rows, ~5 MB
+  // on disk. Branded stays server-only because it's 500k+ rows.
+  // Not CRR — pure reference data, server is canonical.
+  `create table if not exists nutrition_foods_essentials (
+    source text not null default '',
+    source_id text not null default '',
+    data_type text not null default '',
+    description text not null default '',
+    brand text,
+    brand_owner text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    -- Pre-lowercased "description | brand | brand_owner" blob for
+    -- substring matching. ~8k rows so plain LIKE is fast enough; no
+    -- need for FTS5 + triggers + content-table choreography yet.
+    search_blob text not null default '',
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_foods_essentials_blob_idx
+    on nutrition_foods_essentials(search_blob)`,
+  `create index if not exists nutrition_foods_essentials_data_type_idx
+    on nutrition_foods_essentials(data_type)`,
+
   // Sync metadata — a singleton row per logical topic holding the
   // latest-seen remote `updated_at` (ms since epoch). Local-only, not CRR.
   `create table if not exists sync_state (
@@ -521,4 +554,28 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   )`,
   `create index if not exists nutrition_mappings_key_idx
     on nutrition_mappings(ingredient_key)`,
+  // ---------- USDA essentials bulk mirror (2026-06-08) ----------
+  `create table if not exists nutrition_foods_essentials (
+    source text not null default '',
+    source_id text not null default '',
+    data_type text not null default '',
+    description text not null default '',
+    brand text,
+    brand_owner text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    search_blob text not null default '',
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_foods_essentials_blob_idx
+    on nutrition_foods_essentials(search_blob)`,
+  `create index if not exists nutrition_foods_essentials_data_type_idx
+    on nutrition_foods_essentials(data_type)`,
 ];
