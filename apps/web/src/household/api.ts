@@ -28,6 +28,10 @@ export interface HouseholdMember {
   joined_at: string;
   left_at: string | null;
   attested_tos_version: number;
+  /** Whether this member shares their whole library with the household. */
+  library_shared: boolean;
+  library_share_attested_at: string | null;
+  library_share_attestation: string | null;
 }
 
 export interface HouseholdMemberWithProfile extends HouseholdMember {
@@ -79,6 +83,8 @@ export async function getMyHousehold(): Promise<{
   household: Household;
   members: HouseholdMemberWithProfile[];
   role: HouseholdRole;
+  /** Whether the caller currently shares their library with this household. */
+  libraryShared: boolean;
 } | null> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
@@ -116,7 +122,7 @@ export async function getMyHousehold(): Promise<{
     .filter((m) => m.household_id === household.id)
     .map((m) => ({ ...m, display_name: nameById.get(m.user_id) ?? null }));
 
-  return { household, members, role: mine.role };
+  return { household, members, role: mine.role, libraryShared: mine.library_shared };
 }
 
 /** Pending invites for the caller's household (owner-visible). */
@@ -224,22 +230,20 @@ export async function transferHouseholdOwnership(newOwnerId: string): Promise<vo
   if (error) throw error;
 }
 
-export async function shareCollectionWithHousehold(
-  collectionId: string,
+/**
+ * Toggle whether the caller shares their whole library with the given
+ * household. Enabling requires the one-time rights attestation; the
+ * server records it in audit_log. Disabling needs no attestation.
+ */
+export async function setLibrarySharing(
   householdId: string,
-  attestation: string,
+  enabled: boolean,
+  attestation?: string,
 ): Promise<void> {
-  const { error } = await supabase.rpc('share_collection_with_household', {
-    p_collection_id: collectionId,
+  const { error } = await supabase.rpc('set_library_sharing', {
     p_household_id: householdId,
-    p_attestation: attestation,
-  });
-  if (error) throw error;
-}
-
-export async function unshareCollectionFromHousehold(collectionId: string): Promise<void> {
-  const { error } = await supabase.rpc('unshare_collection_from_household', {
-    p_collection_id: collectionId,
+    p_enabled: enabled,
+    p_attestation: attestation ?? undefined,
   });
   if (error) throw error;
 }

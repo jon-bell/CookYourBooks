@@ -16,6 +16,7 @@ import {
 } from '../household/queries.js';
 import { AcceptTosGate } from '../household/AcceptTosGate.js';
 import { AuditLogSection } from '../household/AuditLogSection.js';
+import { LibrarySharingSection } from '../household/LibrarySharingSection.js';
 import { isTosNotAcceptedError } from '../household/api.js';
 
 /**
@@ -74,6 +75,7 @@ export function HouseholdPage() {
         household={data.household}
         members={data.members}
         role={data.role}
+        libraryShared={data.libraryShared}
         userId={user.id}
         setError={setError}
         error={error}
@@ -176,6 +178,7 @@ function HouseholdView({
   household,
   members,
   role,
+  libraryShared,
   userId,
   setError,
   error,
@@ -183,6 +186,7 @@ function HouseholdView({
   household: Household;
   members: HouseholdMemberWithProfile[];
   role: HouseholdRole;
+  libraryShared: boolean;
   userId: string;
   setError: (e: string | null) => void;
   error: string | null;
@@ -269,6 +273,12 @@ function HouseholdView({
           )}
         </div>
       )}
+
+      <LibrarySharingSection
+        householdId={household.id}
+        householdName={household.name}
+        libraryShared={libraryShared}
+      />
 
       <div>
         <h2 className="text-lg font-semibold">Members</h2>

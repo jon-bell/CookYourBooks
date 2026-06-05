@@ -143,31 +143,19 @@ export function useDeleteHousehold() {
   });
 }
 
-export function useShareCollectionWithHousehold() {
+export function useSetLibrarySharing() {
   const invalidate = useInvalidateHousehold();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
-      collectionId,
       householdId,
+      enabled,
       attestation,
     }: {
-      collectionId: string;
       householdId: string;
-      attestation: string;
-    }) => api.shareCollectionWithHousehold(collectionId, householdId, attestation),
-    onSuccess: async () => {
-      await invalidate();
-      await qc.invalidateQueries({ queryKey: ['collections'] });
-    },
-  });
-}
-
-export function useUnshareCollectionFromHousehold() {
-  const invalidate = useInvalidateHousehold();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: api.unshareCollectionFromHousehold,
+      enabled: boolean;
+      attestation?: string;
+    }) => api.setLibrarySharing(householdId, enabled, attestation),
     onSuccess: async () => {
       await invalidate();
       await qc.invalidateQueries({ queryKey: ['collections'] });
