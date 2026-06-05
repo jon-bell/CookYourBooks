@@ -70,6 +70,54 @@ export type Database = {
           },
         ]
       }
+      audit_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          created_at: string
+          household_id: string | null
+          id: string
+          metadata: Json
+          target_id: string | null
+          target_type: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          metadata?: Json
+          target_id?: string | null
+          target_type: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          metadata?: Json
+          target_id?: string | null
+          target_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bakeoff_runs: {
         Row: {
           created_at: string
@@ -444,6 +492,176 @@ export type Database = {
             columns: ["cookbook_id"]
             isOneToOne: false
             referencedRelation: "global_cookbooks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      household_invites: {
+        Row: {
+          created_at: string
+          created_by: string
+          expires_at: string
+          household_id: string
+          id: string
+          revoked_at: string | null
+          token: string
+          used_at: string | null
+          used_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          expires_at: string
+          household_id: string
+          id?: string
+          revoked_at?: string | null
+          token: string
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          expires_at?: string
+          household_id?: string
+          id?: string
+          revoked_at?: string | null
+          token?: string
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_invites_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_invites_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_invites_used_by_fkey"
+            columns: ["used_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      household_join_cooldowns: {
+        Row: {
+          eligible_at: string
+          reason: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          eligible_at: string
+          reason?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          eligible_at?: string
+          reason?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_join_cooldowns_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      household_members: {
+        Row: {
+          attested_tos_version: number
+          household_id: string
+          id: string
+          joined_at: string
+          left_at: string | null
+          role: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attested_tos_version?: number
+          household_id: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          role?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attested_tos_version?: number
+          household_id?: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          role?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_members_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      households: {
+        Row: {
+          created_at: string
+          id: string
+          max_members: number
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          max_members?: number
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          max_members?: number
+          name?: string
+          owner_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "households_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1269,6 +1487,8 @@ export type Database = {
           disabled_reason: string | null
           display_name: string | null
           id: string
+          tos_accepted_at: string | null
+          tos_version: number
         }
         Insert: {
           avatar_url?: string | null
@@ -1277,6 +1497,8 @@ export type Database = {
           disabled_reason?: string | null
           display_name?: string | null
           id: string
+          tos_accepted_at?: string | null
+          tos_version?: number
         }
         Update: {
           avatar_url?: string | null
@@ -1285,6 +1507,8 @@ export type Database = {
           disabled_reason?: string | null
           display_name?: string | null
           id?: string
+          tos_accepted_at?: string | null
+          tos_version?: number
         }
         Relationships: []
       }
@@ -1299,12 +1523,15 @@ export type Database = {
           id: string
           is_public: boolean
           isbn: string | null
+          last_share_attestation: string | null
+          last_share_attested_at: string | null
           moderation_reason: string | null
           moderation_state: string
           notes: string | null
           owner_id: string
           publication_year: number | null
           publisher: string | null
+          shared_with_household_id: string | null
           site_name: string | null
           source_type: string
           source_url: string | null
@@ -1321,12 +1548,15 @@ export type Database = {
           id?: string
           is_public?: boolean
           isbn?: string | null
+          last_share_attestation?: string | null
+          last_share_attested_at?: string | null
           moderation_reason?: string | null
           moderation_state?: string
           notes?: string | null
           owner_id: string
           publication_year?: number | null
           publisher?: string | null
+          shared_with_household_id?: string | null
           site_name?: string | null
           source_type: string
           source_url?: string | null
@@ -1343,12 +1573,15 @@ export type Database = {
           id?: string
           is_public?: boolean
           isbn?: string | null
+          last_share_attestation?: string | null
+          last_share_attested_at?: string | null
           moderation_reason?: string | null
           moderation_state?: string
           notes?: string | null
           owner_id?: string
           publication_year?: number | null
           publisher?: string | null
+          shared_with_household_id?: string | null
           site_name?: string | null
           source_type?: string
           source_url?: string | null
@@ -1382,6 +1615,13 @@ export type Database = {
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_collections_shared_with_household_id_fkey"
+            columns: ["shared_with_household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
             referencedColumns: ["id"]
           },
         ]
@@ -1818,6 +2058,8 @@ export type Database = {
       }
     }
     Functions: {
+      accept_household_invite: { Args: { p_token: string }; Returns: string }
+      accept_tos: { Args: { p_version: number }; Returns: undefined }
       admin_nutrition_upsert_fact: {
         Args: {
           p_brand?: string
@@ -1834,6 +2076,10 @@ export type Database = {
           p_source_id: string
           p_sugar_g?: number
         }
+        Returns: undefined
+      }
+      attest_public_share: {
+        Args: { p_attestation: string; p_collection_id: string }
         Returns: undefined
       }
       bakeoff_claim_next: {
@@ -1898,6 +2144,10 @@ export type Database = {
         }
         Returns: string
       }
+      clear_my_import_storage: {
+        Args: { p_id?: string; p_scope: string }
+        Returns: string[]
+      }
       cli_add_shopping: {
         Args: {
           name: string
@@ -1952,6 +2202,11 @@ export type Database = {
         Returns: Json
       }
       cli_verify_token: { Args: { raw_token: string }; Returns: string }
+      create_household: { Args: { p_name: string }; Returns: string }
+      current_household_id: { Args: { p_user_id: string }; Returns: string }
+      current_tos_version: { Args: never; Returns: number }
+      delete_household: { Args: { p_household_id: string }; Returns: undefined }
+      delete_my_account: { Args: never; Returns: undefined }
       fork_collection: {
         Args: { source_collection_id: string }
         Returns: string
@@ -1961,9 +2216,9 @@ export type Database = {
         Args: {
           p_factor: number
           p_from_unit: string
-          p_id: string
-          p_ingredient_name: string
-          p_notes: string
+          p_id?: string
+          p_ingredient_name?: string
+          p_notes?: string
           p_to_unit: string
         }
         Returns: string
@@ -1986,12 +2241,13 @@ export type Database = {
           p_factor: number
           p_from_unit: string
           p_id: string
-          p_ingredient_name: string
+          p_ingredient_name?: string
           p_notes?: string
           p_to_unit: string
         }
         Returns: string
       }
+      household_cooldown_days: { Args: never; Returns: number }
       import_bakeoff_promote: {
         Args: { p_variant_id: string }
         Returns: undefined
@@ -2135,7 +2391,13 @@ export type Database = {
         }
         Returns: boolean
       }
+      invite_to_household: { Args: { p_household_id: string }; Returns: string }
       is_admin: { Args: { uid: string }; Returns: boolean }
+      is_household_member: {
+        Args: { p_household_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      leave_household: { Args: never; Returns: undefined }
       moderation_ban_user: {
         Args: { reason: string; target_user_id: string }
         Returns: undefined
@@ -2179,6 +2441,36 @@ export type Database = {
           base_url: string
         }[]
       }
+      preview_household_invite: {
+        Args: { p_token: string }
+        Returns: {
+          expires_at: string
+          household_id: string
+          household_name: string
+          invited_by_name: string
+          revoked: boolean
+          used: boolean
+        }[]
+      }
+      record_audit: {
+        Args: {
+          p_action: string
+          p_household_id: string
+          p_metadata: Json
+          p_target_id: string
+          p_target_type: string
+        }
+        Returns: undefined
+      }
+      remove_household_member: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
+      rename_household: {
+        Args: { p_household_id: string; p_name: string }
+        Returns: undefined
+      }
+      require_current_tos: { Args: never; Returns: undefined }
       resolve_nutrition_mapping: {
         Args: { p_ingredient_key: string }
         Returns: {
@@ -2187,6 +2479,10 @@ export type Database = {
           source: string
           source_id: string
         }[]
+      }
+      revoke_household_invite: {
+        Args: { p_invite_id: string }
+        Returns: undefined
       }
       rewrite_cancel: { Args: { p_job_id: string }; Returns: boolean }
       rewrite_claim_next: {
@@ -2249,6 +2545,22 @@ export type Database = {
           p_recipe_id: string
         }
         Returns: string
+      }
+      share_collection_with_household: {
+        Args: {
+          p_attestation: string
+          p_collection_id: string
+          p_household_id: string
+        }
+        Returns: undefined
+      }
+      transfer_household_ownership: {
+        Args: { p_new_owner_id: string }
+        Returns: undefined
+      }
+      unshare_collection_from_household: {
+        Args: { p_collection_id: string }
+        Returns: undefined
       }
       user_ocr_prefs_set: {
         Args: { p_model: string; p_prompt: string; p_provider: string }

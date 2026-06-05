@@ -66,3 +66,33 @@ export async function findCookbookByIsbn(
     entries: (entries ?? []) as GlobalCookbookWithEntries['entries'],
   };
 }
+
+/**
+ * Bulk-fetch ToC titles for a set of global_cookbook ids. Used by the
+ * Discover page to expand multiple cards without N+1 round-trips. The
+ * `global_toc_entries` table is public-readable so this works for
+ * anonymous visitors too.
+ */
+export async function listGlobalTocEntries(
+  cookbookIds: readonly string[],
+): Promise<Map<string, { title: string; page_number: number | null }[]>> {
+  const out = new Map<string, { title: string; page_number: number | null }[]>();
+  if (cookbookIds.length === 0) return out;
+  const { data, error } = await supabase
+    .from('global_toc_entries')
+    .select('cookbook_id, title, page_number, sort_order')
+    .in('cookbook_id', cookbookIds as string[])
+    .order('cookbook_id', { ascending: true })
+    .order('sort_order', { ascending: true });
+  if (error) throw error;
+  for (const row of (data ?? []) as {
+    cookbook_id: string;
+    title: string;
+    page_number: number | null;
+  }[]) {
+    const arr = out.get(row.cookbook_id) ?? [];
+    arr.push({ title: row.title, page_number: row.page_number });
+    out.set(row.cookbook_id, arr);
+  }
+  return out;
+}

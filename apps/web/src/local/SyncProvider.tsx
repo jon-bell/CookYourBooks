@@ -171,6 +171,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setStatus(next);
   }
 
+  const householdIdRef = useRef<string | null>(null);
+
   async function cycle(ownerId: string) {
     if (inFlight.current) {
       pullPending.current = true;
@@ -202,7 +204,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         );
         logSync('info', 'cycle: pushOutbox returned', pushRes);
         logSync('info', 'cycle: invoking pullAll');
-        await withTimeout(
+        const pullRes = await withTimeout(
           pullAll(supabase, ownerId, ac.signal, {
             // Invalidate React Query incrementally so the library card
             // grid hydrates the moment recipes land, instead of waiting
@@ -215,6 +217,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           'pull',
           () => ac.abort(),
         );
+        householdIdRef.current = pullRes.householdId;
         logSync('info', 'cycle: pullAll returned');
         // Fire-and-forget: reference data doesn't gate the UI, and
         // failures shouldn't show up as a sync error to the user.
@@ -326,10 +329,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       await cycle(user.id);
       if (cancelled) return;
       setHydrated(true);
-      handle = subscribeRealtime(supabase, user.id, {
-        onLocalUpdate: scheduleInvalidate,
-        onNeedsPull: () => schedulePull(user.id),
-      });
+      handle = subscribeRealtime(
+        supabase,
+        user.id,
+        {
+          onLocalUpdate: scheduleInvalidate,
+          onNeedsPull: () => schedulePull(user.id),
+        },
+        householdIdRef.current,
+      );
     })();
     return () => {
       cancelled = true;

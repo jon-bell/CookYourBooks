@@ -13,6 +13,9 @@ import { AdminNutritionPage } from './pages/AdminNutritionPage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
 import { LandingPage } from './pages/LandingPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
+import { HouseholdPage } from './pages/HouseholdPage.js';
+import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
+import { LegalPage } from './pages/LegalPage.js';
 import { ImportListPage } from './pages/ImportListPage.js';
 import { ImportNewPage } from './pages/ImportNewPage.js';
 import { ImportBatchPage } from './pages/ImportBatchPage.js';
@@ -221,6 +224,20 @@ export function App() {
               </RequireAuth>
             }
           />
+          <Route
+            path="/household"
+            element={
+              <RequireAuth>
+                <HouseholdPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/household/join"
+            element={<HouseholdJoinPage />}
+          />
+          <Route path="/legal/:doc" element={<LegalPage />} />
+          <Route path="/legal" element={<LegalPage />} />
           <Route
             path="/admin"
             element={

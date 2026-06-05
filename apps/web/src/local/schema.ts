@@ -27,9 +27,14 @@ export const SCHEMA_STATEMENTS: string[] = [
     cover_image_path text,
     moderation_state text not null default 'ACTIVE',
     moderation_reason text,
+    shared_with_household_id text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
+
+  `create index if not exists recipe_collections_household_idx
+    on recipe_collections(shared_with_household_id)
+    where shared_with_household_id is not null`,
 
   `create table if not exists recipes (
     id text primary key not null default '',
@@ -509,6 +514,15 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   )`,
   `create index if not exists rewrite_jobs_recipe_idx on rewrite_jobs(recipe_id)`,
   `create index if not exists rewrite_jobs_owner_idx on rewrite_jobs(owner_id, status)`,
+  // ---------- Household sharing (2026-06-06) ----------
+  // shared_with_household_id flags a collection as visible to members of
+  // the given household via the server-side RLS policy. Local code reads
+  // it to render the "Shared with household" badge and to gate edits
+  // (members can read but not write).
+  `alter table recipe_collections add column shared_with_household_id text`,
+  `create index if not exists recipe_collections_household_idx
+    on recipe_collections(shared_with_household_id)
+    where shared_with_household_id is not null`,
   // ---------- Nutrition cache (2026-06-07) — idempotent post-schema migration ----------
   `create table if not exists nutrition_facts (
     source text not null default '',

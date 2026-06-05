@@ -106,10 +106,10 @@ test.describe('OCR multi-recipe review editor', () => {
     await expect(tabs.getByRole('tab', { name: 'Chewy Cookies' })).toBeVisible();
     await expect(tabs.getByRole('tab', { name: 'Crispy Cookies' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    await page.getByRole('button', { name: 'Save as recipe' }).first().click();
     await expect(tabs).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    await page.getByRole('button', { name: 'Save as recipe' }).first().click();
     await page.waitForURL(/\/import\/[0-9a-f-]+$/);
     await waitForSynced(page);
 
@@ -133,7 +133,7 @@ test.describe('OCR multi-recipe review editor', () => {
     await page.getByRole('button', { name: 'Discard this draft' }).click();
     await expect(page.getByTestId('draft-tabs')).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    await page.getByRole('button', { name: 'Save as recipe' }).first().click();
     await page.waitForURL(/\/import\/[0-9a-f-]+$/);
     await waitForSynced(page);
 

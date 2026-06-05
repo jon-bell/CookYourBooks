@@ -15,6 +15,7 @@ import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
 import { ShareToGlobalButton } from '../components/ShareToGlobalButton.js';
 import { MakePublicDialog } from '../components/MakePublicDialog.js';
+import { CollectionShareSection } from '../household/CollectionShareSection.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { findOpenPlannerSession } from '../import/localRepos.js';
 export function CollectionPage() {
@@ -142,7 +143,7 @@ export function CollectionPage() {
             c.moderationState === 'TAKEN_DOWN'
               ? 'Taken down by a moderator'
               : isbnBlocksPublic && !c.isPublic
-                ? "Cookbooks with an ISBN can't be made public — those recipes belong to the publisher. Email dmca@cookyourbooks.app to report a violation."
+                ? "Cookbooks with an ISBN can't be made public — those recipes belong to the publisher. See /legal/dmca to report a violation."
                 : undefined
           }
           className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
@@ -157,6 +158,9 @@ export function CollectionPage() {
         )}
         {c.sourceType === 'PUBLISHED_BOOK' && c.moderationState !== 'TAKEN_DOWN' && (
           <ShareToGlobalButton cookbook={c} />
+        )}
+        {c.moderationState !== 'TAKEN_DOWN' && (
+          <CollectionShareSection collectionId={c.id} collectionTitle={c.title} />
         )}
         <button
           onClick={async () => {
