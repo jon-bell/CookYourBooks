@@ -120,6 +120,31 @@ describe('recipe mapping', () => {
     expect(back.instructions[0]?.text).toBe('Mix.');
   });
 
+  it('round-trips a recipe sourceUrl', () => {
+    const recipe = createRecipe({
+      id: 'r-src',
+      title: 'From a reel',
+      sourceUrl: 'https://www.youtube.com/watch?v=abc123',
+    });
+    const insert = recipeToInsert(recipe, 'col-1', 0) as RecipeRow & {
+      source_url?: string | null;
+    };
+    expect(insert.source_url).toBe('https://www.youtube.com/watch?v=abc123');
+    const recipeRow = { ...insert, created_at: '', updated_at: '' } as RecipeRow;
+    const back = rowsToRecipe(recipeRow, [], []);
+    expect(back.sourceUrl).toBe('https://www.youtube.com/watch?v=abc123');
+  });
+
+  it('leaves sourceUrl undefined when absent', () => {
+    const recipe = createRecipe({ id: 'r-nosrc', title: 'No source' });
+    const insert = recipeToInsert(recipe, 'col-1', 0) as RecipeRow & {
+      source_url?: string | null;
+    };
+    expect(insert.source_url).toBeNull();
+    const recipeRow = { ...insert, created_at: '', updated_at: '' } as RecipeRow;
+    expect(rowsToRecipe(recipeRow, [], []).sourceUrl).toBeUndefined();
+  });
+
   it('round-trips instruction simplifiedSteps through jsonb', () => {
     const step = instruction({
       id: 's-1',

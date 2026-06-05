@@ -35,6 +35,13 @@ export interface Recipe {
    */
   readonly sourceImageText?: string;
   /**
+   * Origin URL the recipe was imported from — e.g. the YouTube / TikTok /
+   * Instagram video link the video-import flow extracted it from. Distinct
+   * from a WebCollection's `sourceUrl` (which is per-collection); this is
+   * the specific source of this one recipe.
+   */
+  readonly sourceUrl?: string;
+  /**
    * "I want to import this." Set on ToC-seeded placeholder recipes by
    * the user; consumed by the Speed Importer planner to build a
    * page-ordered scan queue. Cleared automatically when the planner
@@ -61,6 +68,7 @@ export function createRecipe(params: {
   bookTitle?: string;
   pageNumbers?: readonly number[];
   sourceImageText?: string;
+  sourceUrl?: string;
   starred?: boolean;
 }): Recipe {
   return {
@@ -77,6 +85,7 @@ export function createRecipe(params: {
     bookTitle: params.bookTitle,
     pageNumbers: params.pageNumbers ? [...params.pageNumbers] : undefined,
     sourceImageText: params.sourceImageText,
+    sourceUrl: params.sourceUrl,
     starred: params.starred ? true : undefined,
   };
 }
@@ -142,6 +151,7 @@ export function adaptRecipe(
     bookTitle: base.bookTitle,
     pageNumbers: base.pageNumbers,
     sourceImageText: base.sourceImageText,
+    sourceUrl: base.sourceUrl,
   });
 }
 

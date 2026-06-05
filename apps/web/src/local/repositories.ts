@@ -4,6 +4,7 @@ import type {
   RecipeCollectionRepository,
   RecipeRepository,
 } from '@cookyourbooks/domain';
+import { createWebCollection } from '@cookyourbooks/domain';
 import {
   rowToCollection,
   rowsToRecipe,
@@ -194,6 +195,7 @@ export async function upsertRecipeRow(
       book_title?: string | null;
       page_numbers?: unknown;
       source_image_text?: string | null;
+      source_url?: string | null;
       starred?: boolean | number | null;
     };
     // Array-ish columns live as TEXT (JSON) in SQLite; the Postgres
@@ -207,8 +209,8 @@ export async function upsertRecipeRow(
          (id, collection_id, title, servings_amount, servings_description,
           servings_amount_max, sort_order, notes, parent_recipe_id,
           description, time_estimate, equipment, book_title, page_numbers,
-          source_image_text, starred, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+          source_image_text, source_url, starred, updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
        on conflict(id) do update set
          collection_id=excluded.collection_id,
          title=excluded.title,
@@ -224,6 +226,7 @@ export async function upsertRecipeRow(
          book_title=excluded.book_title,
          page_numbers=excluded.page_numbers,
          source_image_text=excluded.source_image_text,
+         source_url=excluded.source_url,
          starred=excluded.starred,
          updated_at=excluded.updated_at,
          deleted=0`,
@@ -243,6 +246,7 @@ export async function upsertRecipeRow(
         recipeRowX.book_title ?? null,
         pageNumbersJson,
         recipeRowX.source_image_text ?? null,
+        recipeRowX.source_url ?? null,
         starredInt,
         incomingTs,
       ],
@@ -509,7 +513,7 @@ interface RecipeTx {
 
 // Multi-row INSERT chunk size — only here to stay under SQLite's
 // SQLITE_MAX_VARIABLE_NUMBER (32766 in modern builds). With the widest
-// table (recipes, 18 cols), 1500 rows × 18 cols = 27000 params, safely
+// table (recipes, 19 cols), 1500 rows × 19 cols = 28500 params, safely
 // under the cap. For libraries up to ~1500 recipes this is one INSERT
 // statement per table.
 const MAX_ROWS_PER_INSERT = 1500;
@@ -625,6 +629,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
     'book_title',
     'page_numbers',
     'source_image_text',
+    'source_url',
     'starred',
     'updated_at',
     'deleted',
@@ -648,6 +653,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         book_title?: string | null;
         page_numbers?: unknown;
         source_image_text?: string | null;
+        source_url?: string | null;
         starred?: boolean | number | null;
       };
       const starredRaw: unknown = rx.starred;
@@ -667,6 +673,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         rx.book_title ?? null,
         toJsonText(rx.page_numbers),
         rx.source_image_text ?? null,
+        rx.source_url ?? null,
         starredRaw === true || starredRaw === 1 ? 1 : 0,
         tsToMs(r.updated_at),
         0,
@@ -1109,6 +1116,29 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     }
 
     await enqueue({ kind: 'collection_save', entity_id: collection.id });
+  }
+
+  /**
+   * Resolve the generic per-platform WebCollection a video-imported
+   * recipe lands in (e.g. "YouTube"), creating it on first use. Matches
+   * an existing WEBSITE collection by exact title so repeated imports
+   * from the same platform reuse one collection rather than spawning a
+   * duplicate. Returns the collection id.
+   */
+  async findOrCreateWebCollectionByPlatform(platform: string): Promise<string> {
+    const db = await getLocalDb();
+    const existing = (await db.execO<{ id: string }>(
+      `select id from recipe_collections
+        where owner_id = ? and deleted = 0
+          and source_type = 'WEBSITE' and title = ?
+        order by coalesce(updated_at, 0) asc
+        limit 1`,
+      [this.ownerId, platform],
+    )) as { id: string }[];
+    if (existing[0]) return existing[0].id;
+    const collection = createWebCollection({ title: platform, siteName: platform });
+    await this.save(collection);
+    return collection.id;
   }
 
   async delete(id: string): Promise<void> {

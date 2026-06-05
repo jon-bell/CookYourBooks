@@ -16,12 +16,14 @@
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^6.0.0",
     "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
     "@capacitor/camera": "^6.1.2",
     "@capacitor/core": "^6.2.1",
     "@capacitor/haptics": "^6.0.2",
     "@capacitor/ios": "^6.2.0",
     "@capacitor/share": "^6.0.3",
-    "@sentry/capacitor": "^4.0.0"
+    "@sentry/capacitor": "^4.0.0",
+    "send-intent": "^6.0.3"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",

@@ -1,4 +1,4 @@
-import { Link, Route, Routes } from 'react-router-dom';
+import { Link, Route, Routes, useNavigate } from 'react-router-dom';
 import { LibraryPage } from './pages/LibraryPage.js';
 import { CollectionPage } from './pages/CollectionPage.js';
 import { RecipePage } from './pages/RecipePage.js';
@@ -20,6 +20,7 @@ import { ImportGroupingPage } from './pages/ImportGroupingPage.js';
 import { ImportItemPage } from './pages/ImportItemPage.js';
 import { ImportBakeoffNewPage } from './pages/ImportBakeoffNewPage.js';
 import { SpeedImporterPage } from './pages/SpeedImporterPage.js';
+import { ImportLinkPage } from './pages/ImportLinkPage.js';
 import { SignInPage } from './auth/SignInPage.js';
 import { SignUpPage } from './auth/SignUpPage.js';
 import { RequireAuth } from './auth/RequireAuth.js';
@@ -29,12 +30,15 @@ import { ThemePicker } from './theme/ThemePicker.js';
 import { useAuth } from './auth/AuthProvider.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
+import { useEffect } from 'react';
+import { initShareIntent } from './import/shareIntent.js';
 
 export function App() {
   const { user } = useAuth();
   const { showHelp, closeHelp } = useKeyboardShortcuts(APP_SHORTCUTS);
   return (
     <div className="min-h-full flex flex-col">
+      {user && <ShareIntentListener />}
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-[max(0.5rem,env(safe-area-inset-top))] focus:z-50 focus:rounded focus:bg-stone-900 focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
@@ -190,6 +194,14 @@ export function App() {
             }
           />
           <Route
+            path="/import/link"
+            element={
+              <RequireAuth>
+                <ImportLinkPage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/import/:batchId"
             element={
               <RequireAuth>
@@ -266,6 +278,20 @@ export function App() {
       <HelpDialog open={showHelp} onClose={closeHelp} shortcuts={APP_SHORTCUTS} />
     </div>
   );
+}
+
+// Bridges the mobile share target into the router: when another app shares
+// a supported video link to us, route to the import-from-link flow with the
+// URL prefilled (it auto-extracts). Inert on the web — initShareIntent only
+// wires up native Capacitor plugins.
+function ShareIntentListener() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    return initShareIntent((url) => {
+      navigate(`/import/link?url=${encodeURIComponent(url)}`);
+    });
+  }, [navigate]);
+  return null;
 }
 
 // Branches on auth state so `/` is a marketing page for visitors and a
