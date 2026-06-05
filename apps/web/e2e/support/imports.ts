@@ -275,6 +275,37 @@ export async function listItemAttempts(itemId: string): Promise<ImportItemAttemp
   return (await resp.json()) as ImportItemAttemptRow[];
 }
 
+/**
+ * Poll the server until an item's `is_toc` flag matches `expected`. The
+ * "This is a Table of Contents page" toggle pushes through the outbox,
+ * which can lag the on-page "Synced" badge — tests that then kick the
+ * worker need the flag confirmed server-side first, or the worker reads
+ * the page as a regular recipe.
+ */
+export async function waitForItemIsToc(
+  itemId: string,
+  expected = true,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last: boolean | undefined;
+  while (Date.now() < deadline) {
+    const resp = await fetch(
+      `${SUPABASE_URL}/rest/v1/import_items?id=eq.${itemId}&select=is_toc`,
+      { headers: adminHeaders() },
+    );
+    if (resp.ok) {
+      const rows = (await resp.json()) as { is_toc: boolean }[];
+      last = rows[0]?.is_toc;
+      if (last === expected) return;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(
+    `item ${itemId} is_toc never became ${expected} (last saw ${String(last)})`,
+  );
+}
+
 export async function listBatchItems(batchId: string): Promise<ImportItemRow[]> {
   const resp = await fetch(
     `${SUPABASE_URL}/rest/v1/import_items?batch_id=eq.${batchId}&select=id,page_index,storage_path,status&order=page_index.asc`,
