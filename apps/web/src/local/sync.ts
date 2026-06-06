@@ -27,6 +27,7 @@ import {
   type OutboxEntry,
 } from './outbox.js';
 import { logSync } from './syncLog.js';
+import { reportError } from '../sentry.js';
 
 type CookbooksClient = SupabaseClient<Database>;
 
@@ -1939,6 +1940,11 @@ export async function pushOutbox(
           count: run.length,
           error: msg,
         });
+        reportError(err, {
+          operation: 'push',
+          tags: { kind: 'import_item_insert' },
+          extra: { count: run.length },
+        });
         break;
       }
     }
@@ -1971,6 +1977,12 @@ export async function pushOutbox(
           count: run.length,
           error: msg,
         });
+        // This is where a save_recipes_graph statement timeout surfaces.
+        reportError(err, {
+          operation: 'push',
+          tags: { kind: 'recipe_save' },
+          extra: { count: run.length },
+        });
         break;
       }
     }
@@ -1989,6 +2001,7 @@ export async function pushOutbox(
         id: entry.entity_id,
         error: msg,
       });
+      reportError(err, { operation: 'push', tags: { kind: entry.kind } });
       // Stop on first failure so we don't batter the server with a broken
       // entry; the caller's retry schedule will pick it up.
       break;
