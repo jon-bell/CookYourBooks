@@ -31,7 +31,7 @@ import {
   useImportTocEntries,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr, resetImportItem } from '../import/api.js';
+import { kickOcr, resetImportItem, setImportItemToc } from '../import/api.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { TocReviewPanel } from '../import/TocReviewPanel.js';
 import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
@@ -383,24 +383,33 @@ export function ImportItemPage() {
     }
   }
 
+  // Flag (or un-flag) this page as a Table of Contents. Flipping the
+  // flag always re-runs OCR: a page first read as a recipe has to be
+  // re-read with the ToC prompt to yield entries (and vice versa). The
+  // client can't drive that PENDING transition through the outbox — the
+  // push scrub only honours REVIEWED / DISCARDED — so it goes through a
+  // server RPC that resets the row, clears the stale drafts + any prior
+  // ToC entries, and sets is_toc atomically. We then kick the worker.
   async function toggleIsToc() {
-    if (!item) return;
+    if (!item || !batch) return;
+    setActionError(undefined);
     const next = !item.isToc;
-    await updateItem.mutateAsync({
-      id: item.id,
-      patch: {
-        isToc: next,
-        status: next ? 'PENDING' : item.status,
-        // Drop drafts when promoting to ToC so the worker re-OCRs.
-        parsedDrafts: next ? [] : item.parsedDrafts,
-      },
-    });
-    if (next) {
+    try {
+      await setImportItemToc(item.id, next);
+      await syncNow();
       try {
-        await kickOcr(batch!.id);
+        await kickOcr(batch.id);
       } catch {
-        // pg_cron will pick up the slack.
+        // pg_cron / the next user kick will pick up the slack.
       }
+      showToast(
+        setToast,
+        next
+          ? 'Marked as Table of Contents — re-reading the page…'
+          : 'Unmarked — re-reading the page as a recipe…',
+      );
+    } catch (e) {
+      setActionError(`Couldn't re-OCR this page: ${(e as Error).message}`);
     }
   }
 
@@ -715,6 +724,10 @@ export function ImportItemPage() {
               />
               <span>This is a Table of Contents page</span>
             </label>
+            <p className="mt-1 pl-6 text-xs text-stone-500 dark:text-stone-400">
+              Toggling re-runs OCR on this page with the matching prompt —
+              the table-of-contents reader or the recipe reader.
+            </p>
           </div>
 
           {/* Target cookbook — both the recipe-save path and the ToC
