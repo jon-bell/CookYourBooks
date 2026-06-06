@@ -21,6 +21,7 @@ import {
 } from '@cookyourbooks/db';
 import { getLocalDb } from './db.js';
 import { enqueue } from './outbox.js';
+import { shouldSuppressCrrTriggers } from './crrSuppression.js';
 
 // Milliseconds since epoch, good enough for a monotonic-ish write marker
 // on the local side.
@@ -162,7 +163,7 @@ export async function upsertCollectionsBatch(
     (r) => tsToMs(r.updated_at),
   );
   if (fresh.length === 0) return;
-  await withSuppressedCrrTriggers(['recipe_collections'], async () => {
+  await withSuppressedCrrTriggers(['recipe_collections'], fresh.length, async () => {
     await bulkInsertOnConflictId(
       'recipe_collections',
       COLLECTION_COLS,
@@ -391,17 +392,29 @@ const PULL_CRR_TABLES = [
  * Run `fn` with cr-sqlite's per-row change-tracking triggers suspended
  * on `tables`. cr-sqlite's crsql_begin_alter / crsql_commit_alter pair
  * drops the row triggers for the duration and recreates them on
- * commit_alter — exactly the property a pull needs, since pulled rows
- * are server-canonical and don't need to be re-propagated as outbound
- * CRDT changes. On iPad WASM SQLite each trigger fire is ~10–15ms;
- * disabling them is the single biggest win on bulk inserts. Must run
- * at the top level (not inside a SAVEPOINT / db.tx callback) so the
- * triggers re-attach cleanly even on caller failure.
+ * commit_alter — exactly the property a *bulk* pull needs, since pulled
+ * rows are server-canonical and don't need to be re-propagated as
+ * outbound CRDT changes.
+ *
+ * `rowCount` is the number of rows `fn` is about to write. Below
+ * {@link CRR_SUPPRESS_MIN_ROWS} we skip the begin/commit_alter dance and
+ * just run `fn` with triggers live — paying a handful of cheap per-row
+ * trigger fires instead of one table-sized commit_alter (see
+ * {@link shouldSuppressCrrTriggers}). Pass the total row count across all
+ * `tables` (e.g. recipes + ingredients + instructions + refs), since
+ * that's what the trigger cost tracks.
+ *
+ * Must run at the top level (not inside a SAVEPOINT / db.tx callback) so
+ * the triggers re-attach cleanly even on caller failure.
  */
 export async function withSuppressedCrrTriggers<T>(
   tables: readonly string[],
+  rowCount: number,
   fn: () => Promise<T>,
 ): Promise<T> {
+  if (!shouldSuppressCrrTriggers(rowCount)) {
+    return await fn();
+  }
   const db = await getLocalDb();
   const altered: string[] = [];
   try {
@@ -472,7 +485,13 @@ export async function upsertRecipesBatch(
   if (batch.length === 0) return;
   if (signal?.aborted) return;
   const db = await getLocalDb();
-  await withSuppressedCrrTriggers(PULL_CRR_TABLES, async () => {
+  // Trigger cost tracks total rows written, not recipe count — a single
+  // recipe drags in its ingredients / instructions / refs.
+  const totalRows = batch.reduce(
+    (acc, b) => acc + 1 + b.ingredients.length + b.instructions.length + b.refs.length,
+    0,
+  );
+  await withSuppressedCrrTriggers(PULL_CRR_TABLES, totalRows, async () => {
     await db.tx(async (tx) => {
       const ids = batch.map((b) => b.recipe.id);
       const existingMap = new Map<string, number>();
@@ -1190,7 +1209,7 @@ export class LocalRecipeRepository implements RecipeRepository {
        order by sort_order asc`,
       [this.collectionId],
     )) as RecipeRow[];
-    return Promise.all(rows.map((r) => hydrateRecipe(r)));
+    return hydrateRecipeRowsForCollection(this.collectionId, rows);
   }
 
   async get(id: string): Promise<Recipe | undefined> {
@@ -1264,8 +1283,69 @@ async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> 
          sort_order asc`,
     [row.id],
   )) as RecipeRow[];
-  const recipes = await Promise.all(recipeRows.map(hydrateRecipe));
+  const recipes = await hydrateRecipeRowsForCollection(row.id, recipeRows);
   return rowToCollection(row, recipes);
+}
+
+/**
+ * Hydrate every recipe in a collection with a *fixed* number of child
+ * queries (three) instead of three-per-recipe.
+ *
+ * `hydrateRecipe` issues one ingredients + one instructions + one refs
+ * query per recipe. Looping it (the old `recipeRows.map(hydrateRecipe)`)
+ * was a textbook N+1: a 100-recipe cookbook fired ~300 reads that all
+ * serialize on the single cr-sqlite connection. When a cookbook grew —
+ * e.g. after approving a Table-of-Contents import that mints dozens of
+ * placeholder recipes — that read storm starved the outbox push's own
+ * small reads/writes, so each `recipe_save` ballooned to many seconds
+ * even for empty placeholders and the push cycle kept timing out.
+ *
+ * Here we fetch all children for the collection in three queries, scoped
+ * by `recipe_id in (select id from recipes where collection_id = ?)` so
+ * the reads ride the collection index rather than a giant IN-list, then
+ * group in JS. `rowsToRecipe` already sorts ingredients by sort_order and
+ * instructions by step_number, so no ORDER BY is needed here.
+ */
+async function hydrateRecipeRowsForCollection(
+  collectionId: string,
+  recipeRows: RecipeRow[],
+): Promise<Recipe[]> {
+  if (recipeRows.length === 0) return [];
+  const db = await getLocalDb();
+  const inCollection = `recipe_id in (select id from recipes where collection_id = ? and deleted = 0)`;
+  const [ingredients, instructions, refs] = await Promise.all([
+    db.execO<IngredientRow>(`select * from ingredients where ${inCollection}`, [collectionId]),
+    db.execO<InstructionRow>(`select * from instructions where ${inCollection}`, [collectionId]),
+    // refs carry no recipe_id of their own — surface the parent recipe via
+    // the join so we can bucket them without a per-recipe query.
+    db.execO<InstructionRefRow & { recipe_id: string }>(
+      `select r.*, i.recipe_id
+         from instruction_ingredient_refs r
+         join instructions i on i.id = r.instruction_id
+         where i.${inCollection}`,
+      [collectionId],
+    ),
+  ]);
+  const bucket = <T extends { recipe_id: string }>(rows: T[]): Map<string, T[]> => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) {
+      const list = m.get(r.recipe_id);
+      if (list) list.push(r);
+      else m.set(r.recipe_id, [r]);
+    }
+    return m;
+  };
+  const ingByRecipe = bucket(ingredients as Array<IngredientRow & { recipe_id: string }>);
+  const insByRecipe = bucket(instructions as Array<InstructionRow & { recipe_id: string }>);
+  const refsByRecipe = bucket(refs as Array<InstructionRefRow & { recipe_id: string }>);
+  return recipeRows.map((row) =>
+    rowsToRecipe(
+      row,
+      (ingByRecipe.get(row.id) ?? []) as IngredientRow[],
+      (insByRecipe.get(row.id) ?? []) as InstructionRow[],
+      (refsByRecipe.get(row.id) ?? []) as InstructionRefRow[],
+    ),
+  );
 }
 
 async function hydrateRecipe(row: RecipeRow): Promise<Recipe> {

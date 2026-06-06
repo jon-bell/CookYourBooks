@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useImportBatch, useImportItems } from '../import/queries.js';
+import { useImportBatch, useImportItems, useUpdateImportItem } from '../import/queries.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { finalizeGrouping, kickOcr } from '../import/api.js';
@@ -27,6 +27,7 @@ export function ImportGroupingPage() {
   const navigate = useNavigate();
   const enabled = useLocalQueryEnabled();
   const { syncNow } = useSync();
+  const updateItem = useUpdateImportItem();
   const { data: batch, isLoading: batchLoading } = useImportBatch(batchId);
   const { data: items = [], isLoading: itemsLoading } = useImportItems(batchId);
 
@@ -35,6 +36,10 @@ export function ImportGroupingPage() {
   // Storing as a Set so toggles are O(1) and the empty state (= "all
   // grouped into one") is just an empty set.
   const [removedSplits, setRemovedSplits] = useState<Set<number>>(new Set());
+  // Groups the user flagged as Table-of-Contents pages, keyed by the
+  // group's primary (first/lowest-page) item id so the flag follows the
+  // lead page as splits change.
+  const [tocPrimaryIds, setTocPrimaryIds] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
@@ -77,6 +82,15 @@ export function ImportGroupingPage() {
     });
   }
 
+  function toggleToc(primaryId: string) {
+    setTocPrimaryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(primaryId)) next.delete(primaryId);
+      else next.add(primaryId);
+      return next;
+    });
+  }
+
   function resetToAllSplit() {
     setRemovedSplits(new Set());
   }
@@ -94,6 +108,19 @@ export function ImportGroupingPage() {
     setConfirming(true);
     try {
       const payload = groups.map((g) => g.map((it) => it.id));
+      // Flag ToC groups BEFORE finalizing. The items are still
+      // AWAITING_GROUPING, so this sets is_toc without touching status
+      // (the outbox push carries is_toc but never a non-terminal status
+      // flip). After syncNow lands it, finalizeGrouping flips the rows to
+      // PENDING with is_toc intact, so the worker OCRs them with the
+      // table-of-contents prompt on the first pass — no re-OCR needed.
+      const tocIds = groups
+        .filter((g) => tocPrimaryIds.has(g[0]!.id))
+        .map((g) => g[0]!.id);
+      for (const id of tocIds) {
+        await updateItem.mutateAsync({ id, patch: { isToc: true } });
+      }
+      if (tocIds.length > 0) await syncNow();
       await finalizeGrouping(batchId, payload);
       // Worker picks up PENDING rows on the next pg_cron tick; kick it
       // so the user sees progress immediately. Best-effort.
@@ -200,6 +227,8 @@ export function ImportGroupingPage() {
         groups={groups}
         removedSplits={removedSplits}
         groupable={groupable}
+        tocPrimaryIds={tocPrimaryIds}
+        onToggleToc={toggleToc}
         onToggleSplit={toggleSplit}
         onPreview={(idx) => setPreviewIndex(idx)}
       />
@@ -253,12 +282,16 @@ function GroupingStrip({
   groups,
   removedSplits,
   groupable,
+  tocPrimaryIds,
+  onToggleToc,
   onToggleSplit,
   onPreview,
 }: {
   groups: ImportItem[][];
   removedSplits: Set<number>;
   groupable: ImportItem[];
+  tocPrimaryIds: Set<string>;
+  onToggleToc: (primaryId: string) => void;
   onToggleSplit: (leftIdx: number) => void;
   onPreview: (idx: number) => void;
 }) {
@@ -273,13 +306,30 @@ function GroupingStrip({
   return (
     <div className="overflow-x-auto">
       <div className="flex min-w-min items-stretch gap-0 pb-2">
-        {groups.map((g, gi) => (
+        {groups.map((g, gi) => {
+          const primaryId = g[0]!.id;
+          const isToc = tocPrimaryIds.has(primaryId);
+          return (
           <div
             key={g.map((it) => it.id).join('-')}
-            className={`flex shrink-0 items-stretch gap-1 rounded-md p-2 ${
-              gi % 2 === 0 ? 'bg-stone-50' : 'bg-amber-50'
+            className={`flex shrink-0 flex-col gap-1 rounded-md p-2 ${
+              isToc
+                ? 'bg-indigo-50 ring-2 ring-indigo-400 dark:bg-indigo-950/40'
+                : gi % 2 === 0
+                  ? 'bg-stone-50'
+                  : 'bg-amber-50'
             }`}
           >
+            <label className="flex cursor-pointer items-center gap-1.5 self-start rounded px-1 text-[11px] font-medium text-stone-600 dark:text-stone-300">
+              <input
+                type="checkbox"
+                checked={isToc}
+                onChange={() => onToggleToc(primaryId)}
+                className="h-3.5 w-3.5"
+              />
+              Table of Contents
+            </label>
+            <div className="flex items-stretch gap-1">
             {g.map((it, ii) => {
               const idxInBatch = indexById.get(it.id)!;
               const isLastInBatch = idxInBatch === groupable.length - 1;
@@ -304,8 +354,10 @@ function GroupingStrip({
                 </div>
               );
             })}
+            </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

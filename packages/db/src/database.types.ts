@@ -2404,6 +2404,10 @@ export type Database = {
         Returns: undefined
       }
       import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
+      import_set_item_toc: {
+        Args: { p_item_id: string; p_is_toc: boolean }
+        Returns: undefined
+      }
       import_retry_recitation_failures: {
         Args: { p_batch_id: string }
         Returns: number

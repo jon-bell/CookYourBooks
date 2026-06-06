@@ -31,7 +31,7 @@ import {
   useImportTocEntries,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr, resetImportItem } from '../import/api.js';
+import { kickOcr, resetImportItem, setImportItemToc } from '../import/api.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { TocReviewPanel } from '../import/TocReviewPanel.js';
@@ -74,6 +74,7 @@ export function ImportItemPage() {
   const [showTocSuggestions, setShowTocSuggestions] = useState(false);
   const [draftPatches, setDraftPatches] = useState<Record<number, ParsedRecipeDraft>>({});
   const [actionError, setActionError] = useState<string | undefined>();
+  const [togglingToc, setTogglingToc] = useState(false);
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
   const pinch = useRef<{
@@ -384,24 +385,36 @@ export function ImportItemPage() {
     }
   }
 
+  // Flag (or un-flag) this page as a Table of Contents. Flipping the
+  // flag always re-runs OCR: a page first read as a recipe has to be
+  // re-read with the ToC prompt to yield entries (and vice versa). The
+  // client can't drive that PENDING transition through the outbox — the
+  // push scrub only honours REVIEWED / DISCARDED — so it goes through a
+  // server RPC that resets the row, clears the stale drafts + any prior
+  // ToC entries, and sets is_toc atomically. We then kick the worker.
   async function toggleIsToc() {
-    if (!item) return;
+    if (!item || !batch || togglingToc) return;
+    setActionError(undefined);
+    setTogglingToc(true);
     const next = !item.isToc;
-    await updateItem.mutateAsync({
-      id: item.id,
-      patch: {
-        isToc: next,
-        status: next ? 'PENDING' : item.status,
-        // Drop drafts when promoting to ToC so the worker re-OCRs.
-        parsedDrafts: next ? [] : item.parsedDrafts,
-      },
-    });
-    if (next) {
+    try {
+      await setImportItemToc(item.id, next);
+      await syncNow();
       try {
-        await kickOcr(batch!.id);
+        await kickOcr(batch.id);
       } catch {
-        // pg_cron will pick up the slack.
+        // pg_cron / the next user kick will pick up the slack.
       }
+      showToast(
+        setToast,
+        next
+          ? 'Marked as Table of Contents — re-reading the page…'
+          : 'Unmarked — re-reading the page as a recipe…',
+      );
+    } catch (e) {
+      setActionError(`Couldn't re-OCR this page: ${(e as Error).message}`);
+    } finally {
+      setTogglingToc(false);
     }
   }
 
@@ -708,14 +721,22 @@ export function ImportItemPage() {
           <OcrStatusBanner item={item} batchItems={batchItems} />
 
           <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm">
-            <label className="flex items-center gap-2">
+            <label className={`flex items-center gap-2 ${togglingToc ? 'cursor-progress opacity-70' : ''}`}>
               <input
                 type="checkbox"
                 checked={item.isToc}
+                disabled={togglingToc}
                 onChange={() => void toggleIsToc()}
               />
               <span>This is a Table of Contents page</span>
+              {togglingToc && (
+                <Spinner className="text-stone-400" label="Re-reading page…" />
+              )}
             </label>
+            <p className="mt-1 pl-6 text-xs text-stone-500 dark:text-stone-400">
+              Toggling re-runs OCR on this page with the matching prompt —
+              the table-of-contents reader or the recipe reader.
+            </p>
           </div>
 
           {/* Target cookbook — both the recipe-save path and the ToC
@@ -1954,6 +1975,16 @@ function ViewRawLink({ path }: { path: string }) {
     >
       View raw response →
     </a>
+  );
+}
+
+function Spinner({ className = '', label }: { className?: string; label: string }) {
+  return (
+    <span
+      role="status"
+      aria-label={label}
+      className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent ${className}`}
+    />
   );
 }
 

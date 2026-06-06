@@ -42,6 +42,42 @@ function detectPlatform(): 'capacitor-ios' | 'capacitor-android' | 'web' {
 }
 
 let initialized = false;
+let lastDsn: string | null = null;
+let skipReason: string | null = null;
+
+/**
+ * Diagnostic snapshot of the Sentry runtime state, surfaced in the
+ * sync diagnostics dialog. Lets a user see at a glance whether
+ * Sentry is actually wired up and where events would land — saves the
+ * "I clicked send and nothing happened" loop where dev-gated builds
+ * silently no-op.
+ */
+export function getSentryStatus(): {
+  initialized: boolean;
+  dsnHost: string | null;
+  release: string | null;
+  environment: string;
+  platform: 'capacitor-ios' | 'capacitor-android' | 'web';
+  skipReason: string | null;
+} {
+  const platform = detectPlatform();
+  let dsnHost: string | null = null;
+  if (lastDsn) {
+    try {
+      dsnHost = new URL(lastDsn).host;
+    } catch {
+      dsnHost = lastDsn.slice(0, 40);
+    }
+  }
+  return {
+    initialized,
+    dsnHost,
+    release: RELEASE,
+    environment: import.meta.env.MODE,
+    platform,
+    skipReason,
+  };
+}
 
 /**
  * Initialize Sentry. Called once from `main.tsx` before React renders.
@@ -62,17 +98,33 @@ export function initSentry(): void {
   const dsn = isCapacitor
     ? ((import.meta.env.VITE_SENTRY_DSN_CAPACITOR as string | undefined) ?? DSN_CAPACITOR)
     : ((import.meta.env.VITE_SENTRY_DSN as string | undefined) ?? DSN_WEB);
-  if (!dsn) return;
+  if (!dsn) {
+    skipReason = 'no DSN configured (set VITE_SENTRY_DSN or VITE_SENTRY_DSN_CAPACITOR)';
+    return;
+  }
+
+  // Opt-out hatch. Useful for e2e / load-test runs that shouldn't ship
+  // synthetic events. Anything truthy disables; default is enabled.
+  if ((import.meta.env.VITE_SENTRY_DISABLE as string | undefined) === '1') {
+    skipReason = 'VITE_SENTRY_DISABLE=1';
+    return;
+  }
+
+  // We used to gate dev builds off (`enabled: PROD || ENABLE_DEV=1`)
+  // so `pnpm dev` runs didn't pollute prod Sentry. That made the
+  // "send logs" button silently no-op for anyone actively testing
+  // Sentry against a local build — exactly when you want it to work.
+  // Dev/preview builds now ingest like any other, tagged with
+  // `environment: import.meta.env.MODE` (`development` locally,
+  // `production` on Vercel builds). Filter on that tag in the Sentry
+  // UI if dev events show up where you don't want them.
 
   initialized = true;
+  lastDsn = dsn;
   const commonOptions: Sentry.BrowserOptions = {
     dsn,
     release: RELEASE ?? undefined,
     environment: import.meta.env.MODE,
-    // Don't keep events from local dev unless explicitly opted in.
-    enabled:
-      import.meta.env.PROD ||
-      (import.meta.env.VITE_SENTRY_ENABLE_DEV as string | undefined) === '1',
     integrations: [
       Sentry.browserTracingIntegration(),
       // Replay only fires when an unhandled error is captured (see

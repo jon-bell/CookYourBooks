@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Sentry } from '../sentry.js';
+import { Sentry, getSentryStatus } from '../sentry.js';
 import { useSync } from '../local/SyncProvider.js';
 import {
   getSyncLog,
@@ -175,6 +175,17 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
   async function uploadLogs() {
     setUpload({ state: 'sending' });
     try {
+      const sentry = getSentryStatus();
+      if (!sentry.initialized) {
+        setUpload({
+          state: 'error',
+          message:
+            sentry.skipReason
+              ? `Sentry init skipped: ${sentry.skipReason}`
+              : 'Sentry not initialized yet — try again in a moment.',
+        });
+        return;
+      }
       const eventId = Sentry.withScope((scope) => {
         scope.setTag('report', 'sync-logs');
         // Small, queryable facets for triage in the issue list; the full
@@ -194,18 +205,26 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
         return Sentry.captureMessage('Sync logs (user-initiated upload)', 'info');
       });
       if (!eventId) {
-        // No client / Sentry disabled (e.g. a local dev build without
-        // VITE_SENTRY_ENABLE_DEV=1) — captureMessage no-ops and returns
-        // undefined. Tell the user instead of faking success.
+        // beforeSend or a sample-rate hook dropped the event before it
+        // got an id. Surface that rather than faking success.
         setUpload({
           state: 'error',
-          message: 'Sentry is not enabled in this build.',
+          message: 'Sentry dropped the event (beforeSend / sample rate).',
         });
         return;
       }
       // Block on the flush so we only report success once the envelope
-      // (event + attachment) has actually left the browser.
-      await Sentry.flush(3000);
+      // (event + attachment) has actually left the browser. flush
+      // returns false on timeout — treat that as a real failure so the
+      // user knows the event might not have reached Sentry.
+      const drained = await Sentry.flush(5000);
+      if (!drained) {
+        setUpload({
+          state: 'error',
+          message: `Flush timed out after 5s — event ${eventId.slice(0, 8)} may not have reached Sentry. Check network / DSN host.`,
+        });
+        return;
+      }
       setUpload({ state: 'sent', eventId });
       setTimeout(() => setUpload({ state: 'idle' }), 6000);
     } catch (err) {
@@ -378,6 +397,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
           </Section>
 
           <DbInitSection now={now} />
+
+          <SentryStatusSection />
+
 
           <Section title="Emergency reset" className="md:col-span-2">
             <p className="mb-2 text-xs text-stone-600 dark:text-stone-400">
@@ -608,6 +630,29 @@ function DbInitSection({ now }: { now: number }) {
       />
       <KV k="ready" v={init.finishedAt ? 'yes' : 'no'} />
       {init.error && <KV k="error" v={init.error} mono />}
+    </Section>
+  );
+}
+
+function SentryStatusSection() {
+  const sentry = getSentryStatus();
+  return (
+    <Section title="Sentry">
+      <KV k="initialized" v={sentry.initialized ? 'yes' : 'no'} />
+      <KV k="DSN host" v={sentry.dsnHost ?? '—'} mono />
+      <KV k="environment" v={sentry.environment} />
+      <KV k="platform" v={sentry.platform} />
+      <KV k="release" v={sentry.release ?? '(unset → "dev" bucket)'} mono />
+      {sentry.skipReason && (
+        <div className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+          Init skipped: {sentry.skipReason}
+        </div>
+      )}
+      {!sentry.initialized && !sentry.skipReason && (
+        <p className="mt-2 text-xs text-stone-500">
+          SDK hasn&apos;t finished initializing yet — refresh and try again.
+        </p>
+      )}
     </Section>
   );
 }
