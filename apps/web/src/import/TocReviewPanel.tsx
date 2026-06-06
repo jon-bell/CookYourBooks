@@ -22,10 +22,10 @@ interface ReviewRow {
  * worker extracts ToC lines into `import_toc_entries`; until this panel
  * existed those rows were invisible and only ever fed the page-number
  * autocomplete. Here the user can edit each title / page, drop bad
- * lines, and approve — which mints one starred placeholder recipe per
- * kept entry in the target cookbook. Those placeholders are exactly
- * what the Speed Importer's "starred placeholders" queue consumes, so
- * scanning a ToC now bootstraps the whole cookbook.
+ * lines, and approve — which mints one placeholder recipe per kept entry
+ * in the target cookbook. The user then stars the placeholders they want
+ * to capture; the Speed Importer's "starred placeholders" queue consumes
+ * those, so scanning a ToC bootstraps the cookbook a few entries at a time.
  *
  * Edits are intentionally ephemeral: the `import_toc_entries` rows are
  * server-owned (CRR-synced from the worker), so we treat them as the
@@ -111,9 +111,11 @@ export function TocReviewPanel({
           title,
           bookTitle: targetCollection?.title,
           pageNumbers: Number.isFinite(pn) && pn > 0 ? [pn] : undefined,
-          // Star the placeholder so it surfaces in the Speed Importer
-          // capture queue (and reads as "to scan" in the cookbook).
-          starred: true,
+          // Do NOT auto-star: a ToC import can mint dozens of entries and
+          // starring them all floods the user's stars. Starring is a
+          // deliberate action — the user taps ☆ on the cookbook page to
+          // queue specific placeholders for the Speed Importer.
+          starred: false,
         });
         await saveRecipe.mutateAsync(recipe);
         created += 1;
@@ -155,10 +157,10 @@ export function TocReviewPanel({
           Review table of contents ({entries.length})
         </h2>
         <p className="text-xs text-stone-600 dark:text-stone-400">
-          Approve to create a starred placeholder recipe for each entry in
-          the target cookbook. Edit titles or page numbers, and untick
-          anything you don't want. The Speed Importer can then walk you
-          through scanning each one.
+          Approve to create a placeholder recipe for each entry in the
+          target cookbook. Edit titles or page numbers, and untick anything
+          you don't want. Star the ones you want to capture and the Speed
+          Importer will walk you through scanning each.
         </p>
       </div>
 
