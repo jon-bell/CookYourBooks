@@ -21,6 +21,9 @@ export type CookingEventStatus = 'PLANNED' | 'COOKED';
  */
 export type OccasionCategory = 'MEAL' | 'CELEBRATION' | 'PRACTICE' | 'MEAL_PREP' | 'OTHER';
 
+/** Day-part of a cook. App-level enum (DB stores free text, no CHECK). */
+export type MealSlot = 'BREAKFAST' | 'LUNCH' | 'DINNER' | 'SNACK';
+
 /**
  * A single structured change the cook made relative to the recipe as
  * written. Discriminated union tagged with `type` (domain convention).
@@ -95,6 +98,9 @@ export interface CookingEvent {
   /** ISO day-only date, 'YYYY-MM-DD'. */
   readonly eventDate: string;
   readonly occasionCategory?: OccasionCategory;
+  /** Day-part: breakfast / lunch / dinner / snack. */
+  readonly mealSlot?: MealSlot;
+  /** Free-form occasion ("Mum's birthday", "Date night"). */
   readonly occasionNote?: string;
   readonly notes?: string;
   readonly adjustments: readonly RecipeAdjustment[];
@@ -129,6 +135,7 @@ interface BaseEventParams {
   recipeId: string;
   eventDate: string;
   occasionCategory?: OccasionCategory;
+  mealSlot?: MealSlot;
   occasionNote?: string;
   notes?: string;
   adjustments?: readonly RecipeAdjustment[];
@@ -143,6 +150,7 @@ export function planCook(params: BaseEventParams): CookingEvent {
     status: 'PLANNED',
     eventDate: params.eventDate,
     occasionCategory: params.occasionCategory,
+    mealSlot: params.mealSlot,
     occasionNote: params.occasionNote,
     notes: params.notes,
     adjustments: [...(params.adjustments ?? [])],
@@ -158,6 +166,7 @@ export function logCook(params: BaseEventParams & { snapshot: RecipeSnapshot }):
     status: 'COOKED',
     eventDate: params.eventDate,
     occasionCategory: params.occasionCategory,
+    mealSlot: params.mealSlot,
     occasionNote: params.occasionNote,
     notes: params.notes,
     adjustments: [...(params.adjustments ?? [])],

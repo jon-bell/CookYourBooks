@@ -194,6 +194,7 @@ export interface CookingEventUpsertInput {
   status: string;
   event_date: string;
   occasion_category: string | null;
+  meal_slot: string | null;
   occasion_note: string | null;
   notes: string | null;
   /** Object (stringified here) or an already-serialized JSON string. */
@@ -223,15 +224,16 @@ export async function upsertCookingEventRow(row: CookingEventUpsertInput): Promi
   await db.exec(
     `insert into cooking_events
        (id, owner_id, recipe_id, status, event_date, occasion_category,
-        occasion_note, notes, adjustments, recipe_snapshot, photo_paths,
+        meal_slot, occasion_note, notes, adjustments, recipe_snapshot, photo_paths,
         shared_with_household_id, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,NULL,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        recipe_id=excluded.recipe_id,
        status=excluded.status,
        event_date=excluded.event_date,
        occasion_category=excluded.occasion_category,
+       meal_slot=excluded.meal_slot,
        occasion_note=excluded.occasion_note,
        notes=excluded.notes,
        adjustments=excluded.adjustments,
@@ -247,6 +249,7 @@ export async function upsertCookingEventRow(row: CookingEventUpsertInput): Promi
       row.status,
       row.event_date,
       row.occasion_category,
+      row.meal_slot,
       row.occasion_note,
       row.notes,
       adjustments,
@@ -1445,6 +1448,7 @@ interface CookingEventLocalRow {
   status: string;
   event_date: string;
   occasion_category: string | null;
+  meal_slot: string | null;
   occasion_note: string | null;
   notes: string | null;
   adjustments: string;
@@ -1504,6 +1508,7 @@ function rowToCookingEventRecord(row: CookingEventLocalRow): CookingEventRecord 
     eventDate: row.event_date,
     occasionCategory:
       (row.occasion_category as CookingEvent['occasionCategory']) ?? undefined,
+    mealSlot: (row.meal_slot as CookingEvent['mealSlot']) ?? undefined,
     occasionNote: row.occasion_note ?? undefined,
     notes: row.notes ?? undefined,
     adjustments: parseAdjustments(row.adjustments),
@@ -1552,6 +1557,23 @@ export class LocalCookingEventRepository implements CookingEventRepository {
     }));
   }
 
+  /** Distinct free-form occasions previously used (own + shared) — the
+   *  vocabulary for the occasion autocomplete, most-recent first. */
+  async listOccasions(): Promise<string[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ occasion_note: string }>(
+      `select occasion_note, max(updated_at) as last_used
+         from cooking_events
+        where deleted = 0
+          and occasion_note is not null and trim(occasion_note) <> ''
+          and (owner_id = ? or shared_with_household_id is not null)
+        group by occasion_note
+        order by last_used desc`,
+      [this.ownerId],
+    )) as { occasion_note: string }[];
+    return rows.map((r) => r.occasion_note);
+  }
+
   /** Past + upcoming events for one recipe (own + household-shared), newest first. */
   async listForRecipe(recipeId: string): Promise<CookingEventRecord[]> {
     const db = await getLocalDb();
@@ -1597,6 +1619,7 @@ export class LocalCookingEventRepository implements CookingEventRepository {
       status: event.status,
       event_date: event.eventDate,
       occasion_category: event.occasionCategory ?? null,
+      meal_slot: event.mealSlot ?? null,
       occasion_note: event.occasionNote ?? null,
       notes: event.notes ?? null,
       adjustments: event.adjustments,

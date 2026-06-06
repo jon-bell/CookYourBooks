@@ -324,6 +324,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     status text not null default 'PLANNED',
     event_date text not null default '',     -- ISO day 'YYYY-MM-DD'
     occasion_category text,
+    meal_slot text,
     occasion_note text,
     notes text,
     adjustments text not null default '[]',  -- JSON RecipeAdjustment[]
@@ -693,4 +694,6 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   // cooking_events before this column existed; the create-table above
   // already includes it for fresh DBs.
   `alter table cooking_events add column photo_paths text not null default '[]'`,
+  // Meal slot (breakfast/lunch/dinner/snack). Nullable, additive.
+  `alter table cooking_events add column meal_slot text`,
 ];

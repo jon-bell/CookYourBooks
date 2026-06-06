@@ -3,6 +3,7 @@ import {
   logCook,
   planCook,
   snapshotOfRecipe,
+  type MealSlot,
   type OccasionCategory,
   type Recipe,
   type RecipeAdjustment,
@@ -56,6 +57,17 @@ export function useScheduledRecipeIds(range: { start: string; end: string }) {
       }
       return [...ids];
     },
+  });
+}
+
+/** Free-form occasions previously used — suggestions for the autocomplete. */
+export function useOccasionSuggestions() {
+  const { user } = useAuth();
+  const enabled = useLocalQueryEnabled();
+  return useQuery<string[]>({
+    queryKey: ['cooking', 'occasions', user?.id],
+    enabled,
+    queryFn: () => cookingEventRepo(user!.id).listOccasions(),
   });
 }
 
@@ -119,6 +131,7 @@ export interface CookFormInput {
   recipe: Recipe;
   date: string; // 'YYYY-MM-DD'
   occasionCategory?: OccasionCategory;
+  mealSlot?: MealSlot;
   occasionNote?: string;
   notes?: string;
   adjustments?: RecipeAdjustment[];
@@ -137,6 +150,7 @@ export function useLogCook() {
           recipeId: input.recipe.id,
           eventDate: input.date,
           occasionCategory: input.occasionCategory,
+          mealSlot: input.mealSlot,
           occasionNote: input.occasionNote,
           notes: input.notes,
           adjustments: input.adjustments,
@@ -160,6 +174,7 @@ export function useScheduleCook() {
           recipeId: input.recipe.id,
           eventDate: input.date,
           occasionCategory: input.occasionCategory,
+          mealSlot: input.mealSlot,
           occasionNote: input.occasionNote,
           notes: input.notes,
           adjustments: input.adjustments,

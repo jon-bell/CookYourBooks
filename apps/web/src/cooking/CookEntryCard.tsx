@@ -1,6 +1,6 @@
 import type { Recipe } from '@cookyourbooks/domain';
 import type { CookingEventRecord } from '../local/repositories.js';
-import { formatEventDate, occasionLabel } from './format.js';
+import { formatEventDate, mealSlotLabel, occasionLabel } from './format.js';
 import { AdjustmentSummary } from './AdjustmentSummary.js';
 import { CookingPhotoThumb } from './photos.js';
 import { useDeleteCook, useMarkCooked } from './queries.js';
@@ -34,6 +34,11 @@ export function CookEntryCard({
             </span>
             <span className="text-stone-400">·</span>
             <span className="text-stone-500">{attributedTo}</span>
+            {event.mealSlot && (
+              <span className="rounded-full bg-sky-100 dark:bg-sky-900/50 px-2 py-0.5 text-xs text-sky-800 dark:text-sky-200">
+                {mealSlotLabel(event.mealSlot)}
+              </span>
+            )}
             {event.occasionCategory && (
               <span className="rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-600 dark:text-stone-300">
                 {occasionLabel(event.occasionCategory)}

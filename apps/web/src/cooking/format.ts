@@ -1,5 +1,17 @@
-import type { OccasionCategory, RecipeAdjustment } from '@cookyourbooks/domain';
+import type { MealSlot, OccasionCategory, RecipeAdjustment } from '@cookyourbooks/domain';
 import { parseISODate } from './dateGrid.js';
+
+export const MEAL_SLOT_OPTIONS: { value: MealSlot; label: string }[] = [
+  { value: 'BREAKFAST', label: 'Breakfast' },
+  { value: 'LUNCH', label: 'Lunch' },
+  { value: 'DINNER', label: 'Dinner' },
+  { value: 'SNACK', label: 'Snack' },
+];
+
+export function mealSlotLabel(slot?: MealSlot): string {
+  if (!slot) return '';
+  return MEAL_SLOT_OPTIONS.find((o) => o.value === slot)?.label ?? slot;
+}
 
 export const OCCASION_OPTIONS: { value: OccasionCategory; label: string }[] = [
   { value: 'MEAL', label: 'Meal' },

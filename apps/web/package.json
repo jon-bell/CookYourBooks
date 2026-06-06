@@ -33,7 +33,8 @@
     "pdfjs-dist": "^4.10.38",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.2"
+    "react-router-dom": "^7.0.2",
+    "react-select": "^5.10.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",

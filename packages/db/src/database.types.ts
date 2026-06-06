@@ -346,6 +346,7 @@ export type Database = {
           created_at: string
           event_date: string
           id: string
+          meal_slot: string | null
           notes: string | null
           occasion_category: string | null
           occasion_note: string | null
@@ -361,6 +362,7 @@ export type Database = {
           created_at?: string
           event_date: string
           id?: string
+          meal_slot?: string | null
           notes?: string | null
           occasion_category?: string | null
           occasion_note?: string | null
@@ -376,6 +378,7 @@ export type Database = {
           created_at?: string
           event_date?: string
           id?: string
+          meal_slot?: string | null
           notes?: string | null
           occasion_category?: string | null
           occasion_note?: string | null
