@@ -1097,7 +1097,7 @@ async function pullConversionRules(
       (r) => toMs(r.updated_at),
     );
     if (fresh.length > 0) {
-      await withSuppressedCrrTriggers(['conversion_rules'], () =>
+      await withSuppressedCrrTriggers(['conversion_rules'], fresh.length, () =>
         bulkInsertOnConflictId(
           'conversion_rules',
           CONVERSION_RULE_COLS,
@@ -1137,7 +1137,7 @@ async function pullRewriteJobs(
       (r) => toMs(r.updated_at),
     );
     if (fresh.length > 0) {
-      await withSuppressedCrrTriggers(['rewrite_jobs'], () =>
+      await withSuppressedCrrTriggers(['rewrite_jobs'], fresh.length, () =>
         bulkInsertOnConflictId(
           'rewrite_jobs',
           REWRITE_JOB_COLS,
@@ -1227,6 +1227,7 @@ async function pullImports(
   // statements instead of N.
   await withSuppressedCrrTriggers(
     ['import_batches', 'import_items', 'import_item_attempts', 'import_toc_entries'],
+    batches.length + items.length + attempts.length + tocs.length,
     async () => {
       if (batches.length > 0) {
         const fresh = await filterFresherIncoming(
