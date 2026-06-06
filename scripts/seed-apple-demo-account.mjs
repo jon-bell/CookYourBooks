@@ -12,8 +12,10 @@
 //   GEMINI_API_KEY                 — pinned on the demo account so the
 //                                    reviewer can test the OCR + video-link
 //                                    import flows (optional; warns if missing).
-//                                    Rotate this Gemini key after Apple's
-//                                    review approval.
+//                                    Stored encrypted in vault.secrets;
+//                                    clients only ever see the fingerprint,
+//                                    never the raw key, so no rotation is
+//                                    needed after Apple's review.
 //
 // Usage: node scripts/seed-apple-demo-account.mjs
 
