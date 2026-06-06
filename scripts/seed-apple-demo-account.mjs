@@ -2,8 +2,12 @@
 // Seeds the Apple Beta App Review demo account on the hosted Supabase
 // project. Idempotent — re-running just no-ops on duplicates.
 //
-// Reads SUPABASE_URL + SUPABASE_SECRET_KEY (the new sb_secret_*
-// service-role-equivalent) from the .secrets file at the repo root.
+// Reads three secrets from the .secrets file at the repo root (which
+// is gitignored — never commit secrets here):
+//   VITE_SUPABASE_URL              — hosted project URL
+//   SUPABASE_SECRET_KEY            — sb_secret_* service-role key
+//   APPLE_REVIEW_DEMO_PASSWORD     — password to set/reset on the
+//                                    apple-review@cookyourbooks.app user
 //
 // Usage: node scripts/seed-apple-demo-account.mjs
 
@@ -24,8 +28,12 @@ const env = Object.fromEntries(
 
 const URL = (env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SECRET = env.SUPABASE_SECRET_KEY;
-if (!URL || !SECRET) {
-  console.error('Missing VITE_SUPABASE_URL or SUPABASE_SECRET_KEY in .secrets');
+const PASSWORD = env.APPLE_REVIEW_DEMO_PASSWORD;
+if (!URL || !SECRET || !PASSWORD) {
+  console.error(
+    'Missing one of VITE_SUPABASE_URL, SUPABASE_SECRET_KEY, ' +
+      'APPLE_REVIEW_DEMO_PASSWORD in .secrets',
+  );
   process.exit(1);
 }
 
@@ -36,7 +44,6 @@ const HDR = {
 };
 
 const EMAIL = 'apple-review@cookyourbooks.app';
-const PASSWORD = 'CYBReview-2026-AbC9!xPq';
 const DISPLAY = 'Apple Review';
 
 async function api(path, init = {}) {
