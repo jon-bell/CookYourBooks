@@ -130,6 +130,12 @@ jobs:
           set +e
           find ~/Library/Developer/Xcode/DerivedData -mindepth 1 -maxdepth 1 -mtime +2 -exec rm -rf {} +
           find /Users/jon/actions-runner/_work/CookYourBooks/CookYourBooks/apps/mobile/ios/build -mindepth 1 -mtime +2 -exec rm -rf {} + 2>/dev/null
+          # Shut down any simulators left booted by a previous job /
+          # local dev session. A booted sim keeps its mediaanalysisd
+          # alive, which on a busy day pegs 5-6 cores indexing the sim's
+          # photo library and starves this build of CPU. Idempotent
+          # no-op if nothing is booted.
+          xcrun simctl shutdown all 2>/dev/null
           # Pre-flight: confirm the login keychain is unlocked. The
           # LaunchAgent at scripts/runner/app.cookyourbooks.unlock-keychain.plist
           # should keep it unlocked across reboots; this surfaces a clear
