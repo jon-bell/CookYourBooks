@@ -212,7 +212,14 @@ platform :ios do
       api_key: asc_api_key,
       ipa: "build/CookYourBooks.ipa",
       skip_waiting_for_build_processing: true,
-      # Beta groups + changelog can be filled in later via App Store Connect UI.
+      # Attach every build to the external "Friends & Family" group so
+      # once Apple approves the first build in a version, subsequent
+      # builds reach external testers automatically without another
+      # ASC click. First-build-in-version still needs Beta App Review;
+      # the group attachment is what queues it up.
+      distribute_external: true,
+      notify_external_testers: true,
+      groups: ["Friends & Family"],
       changelog: ENV["BETA_CHANGELOG"] || "Internal build"
     )
   end
