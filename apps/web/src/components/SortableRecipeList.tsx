@@ -19,20 +19,56 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { Recipe } from '@cookyourbooks/domain';
 
+/** How the cookbook list is ordered. `manual` is the user's drag order
+ *  (persisted via sort_order); `name`/`page` are read-only views. */
+export type RecipeSortMode = 'manual' | 'name' | 'page';
+
+const UL_CLASS =
+  'divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900';
+
+/** Smallest page number on a recipe, or +Infinity if it has none (so
+ *  page-less entries sort last). */
+function minPage(recipe: Recipe): number {
+  const ps = (recipe.pageNumbers ?? []).filter((n) => Number.isFinite(n));
+  return ps.length ? Math.min(...ps) : Number.POSITIVE_INFINITY;
+}
+
+/** "p. 42" / "pp. 42, 51" / null when the recipe carries no page. */
+function formatPages(pageNumbers: readonly number[] | undefined): string | null {
+  const ps = [...(pageNumbers ?? [])].filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+  if (ps.length === 0) return null;
+  return ps.length === 1 ? `p. ${ps[0]}` : `pp. ${ps.join(', ')}`;
+}
+
+function sortRecipes(recipes: readonly Recipe[], mode: RecipeSortMode): Recipe[] {
+  const arr = [...recipes];
+  if (mode === 'name') {
+    arr.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+  } else if (mode === 'page') {
+    arr.sort((a, b) => {
+      const d = minPage(a) - minPage(b);
+      return d !== 0 ? d : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+    });
+  }
+  return arr;
+}
+
 /**
- * A drag-and-drop-reorderable list of recipes. Submits the new order by
- * calling `onReorder` with the full list of ids in display order. The
- * parent is responsible for persisting — we keep this component stateless
- * about sync so it's easy to unit-test.
+ * A reorderable list of recipes. In `manual` sort mode it's drag-and-drop:
+ * dropping submits the new order via `onReorder` (the parent persists).
+ * In `name`/`page` mode it's a read-only sorted view (drag disabled — a
+ * derived sort has no manual order to save). Every row shows the page
+ * number when known.
  *
- * Keyboard accessibility: focus a row and press Space to lift, arrow keys
- * to move, Space/Enter to drop (provided by @dnd-kit).
+ * Keyboard accessibility (manual mode): focus a row and press Space to
+ * lift, arrow keys to move, Space/Enter to drop (provided by @dnd-kit).
  */
 export function SortableRecipeList({
   collectionId,
   recipes,
   onReorder,
   onToggleStar,
+  sortMode = 'manual',
 }: {
   collectionId: string;
   recipes: readonly Recipe[];
@@ -41,6 +77,7 @@ export function SortableRecipeList({
    *  queue is derived from `recipes.starred`; placeholders are the
    *  usual target but starring is allowed on filled recipes too. */
   onToggleStar?: (recipeId: string) => Promise<void> | void;
+  sortMode?: RecipeSortMode;
 }) {
   // Keep a local mirror of the order so the drop animates before the
   // server round-trip. Re-sync from props when the incoming list changes.
@@ -65,12 +102,28 @@ export function SortableRecipeList({
     void onReorder(next);
   }
 
-  const byId = new Map(recipes.map((r) => [r.id, r]));
+  // Derived sort: read-only, no drag affordance.
+  if (sortMode !== 'manual') {
+    return (
+      <ul className={UL_CLASS}>
+        {sortRecipes(recipes, sortMode).map((recipe) => (
+          <li key={recipe.id} className="flex items-center gap-2 pl-3">
+            <RecipeRowBody
+              collectionId={collectionId}
+              recipe={recipe}
+              onToggleStar={onToggleStar}
+            />
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
+  const byId = new Map(recipes.map((r) => [r.id, r]));
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
       <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-        <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+        <ul className={UL_CLASS}>
           {ids.map((id) => {
             const recipe = byId.get(id);
             if (!recipe) return null;
@@ -110,11 +163,6 @@ function SortableRow({
     opacity: isDragging ? 0.7 : undefined,
     background: isDragging ? '#fafaf9' : undefined,
   };
-  // A "placeholder" recipe is a ToC entry seeded from the catalog
-  // that the user hasn't imported / hand-entered yet. Render it
-  // muted so the imported ones above pop visually.
-  const isPlaceholder = recipe.ingredients.length === 0 && recipe.instructions.length === 0;
-  const starred = recipe.starred === true;
   return (
     <li ref={setNodeRef} style={style} className="flex items-center gap-2">
       <button
@@ -126,6 +174,30 @@ function SortableRow({
       >
         <span aria-hidden>⋮⋮</span>
       </button>
+      <RecipeRowBody collectionId={collectionId} recipe={recipe} onToggleStar={onToggleStar} />
+    </li>
+  );
+}
+
+/** The shared visual body of a row: optional star button + the link with
+ *  title, page number, and ingredient/step summary. Used by both the
+ *  draggable and read-only rows. */
+function RecipeRowBody({
+  collectionId,
+  recipe,
+  onToggleStar,
+}: {
+  collectionId: string;
+  recipe: Recipe;
+  onToggleStar?: (recipeId: string) => Promise<void> | void;
+}) {
+  // A "placeholder" recipe is a ToC entry the user hasn't imported /
+  // hand-entered yet. Render it muted so the imported ones pop.
+  const isPlaceholder = recipe.ingredients.length === 0 && recipe.instructions.length === 0;
+  const starred = recipe.starred === true;
+  const pages = formatPages(recipe.pageNumbers);
+  return (
+    <>
       {onToggleStar && (
         <button
           type="button"
@@ -160,6 +232,9 @@ function SortableRow({
       >
         <span className="flex items-center gap-2 min-w-0">
           <span className={`truncate ${isPlaceholder ? '' : 'font-medium'}`}>{recipe.title}</span>
+          {pages && (
+            <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">· {pages}</span>
+          )}
           {isPlaceholder && (
             <span className="shrink-0 rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
               Not imported
@@ -172,6 +247,6 @@ function SortableRow({
             : `${recipe.ingredients.length} ing · ${recipe.instructions.length} steps`}
         </span>
       </Link>
-    </li>
+    </>
   );
 }
