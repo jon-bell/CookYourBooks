@@ -590,6 +590,9 @@ export type Database = {
           id: string
           joined_at: string
           left_at: string | null
+          library_share_attestation: string | null
+          library_share_attested_at: string | null
+          library_shared: boolean
           role: string
           updated_at: string
           user_id: string
@@ -600,6 +603,9 @@ export type Database = {
           id?: string
           joined_at?: string
           left_at?: string | null
+          library_share_attestation?: string | null
+          library_share_attested_at?: string | null
+          library_shared?: boolean
           role?: string
           updated_at?: string
           user_id: string
@@ -610,6 +616,9 @@ export type Database = {
           id?: string
           joined_at?: string
           left_at?: string | null
+          library_share_attestation?: string | null
+          library_share_attested_at?: string | null
+          library_shared?: boolean
           role?: string
           updated_at?: string
           user_id?: string
@@ -1446,6 +1455,66 @@ export type Database = {
           source?: string
           source_id?: string
           sugar_g?: number | null
+        }
+        Relationships: []
+      }
+      nutrition_foods_master: {
+        Row: {
+          brand: string | null
+          brand_owner: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          data_type: string
+          description: string
+          fat_g: number | null
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          saturated_fat_g: number | null
+          search_tsv: unknown
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+          updated_at: string
+        }
+        Insert: {
+          brand?: string | null
+          brand_owner?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          data_type: string
+          description: string
+          fat_g?: number | null
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          saturated_fat_g?: number | null
+          search_tsv?: unknown
+          sodium_mg?: number | null
+          source: string
+          source_id: string
+          sugar_g?: number | null
+          updated_at?: string
+        }
+        Update: {
+          brand?: string | null
+          brand_owner?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          data_type?: string
+          description?: string
+          fat_g?: number | null
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          saturated_fat_g?: number | null
+          search_tsv?: unknown
+          sodium_mg?: number | null
+          source?: string
+          source_id?: string
+          sugar_g?: number | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -2430,6 +2499,7 @@ export type Database = {
         Returns: undefined
       }
       normalize_isbn: { Args: { raw: string }; Returns: string }
+      nutrition_get_config: { Args: never; Returns: Json }
       nutrition_health: { Args: never; Returns: boolean }
       ocr_key_delete: { Args: { p_provider: string }; Returns: undefined }
       ocr_key_set: {
@@ -2549,20 +2619,46 @@ export type Database = {
         }
         Returns: string
       }
-      share_collection_with_household: {
+      search_nutrition_foods: {
+        Args: { p_limit?: number; p_query: string }
+        Returns: {
+          brand: string | null
+          brand_owner: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          data_type: string
+          description: string
+          fat_g: number | null
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          saturated_fat_g: number | null
+          search_tsv: unknown
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "nutrition_foods_master"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      set_library_sharing: {
         Args: {
-          p_attestation: string
-          p_collection_id: string
+          p_attestation?: string
+          p_enabled: boolean
           p_household_id: string
         }
         Returns: undefined
       }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
       transfer_household_ownership: {
         Args: { p_new_owner_id: string }
-        Returns: undefined
-      }
-      unshare_collection_from_household: {
-        Args: { p_collection_id: string }
         Returns: undefined
       }
       user_ocr_prefs_set: {
@@ -2572,6 +2668,10 @@ export type Database = {
       user_rewrite_prefs_set: {
         Args: { p_model: string; p_prompt: string; p_provider: string }
         Returns: undefined
+      }
+      viewer_can_read_owner_library: {
+        Args: { p_owner: string }
+        Returns: boolean
       }
     }
     Enums: {

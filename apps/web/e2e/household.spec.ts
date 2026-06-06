@@ -59,11 +59,10 @@ test.describe('Household sharing', () => {
         ingredients: [{ kind: 'vague', name: 'pasta' }],
         steps: ['Boil water', 'Cook pasta'],
       });
-      // We're on the recipe page; navigate to the collection page.
+      // Library sharing is on by default for household members, so the
+      // collection is shared without any per-collection action — the
+      // collection page just reflects that state.
       await pageA.getByRole('link', { name: /Family Recipes/ }).first().click();
-      await pageA.getByTestId('share-with-household').click();
-      await pageA.getByTestId('share-attestation-checkbox').check();
-      await pageA.getByTestId('share-confirm').click();
       await expect(pageA.getByTestId('household-share-status')).toContainText(
         /Shared with Test Household/,
       );
@@ -77,14 +76,31 @@ test.describe('Household sharing', () => {
       // Member sees the owner row in the member list.
       await expect(pageB.getByText(/OWNER · joined/)).toBeVisible({ timeout: 10_000 });
 
-      // ---- Member side: shared collection should appear in library ----
+      // ---- Member side: the owner's whole library should appear ----
       await pageB.getByRole('link', { name: 'Library' }).click();
       await waitForSynced(pageB);
-      // Trigger another sync — pull is async, and the share happened
-      // while pageB was on /household.
+      // Trigger another sync — pull is async, and the owner's content
+      // landed while pageB was on /household.
       await pageB.reload();
       await waitForSynced(pageB);
       await expect(pageB.getByText('Family Recipes')).toBeVisible({ timeout: 20_000 });
+
+      // ---- Regression: a recipe added to an already-shared cookbook
+      //      AFTER the member joined must also propagate (this is the bug
+      //      the library model fixes). Owner adds a second recipe to
+      //      Family Recipes; the member re-pulls and sees it.
+      await pageA.getByRole('link', { name: 'Add recipe' }).click();
+      await pageA.locator('main input').first().fill('Tuesday Tacos');
+      await pageA.locator('input[placeholder="ingredient name"]').first().fill('tortilla');
+      await pageA.locator('ol textarea').first().fill('Assemble and serve.');
+      await pageA.getByRole('button', { name: 'Save recipe' }).click();
+      await expect(pageA.getByRole('heading', { name: 'Tuesday Tacos' })).toBeVisible();
+      await waitForSynced(pageA);
+
+      await pageB.reload();
+      await waitForSynced(pageB);
+      await pageB.getByRole('link', { name: /Family Recipes/ }).first().click();
+      await expect(pageB.getByText('Tuesday Tacos')).toBeVisible({ timeout: 20_000 });
     } finally {
       await cleanupHouseholdFor([owner.id, member.id]);
       await owner.cleanup();
@@ -220,10 +236,8 @@ test.describe('Household sharing', () => {
         steps: ['Mix', 'Bake'],
       });
       await page.getByRole('link', { name: /Will Be Shared/ }).first().click();
-      // Share with household.
-      await page.getByTestId('share-with-household').click();
-      await page.getByTestId('share-attestation-checkbox').check();
-      await page.getByTestId('share-confirm').click();
+      // Library sharing is on by default, so this collection is already
+      // household-shared (the public-flip cascade keys off that).
       await expect(page.getByTestId('household-share-status')).toContainText(/Shared with/);
 
       // Inspect collection id from URL.
@@ -303,7 +317,7 @@ test.describe('Household sharing', () => {
     }
   });
 
-  test('audit log records share + attestation entries', async ({ browser }) => {
+  test('audit log records library share + attestation entries', async ({ browser }) => {
     const owner = await createTestUser('audit-owner');
     await acceptTosViaService(owner.id);
     const ctx = await browser.newContext();
@@ -315,22 +329,20 @@ test.describe('Household sharing', () => {
       await page.getByRole('button', { name: 'Create household' }).click();
       await expect(page.getByRole('heading', { name: 'Audit House' })).toBeVisible();
 
-      await createRecipeViaUi(page, {
-        collectionTitle: 'Audit Coll',
-        recipeTitle: 'Soup',
-        ingredients: [{ kind: 'vague', name: 'broth' }],
-        steps: ['Heat'],
-      });
-      await page.getByRole('link', { name: /Audit Coll/ }).first().click();
-      await page.getByTestId('share-with-household').click();
-      await page.getByTestId('share-attestation-checkbox').check();
-      await page.getByTestId('share-confirm').click();
-      await expect(page.getByTestId('household-share-status')).toContainText(/Shared with/);
+      // Library sharing defaults on. Toggle it off, then back on so the
+      // one-time rights attestation is captured in the audit trail.
+      page.once('dialog', (d) => d.accept());
+      await page.getByTestId('library-sharing-disable').click();
+      await expect(page.getByTestId('library-sharing-enable')).toBeVisible();
+      await page.getByTestId('library-sharing-enable').click();
+      await page.getByTestId('library-attestation-checkbox').check();
+      await page.getByTestId('library-sharing-confirm').click();
+      await expect(page.getByTestId('library-sharing-disable')).toBeVisible();
 
       // Service-role view: confirm the audit-log entries exist.
       const created = await listAuditLog({ actorId: owner.id, action: 'HOUSEHOLD_CREATED' });
       expect(created.length).toBeGreaterThanOrEqual(1);
-      const shared = await listAuditLog({ actorId: owner.id, action: 'COLLECTION_SHARED' });
+      const shared = await listAuditLog({ actorId: owner.id, action: 'LIBRARY_SHARED' });
       expect(shared.length).toBeGreaterThanOrEqual(1);
       const attest = await listAuditLog({ actorId: owner.id, action: 'ATTESTATION_GIVEN' });
       expect(attest.length).toBeGreaterThanOrEqual(1);
@@ -344,7 +356,7 @@ test.describe('Household sharing', () => {
       await page.goto('/household');
       await expect(page.getByTestId('audit-log')).toBeVisible();
       await expect(page.getByTestId('audit-row-HOUSEHOLD_CREATED')).toBeVisible();
-      await expect(page.getByTestId('audit-row-COLLECTION_SHARED')).toBeVisible();
+      await expect(page.getByTestId('audit-row-LIBRARY_SHARED')).toBeVisible();
     } finally {
       await cleanupHouseholdFor([owner.id]);
       await owner.cleanup();

@@ -160,7 +160,7 @@ export function CollectionPage() {
           <ShareToGlobalButton cookbook={c} />
         )}
         {c.moderationState !== 'TAKEN_DOWN' && (
-          <CollectionShareSection collectionId={c.id} collectionTitle={c.title} />
+          <CollectionShareSection />
         )}
         <button
           onClick={async () => {

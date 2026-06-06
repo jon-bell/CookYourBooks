@@ -34,7 +34,9 @@ import {
 import { kickOcr, resetImportItem } from '../import/api.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { TocReviewPanel } from '../import/TocReviewPanel.js';
 import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
+import type { CollectionPickerOption } from '../local/repositories.js';
 import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
 import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
@@ -57,7 +59,6 @@ export function ImportItemPage() {
   const resolvedTargetId =
     item?.assignedCollectionId ?? batch?.targetCollectionId ?? '';
   const { data: targetCollection } = useCollection(resolvedTargetId);
-  const saveCollection = useSaveCollection();
   const updateItem = useUpdateImportItem();
   const { syncNow, status: syncStatus, localReady, hydrated } = useSync();
   const navigate = useNavigate();
@@ -72,10 +73,6 @@ export function ImportItemPage() {
   const [pageNumberStr, setPageNumberStr] = useState('');
   const [showTocSuggestions, setShowTocSuggestions] = useState(false);
   const [draftPatches, setDraftPatches] = useState<Record<number, ParsedRecipeDraft>>({});
-  const [creatingCookbook, setCreatingCookbook] = useState(false);
-  const [newCookbookTitle, setNewCookbookTitle] = useState('');
-  const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
-  const [cookbookError, setCookbookError] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | undefined>();
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
@@ -353,7 +350,39 @@ export function ImportItemPage() {
   const targetCollectionId =
     assignedCollectionId || batch.targetCollectionId || '';
 
+  // ToC entries belonging to *this* page (a batch may hold several ToC
+  // scans). Feeds the review/approve panel below.
+  const itemTocEntries = tocEntries.filter((e) => e.itemId === item.id);
+
   const reOcrAllowed = canReOcr(item.status);
+
+  // Called by TocReviewPanel once it has minted the approved placeholder
+  // recipes. Persist the chosen cookbook, close the item out as REVIEWED,
+  // and advance to the next thing that still needs attention.
+  async function onTocApproved(created: number) {
+    if (!item || !batch) return;
+    setActionError(undefined);
+    try {
+      await updateItem.mutateAsync({
+        id: item.id,
+        patch: {
+          assignedCollectionId: targetCollectionId || null,
+          status: 'REVIEWED',
+        },
+      });
+      await syncNow();
+      showToast(
+        setToast,
+        created === 0
+          ? 'Entries already in the cookbook — nothing new to add.'
+          : `Created ${created} placeholder recipe${created === 1 ? '' : 's'}.`,
+      );
+      const next = findReviewable(batchItems, item.id, 'next');
+      navigate(next ? `/import/${batch.id}/items/${next.id}` : `/import/${batch.id}`);
+    } catch (e) {
+      setActionError(`Couldn't finish the table-of-contents review: ${(e as Error).message}`);
+    }
+  }
 
   async function toggleIsToc() {
     if (!item) return;
@@ -689,126 +718,75 @@ export function ImportItemPage() {
             </label>
           </div>
 
-          {!item.isToc && (
+          {/* Target cookbook — both the recipe-save path and the ToC
+              placeholder-creation path need somewhere to put their
+              output, so the picker lives outside the isToc gate. */}
+          <Field label="Cookbook">
+            <CookbookField
+              options={pickerOptions}
+              value={assignedCollectionId}
+              onChange={setAssignedCollectionId}
+              loading={pickerLoading}
+              matchedExistingTitle={item.isToc ? undefined : matchedExisting?.title}
+            />
+          </Field>
+
+          {item.isToc ? (
             <>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Cookbook">
-                  {creatingCookbook ? (
-                    <div className="space-y-2 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2">
-                      <input
-                        autoFocus
-                        placeholder="Cookbook title"
-                        value={newCookbookTitle}
-                        onChange={(e) => setNewCookbookTitle(e.target.value)}
-                        className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-                      />
-                      <input
-                        placeholder="Author (optional)"
-                        value={newCookbookAuthor}
-                        onChange={(e) => setNewCookbookAuthor(e.target.value)}
-                        className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const title = newCookbookTitle.trim();
-                            if (!title) return;
-                            const cookbook: RecipeCollection = createCookbook({
-                              title,
-                              author: newCookbookAuthor.trim() || undefined,
-                            });
-                            try {
-                              await saveCollection.mutateAsync(cookbook);
-                              setAssignedCollectionId(cookbook.id);
-                              setCreatingCookbook(false);
-                              setNewCookbookTitle('');
-                              setNewCookbookAuthor('');
-                              setCookbookError(undefined);
-                            } catch (err) {
-                              setCookbookError((err as Error).message);
-                            }
-                          }}
-                          disabled={!newCookbookTitle.trim() || saveCollection.isPending}
-                          className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
-                        >
-                          {saveCollection.isPending ? 'Creating…' : 'Create'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCreatingCookbook(false);
-                            setNewCookbookTitle('');
-                            setNewCookbookAuthor('');
-                          }}
-                          className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                      {cookbookError && (
-                        <p className="text-xs text-red-700 dark:text-red-300">{cookbookError}</p>
-                      )}
+              <TocReviewPanel
+                entries={itemTocEntries}
+                targetCollectionId={targetCollectionId}
+                itemStatus={item.status}
+                onApproved={onTocApproved}
+              />
+              {actionError && (
+                <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                  {actionError}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <Field label="Page number">
+                <div className="relative">
+                  <input
+                    value={pageNumberStr}
+                    onChange={(e) => setPageNumberStr(e.target.value)}
+                    onFocus={() => setShowTocSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowTocSuggestions(false), 150)}
+                    className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1.5 text-sm"
+                    placeholder="e.g. 42"
+                  />
+                  {showTocSuggestions && tocSuggestions.length > 0 && (
+                    <div className="absolute z-20 mt-1 w-full rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-md">
+                      <ul className="max-h-48 overflow-auto py-1 text-xs">
+                        {tocSuggestions.map((s) => (
+                          <li key={s.entry.id}>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (s.entry.pageNumber != null) {
+                                  setPageNumberStr(String(s.entry.pageNumber));
+                                }
+                                setShowTocSuggestions(false);
+                              }}
+                              className="block w-full px-3 py-1.5 text-left hover:bg-stone-100 dark:hover:bg-stone-800"
+                            >
+                              <span className="font-medium">{s.entry.title}</span>
+                              {s.entry.pageNumber != null && (
+                                <span className="ml-2 text-stone-500 dark:text-stone-400">
+                                  p. {s.entry.pageNumber}
+                                </span>
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  ) : (
-                    <>
-                      <CookbookCombobox
-                        options={pickerOptions}
-                        value={assignedCollectionId}
-                        onChange={setAssignedCollectionId}
-                        onCreateNew={() => setCreatingCookbook(true)}
-                        loading={pickerLoading}
-                        matchedExistingTitle={matchedExisting?.title}
-                      />
-                      {!pickerLoading && pickerOptions.length === 0 && (
-                        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-                          No cookbooks yet — create one to save this recipe.
-                        </p>
-                      )}
-                    </>
                   )}
-                </Field>
-                <Field label="Page number">
-                  <div className="relative">
-                    <input
-                      value={pageNumberStr}
-                      onChange={(e) => setPageNumberStr(e.target.value)}
-                      onFocus={() => setShowTocSuggestions(true)}
-                      onBlur={() => setTimeout(() => setShowTocSuggestions(false), 150)}
-                      className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1.5 text-sm"
-                      placeholder="e.g. 42"
-                    />
-                    {showTocSuggestions && tocSuggestions.length > 0 && (
-                      <div className="absolute z-20 mt-1 w-full rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-md">
-                        <ul className="max-h-48 overflow-auto py-1 text-xs">
-                          {tocSuggestions.map((s) => (
-                            <li key={s.entry.id}>
-                              <button
-                                type="button"
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  if (s.entry.pageNumber != null) {
-                                    setPageNumberStr(String(s.entry.pageNumber));
-                                  }
-                                  setShowTocSuggestions(false);
-                                }}
-                                className="block w-full px-3 py-1.5 text-left hover:bg-stone-100 dark:hover:bg-stone-800"
-                              >
-                                <span className="font-medium">{s.entry.title}</span>
-                                {s.entry.pageNumber != null && (
-                                  <span className="ml-2 text-stone-500 dark:text-stone-400">
-                                    p. {s.entry.pageNumber}
-                                  </span>
-                                )}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </Field>
-              </div>
+                </div>
+              </Field>
 
               {drafts.length > 1 && (
                 <div
@@ -1985,6 +1963,110 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">{label}</span>
       {children}
     </label>
+  );
+}
+
+/**
+ * Target-cookbook picker with an inline "create a new cookbook" form.
+ * Self-contained — owns its own create state and persistence — so both
+ * the recipe-save path and the ToC placeholder path can drop it in
+ * without duplicating the create flow. On a successful create it selects
+ * the new cookbook via `onChange`.
+ */
+function CookbookField({
+  options,
+  value,
+  onChange,
+  loading = false,
+  matchedExistingTitle,
+}: {
+  options: readonly CollectionPickerOption[];
+  value: string;
+  onChange: (id: string) => void;
+  loading?: boolean;
+  matchedExistingTitle?: string;
+}) {
+  const saveCollection = useSaveCollection();
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState('');
+  const [author, setAuthor] = useState('');
+  const [error, setError] = useState<string | undefined>();
+
+  if (creating) {
+    return (
+      <div className="space-y-2 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2">
+        <input
+          autoFocus
+          placeholder="Cookbook title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+        />
+        <input
+          placeholder="Author (optional)"
+          value={author}
+          onChange={(e) => setAuthor(e.target.value)}
+          className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+        />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              const t = title.trim();
+              if (!t) return;
+              const cookbook: RecipeCollection = createCookbook({
+                title: t,
+                author: author.trim() || undefined,
+              });
+              try {
+                await saveCollection.mutateAsync(cookbook);
+                onChange(cookbook.id);
+                setCreating(false);
+                setTitle('');
+                setAuthor('');
+                setError(undefined);
+              } catch (err) {
+                setError((err as Error).message);
+              }
+            }}
+            disabled={!title.trim() || saveCollection.isPending}
+            className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
+          >
+            {saveCollection.isPending ? 'Creating…' : 'Create'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCreating(false);
+              setTitle('');
+              setAuthor('');
+            }}
+            className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
+          >
+            Cancel
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-700 dark:text-red-300">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <CookbookCombobox
+        options={options}
+        value={value}
+        onChange={onChange}
+        onCreateNew={() => setCreating(true)}
+        loading={loading}
+        matchedExistingTitle={matchedExistingTitle}
+      />
+      {!loading && options.length === 0 && (
+        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+          No cookbooks yet — create one to save this recipe.
+        </p>
+      )}
+    </>
   );
 }
 
