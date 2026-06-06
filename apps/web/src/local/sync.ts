@@ -118,6 +118,32 @@ export interface PullResult {
   importTocEntries: number;
   conversionRules: number;
   rewriteJobs: number;
+  /** Collections + their children pulled because they're shared into the user's household. */
+  householdSharedCollections: number;
+  /** The user's active household id at pull time (null if none). */
+  householdId: string | null;
+}
+
+/**
+ * Look up the user's currently-active household. Households live on the
+ * server only — they don't replicate through cr-sqlite — so sync code
+ * has to ask the server each time. Cheap: one row at most.
+ */
+async function getCurrentHouseholdId(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<string | null> {
+  const { data, error } = await client
+    .from('household_members')
+    .select('household_id')
+    .eq('user_id', ownerId)
+    .is('left_at', null)
+    .maybeSingle();
+  if (error) {
+    logSync('error', 'household lookup failed', { error: error.message });
+    return null;
+  }
+  return data?.household_id ?? null;
 }
 
 interface ConversionRuleRow {
@@ -479,6 +505,24 @@ export async function pullAll(
       return n;
     }),
   ]);
+
+  // Household-shared content from other members. Done as a separate
+  // serial phase (after the parallel tail above) so the watermark for
+  // owned content stays clean and so the sync invariant "I'm pulling
+  // things I own" doesn't get mixed up with "I'm pulling things shared
+  // with me". When the user isn't in a household this is a no-op.
+  checkAbort('household');
+  const householdPhase = Date.now();
+  const householdId = await getCurrentHouseholdId(client, ownerId);
+  const householdSharedCollections = householdId
+    ? await pullHouseholdSharedContent(client, ownerId, householdId)
+    : 0;
+  logSync(
+    'info',
+    `pull household-shared: ${householdSharedCollections} collections in ${Date.now() - householdPhase}ms`,
+    { householdId },
+  );
+
   logSync('info', `pull complete in ${Date.now() - pullStart}ms`);
 
   return {
@@ -492,7 +536,142 @@ export async function pullAll(
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
     rewriteJobs: rewriteJobsPulled,
+    householdSharedCollections,
+    householdId,
   };
+}
+
+/**
+ * Pull the libraries of the other members of the user's household.
+ *
+ * Sharing is library-wide and membership-driven now: every collection
+ * (plus its recipes / ingredients / instructions / refs) owned by a
+ * co-member who shares their library is visible to us via RLS. We don't
+ * filter on a per-collection flag — we just fetch everything owned by
+ * *someone else* (`owner_id <> me`) and let RLS return only the rows we
+ * may read. New recipes a co-member adds later are picked up
+ * incrementally via the `updated_at` watermark, which is the fix for
+ * "shared a cookbook then added a recipe and it didn't propagate".
+ *
+ * Watermarked on a per-household topic so switching households forces a
+ * fresh pull. Each co-member collection is tagged locally with
+ * `shared_with_household_id = householdId` (a local-only marker — the
+ * server column is vestigial) so the library read surfaces it and the
+ * "Shared with household" badge renders.
+ */
+async function pullHouseholdSharedContent(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<number> {
+  const collectionTopic = `household_collections:${ownerId}:${householdId}`;
+  const recipeTopic = `household_recipes:${ownerId}:${householdId}`;
+
+  const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
+  const collections = await fetchAllPages<CollectionRow>((from, to) =>
+    client
+      .from('recipe_collections')
+      .select('*')
+      .neq('owner_id', ownerId)
+      .gte('updated_at', collectionsSince)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  let maxCollectionTs = await getWatermark(collectionTopic);
+  for (const row of collections) {
+    // Local-only marker so LocalRecipeCollectionRepository surfaces it
+    // as a household-shared collection.
+    await upsertCollectionRow({ ...row, shared_with_household_id: householdId });
+    maxCollectionTs = Math.max(maxCollectionTs, toMs(row.updated_at));
+  }
+  if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
+
+  // Recipes inside co-members' collections. The inner-join filter on the
+  // collection's owner scopes us to other people's recipes; RLS narrows
+  // that to library-sharing co-members. Pagination identical to the
+  // owned-content path.
+  const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
+  const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
+    (from, to) =>
+      client
+        .from('recipes')
+        .select('*, recipe_collections!inner(owner_id)')
+        .neq('recipe_collections.owner_id', ownerId)
+        .gte('updated_at', recipesSince)
+        .order('updated_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+  );
+  const recipes: RecipeRow[] = recipeRowsRaw.map((row) => {
+    const { recipe_collections: _rc, ...rest } = row;
+    return rest as RecipeRow;
+  });
+
+  if (recipes.length > 0) {
+    const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
+      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
+        client
+          .from('ingredients')
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+          .neq('recipes.recipe_collections.owner_id', ownerId)
+          .gte('recipes.updated_at', recipesSince)
+          .order('recipe_id', { ascending: true })
+          .order('sort_order', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
+        client
+          .from('instructions')
+          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
+          .neq('recipes.recipe_collections.owner_id', ownerId)
+          .gte('recipes.updated_at', recipesSince)
+          .order('recipe_id', { ascending: true })
+          .order('step_number', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
+        (from, to) =>
+          client
+            .from('instruction_ingredient_refs')
+            .select(
+              '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
+            )
+            .neq('instructions.recipes.recipe_collections.owner_id', ownerId)
+            .gte('instructions.recipes.updated_at', recipesSince)
+            .order('instruction_id', { ascending: true })
+            .range(from, to),
+      ),
+    ]);
+
+    const ings = stripEmbedded(ingsRaw, 'recipes');
+    const steps = stripEmbedded(stepsRaw, 'recipes');
+    const ingByRecipe = groupBy(ings, (i) => i.recipe_id);
+    const stepsByRecipe = groupBy(steps, (s) => s.recipe_id);
+    const refsByRecipe = new Map<string, InstructionRefRow[]>();
+    for (const row of refsRaw) {
+      const recipeId = row.instructions?.recipe_id ?? '';
+      const { instructions: _i, ...refOnly } = row;
+      if (!recipeId) continue;
+      const arr = refsByRecipe.get(recipeId) ?? [];
+      arr.push(refOnly as InstructionRefRow);
+      refsByRecipe.set(recipeId, arr);
+    }
+
+    let maxRecipeTs = await getWatermark(recipeTopic);
+    for (const r of recipes) {
+      await upsertRecipeRow(
+        r,
+        ingByRecipe.get(r.id) ?? [],
+        stepsByRecipe.get(r.id) ?? [],
+        refsByRecipe.get(r.id) ?? [],
+      );
+      maxRecipeTs = Math.max(maxRecipeTs, toMs(r.updated_at));
+    }
+    if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
+  }
+
+  return collections.length;
 }
 
 // ---------- nutrition essentials (USDA Foundation + SR Legacy) ----------
@@ -1457,6 +1636,7 @@ export function subscribeRealtime(
   client: CookbooksClient,
   ownerId: string,
   callbacks: RealtimeCallbacks,
+  householdId?: string | null,
 ): RealtimeHandle {
   const { onLocalUpdate, onNeedsPull } = callbacks;
   const channel: RealtimeChannel = client
@@ -1545,8 +1725,45 @@ export function subscribeRealtime(
         if (evt?.status === 'DONE') onNeedsPull();
         onLocalUpdate();
       },
-    )
-    .subscribe();
+    );
+
+  // Household library sharing is membership-driven, so there's no
+  // per-collection flag to filter realtime on. Instead, watch all
+  // recipe_collections changes (RLS only lets co-members' rows through)
+  // and schedule a household re-pull — that re-applies the local marker
+  // and fetches any new recipes by watermark. The owner-filtered
+  // subscription above already handles our own rows; the duplicate
+  // events on our own collections are idempotent.
+  if (householdId) {
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'recipe_collections',
+      },
+      () => {
+        onNeedsPull();
+      },
+    );
+    // Membership churn (someone joined or left) doesn't change recipe
+    // data immediately but it changes which collections we can see, so
+    // schedule a pull on any household_members change for our household.
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'household_members',
+        filter: `household_id=eq.${householdId}`,
+      },
+      () => {
+        onNeedsPull();
+      },
+    );
+  }
+
+  channel.subscribe();
 
   return {
     unsubscribe: async () => {
@@ -1968,10 +2185,7 @@ async function pushConversionRule(client: CookbooksClient, id: string): Promise<
     p_from_unit: local.from_unit as string,
     p_to_unit: local.to_unit as string,
     p_factor: local.factor as number,
-    // house_conversion_upsert.p_ingredient_name is declared `text` (no
-    // `default null`) but the body coalesces empty string → null, so
-    // pass '' on absence rather than dropping the key entirely.
-    p_ingredient_name: (local.ingredient_name as string | null) ?? '',
+    p_ingredient_name: (local.ingredient_name as string | null) ?? undefined,
     p_notes: (local.notes as string | null) ?? undefined,
   });
   if (error) throw error;
