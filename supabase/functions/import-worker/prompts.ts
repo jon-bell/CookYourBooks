@@ -44,6 +44,7 @@ Rules:
 - temperature: null or { "value": 350, "unit": "FAHRENHEIT" } / "CELSIUS".
 - pageNumbers: array of integers from corners/headers. bookTitle: from top/bottom of page. yield uses the PEOPLE unit for serving counts and WHOLE for non-serving yields (cookies, loaves).
 - consumedIngredients on each step lists which recipe ingredients are used. For measured items include their quantity; for vague items use { "ingredientName": "...", "vague": true }.
+- description: any headnote / intro paragraph about the recipe. If the page ALSO shows clearly-related content that is not the recipe itself — a simple accompaniment, a serving suggestion, a variation, or a buying/ingredient guide — append a brief note about it to the END of description, prefixed "On the page: ", so the cook can refer back to the page. Keep it to a sentence or two and never invent content that isn't visibly present.
 - Include the full extracted page text in rawText.`;
 
 export const TOC_PROMPT = `This image is a cookbook table of contents (or index). Its primary feature is a list of titles and page numbers, which might be formatted in a variety of ways (sometimes might not even say "page", but still has numbers aligned with titles). There may be other artifacts on the page. Extract every visible entry and return JSON ONLY in this exact shape:

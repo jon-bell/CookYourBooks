@@ -4,6 +4,7 @@ import { useImportBatch, useImportItems, useUpdateImportItem } from '../import/q
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { finalizeGrouping, kickOcr } from '../import/api.js';
+import { rotateImportItemImage } from '../import/rotateItemImage.js';
 import type { ImportItem } from '../import/model.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
 
@@ -43,6 +44,14 @@ export function ImportGroupingPage() {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  // Manual page rotation. `rotatingId` gates concurrent rotates;
+  // `rotationVersion` bumps per item so thumbnails + the preview re-fetch the
+  // rewritten bytes (the signed-URL cache is busted inside rotateImportItemImage).
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
+  const [rotationVersion, setRotationVersion] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+  const [rotateError, setRotateError] = useState<string | undefined>();
 
   // Items in upload order. Only AWAITING_GROUPING items participate in
   // the grouping decision — any item already past that status (e.g.,
@@ -93,6 +102,27 @@ export function ImportGroupingPage() {
 
   function resetToAllSplit() {
     setRemovedSplits(new Set());
+  }
+
+  // Rotate the page image 90° (turns = +1 CW / -1 CCW) and re-upload in
+  // place. Pre-OCR, so no re-OCR reset is needed — the worker reads the
+  // rewritten bytes when grouping is confirmed.
+  async function rotateItem(item: ImportItem, quarterTurns: number) {
+    if (rotatingId) return;
+    setRotatingId(item.id);
+    setRotateError(undefined);
+    try {
+      await rotateImportItemImage(item, quarterTurns);
+      setRotationVersion((prev) => {
+        const next = new Map(prev);
+        next.set(item.id, (prev.get(item.id) ?? 0) + 1);
+        return next;
+      });
+    } catch (e) {
+      setRotateError(`Couldn't rotate the page: ${(e as Error).message}`);
+    } finally {
+      setRotatingId(null);
+    }
   }
 
   function mergeAll() {
@@ -231,6 +261,9 @@ export function ImportGroupingPage() {
         onToggleToc={toggleToc}
         onToggleSplit={toggleSplit}
         onPreview={(idx) => setPreviewIndex(idx)}
+        onRotate={rotateItem}
+        rotatingId={rotatingId}
+        rotationVersion={rotationVersion}
       />
 
       {previewIndex !== null && (
@@ -238,11 +271,18 @@ export function ImportGroupingPage() {
           item={groupable[previewIndex]!}
           index={previewIndex}
           total={groupable.length}
+          groups={groups}
+          removedSplits={removedSplits}
+          onToggleSplit={toggleSplit}
+          onRotate={(turns) => void rotateItem(groupable[previewIndex]!, turns)}
+          rotating={rotatingId === groupable[previewIndex]!.id}
+          version={rotationVersion.get(groupable[previewIndex]!.id) ?? 0}
           onClose={() => setPreviewIndex(null)}
           onNavigate={setPreviewIndex}
         />
       )}
 
+      {rotateError && <p className="text-sm text-red-700 dark:text-red-300">{rotateError}</p>}
       {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
 
       <div className="flex gap-3">
@@ -286,6 +326,9 @@ function GroupingStrip({
   onToggleToc,
   onToggleSplit,
   onPreview,
+  onRotate,
+  rotatingId,
+  rotationVersion,
 }: {
   groups: ImportItem[][];
   removedSplits: Set<number>;
@@ -294,6 +337,9 @@ function GroupingStrip({
   onToggleToc: (primaryId: string) => void;
   onToggleSplit: (leftIdx: number) => void;
   onPreview: (idx: number) => void;
+  onRotate: (item: ImportItem, quarterTurns: number) => void;
+  rotatingId: string | null;
+  rotationVersion: Map<string, number>;
 }) {
   // Map item.id -> its index inside `groupable`, used by the split
   // gap to know which split toggle it represents.
@@ -340,6 +386,9 @@ function GroupingStrip({
                     pageInGroup={ii + 1}
                     groupSize={g.length}
                     onPreview={() => onPreview(idxInBatch)}
+                    onRotate={(turns) => onRotate(it, turns)}
+                    rotating={rotatingId === it.id}
+                    version={rotationVersion.get(it.id) ?? 0}
                   />
                   {/* Splits live BETWEEN thumbs; render the right-side
                       gap on every thumb except the very last in the
@@ -368,11 +417,17 @@ function Thumb({
   pageInGroup,
   groupSize,
   onPreview,
+  onRotate,
+  rotating,
+  version,
 }: {
   item: ImportItem;
   pageInGroup: number;
   groupSize: number;
   onPreview: () => void;
+  onRotate: (quarterTurns: number) => void;
+  rotating: boolean;
+  version: number;
 }) {
   return (
     <div className="flex w-32 flex-col items-center gap-1">
@@ -384,20 +439,62 @@ function Thumb({
         className="aspect-[3/4] w-full overflow-hidden rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:border-stone-500 dark:hover:border-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-400"
       >
         <ImportThumb
+          // Remount on rotate so the (cache-busted) thumb re-signs + reloads.
+          key={`${item.id}-${version}`}
           path={item.thumbPath ?? item.storagePath}
           alt={`Page ${item.pageIndex + 1}`}
           className="h-full w-full object-cover"
         />
       </button>
-      <div className="text-[11px] leading-tight text-stone-600 dark:text-stone-400">
-        Page {item.pageIndex + 1}
-        {groupSize > 1 && (
-          <span className="ml-1 text-stone-400">
-            ({pageInGroup}/{groupSize})
-          </span>
-        )}
+      <div className="flex items-center gap-1">
+        <RotateButton dir="ccw" disabled={rotating} onClick={() => onRotate(-1)} />
+        <span className="text-[11px] leading-tight text-stone-600 dark:text-stone-400">
+          Page {item.pageIndex + 1}
+          {groupSize > 1 && (
+            <span className="ml-1 text-stone-400">
+              ({pageInGroup}/{groupSize})
+            </span>
+          )}
+        </span>
+        <RotateButton dir="cw" disabled={rotating} onClick={() => onRotate(1)} />
       </div>
     </div>
+  );
+}
+
+/** Small ⟲ / ⟳ rotate control. Shared by the strip thumbs and the preview. */
+function RotateButton({
+  dir,
+  disabled,
+  onClick,
+  size = 'sm',
+}: {
+  dir: 'cw' | 'ccw';
+  disabled?: boolean;
+  onClick: () => void;
+  size?: 'sm' | 'lg';
+}) {
+  const label = dir === 'cw' ? 'Rotate right' : 'Rotate left';
+  const glyph = dir === 'cw' ? '⟳' : '⟲';
+  const light =
+    'border-stone-300 dark:border-stone-600 text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800';
+  const dark = 'border-white/20 text-white/90 hover:bg-white/10';
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className={`rounded border ${size === 'lg' ? 'px-3 py-1.5 text-base' : 'px-1 text-xs'} ${
+        size === 'lg' ? dark : light
+      } disabled:opacity-40`}
+    >
+      {glyph}
+    </button>
   );
 }
 
@@ -449,18 +546,33 @@ function PagePreviewOverlay({
   item,
   index,
   total,
+  groups,
+  removedSplits,
+  onToggleSplit,
+  onRotate,
+  rotating,
+  version,
   onClose,
   onNavigate,
 }: {
   item: ImportItem;
   index: number;
   total: number;
+  groups: ImportItem[][];
+  removedSplits: Set<number>;
+  onToggleSplit: (leftIdx: number) => void;
+  onRotate: (quarterTurns: number) => void;
+  rotating: boolean;
+  version: number;
   onClose: () => void;
   onNavigate: (idx: number) => void;
 }) {
   const [imgUrl, setImgUrl] = useState<string | undefined>();
   const [loadError, setLoadError] = useState(false);
 
+  // Re-fetch when the image changes OR after a rotate (version bump). The
+  // signed-URL cache was busted in rotateImportItemImage, so this re-signs
+  // and the new token defeats the browser/CDN cache of the old bytes.
   useEffect(() => {
     let cancelled = false;
     setImgUrl(undefined);
@@ -475,7 +587,21 @@ function PagePreviewOverlay({
     return () => {
       cancelled = true;
     };
-  }, [item.storagePath]);
+  }, [item.storagePath, version]);
+
+  // Which recipe (group) this page belongs to, for the footer label.
+  const membership = useMemo(() => {
+    const gi = groups.findIndex((g) => g.some((it) => it.id === item.id));
+    if (gi < 0) return undefined;
+    const grp = groups[gi]!;
+    const pos = grp.findIndex((it) => it.id === item.id);
+    return {
+      recipeNumber: gi + 1,
+      totalRecipes: groups.length,
+      pageInGroup: pos + 1,
+      groupSize: grp.length,
+    };
+  }, [groups, item.id]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -524,40 +650,79 @@ function PagePreviewOverlay({
       </div>
 
       <div
-        className="flex shrink-0 flex-wrap items-center gap-3 border-t border-white/10 px-4 py-3 text-sm text-white/90"
+        className="flex shrink-0 flex-col gap-2 border-t border-white/10 px-4 py-3 text-sm text-white/90"
         onClick={(e) => e.stopPropagation()}
       >
-        <span>
-          Page {item.pageIndex + 1} · {index + 1} of {total}
-        </span>
-        <span className="hidden text-white/60 sm:inline">
-          Pinch or ⌘+scroll to zoom · drag to pan · ← / → to move between pages
-        </span>
-        <span className="ml-auto flex gap-2">
-          <button
-            type="button"
-            disabled={index === 0}
-            onClick={() => onNavigate(index - 1)}
-            className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
-          >
-            ← Prev
-          </button>
-          <button
-            type="button"
-            disabled={index >= total - 1}
-            onClick={() => onNavigate(index + 1)}
-            className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
-          >
-            Next →
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md bg-white/90 px-3 py-1.5 font-medium text-stone-900 hover:bg-white"
-          >
-            Close
-          </button>
-        </span>
+        <div className="flex flex-wrap items-center gap-3">
+          <span>
+            Page {item.pageIndex + 1} · {index + 1} of {total}
+          </span>
+          {membership && (
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">
+              Recipe {membership.recipeNumber} of {membership.totalRecipes}
+              {membership.groupSize > 1 &&
+                ` · page ${membership.pageInGroup} of ${membership.groupSize}`}
+            </span>
+          )}
+          <span className="hidden text-white/60 sm:inline">
+            Pinch or ⌘+scroll to zoom · drag to pan · ← / → to move between pages
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-wide text-white/50">Rotate</span>
+          <RotateButton dir="ccw" size="lg" disabled={rotating} onClick={() => onRotate(-1)} />
+          <RotateButton dir="cw" size="lg" disabled={rotating} onClick={() => onRotate(1)} />
+          {rotating && <span className="text-xs text-white/60">Rotating…</span>}
+
+          {index > 0 && (
+            <button
+              type="button"
+              onClick={() => onToggleSplit(index - 1)}
+              className="rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
+            >
+              {removedSplits.has(index - 1)
+                ? 'Split from previous page'
+                : 'Merge with previous page'}
+            </button>
+          )}
+          {index < total - 1 && (
+            <button
+              type="button"
+              onClick={() => onToggleSplit(index)}
+              className="rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
+            >
+              {removedSplits.has(index)
+                ? 'Split from next page'
+                : 'Merge with next page'}
+            </button>
+          )}
+
+          <span className="ml-auto flex gap-2">
+            <button
+              type="button"
+              disabled={index === 0}
+              onClick={() => onNavigate(index - 1)}
+              className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              disabled={index >= total - 1}
+              onClick={() => onNavigate(index + 1)}
+              className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
+            >
+              Next →
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md bg-white/90 px-3 py-1.5 font-medium text-stone-900 hover:bg-white"
+            >
+              Close
+            </button>
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  createRecipe,
   createCookbook,
   exact,
   formatQuantity,
@@ -32,7 +31,7 @@ import {
   useUpdateImportItem,
 } from '../import/queries.js';
 import { kickOcr, resetImportItem, setImportItemToc } from '../import/api.js';
-import { withFreshIds } from '../import/draftToRecipe.js';
+import { buildRecipeFromDraft } from '../import/promoteDraft.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { TocReviewPanel } from '../import/TocReviewPanel.js';
 import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
@@ -434,18 +433,6 @@ export function ImportItemPage() {
         : currentDraft.pageNumbers
           ? [...currentDraft.pageNumbers]
           : undefined;
-    // Re-mint ingredient + instruction ids so a retry (or two drafts
-    // happening to share an id) never trips the global UNIQUE on
-    // ingredients.id / instructions.id.
-    const { ingredients, instructions } = withFreshIds(currentDraft);
-    // bookTitle: if the batch has a target cookbook, that wins —
-    // OCR-extracted bookTitle is just a hint and the user has
-    // explicitly chosen where this recipe belongs.
-    const bookTitle = targetCollection?.title ?? currentDraft.bookTitle;
-    // Planner pre-binding takes precedence over fuzzy match. Neither
-    // wins → mint a fresh id.
-    const recipeId = plannedRecipe?.id ?? matchedExisting?.id;
-    const overwriteTitle = plannedRecipe?.title ?? matchedExisting?.title;
     const remainingAfter = drafts.length - 1; // local count of drafts still left on this item
     const nextItem = remainingAfter === 0 ? findReviewable(batchItems, item.id, 'next') : undefined;
     // Toast immediately so the user has feedback before the network
@@ -458,21 +445,14 @@ export function ImportItemPage() {
     } else {
       showToast(setToast, 'Saving recipe — batch complete!');
     }
-    const recipe = createRecipe({
-      id: recipeId,
-      title: currentDraft.title?.trim() || overwriteTitle || 'Untitled',
-      servings: currentDraft.servings,
-      ingredients,
-      instructions,
-      description: currentDraft.description,
-      timeEstimate: currentDraft.timeEstimate,
-      equipment: currentDraft.equipment,
-      bookTitle,
+    // Planner pre-binding takes precedence over fuzzy match (both feed
+    // recipeId/overwriteTitle); the target cookbook's title wins for
+    // bookTitle. See buildRecipeFromDraft.
+    const recipe = buildRecipeFromDraft(currentDraft, {
+      collectionTitle: targetCollection?.title,
+      recipeId: plannedRecipe?.id ?? matchedExisting?.id,
+      overwriteTitle: plannedRecipe?.title ?? matchedExisting?.title,
       pageNumbers,
-      sourceImageText: currentDraft.sourceImageText,
-      // Filling the placeholder clears its planner star — the user's
-      // wish has been granted, drop it from the queue.
-      starred: false,
     });
     try {
       await saveRecipe.mutateAsync(recipe);
