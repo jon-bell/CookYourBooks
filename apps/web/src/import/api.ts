@@ -38,6 +38,26 @@ export async function resetImportItem(itemId: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Flip an item's Table-of-Contents flag and re-arm it for a fresh OCR
+ * pass, server-side. The client can't push this through the outbox — the
+ * push scrub drops any client status change that isn't REVIEWED /
+ * DISCARDED, so a page already OCR'd as a recipe could never be re-read
+ * as a ToC (and vice versa). This RPC resets the row to PENDING, clears
+ * the stale drafts + any prior ToC entries, and sets is_toc in one shot;
+ * the caller then kicks the worker so the re-OCR starts immediately.
+ */
+export async function setImportItemToc(
+  itemId: string,
+  isToc: boolean,
+): Promise<void> {
+  const { error } = await supabase.rpc('import_set_item_toc', {
+    p_item_id: itemId,
+    p_is_toc: isToc,
+  });
+  if (error) throw error;
+}
+
 // ---------- bakeoff ----------
 
 export interface BakeoffVariantInput {
