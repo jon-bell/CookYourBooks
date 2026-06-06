@@ -1111,6 +1111,65 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     return hydrateCollection(row);
   }
 
+  /**
+   * SQL-backed library search — title OR any ingredient name, case
+   * insensitive. Returns lightweight hits and does NOT hydrate recipe
+   * graphs (the old SearchPage hydrated the entire library into JS just
+   * to read titles + match ingredient names, saturating the single
+   * cr-sqlite connection on large libraries). An empty query returns
+   * every recipe, so callers can reuse it as a plain recipe list.
+   * Placeholders (no ingredients and no instructions) sort last, matching
+   * the previous in-memory ranking.
+   */
+  async searchRecipes(query: string): Promise<RecipeSearchHit[]> {
+    const db = await getLocalDb();
+    const q = query.trim().toLowerCase();
+    const params: unknown[] = [this.ownerId];
+    let filter = '';
+    if (q) {
+      const like = `%${escapeLike(q)}%`;
+      filter = ` and (lower(r.title) like ? escape '\\'
+                 or exists (select 1 from ingredients i
+                            where i.recipe_id = r.id and lower(i.name) like ? escape '\\'))`;
+      params.push(like, like);
+    }
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      collection_id: string;
+      collection_title: string;
+      source_type: CollectionRow['source_type'];
+      has_content: number;
+    }>(
+      `select r.id, r.title, r.collection_id,
+              c.title as collection_title, c.source_type,
+              (exists (select 1 from ingredients where recipe_id = r.id)
+               or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+         from recipes r
+         join recipe_collections c on c.id = r.collection_id
+        where r.deleted = 0 and c.deleted = 0
+          and (c.owner_id = ? or c.shared_with_household_id is not null)
+          ${filter}
+        order by has_content desc, c.title asc, r.sort_order asc`,
+      params as (string | number)[],
+    )) as Array<{
+      id: string;
+      title: string;
+      collection_id: string;
+      collection_title: string;
+      source_type: CollectionRow['source_type'];
+      has_content: number;
+    }>;
+    return rows.map((r) => ({
+      recipeId: r.id,
+      recipeTitle: r.title,
+      collectionId: r.collection_id,
+      collectionTitle: r.collection_title,
+      sourceType: r.source_type,
+      isPlaceholder: !r.has_content,
+    }));
+  }
+
   async save(collection: RecipeCollection): Promise<void> {
     const insert = collectionToInsert(collection, this.ownerId);
     const row: CollectionRow = {
@@ -1420,6 +1479,76 @@ export async function getRecipeSummary(id: string): Promise<RecipeSummary | unde
   const row = rows[0];
   if (!row) return undefined;
   return { id: row.id, title: row.title, collectionId: row.collection_id };
+}
+
+export interface RecipeSearchHit {
+  recipeId: string;
+  recipeTitle: string;
+  collectionId: string;
+  collectionTitle: string;
+  sourceType: CollectionRow['source_type'];
+  isPlaceholder: boolean;
+}
+
+/** Escape LIKE wildcards so a user's query is matched literally (paired
+ *  with `escape '\'` in the SQL). */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
+/**
+ * Fully hydrate a specific set of recipes by id, in a fixed number of
+ * queries (not per-recipe). Used by the shopping list to hydrate only the
+ * recipes the user actually selected, instead of materializing the whole
+ * library. Same batch-and-bucket shape as hydrateRecipeRowsForCollection.
+ */
+export async function getRecipesByIds(ids: readonly string[]): Promise<Recipe[]> {
+  if (ids.length === 0) return [];
+  const db = await getLocalDb();
+  const ph = ids.map(() => '?').join(',');
+  const args = ids as readonly string[] as string[];
+  const recipeRows = (await db.execO<RecipeRow>(
+    `select * from recipes where id in (${ph}) and deleted = 0`,
+    args,
+  )) as RecipeRow[];
+  if (recipeRows.length === 0) return [];
+  const inIds = `recipe_id in (${ph})`;
+  const [ingredients, instructions, refs] = await Promise.all([
+    db.execO<IngredientRow>(`select * from ingredients where ${inIds}`, args),
+    db.execO<InstructionRow>(`select * from instructions where ${inIds}`, args),
+    db.execO<InstructionRefRow & { recipe_id: string }>(
+      `select r.*, i.recipe_id
+         from instruction_ingredient_refs r
+         join instructions i on i.id = r.instruction_id
+         where i.${inIds}`,
+      args,
+    ),
+  ]);
+  const bucket = <T extends { recipe_id: string }>(rows: T[]): Map<string, T[]> => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) {
+      const list = m.get(r.recipe_id);
+      if (list) list.push(r);
+      else m.set(r.recipe_id, [r]);
+    }
+    return m;
+  };
+  const ingByRecipe = bucket(ingredients as Array<IngredientRow & { recipe_id: string }>);
+  const insByRecipe = bucket(instructions as Array<InstructionRow & { recipe_id: string }>);
+  const refsByRecipe = bucket(refs as Array<InstructionRefRow & { recipe_id: string }>);
+  // Preserve the caller's requested order.
+  const byId = new Map(recipeRows.map((r) => [r.id, r]));
+  return ids
+    .map((id) => byId.get(id))
+    .filter((r): r is RecipeRow => r != null)
+    .map((row) =>
+      rowsToRecipe(
+        row,
+        (ingByRecipe.get(row.id) ?? []) as IngredientRow[],
+        (insByRecipe.get(row.id) ?? []) as InstructionRow[],
+        (refsByRecipe.get(row.id) ?? []) as InstructionRefRow[],
+      ),
+    );
 }
 
 /** List direct adaptations of a recipe, regardless of collection. */

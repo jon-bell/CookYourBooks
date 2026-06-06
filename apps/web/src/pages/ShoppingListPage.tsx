@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react';
 import { buildShoppingList } from '@cookyourbooks/domain';
-import { useCollections } from '../data/queries.js';
+import { useRecipeSearch, useRecipesByIds } from '../data/queries.js';
 import { PantrySection } from './PantrySection.js';
 
 export function ShoppingListPage() {
-  const { data: collections = [], isLoading } = useCollections();
+  // Lightweight selector list (no full-library hydration). Only the
+  // recipes the user actually selects get hydrated, on demand.
+  const { data: hits = [], isLoading } = useRecipeSearch('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [checked, setChecked] = useState<Set<string>>(() => loadChecked());
 
-  const list = useMemo(() => {
-    const recipes = collections.flatMap((c) => c.recipes).filter((r) => selected.has(r.id));
-    return buildShoppingList(recipes);
-  }, [collections, selected]);
+  const selectedIds = useMemo(() => [...selected], [selected]);
+  const { data: selectedRecipes = [] } = useRecipesByIds(selectedIds);
+  const list = useMemo(() => buildShoppingList(selectedRecipes), [selectedRecipes]);
 
   function toggleSelect(id: string) {
     setSelected((cur) => {
@@ -40,22 +41,22 @@ export function ShoppingListPage() {
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-stone-600 dark:text-stone-400">Include recipes</h2>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
-          {collections.flatMap((c) =>
-            c.recipes.map((r) => (
-              <label
-                key={r.id}
-                className="flex cursor-pointer items-center gap-2 rounded border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-3 py-2 text-sm hover:border-stone-400"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(r.id)}
-                  onChange={() => toggleSelect(r.id)}
-                />
-                <span className="font-medium">{r.title}</span>
-                <span className="ml-auto text-xs text-stone-500 dark:text-stone-400">{c.title}</span>
-              </label>
-            )),
-          )}
+          {hits.map((h) => (
+            <label
+              key={h.recipeId}
+              className="flex cursor-pointer items-center gap-2 rounded border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-3 py-2 text-sm hover:border-stone-400"
+            >
+              <input
+                type="checkbox"
+                checked={selected.has(h.recipeId)}
+                onChange={() => toggleSelect(h.recipeId)}
+              />
+              <span className="font-medium">{h.recipeTitle}</span>
+              <span className="ml-auto text-xs text-stone-500 dark:text-stone-400">
+                {h.collectionTitle}
+              </span>
+            </label>
+          ))}
         </div>
       </section>
 
