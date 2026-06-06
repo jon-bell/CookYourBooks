@@ -105,6 +105,33 @@ async function fetchAllPages<T>(
   return out;
 }
 
+/**
+ * Keyset (cursor) pagination — the offset-free cousin of
+ * {@link fetchAllPages}. Each page starts strictly *after* the previous
+ * page's last row instead of `OFFSET`, which Postgres implements by
+ * re-scanning and discarding `offset` rows every page (O(offset) per
+ * page → O(n²/page) over a full pull). The builder must apply the cursor
+ * predicate, order ascending by the SAME key it cursors on, and
+ * `.limit(PAGE_SIZE)`; `build(null)` is the first page. The whole last
+ * row is handed back as the cursor so callers can key on a single column
+ * (`row.id`) or a composite tuple.
+ */
+async function fetchAllPagesKeyset<T>(
+  build: (cursor: T | null) => PromiseLike<PageResult>,
+): Promise<T[]> {
+  const out: T[] = [];
+  let cursor: T | null = null;
+  while (true) {
+    const { data, error } = await build(cursor);
+    if (error) throw error;
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+    cursor = rows[rows.length - 1]!;
+  }
+  return out;
+}
+
 // ---------- pull ----------
 
 export interface PullResult {
@@ -334,16 +361,17 @@ export async function pullAll(
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
 
   const collectionsPhase = Date.now();
-  const collections = await fetchAllPages<CollectionRow>((from, to) =>
-    client
+  const collections = await fetchAllPagesKeyset<CollectionRow>((cursor) => {
+    let q = client
       .from('recipe_collections')
       .select('*')
       .eq('owner_id', ownerId)
       .gte('updated_at', collectionsSince)
-      .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+    if (cursor) q = q.gt('id', cursor.id);
+    return q;
+  });
   logSync('info', `pull collections: ${collections.length} rows in ${Date.now() - collectionsPhase}ms`);
 
   let maxCollectionTs = await getWatermark(collectionTopic);
@@ -371,16 +399,18 @@ export async function pullAll(
   // (1000), so we loop until exhausted — without this, libraries past
   // 1000 recipes never sync the rows beyond the cap and newly-saved
   // recipes silently fail to appear on other devices.
-  const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
-    (from, to) =>
-      client
+  const recipeRowsRaw = await fetchAllPagesKeyset<RecipeRow & { recipe_collections?: unknown }>(
+    (cursor) => {
+      let q = client
         .from('recipes')
         .select('*, recipe_collections!inner(owner_id)')
         .eq('recipe_collections.owner_id', ownerId)
         .gte('updated_at', recipesSince)
-        .order('updated_at', { ascending: true })
         .order('id', { ascending: true })
-        .range(from, to),
+        .limit(PAGE_SIZE);
+      if (cursor) q = q.gt('id', cursor.id);
+      return q;
+    },
   );
   const recipesFetched: RecipeRow[] = recipeRowsRaw.map((row) => {
     const { recipe_collections: _rc, ...rest } = row;
@@ -399,29 +429,31 @@ export async function pullAll(
     // table is paginated independently — the join filter keeps the URL
     // small no matter how many parents matched.
     const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
-      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
-        client
+      fetchAllPagesKeyset<IngredientRow & { recipes?: unknown }>((cursor) => {
+        let q = client
           .from('ingredients')
           .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
           .eq('recipes.recipe_collections.owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
-          .order('recipe_id', { ascending: true })
-          .order('sort_order', { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
-        client
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+        if (cursor) q = q.gt('id', cursor.id);
+        return q;
+      }),
+      fetchAllPagesKeyset<InstructionRow & { recipes?: unknown }>((cursor) => {
+        let q = client
           .from('instructions')
           .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
           .eq('recipes.recipe_collections.owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
-          .order('recipe_id', { ascending: true })
-          .order('step_number', { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
-        (from, to) =>
-          client
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+        if (cursor) q = q.gt('id', cursor.id);
+        return q;
+      }),
+      fetchAllPagesKeyset<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
+        (cursor) => {
+          let q = client
             .from('instruction_ingredient_refs')
             .select(
               '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
@@ -429,7 +461,17 @@ export async function pullAll(
             .eq('instructions.recipes.recipe_collections.owner_id', ownerId)
             .gte('instructions.recipes.updated_at', recipesSince)
             .order('instruction_id', { ascending: true })
-            .range(from, to),
+            .order('ingredient_id', { ascending: true })
+            .limit(PAGE_SIZE);
+          if (cursor) {
+            // Composite keyset — instruction_ingredient_refs has no single
+            // id column; its PK is (instruction_id, ingredient_id).
+            q = q.or(
+              `instruction_id.gt.${cursor.instruction_id},and(instruction_id.eq.${cursor.instruction_id},ingredient_id.gt.${cursor.ingredient_id})`,
+            );
+          }
+          return q;
+        },
       ),
     ]);
 
@@ -568,16 +610,17 @@ async function pullHouseholdSharedContent(
   const recipeTopic = `household_recipes:${ownerId}:${householdId}`;
 
   const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
-  const collections = await fetchAllPages<CollectionRow>((from, to) =>
-    client
+  const collections = await fetchAllPagesKeyset<CollectionRow>((cursor) => {
+    let q = client
       .from('recipe_collections')
       .select('*')
       .neq('owner_id', ownerId)
       .gte('updated_at', collectionsSince)
-      .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+    if (cursor) q = q.gt('id', cursor.id);
+    return q;
+  });
   let maxCollectionTs = await getWatermark(collectionTopic);
   for (const row of collections) {
     // Local-only marker so LocalRecipeCollectionRepository surfaces it
@@ -592,16 +635,18 @@ async function pullHouseholdSharedContent(
   // that to library-sharing co-members. Pagination identical to the
   // owned-content path.
   const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
-  const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
-    (from, to) =>
-      client
+  const recipeRowsRaw = await fetchAllPagesKeyset<RecipeRow & { recipe_collections?: unknown }>(
+    (cursor) => {
+      let q = client
         .from('recipes')
         .select('*, recipe_collections!inner(owner_id)')
         .neq('recipe_collections.owner_id', ownerId)
         .gte('updated_at', recipesSince)
-        .order('updated_at', { ascending: true })
         .order('id', { ascending: true })
-        .range(from, to),
+        .limit(PAGE_SIZE);
+      if (cursor) q = q.gt('id', cursor.id);
+      return q;
+    },
   );
   const recipes: RecipeRow[] = recipeRowsRaw.map((row) => {
     const { recipe_collections: _rc, ...rest } = row;
@@ -610,29 +655,31 @@ async function pullHouseholdSharedContent(
 
   if (recipes.length > 0) {
     const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
-      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
-        client
+      fetchAllPagesKeyset<IngredientRow & { recipes?: unknown }>((cursor) => {
+        let q = client
           .from('ingredients')
           .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
           .neq('recipes.recipe_collections.owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
-          .order('recipe_id', { ascending: true })
-          .order('sort_order', { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
-        client
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+        if (cursor) q = q.gt('id', cursor.id);
+        return q;
+      }),
+      fetchAllPagesKeyset<InstructionRow & { recipes?: unknown }>((cursor) => {
+        let q = client
           .from('instructions')
           .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
           .neq('recipes.recipe_collections.owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
-          .order('recipe_id', { ascending: true })
-          .order('step_number', { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
-        (from, to) =>
-          client
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+        if (cursor) q = q.gt('id', cursor.id);
+        return q;
+      }),
+      fetchAllPagesKeyset<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
+        (cursor) => {
+          let q = client
             .from('instruction_ingredient_refs')
             .select(
               '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
@@ -640,7 +687,15 @@ async function pullHouseholdSharedContent(
             .neq('instructions.recipes.recipe_collections.owner_id', ownerId)
             .gte('instructions.recipes.updated_at', recipesSince)
             .order('instruction_id', { ascending: true })
-            .range(from, to),
+            .order('ingredient_id', { ascending: true })
+            .limit(PAGE_SIZE);
+          if (cursor) {
+            q = q.or(
+              `instruction_id.gt.${cursor.instruction_id},and(instruction_id.eq.${cursor.instruction_id},ingredient_id.gt.${cursor.ingredient_id})`,
+            );
+          }
+          return q;
+        },
       ),
     ]);
 
