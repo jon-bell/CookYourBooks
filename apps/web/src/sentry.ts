@@ -179,5 +179,78 @@ export function setSentryUser(userId: string | null): void {
   Sentry.setUser(userId ? { id: userId } : null);
 }
 
+type SupabaseishError = {
+  message?: unknown;
+  code?: unknown;
+  details?: unknown;
+  hint?: unknown;
+};
+
+/** Pull the Postgres/PostgREST error code (e.g. '57014' = statement timeout)
+ *  off a thrown supabase error so it can be tagged + grouped in Sentry. */
+function errorCode(error: unknown): string | undefined {
+  if (error && typeof error === 'object') {
+    const c = (error as SupabaseishError).code;
+    if (typeof c === 'string' && c.length > 0) return c;
+  }
+  return undefined;
+}
+
+/**
+ * Supabase throws plain PostgrestError-shaped objects, not `Error`
+ * instances — Sentry would record those as a contextless "Non-Error
+ * exception". Wrap them in a real Error with a readable message (and the
+ * pg code), keeping the original shape as `cause`.
+ */
+function toException(error: unknown): Error {
+  if (error instanceof Error) return error;
+  if (error && typeof error === 'object') {
+    const e = error as SupabaseishError;
+    const base = typeof e.message === 'string' && e.message ? e.message : 'Non-Error thrown';
+    const code = errorCode(error);
+    const wrapped = new Error(code ? `${base} (code=${code})` : base);
+    wrapped.name = code ? `SupabaseError ${code}` : 'NonError';
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    return wrapped;
+  }
+  return new Error(typeof error === 'string' ? error : String(error));
+}
+
+/**
+ * Capture a handled failure (a rejected query/mutation, a sync push/pull
+ * error) that wouldn't otherwise reach Sentry — those are swallowed into
+ * inline UI error state, so the default window.onerror / ErrorBoundary
+ * handlers never see them. Tags the supabase error code so e.g. all 57014
+ * statement timeouts group together and stay filterable. No-ops (but logs
+ * to the console) when Sentry isn't initialized.
+ */
+export function reportError(
+  error: unknown,
+  context: {
+    operation?: string;
+    tags?: Record<string, string | undefined>;
+    extra?: Record<string, unknown>;
+  } = {},
+): void {
+  const code = errorCode(error);
+  if (!initialized) {
+    console.error(`[reportError${context.operation ? ` ${context.operation}` : ''}]`, error);
+    return;
+  }
+  const tags: Record<string, string> = {};
+  if (context.operation) tags.operation = context.operation;
+  if (code) tags.supabase_code = code;
+  for (const [k, v] of Object.entries(context.tags ?? {})) {
+    if (v != null) tags[k] = v;
+  }
+  Sentry.captureException(toException(error), {
+    tags,
+    extra: context.extra,
+    // Group by code+operation so a flood of the same timeout collapses into
+    // one issue instead of thousands.
+    fingerprint: code ? ['supabase', code, context.operation ?? 'op'] : undefined,
+  });
+}
+
 /** Re-export for places that need to capture manually. */
 export { Sentry };

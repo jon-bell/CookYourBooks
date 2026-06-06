@@ -12,6 +12,7 @@ import {
   type RealtimeHandle,
 } from './sync.js';
 import { logSync } from './syncLog.js';
+import { reportError } from '../sentry.js';
 import {
   ensureLeaderElection,
   getTabRole,
@@ -248,6 +249,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         console.error('[sync] cycle threw:', err);
         setSettled('error', msg);
         logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
+        // The cycle catch only sees pull / cycle-timeout failures (pushOutbox
+        // handles its own per-entry errors internally). Report them so prod
+        // sync stalls — e.g. a pull statement timing out — are visible.
+        reportError(err, { operation: 'sync_cycle' });
       } finally {
         if (currentAbort.current === ac) currentAbort.current = null;
         await refreshPendingCount();
