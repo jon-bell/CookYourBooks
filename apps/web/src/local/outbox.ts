@@ -18,7 +18,12 @@ export type OutboxKind =
   // Per-user HOUSE conversion rules. Pushed via the
   // house_conversion_upsert / house_conversion_delete RPCs.
   | 'conversion_rule_save'
-  | 'conversion_rule_delete';
+  | 'conversion_rule_delete'
+  // Cooking tracker (2026-06-17). Plain PostgREST upsert/delete — no RPC.
+  | 'cooking_event_save'
+  | 'cooking_event_delete'
+  | 'recipe_tag_save'
+  | 'recipe_tag_delete';
 
 export interface OutboxEntry {
   id: number;

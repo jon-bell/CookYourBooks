@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { buildShoppingList } from '@cookyourbooks/domain';
 import { useRecipeSearch, useRecipesByIds } from '../data/queries.js';
+import { useScheduledRecipeIds } from '../cooking/queries.js';
+import { addDaysISO, todayISO } from '../cooking/dateGrid.js';
 import { PantrySection } from './PantrySection.js';
 
 export function ShoppingListPage() {
@@ -9,6 +11,15 @@ export function ShoppingListPage() {
   const { data: hits = [], isLoading } = useRecipeSearch('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [checked, setChecked] = useState<Set<string>>(() => loadChecked());
+
+  // "Shop for what's scheduled" — pull recipes PLANNED in a date range
+  // and merge them into the selection, feeding the existing builder.
+  const [rangeStart, setRangeStart] = useState(todayISO());
+  const [rangeEnd, setRangeEnd] = useState(addDaysISO(todayISO(), 7));
+  const { data: scheduledIds = [] } = useScheduledRecipeIds({
+    start: rangeStart,
+    end: rangeEnd,
+  });
 
   const selectedIds = useMemo(() => [...selected], [selected]);
   const { data: selectedRecipes = [] } = useRecipesByIds(selectedIds);
@@ -38,6 +49,50 @@ export function ShoppingListPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Shopping list</h1>
+
+      <section
+        className="space-y-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4"
+        data-testid="shop-scheduled"
+      >
+        <h2 className="text-sm font-medium text-stone-600 dark:text-stone-400">
+          Shop for what's scheduled
+        </h2>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="block text-xs text-stone-500">From</span>
+            <input
+              type="date"
+              value={rangeStart}
+              onChange={(e) => setRangeStart(e.target.value)}
+              className="rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-2 py-1"
+              data-testid="shop-range-start"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-xs text-stone-500">To</span>
+            <input
+              type="date"
+              value={rangeEnd}
+              onChange={(e) => setRangeEnd(e.target.value)}
+              className="rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-2 py-1"
+              data-testid="shop-range-end"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={scheduledIds.length === 0}
+            onClick={() => setSelected((cur) => new Set([...cur, ...scheduledIds]))}
+            className="rounded-md bg-stone-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-300"
+            data-testid="add-scheduled"
+          >
+            Add scheduled recipes
+          </button>
+          <span className="text-xs text-stone-500">
+            {scheduledIds.length} recipe{scheduledIds.length === 1 ? '' : 's'} scheduled in this range
+          </span>
+        </div>
+      </section>
+
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-stone-600 dark:text-stone-400">Include recipes</h2>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">

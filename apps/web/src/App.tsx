@@ -5,6 +5,9 @@ import { RecipePage } from './pages/RecipePage.js';
 import { RecipeEditorPage } from './pages/RecipeEditorPage.js';
 import { SearchPage } from './pages/SearchPage.js';
 import { ShoppingListPage } from './pages/ShoppingListPage.js';
+import { CookingTrackerPage } from './pages/CookingTrackerPage.js';
+import { RecentlyViewedPage } from './pages/RecentlyViewedPage.js';
+import { TagBrowsePage } from './pages/TagBrowsePage.js';
 import { NewCollectionPage } from './pages/NewCollectionPage.js';
 import { CookModePage } from './pages/CookModePage.js';
 import { AdminPage } from './pages/AdminPage.js';
@@ -65,6 +68,9 @@ export function App() {
             </Link>
             <Link to="/shopping" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
               Shopping
+            </Link>
+            <Link to="/cooking" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
+              Cooking
             </Link>
             <Link to="/import" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
               Import
@@ -153,6 +159,38 @@ export function App() {
             element={
               <RequireAuth>
                 <ShoppingListPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/cooking"
+            element={
+              <RequireAuth>
+                <CookingTrackerPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/cooking/recent"
+            element={
+              <RequireAuth>
+                <RecentlyViewedPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/tags"
+            element={
+              <RequireAuth>
+                <TagBrowsePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/tags/:tag"
+            element={
+              <RequireAuth>
+                <TagBrowsePage />
               </RequireAuth>
             }
           />

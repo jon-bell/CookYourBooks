@@ -1,10 +1,12 @@
 import type {
   CollectionRow,
+  CookingEventRow,
   IngredientRow,
   InstructionRefRow,
   InstructionRow,
   Json,
   RecipeRow,
+  RecipeTagRow,
 } from '@cookyourbooks/db';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@cookyourbooks/db';
@@ -14,6 +16,8 @@ import {
   purgeRecipe,
   upsertCollectionRow,
   upsertCollectionsBatch,
+  upsertCookingEventRow,
+  upsertRecipeTagRow,
   upsertRecipesBatch,
   withSuppressedCrrTriggers,
   filterFresherIncoming,
@@ -119,6 +123,8 @@ export interface PullResult {
   importTocEntries: number;
   conversionRules: number;
   rewriteJobs: number;
+  cookingEvents: number;
+  recipeTags: number;
   /** Collections + their children pulled because they're shared into the user's household. */
   householdSharedCollections: number;
   /** The user's active household id at pull time (null if none). */
@@ -281,7 +287,10 @@ interface RewriteJobRow {
 // first pull after the user upgrades, every per-topic watermark is
 // reset to 0 so missed rows get a chance to flow in. Increment when
 // fixing a pull bug that could have stranded server rows.
-const SYNC_RESET_VERSION = 4;
+//
+// v5 (2026-06-17): added cooking_events + recipe_tags topics — reset so
+// existing users do a clean first pull of the new tables.
+const SYNC_RESET_VERSION = 5;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
   const versionTopic = `sync_reset_version:${ownerId}`;
@@ -289,7 +298,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -299,6 +308,8 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `import_toc_entries:${ownerId}`,
       `conversion_rules:${ownerId}`,
       `rewrite_jobs:${ownerId}`,
+      `cooking_events:${ownerId}`,
+      `recipe_tags:${ownerId}`,
     ],
   );
   await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
@@ -310,7 +321,16 @@ export interface PullCallbacks {
    * invalidate React Query keys incrementally so the UI hydrates as
    * each topic lands instead of waiting for the whole pull to finish.
    */
-  onPhaseComplete?: (phase: 'collections' | 'recipes' | 'imports' | 'conversion_rules' | 'rewrite_jobs') => void;
+  onPhaseComplete?: (
+    phase:
+      | 'collections'
+      | 'recipes'
+      | 'imports'
+      | 'conversion_rules'
+      | 'rewrite_jobs'
+      | 'cooking_events'
+      | 'recipe_tags',
+  ) => void;
 }
 
 export async function pullAll(
@@ -483,7 +503,15 @@ export async function pullAll(
   const importPhase = Date.now();
   const convPhase = Date.now();
   const rewritePhase = Date.now();
-  const [importCounts, conversionRulesPulled, rewriteJobsPulled] = await Promise.all([
+  const cookingPhase = Date.now();
+  const tagsPhase = Date.now();
+  const [
+    importCounts,
+    conversionRulesPulled,
+    rewriteJobsPulled,
+    cookingEventsPulled,
+    recipeTagsPulled,
+  ] = await Promise.all([
     pullImports(client, ownerId).then((c) => {
       logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, { ...c });
       callbacks?.onPhaseComplete?.('imports');
@@ -503,6 +531,16 @@ export async function pullAll(
         `pull rewrite_jobs: ${n} rows in ${Date.now() - rewritePhase}ms`,
       );
       callbacks?.onPhaseComplete?.('rewrite_jobs');
+      return n;
+    }),
+    pullCookingEvents(client, ownerId).then((n) => {
+      logSync('info', `pull cooking_events: ${n} rows in ${Date.now() - cookingPhase}ms`);
+      callbacks?.onPhaseComplete?.('cooking_events');
+      return n;
+    }),
+    pullRecipeTags(client, ownerId).then((n) => {
+      logSync('info', `pull recipe_tags: ${n} rows in ${Date.now() - tagsPhase}ms`);
+      callbacks?.onPhaseComplete?.('recipe_tags');
       return n;
     }),
   ]);
@@ -537,6 +575,8 @@ export async function pullAll(
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
     rewriteJobs: rewriteJobsPulled,
+    cookingEvents: cookingEventsPulled,
+    recipeTags: recipeTagsPulled,
     householdSharedCollections,
     householdId,
   };
@@ -679,6 +719,13 @@ async function pullHouseholdSharedContent(
     }
     if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
   }
+
+  // Co-members' cooking activity + tags. RLS narrows `owner_id <> me` to
+  // library-sharing co-members; each row is tagged locally with
+  // shared_with_household_id so the repository surfaces it. Side effects —
+  // the caller only logs the collection count.
+  await pullHouseholdCookingEvents(client, ownerId, householdId);
+  await pullHouseholdRecipeTags(client, ownerId, householdId);
 
   return collections.length;
 }
@@ -864,6 +911,33 @@ const REWRITE_JOB_COLS = [
   'deleted',
 ] as const;
 
+const COOKING_EVENT_COLS = [
+  'id',
+  'owner_id',
+  'recipe_id',
+  'status',
+  'event_date',
+  'occasion_category',
+  'occasion_note',
+  'notes',
+  'adjustments',
+  'recipe_snapshot',
+  'photo_paths',
+  'shared_with_household_id',
+  'updated_at',
+  'deleted',
+] as const;
+
+const RECIPE_TAG_COLS = [
+  'id',
+  'owner_id',
+  'recipe_id',
+  'label',
+  'shared_with_household_id',
+  'updated_at',
+  'deleted',
+] as const;
+
 const IMPORT_BATCH_COLS = [
   'id',
   'owner_id',
@@ -982,6 +1056,55 @@ function rewriteJobToParams(row: RewriteJobRow): readonly unknown[] {
     row.completion_tokens,
     row.cost_usd_micros,
     row.latency_ms,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
+function cookingEventToParams(
+  row: CookingEventRow,
+  householdId: string | null,
+): readonly unknown[] {
+  const adjustments =
+    row.adjustments === null || row.adjustments === undefined
+      ? '[]'
+      : JSON.stringify(row.adjustments);
+  const snapshot =
+    row.recipe_snapshot === null || row.recipe_snapshot === undefined
+      ? null
+      : JSON.stringify(row.recipe_snapshot);
+  const photoPaths =
+    row.photo_paths === null || row.photo_paths === undefined
+      ? '[]'
+      : JSON.stringify(row.photo_paths);
+  return [
+    row.id,
+    row.owner_id,
+    row.recipe_id,
+    row.status,
+    row.event_date,
+    row.occasion_category,
+    row.occasion_note,
+    row.notes,
+    adjustments,
+    snapshot,
+    photoPaths,
+    householdId,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
+function recipeTagToParams(
+  row: RecipeTagRow,
+  householdId: string | null,
+): readonly unknown[] {
+  return [
+    row.id,
+    row.owner_id,
+    row.recipe_id,
+    row.label,
+    householdId,
     toMs(row.updated_at),
     0,
   ];
@@ -1152,6 +1275,162 @@ async function pullRewriteJobs(
           REWRITE_JOB_COLS,
           fresh,
           rewriteJobToParams,
+        ),
+      );
+    }
+  }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+// ---------- pull: cooking tracker ----------
+
+async function pullCookingEvents(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `cooking_events:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<CookingEventRow>((from, to) =>
+    client
+      .from('cooking_events')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'cooking_events',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['cooking_events'], fresh.length, () =>
+        bulkInsertOnConflictId('cooking_events', COOKING_EVENT_COLS, fresh, (r) =>
+          cookingEventToParams(r, null),
+        ),
+      );
+    }
+  }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+async function pullRecipeTags(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `recipe_tags:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<RecipeTagRow>((from, to) =>
+    client
+      .from('recipe_tags')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'recipe_tags',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['recipe_tags'], fresh.length, () =>
+        bulkInsertOnConflictId('recipe_tags', RECIPE_TAG_COLS, fresh, (r) =>
+          recipeTagToParams(r, null),
+        ),
+      );
+    }
+  }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+// Co-members' cooking events / tags — pulled with `owner_id <> me` (RLS
+// narrows to library-sharing co-members) and tagged locally with
+// shared_with_household_id so the repository surfaces them. Watermarked
+// per-household so switching households forces a fresh pull.
+async function pullHouseholdCookingEvents(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<number> {
+  const topic = `household_cooking_events:${ownerId}:${householdId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<CookingEventRow>((from, to) =>
+    client
+      .from('cooking_events')
+      .select('*')
+      .neq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'cooking_events',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['cooking_events'], fresh.length, () =>
+        bulkInsertOnConflictId('cooking_events', COOKING_EVENT_COLS, fresh, (r) =>
+          cookingEventToParams(r, householdId),
+        ),
+      );
+    }
+  }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+async function pullHouseholdRecipeTags(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<number> {
+  const topic = `household_recipe_tags:${ownerId}:${householdId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<RecipeTagRow>((from, to) =>
+    client
+      .from('recipe_tags')
+      .select('*')
+      .neq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'recipe_tags',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['recipe_tags'], fresh.length, () =>
+        bulkInsertOnConflictId('recipe_tags', RECIPE_TAG_COLS, fresh, (r) =>
+          recipeTagToParams(r, householdId),
         ),
       );
     }
@@ -1748,6 +2027,22 @@ export function subscribeRealtime(
         if (evt?.status === 'DONE') onNeedsPull();
         onLocalUpdate();
       },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'cooking_events', filter: `owner_id=eq.${ownerId}` },
+      async (payload) => {
+        await handleCookingEventEvent(payload);
+        onLocalUpdate();
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'recipe_tags', filter: `owner_id=eq.${ownerId}` },
+      async (payload) => {
+        await handleRecipeTagEvent(payload);
+        onLocalUpdate();
+      },
     );
 
   // Household library sharing is membership-driven, so there's no
@@ -1785,6 +2080,23 @@ export function subscribeRealtime(
         table: 'household_members',
         filter: `household_id=eq.${householdId}`,
       },
+      () => {
+        onNeedsPull();
+      },
+    );
+    // Co-members' cooking activity + tags. Like recipe_collections above,
+    // RLS only delivers other members' rows here; schedule a household
+    // re-pull so the local shared_with_household_id marker is reapplied.
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'cooking_events', filter: `owner_id=neq.${ownerId}` },
+      () => {
+        onNeedsPull();
+      },
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'recipe_tags', filter: `owner_id=neq.${ownerId}` },
       () => {
         onNeedsPull();
       },
@@ -1886,6 +2198,30 @@ async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
     return;
   }
   await upsertRewriteJobRow(payload.new as unknown as RewriteJobRow);
+}
+
+async function handleCookingEventEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { id?: string }).id;
+    if (id) {
+      const db = await getLocalDb();
+      await db.exec(`delete from cooking_events where id = ?`, [id]);
+    }
+    return;
+  }
+  await upsertCookingEventRow(payload.new as unknown as CookingEventRow);
+}
+
+async function handleRecipeTagEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { id?: string }).id;
+    if (id) {
+      const db = await getLocalDb();
+      await db.exec(`delete from recipe_tags where id = ?`, [id]);
+    }
+    return;
+  }
+  await upsertRecipeTagRow(payload.new as unknown as RecipeTagRow);
 }
 
 // ---------- push ----------
@@ -2102,7 +2438,91 @@ async function pushOne(
       if (error) throw error;
       return;
     }
+    case 'cooking_event_save':
+      return pushCookingEvent(client, ownerId, entry.entity_id);
+    case 'cooking_event_delete': {
+      const { error } = await client.from('cooking_events').delete().eq('id', entry.entity_id);
+      if (error) throw error;
+      return;
+    }
+    case 'recipe_tag_save':
+      return pushRecipeTag(client, ownerId, entry.entity_id);
+    case 'recipe_tag_delete': {
+      const { error } = await client.from('recipe_tags').delete().eq('id', entry.entity_id);
+      if (error) throw error;
+      return;
+    }
   }
+}
+
+async function pushCookingEvent(
+  client: CookbooksClient,
+  ownerId: string,
+  id: string,
+): Promise<void> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<Record<string, unknown>>(
+    `select * from cooking_events where id = ?`,
+    [id],
+  )) as Record<string, unknown>[];
+  const local = rows[0];
+  if (!local) return; // locally purged; a delete was queued separately
+  if (local.deleted === 1 || local.deleted === true) {
+    const { error } = await client.from('cooking_events').delete().eq('id', id);
+    if (error) throw error;
+    return;
+  }
+  type EventInsert = Database['public']['Tables']['cooking_events']['Insert'];
+  const adjustments = parseJsonField(local.adjustments) ?? [];
+  const snapshot =
+    local.recipe_snapshot === null || local.recipe_snapshot === undefined
+      ? null
+      : parseJsonField(local.recipe_snapshot);
+  const photoPaths = parseJsonField(local.photo_paths) ?? [];
+  const payload: EventInsert = {
+    id: local.id as string,
+    owner_id: ownerId,
+    // null once the recipe is gone — the snapshot keeps the entry readable.
+    recipe_id: (local.recipe_id as string | null) ?? null,
+    status: local.status as string,
+    event_date: local.event_date as string,
+    occasion_category: (local.occasion_category as string | null) ?? null,
+    occasion_note: (local.occasion_note as string | null) ?? null,
+    notes: (local.notes as string | null) ?? null,
+    adjustments: adjustments as EventInsert['adjustments'],
+    recipe_snapshot: snapshot as EventInsert['recipe_snapshot'],
+    photo_paths: photoPaths as EventInsert['photo_paths'],
+  };
+  const { error } = await client.from('cooking_events').upsert(payload, { onConflict: 'id' });
+  if (error) throw error;
+}
+
+async function pushRecipeTag(
+  client: CookbooksClient,
+  ownerId: string,
+  id: string,
+): Promise<void> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<Record<string, unknown>>(
+    `select * from recipe_tags where id = ?`,
+    [id],
+  )) as Record<string, unknown>[];
+  const local = rows[0];
+  if (!local) return;
+  type TagInsert = Database['public']['Tables']['recipe_tags']['Insert'];
+  const payload: TagInsert = {
+    id: local.id as string,
+    owner_id: ownerId,
+    recipe_id: local.recipe_id as string,
+    label: local.label as string,
+  };
+  // Conflict on the natural key, NOT id: a re-add of the same (owner,
+  // recipe, label) from a second device must not violate the server's
+  // unique constraint or create a duplicate row.
+  const { error } = await client
+    .from('recipe_tags')
+    .upsert(payload, { onConflict: 'owner_id,recipe_id,label' });
+  if (error) throw error;
 }
 
 // ---------- push: bulk OCR imports ----------

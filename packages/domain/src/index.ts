@@ -6,6 +6,8 @@ export * from './model/instruction.js';
 export * from './model/servings.js';
 export * from './model/recipe.js';
 export * from './model/collection.js';
+export * from './model/cookingEvent.js';
+export * from './model/tag.js';
 
 // Conversion
 export * from './conversion/rules.js';

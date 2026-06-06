@@ -30,6 +30,10 @@ export type InstructionRow = Tables['instructions']['Row'];
 export type InstructionInsert = Tables['instructions']['Insert'];
 export type InstructionRefRow = Tables['instruction_ingredient_refs']['Row'];
 export type InstructionRefInsert = Tables['instruction_ingredient_refs']['Insert'];
+export type CookingEventRow = Tables['cooking_events']['Row'];
+export type CookingEventInsert = Tables['cooking_events']['Insert'];
+export type RecipeTagRow = Tables['recipe_tags']['Row'];
+export type RecipeTagInsert = Tables['recipe_tags']['Insert'];
 
 // ---- Collection ----
 

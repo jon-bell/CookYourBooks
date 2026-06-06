@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -44,11 +44,23 @@ import {
 import { useImportItemsForRecipe } from '../import/queries.js';
 import { RecipeScanDialog } from '../components/RecipeScanDialog.js';
 import { RecipeNutritionPanel } from '../nutrition/RecipeNutritionPanel.js';
+import { CookingPanel } from '../cooking/CookingPanel.js';
+import { CookingHistoryPanel } from '../cooking/CookingHistoryPanel.js';
+import { TagEditor } from '../cooking/TagEditor.js';
+import { useRecordRecipeView } from '../cooking/queries.js';
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
   const { data: collection, isLoading } = useCollection(collectionId);
   const recipe = collection?.recipes.find((r) => r.id === recipeId);
+
+  // Local-only browsing history: record one view per recipe id the page
+  // settles on. Fire-and-forget; guarded so re-renders don't double-log.
+  const recordView = useRecordRecipeView();
+  const recordViewMutate = recordView.mutate;
+  useEffect(() => {
+    if (recipeId) recordViewMutate({ recipeId, source: 'recipe_page' });
+  }, [recipeId, recordViewMutate]);
   const deleteRecipe = useDeleteRecipe(collectionId ?? '');
   const saveRecipe = useSaveRecipe(collectionId ?? '');
   const { data: parent } = useRecipeSummary(recipe?.parentRecipeId);
@@ -253,6 +265,8 @@ export function RecipePage() {
             ))}
           </ul>
         )}
+
+        <TagEditor recipeId={recipe.id} />
       </div>
 
       <div className="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
@@ -461,7 +475,11 @@ export function RecipePage() {
         </section>
       )}
 
+      <CookingPanel recipe={recipe} />
+
       <RecipeNutritionPanel recipe={recipe} />
+
+      <CookingHistoryPanel recipe={recipe} />
 
       {adaptations.length > 0 && (
         <section className="space-y-2">

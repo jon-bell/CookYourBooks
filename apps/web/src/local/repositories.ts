@@ -1,10 +1,15 @@
 import type {
+  CookingEvent,
+  CookingEventRepository,
   Recipe,
   RecipeCollection,
   RecipeCollectionRepository,
   RecipeRepository,
+  RecipeSnapshot,
+  RecipeTagRepository,
+  Tag,
 } from '@cookyourbooks/domain';
-import { createWebCollection } from '@cookyourbooks/domain';
+import { createWebCollection, newCookingEventId, newTagId, normalizeLabel } from '@cookyourbooks/domain';
 import {
   rowToCollection,
   rowsToRecipe,
@@ -171,6 +176,111 @@ export async function upsertCollectionsBatch(
       collectionToParams,
     );
   });
+}
+
+// ---------- cooking tracker: per-row upserts ----------
+//
+// Used by both the realtime owner-filtered handler in sync.ts and the
+// local repositories' save paths. Always an owned row: shared_with_household_id
+// stays null on insert and is left untouched on conflict, so a household-pull
+// marker is never clobbered. The `updated_at >= existing` guard refuses to
+// regress a fresher local row with a stale incoming one.
+
+/** Flexible input for upsertCookingEventRow — server row (realtime) or a local save. */
+export interface CookingEventUpsertInput {
+  id: string;
+  owner_id: string;
+  recipe_id: string | null;
+  status: string;
+  event_date: string;
+  occasion_category: string | null;
+  occasion_note: string | null;
+  notes: string | null;
+  /** Object (stringified here) or an already-serialized JSON string. */
+  adjustments: unknown;
+  recipe_snapshot: unknown;
+  photo_paths: unknown;
+  updated_at: string | number;
+}
+
+export async function upsertCookingEventRow(row: CookingEventUpsertInput): Promise<void> {
+  const db = await getLocalDb();
+  const ts = tsToMs(row.updated_at);
+  const adjustments =
+    typeof row.adjustments === 'string'
+      ? row.adjustments
+      : JSON.stringify(row.adjustments ?? []);
+  const snapshot =
+    row.recipe_snapshot === null || row.recipe_snapshot === undefined
+      ? null
+      : typeof row.recipe_snapshot === 'string'
+        ? row.recipe_snapshot
+        : JSON.stringify(row.recipe_snapshot);
+  const photoPaths =
+    typeof row.photo_paths === 'string'
+      ? row.photo_paths
+      : JSON.stringify(row.photo_paths ?? []);
+  await db.exec(
+    `insert into cooking_events
+       (id, owner_id, recipe_id, status, event_date, occasion_category,
+        occasion_note, notes, adjustments, recipe_snapshot, photo_paths,
+        shared_with_household_id, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,NULL,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       status=excluded.status,
+       event_date=excluded.event_date,
+       occasion_category=excluded.occasion_category,
+       occasion_note=excluded.occasion_note,
+       notes=excluded.notes,
+       adjustments=excluded.adjustments,
+       recipe_snapshot=excluded.recipe_snapshot,
+       photo_paths=excluded.photo_paths,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= cooking_events.updated_at`,
+    [
+      row.id,
+      row.owner_id,
+      row.recipe_id,
+      row.status,
+      row.event_date,
+      row.occasion_category,
+      row.occasion_note,
+      row.notes,
+      adjustments,
+      snapshot,
+      photoPaths,
+      ts,
+    ],
+  );
+}
+
+export interface RecipeTagUpsertInput {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  label: string;
+  updated_at: string | number;
+}
+
+export async function upsertRecipeTagRow(row: RecipeTagUpsertInput): Promise<void> {
+  const db = await getLocalDb();
+  const ts = tsToMs(row.updated_at);
+  await db.exec(
+    `insert into recipe_tags
+       (id, owner_id, recipe_id, label, shared_with_household_id, updated_at, deleted)
+     values (?,?,?,?,NULL,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       label=excluded.label,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= recipe_tags.updated_at`,
+    [row.id, row.owner_id, row.recipe_id, row.label, ts],
+  );
 }
 
 /** Upsert a recipe row and replace its child ingredients/instructions + step refs. */
@@ -1323,6 +1433,352 @@ export class LocalRecipeRepository implements RecipeRepository {
   }
 }
 
+// ============================================================
+// Cooking tracker repositories
+// ============================================================
+
+/** Raw local cooking_events row shape (SQLite types). */
+interface CookingEventLocalRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string | null;
+  status: string;
+  event_date: string;
+  occasion_category: string | null;
+  occasion_note: string | null;
+  notes: string | null;
+  adjustments: string;
+  recipe_snapshot: string | null;
+  photo_paths: string;
+  shared_with_household_id: string | null;
+  updated_at: number;
+  deleted: number;
+}
+
+/**
+ * A cooking event as the web UI consumes it: the pure domain CookingEvent
+ * fields plus the owner + household-share marker needed for attribution
+ * ("Alice made this") in a shared household. CookingEventRecord extends
+ * CookingEvent so it satisfies the domain CookingEventRepository contract.
+ */
+export interface CookingEventRecord extends CookingEvent {
+  ownerId: string;
+  /** Non-null when this row was pulled because a co-member shared their library. */
+  sharedWithHouseholdId: string | null;
+}
+
+function parseAdjustments(text: string | null): CookingEvent['adjustments'] {
+  if (!text) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed as CookingEvent['adjustments']) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseSnapshot(text: string | null): RecipeSnapshot | undefined {
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as RecipeSnapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseStringArray(text: string | null): string[] {
+  if (!text) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function rowToCookingEventRecord(row: CookingEventLocalRow): CookingEventRecord {
+  return {
+    id: row.id,
+    recipeId: row.recipe_id,
+    status: row.status === 'COOKED' ? 'COOKED' : 'PLANNED',
+    eventDate: row.event_date,
+    occasionCategory:
+      (row.occasion_category as CookingEvent['occasionCategory']) ?? undefined,
+    occasionNote: row.occasion_note ?? undefined,
+    notes: row.notes ?? undefined,
+    adjustments: parseAdjustments(row.adjustments),
+    photoPaths: parseStringArray(row.photo_paths),
+    recipeSnapshot: parseSnapshot(row.recipe_snapshot),
+    ownerId: row.owner_id,
+    sharedWithHouseholdId: row.shared_with_household_id,
+  };
+}
+
+/** A calendar entry: a cooking event enriched with its recipe's title +
+ *  collection id (via LEFT JOIN, so both are null once the recipe is
+ *  deleted — the snapshot title still renders for COOKED events). */
+export interface CalendarEntry extends CookingEventRecord {
+  recipeTitle: string | null;
+  collectionId: string | null;
+}
+
+export class LocalCookingEventRepository implements CookingEventRepository {
+  constructor(private readonly ownerId: string) {}
+
+  /** Calendar entries (own + household-shared) in [fromISO, toISO], with
+   *  recipe title + collection id joined for linking/display. */
+  async listCalendarEntries(fromISO: string, toISO: string): Promise<CalendarEntry[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow & {
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>(
+      `select ce.*, r.title as recipe_title, r.collection_id as collection_id
+         from cooking_events ce
+         left join recipes r on r.id = ce.recipe_id and r.deleted = 0
+        where ce.deleted = 0
+          and (ce.owner_id = ? or ce.shared_with_household_id is not null)
+          and ce.event_date >= ? and ce.event_date <= ?
+        order by ce.event_date asc, ce.updated_at asc`,
+      [this.ownerId, fromISO, toISO],
+    )) as Array<CookingEventLocalRow & {
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>;
+    return rows.map((row) => ({
+      ...rowToCookingEventRecord(row),
+      recipeTitle: row.recipe_title ?? null,
+      collectionId: row.collection_id ?? null,
+    }));
+  }
+
+  /** Past + upcoming events for one recipe (own + household-shared), newest first. */
+  async listForRecipe(recipeId: string): Promise<CookingEventRecord[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow>(
+      `select * from cooking_events
+        where recipe_id = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+        order by event_date desc, updated_at desc`,
+      [recipeId, this.ownerId],
+    )) as CookingEventLocalRow[];
+    return rows.map(rowToCookingEventRecord);
+  }
+
+  /** All events (own + household-shared) whose eventDate is in [fromISO, toISO]. */
+  async listInDateRange(fromISO: string, toISO: string): Promise<CookingEventRecord[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow>(
+      `select * from cooking_events
+        where deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+          and event_date >= ? and event_date <= ?
+        order by event_date asc, updated_at asc`,
+      [this.ownerId, fromISO, toISO],
+    )) as CookingEventLocalRow[];
+    return rows.map(rowToCookingEventRecord);
+  }
+
+  async get(id: string): Promise<CookingEventRecord | undefined> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow>(
+      `select * from cooking_events where id = ? and deleted = 0`,
+      [id],
+    )) as CookingEventLocalRow[];
+    const row = rows[0];
+    return row ? rowToCookingEventRecord(row) : undefined;
+  }
+
+  async save(event: CookingEvent): Promise<void> {
+    await upsertCookingEventRow({
+      id: event.id,
+      owner_id: this.ownerId,
+      recipe_id: event.recipeId,
+      status: event.status,
+      event_date: event.eventDate,
+      occasion_category: event.occasionCategory ?? null,
+      occasion_note: event.occasionNote ?? null,
+      notes: event.notes ?? null,
+      adjustments: event.adjustments,
+      recipe_snapshot: event.recipeSnapshot ?? null,
+      photo_paths: event.photoPaths,
+      updated_at: now(),
+    });
+    await enqueue({ kind: 'cooking_event_save', entity_id: event.id });
+  }
+
+  /** PLANNED -> COOKED, capturing the recipe snapshot at cook time. */
+  async markCooked(id: string, snapshot: RecipeSnapshot): Promise<void> {
+    const db = await getLocalDb();
+    await db.exec(
+      `update cooking_events
+          set status = 'COOKED', recipe_snapshot = ?, updated_at = ?, deleted = 0
+        where id = ? and owner_id = ?`,
+      [JSON.stringify(snapshot), now(), id, this.ownerId],
+    );
+    await enqueue({ kind: 'cooking_event_save', entity_id: id });
+  }
+
+  async delete(id: string): Promise<void> {
+    const db = await getLocalDb();
+    await db.exec(
+      `update cooking_events set deleted = 1, updated_at = ? where id = ? and owner_id = ?`,
+      [now(), id, this.ownerId],
+    );
+    await enqueue({ kind: 'cooking_event_delete', entity_id: id });
+  }
+}
+
+/** Raw local recipe_tags row shape. */
+interface RecipeTagLocalRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  label: string;
+  shared_with_household_id: string | null;
+  updated_at: number;
+  deleted: number;
+}
+
+export class LocalRecipeTagRepository implements RecipeTagRepository {
+  constructor(private readonly ownerId: string) {}
+
+  async listForRecipe(recipeId: string): Promise<Tag[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<RecipeTagLocalRow>(
+      `select * from recipe_tags
+        where recipe_id = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+        order by label asc`,
+      [recipeId, this.ownerId],
+    )) as RecipeTagLocalRow[];
+    return rows.map((r) => ({ id: r.id, recipeId: r.recipe_id, label: r.label }));
+  }
+
+  async listAllLabels(): Promise<string[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ label: string }>(
+      `select distinct label from recipe_tags
+        where deleted = 0 and (owner_id = ? or shared_with_household_id is not null)
+        order by label asc`,
+      [this.ownerId],
+    )) as { label: string }[];
+    return rows.map((r) => r.label);
+  }
+
+  async listRecipesByLabel(label: string): Promise<string[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ recipe_id: string }>(
+      `select distinct recipe_id from recipe_tags
+        where label = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)`,
+      [normalizeLabel(label), this.ownerId],
+    )) as { recipe_id: string }[];
+    return rows.map((r) => r.recipe_id);
+  }
+
+  /** Idempotent: a no-op if the (owner, recipe, label) tag already exists. */
+  async addTag(recipeId: string, label: string): Promise<void> {
+    const normalized = normalizeLabel(label);
+    if (normalized.length === 0) return;
+    const db = await getLocalDb();
+    const existing = (await db.execO<{ id: string }>(
+      `select id from recipe_tags
+        where owner_id = ? and recipe_id = ? and label = ? and deleted = 0
+        limit 1`,
+      [this.ownerId, recipeId, normalized],
+    )) as { id: string }[];
+    if (existing.length > 0) return;
+    const id = newTagId();
+    await upsertRecipeTagRow({
+      id,
+      owner_id: this.ownerId,
+      recipe_id: recipeId,
+      label: normalized,
+      updated_at: now(),
+    });
+    await enqueue({ kind: 'recipe_tag_save', entity_id: id });
+  }
+
+  /** Hard-delete locally (frees the natural-key slot for re-add) + queue server delete. */
+  async removeTag(recipeId: string, label: string): Promise<void> {
+    const normalized = normalizeLabel(label);
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ id: string }>(
+      `select id from recipe_tags
+        where owner_id = ? and recipe_id = ? and label = ?`,
+      [this.ownerId, recipeId, normalized],
+    )) as { id: string }[];
+    for (const r of rows) {
+      await db.exec(`delete from recipe_tags where id = ?`, [r.id]);
+      await enqueue({ kind: 'recipe_tag_delete', entity_id: r.id });
+    }
+  }
+}
+
+/** Summary of a recently-viewed recipe (local-only analytics). */
+export interface RecentlyViewedEntry {
+  recipeId: string;
+  viewedAt: number;
+  recipeTitle: string | null;
+  collectionId: string | null;
+}
+
+/**
+ * LOCAL-ONLY personal browsing history. Never synced, never shared — this
+ * is "your own record" and lives only on this device. No outbox, no CRR.
+ */
+export class LocalRecipeViewRepository {
+  async recordView(recipeId: string, source?: string): Promise<void> {
+    const db = await getLocalDb();
+    await db.exec(
+      `insert into recipe_views (recipe_id, viewed_at, source) values (?,?,?)`,
+      [recipeId, now(), source ?? null],
+    );
+  }
+
+  /** Distinct recipes by most-recent view, newest first. Only surfaces
+   *  recipes that still exist locally (a deleted recipe drops out). */
+  async listRecentlyViewed(limit = 50): Promise<RecentlyViewedEntry[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{
+      recipe_id: string;
+      viewed_at: number;
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>(
+      `select v.recipe_id, max(v.viewed_at) as viewed_at,
+              r.title as recipe_title, r.collection_id as collection_id
+         from recipe_views v
+         join recipes r on r.id = v.recipe_id and r.deleted = 0
+        group by v.recipe_id
+        order by viewed_at desc
+        limit ?`,
+      [limit],
+    )) as Array<{
+      recipe_id: string;
+      viewed_at: number;
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>;
+    return rows.map((r) => ({
+      recipeId: r.recipe_id,
+      viewedAt: r.viewed_at,
+      recipeTitle: r.recipe_title ?? null,
+      collectionId: r.collection_id ?? null,
+    }));
+  }
+
+  async viewCount(recipeId: string): Promise<number> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ c: number }>(
+      `select count(*) as c from recipe_views where recipe_id = ?`,
+      [recipeId],
+    )) as { c: number }[];
+    return rows[0]?.c ?? 0;
+  }
+}
+
 // ------------- helpers -------------
 
 async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> {
@@ -1488,6 +1944,58 @@ export interface RecipeSearchHit {
   collectionTitle: string;
   sourceType: CollectionRow['source_type'];
   isPlaceholder: boolean;
+}
+
+/**
+ * Recipes carrying ANY of the given tag labels (own + household-shared),
+ * returned as search hits so the tag-browse grid reuses the same card
+ * markup as search/shopping. Labels are normalized to match how they're
+ * stored.
+ */
+export async function searchRecipesByTags(
+  ownerId: string,
+  labels: readonly string[],
+): Promise<RecipeSearchHit[]> {
+  const normalized = labels.map((l) => normalizeLabel(l)).filter((l) => l.length > 0);
+  if (normalized.length === 0) return [];
+  const db = await getLocalDb();
+  const placeholders = normalized.map(() => '?').join(',');
+  const rows = (await db.execO<{
+    id: string;
+    title: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: CollectionRow['source_type'];
+    has_content: number;
+  }>(
+    `select distinct r.id, r.title, r.collection_id,
+            c.title as collection_title, c.source_type,
+            (exists (select 1 from ingredients where recipe_id = r.id)
+             or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+       from recipe_tags t
+       join recipes r on r.id = t.recipe_id
+       join recipe_collections c on c.id = r.collection_id
+      where t.deleted = 0 and r.deleted = 0 and c.deleted = 0
+        and (t.owner_id = ? or t.shared_with_household_id is not null)
+        and t.label in (${placeholders})
+      order by has_content desc, c.title asc, r.sort_order asc`,
+    [ownerId, ...normalized],
+  )) as Array<{
+    id: string;
+    title: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: CollectionRow['source_type'];
+    has_content: number;
+  }>;
+  return rows.map((r) => ({
+    recipeId: r.id,
+    recipeTitle: r.title,
+    collectionId: r.collection_id,
+    collectionTitle: r.collection_title,
+    sourceType: r.source_type,
+    isPlaceholder: !r.has_content,
+  }));
 }
 
 /** Escape LIKE wildcards so a user's query is matched literally (paired
