@@ -2,12 +2,18 @@
 // Seeds the Apple Beta App Review demo account on the hosted Supabase
 // project. Idempotent — re-running just no-ops on duplicates.
 //
-// Reads three secrets from the .secrets file at the repo root (which
-// is gitignored — never commit secrets here):
-//   VITE_SUPABASE_URL              — hosted project URL
-//   SUPABASE_SECRET_KEY            — sb_secret_* service-role key
+// Reads from the .secrets file at the repo root (which is gitignored;
+// never commit secrets here):
+//   VITE_SUPABASE_URL              — hosted project URL (required)
+//   VITE_SUPABASE_ANON_KEY         — publishable key for signin (required)
+//   SUPABASE_SECRET_KEY            — sb_secret_* service-role key (required)
 //   APPLE_REVIEW_DEMO_PASSWORD     — password to set/reset on the
-//                                    apple-review@cookyourbooks.app user
+//                                    apple-review@cookyourbooks.app user (required)
+//   GEMINI_API_KEY                 — pinned on the demo account so the
+//                                    reviewer can test the OCR + video-link
+//                                    import flows (optional; warns if missing).
+//                                    Rotate this Gemini key after Apple's
+//                                    review approval.
 //
 // Usage: node scripts/seed-apple-demo-account.mjs
 
@@ -28,11 +34,13 @@ const env = Object.fromEntries(
 
 const URL = (env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SECRET = env.SUPABASE_SECRET_KEY;
+const ANON = env.VITE_SUPABASE_ANON_KEY;
 const PASSWORD = env.APPLE_REVIEW_DEMO_PASSWORD;
-if (!URL || !SECRET || !PASSWORD) {
+const GEMINI_KEY = env.GEMINI_API_KEY; // optional
+if (!URL || !SECRET || !ANON || !PASSWORD) {
   console.error(
-    'Missing one of VITE_SUPABASE_URL, SUPABASE_SECRET_KEY, ' +
-      'APPLE_REVIEW_DEMO_PASSWORD in .secrets',
+    'Missing one of VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, ' +
+      'SUPABASE_SECRET_KEY, APPLE_REVIEW_DEMO_PASSWORD in .secrets',
   );
   process.exit(1);
 }
@@ -358,10 +366,54 @@ async function main() {
     ],
   });
 
+  // === Pin Gemini key (so reviewer can exercise OCR + video-link import) ===
+  if (GEMINI_KEY) {
+    // ocr_key_set is SECURITY DEFINER keyed off auth.uid(), so we have
+    // to call it as the demo user, not as service role. Sign in via the
+    // publishable key + signInWithPassword (just like the real client
+    // does) and use the resulting access_token on the RPC call.
+    const signin = await fetch(`${URL}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
+    });
+    if (!signin.ok) {
+      console.error(
+        'Demo signin failed; cannot set Gemini key:',
+        await signin.text(),
+      );
+    } else {
+      const { access_token } = await signin.json();
+      const rpc = await fetch(`${URL}/rest/v1/rpc/ocr_key_set`, {
+        method: 'POST',
+        headers: {
+          apikey: ANON,
+          Authorization: `Bearer ${access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          p_provider: 'gemini',
+          p_raw_key: GEMINI_KEY,
+          p_base_url: null,
+        }),
+      });
+      if (rpc.ok) {
+        console.log(`  Gemini key pinned (fingerprint …${GEMINI_KEY.slice(-4)})`);
+      } else {
+        console.error('ocr_key_set RPC failed:', rpc.status, await rpc.text());
+      }
+    }
+  } else {
+    console.log(
+      '  (GEMINI_API_KEY not in .secrets — skipping. OCR/video import ' +
+        'will prompt for a key on the demo account.)',
+    );
+  }
+
   console.log('\nDemo account ready.');
   console.log(`  Email:    ${EMAIL}`);
   console.log(`  Password: ${PASSWORD}`);
-  console.log('  Seeded: 3 collections, 5 recipes');
+  console.log(`  Seeded:   3 collections, 5 recipes${GEMINI_KEY ? ', Gemini key pinned' : ''}`);
 }
 
 main().catch((e) => {
