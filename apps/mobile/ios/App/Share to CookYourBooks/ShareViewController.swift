@@ -40,7 +40,7 @@ class ShareViewController: UIViewController {
                     value: $0.url?.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? ""),
             ]
         }.flatMap({ $0 })
-        var urlComps = URLComponents(string: "YOUR_APP_URL_SCHEME://")!
+        var urlComps = URLComponents(string: "cookyourbooks://")!
         urlComps.queryItems = queryItems
         openURL(urlComps.url!)
     }
@@ -52,7 +52,7 @@ class ShareViewController: UIViewController {
 
         let fileManager = FileManager.default
         guard let containerUrl = fileManager.containerURL(
-            forSecurityApplicationGroupIdentifier: "YOUR_APP_GROUP_ID"
+            forSecurityApplicationGroupIdentifier: "group.app.cookyourbooks"
         ) else {
             print("Failed to resolve app group container URL")
             return ""
@@ -74,7 +74,7 @@ class ShareViewController: UIViewController {
         let fileManager = FileManager.default
         
         let copyFileUrl =
-        fileManager.containerURL(forSecurityApplicationGroupIdentifier: "YOUR_APP_GROUP_ID")!
+        fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.app.cookyourbooks")!
             .absoluteString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
         + "/screenshot_\(index).png"
         do {
