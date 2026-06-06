@@ -14,6 +14,7 @@ import {
   OcrWorkerNotConfiguredError,
   retryRecitationFailures,
   setBatchFallback,
+  setImportItemToc,
   setRecitationPolicy,
 } from '../import/api.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
@@ -197,6 +198,30 @@ export function ImportBatchPage() {
       await updateItem.mutateAsync({ id, patch });
     }
     setSelected(new Set());
+  }
+
+  // Flagging pages as ToC has to re-run OCR, which means a server-side
+  // reset to PENDING — the outbox push scrub drops any client status
+  // change that isn't REVIEWED / DISCARDED, so the plain bulk-patch path
+  // (isToc + status PENDING) never reached the worker. Go through the
+  // same RPC the single-item toggle uses, then kick the worker.
+  async function markSelectedAsToc() {
+    if (!batch || selected.size === 0) return;
+    const ids = [...selected];
+    try {
+      for (const id of ids) {
+        await setImportItemToc(id, true);
+      }
+      await syncNow();
+      try {
+        await kickOcr(batch.id);
+      } catch {
+        // pg_cron / the next kick will pick up the slack.
+      }
+      setSelected(new Set());
+    } catch (e) {
+      alert(`Couldn't re-OCR the selected pages as ToC: ${(e as Error).message}`);
+    }
   }
 
   async function applyRecitation(policy: 'FALLBACK' | 'FAIL') {
@@ -638,7 +663,7 @@ export function ImportBatchPage() {
           <span>{selected.size} selected</span>
           <button
             type="button"
-            onClick={() => applyBulk({ isToc: true, status: 'PENDING' })}
+            onClick={() => void markSelectedAsToc()}
             className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Mark as ToC
