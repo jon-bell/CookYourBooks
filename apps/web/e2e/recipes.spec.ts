@@ -37,7 +37,9 @@ test.describe('Recipes — CRUD + editor', () => {
     await expect(page.getByRole('heading', { name: 'Pancakes' })).toBeVisible();
     await expect(page.getByText('Serves 4 pancakes')).toBeVisible();
     await expect(page.getByText('2 cup flour')).toBeVisible();
-    await expect(page.getByText(/^salt$/)).toBeVisible();
+    // Scope to the ingredient list — the nutrition panel also renders the
+    // ingredient name in a table cell, so a bare getByText is ambiguous.
+    await expect(page.getByRole('listitem').filter({ hasText: /^salt$/ })).toBeVisible();
     await waitForSynced(page);
   });
 

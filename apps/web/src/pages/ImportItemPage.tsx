@@ -874,6 +874,7 @@ export function ImportItemPage() {
               <div className="flex flex-wrap gap-2 pt-2">
                 <button
                   type="button"
+                  data-testid="save-as-recipe"
                   onClick={() => void saveAsRecipe()}
                   disabled={!currentDraft || !targetCollectionId || saveRecipe.isPending}
                   className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"

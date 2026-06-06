@@ -108,7 +108,7 @@ test.describe('bulk OCR imports', () => {
       timeout: 15_000,
     });
 
-    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    await page.getByTestId('save-as-recipe').click();
     // Save auto-advances: if more reviewable items remain in the batch
     // the page navigates to the next one; only when the batch is fully
     // reviewed does it fall back to the batch board. Both URLs are
