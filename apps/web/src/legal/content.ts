@@ -23,7 +23,7 @@ export const CURRENT_TOS_VERSION = 1;
 export const LEGAL_LAST_UPDATED = '2026-05-27';
 
 export interface LegalDoc {
-  slug: 'terms' | 'aup' | 'dmca' | 'privacy';
+  slug: 'terms' | 'aup' | 'dmca' | 'privacy' | 'data-deletion';
   title: string;
   summary: string;
   body: string;
@@ -458,9 +458,105 @@ privacy@cookyourbooks.app.
 `.trim(),
 };
 
+export const DATA_DELETION: LegalDoc = {
+  slug: 'data-deletion',
+  title: 'How to delete your CookYourBooks account and data',
+  summary:
+    'Step-by-step instructions for permanently deleting your account, recipes, and sync data.',
+  body: `
+# How to delete your CookYourBooks account and data
+
+**Last updated:** ${LEGAL_LAST_UPDATED}
+
+This page is the canonical "data deletion instructions" reference for
+third-party platforms (Meta App Review, Google Play Data safety, App
+Store privacy disclosures) and for users exercising their GDPR Article
+17 ("right to be forgotten") or CCPA / CPRA deletion rights.
+
+## In-app deletion (recommended)
+
+If you can sign in to CookYourBooks, this is the fastest path:
+
+1. Open CookYourBooks (web at <https://www.cookyourbooks.app/> or the
+   iOS app from TestFlight / the App Store) and sign in.
+2. Tap your avatar / name in the top-right corner → **Settings**.
+3. Scroll to the **Danger Zone** section.
+4. Tap **Delete account** and confirm.
+
+What gets deleted, in the same database transaction:
+
+- Your authentication identity (email/password or Google OAuth subject).
+- Your profile (display name, avatar reference).
+- All of your recipe collections, recipes, ingredients, instructions,
+  and any conversion rules you defined.
+- Your full import history (uploaded photos, OCR scans, drafts, video
+  link imports), along with the underlying objects in storage.
+- Your household memberships and any shares you initiated.
+- Your settings (OCR provider/key reference, theme, household
+  preferences).
+- All local sync state on the device the moment you next open the app
+  while signed out.
+
+The user-supplied API keys for OCR / video providers (Gemini, etc.)
+are stored encrypted in Supabase Vault and the references are removed
+in the same transaction; the encryption keys are rotated on a separate
+schedule documented in the Privacy Policy.
+
+## Email request (no sign-in needed)
+
+If you've lost access to your account, or you signed up but never
+opened the app, email **privacy@cookyourbooks.app** from the address
+you registered with. Include:
+
+- The email address tied to the account.
+- Confirmation that you want to delete the account and all associated
+  data.
+
+We respond within 30 days per GDPR Art. 12(3). In practice it's
+usually same-day.
+
+## What we retain after deletion
+
+A small set of records survive deletion because the law requires it
+or because they no longer identify you:
+
+- **Audit log of moderation actions** (e.g., DMCA takedowns, account
+  suspensions for abuse). Retained for the statutory limitations
+  period as legal defense.
+- **Aggregated, anonymized usage metrics** that contain no identifier
+  linkable back to you.
+
+All of this is described in detail in the [Privacy
+Policy](/legal/privacy) under "Retention."
+
+## Third-party data we don't control
+
+A few flows in the app hand data to third parties; deleting your
+CookYourBooks account does **not** automatically delete data those
+parties may hold:
+
+- **Google sign-in:** managed by Google. Revoke at
+  <https://myaccount.google.com/permissions>.
+- **Apple sign-in:** managed by Apple. Revoke at System Settings →
+  Apple ID → Sign in with Apple.
+- **Your OCR / video-provider keys (Gemini, etc.):** if you supplied
+  your own key, calls go directly to the provider. Manage / revoke
+  the key in the provider's own console.
+- **Public Instagram captions fetched via Meta's Graph oEmbed:** when
+  you imported an Instagram recipe via "Share to CookYourBooks", Meta
+  served us the post's public caption. Meta's logs of that request are
+  governed by Meta's policies, not ours.
+
+## Questions
+
+Email **privacy@cookyourbooks.app**.
+`.trim(),
+};
+
 export const DOCS: Record<LegalDoc['slug'], LegalDoc> = {
   terms: TERMS,
   aup: AUP,
   dmca: DMCA,
   privacy: PRIVACY,
+  'data-deletion': DATA_DELETION,
 };
