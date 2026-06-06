@@ -3,6 +3,7 @@ import type {
   IngredientRow,
   InstructionRefRow,
   InstructionRow,
+  Json,
   RecipeRow,
 } from '@cookyourbooks/db';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
@@ -13,7 +14,6 @@ import {
   purgeRecipe,
   upsertCollectionRow,
   upsertCollectionsBatch,
-  upsertRecipeRow,
   upsertRecipesBatch,
   withSuppressedCrrTriggers,
   filterFresherIncoming,
@@ -579,10 +579,14 @@ async function pullHouseholdSharedContent(
       .range(from, to),
   );
   let maxCollectionTs = await getWatermark(collectionTopic);
+  // Batch the upsert (was a per-row loop — the same lock-churn N+1 the
+  // owned path eliminated, on a now-default-on feature). The local-only
+  // shared_with_household_id marker is what LocalRecipeCollectionRepository
+  // keys off to surface these as household-shared.
+  await upsertCollectionsBatch(
+    collections.map((row) => ({ ...row, shared_with_household_id: householdId })),
+  );
   for (const row of collections) {
-    // Local-only marker so LocalRecipeCollectionRepository surfaces it
-    // as a household-shared collection.
-    await upsertCollectionRow({ ...row, shared_with_household_id: householdId });
     maxCollectionTs = Math.max(maxCollectionTs, toMs(row.updated_at));
   }
   if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
@@ -659,13 +663,17 @@ async function pullHouseholdSharedContent(
     }
 
     let maxRecipeTs = await getWatermark(recipeTopic);
+    // Bulk-upsert in one transaction (was a per-recipe upsertRecipeRow
+    // loop — lock + tx churn per recipe). Mirrors the owned-content path.
+    await upsertRecipesBatch(
+      recipes.map((r) => ({
+        recipe: r,
+        ingredients: ingByRecipe.get(r.id) ?? [],
+        instructions: stepsByRecipe.get(r.id) ?? [],
+        refs: refsByRecipe.get(r.id) ?? [],
+      })),
+    );
     for (const r of recipes) {
-      await upsertRecipeRow(
-        r,
-        ingByRecipe.get(r.id) ?? [],
-        stepsByRecipe.get(r.id) ?? [],
-        refsByRecipe.get(r.id) ?? [],
-      );
       maxRecipeTs = Math.max(maxRecipeTs, toMs(r.updated_at));
     }
     if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
@@ -1654,8 +1662,21 @@ export function subscribeRealtime(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'recipes' },
       async (payload) => {
-        await handleRecipeEvent(client, payload);
-        onLocalUpdate();
+        // DELETEs are hard server-side and never come back in a watermark
+        // pull, so purge locally right away. INSERT/UPDATE route to the
+        // debounced bulk pull instead of a per-event fetch+rewrite: a bulk
+        // import/edit emits one event per recipe, and handling each with
+        // two network fetches + a child delete/reinsert on the single
+        // cr-sqlite connection was a thundering herd that starved the
+        // outbox push. The pull fetches exactly the changed recipes — and
+        // their refs, which the old per-event path silently dropped.
+        if ((payload as { eventType?: string }).eventType === 'DELETE') {
+          const id = ((payload as RealtimePayload).old as { id?: string }).id;
+          if (id) await purgeRecipe(id);
+          onLocalUpdate();
+          return;
+        }
+        onNeedsPull();
       },
     )
     .on(
@@ -1742,6 +1763,11 @@ export function subscribeRealtime(
         event: '*',
         schema: 'public',
         table: 'recipe_collections',
+        // Only OTHER members' collection changes need a household re-pull;
+        // our own rows are already handled by the owner-filtered
+        // subscription above. Without this, every own-collection edit also
+        // scheduled a redundant full cycle.
+        filter: `owner_id=neq.${ownerId}`,
       },
       () => {
         onNeedsPull();
@@ -1787,30 +1813,6 @@ async function handleCollectionEvent(payload: RealtimePayload): Promise<void> {
   }
   const row = payload.new as CollectionRow;
   await upsertCollectionRow(row);
-}
-
-async function handleRecipeEvent(
-  client: CookbooksClient,
-  payload: RealtimePayload,
-): Promise<void> {
-  if (payload.eventType === 'DELETE') {
-    const id = (payload.old as { id?: string }).id;
-    if (id) await purgeRecipe(id);
-    return;
-  }
-  // Re-fetch children on insert/update since the event only carries the
-  // parent row. Cheaper than subscribing with an IN-filter per collection.
-  const recipeRow = payload.new as RecipeRow;
-  const [ingRes, stepRes] = await Promise.all([
-    client.from('ingredients').select('*').eq('recipe_id', recipeRow.id),
-    client.from('instructions').select('*').eq('recipe_id', recipeRow.id),
-  ]);
-  if (ingRes.error || stepRes.error) return;
-  await upsertRecipeRow(
-    recipeRow,
-    (ingRes.data ?? []) as IngredientRow[],
-    (stepRes.data ?? []) as InstructionRow[],
-  );
 }
 
 async function handleImportBatchEvent(payload: RealtimePayload): Promise<void> {
@@ -1934,6 +1936,38 @@ export async function pushOutbox(
         await markFailed(run[0]!.id, msg);
         failed += 1;
         logSync('error', `push import_item_insert FAILED after ${Date.now() - started}ms`, {
+          count: run.length,
+          error: msg,
+        });
+        break;
+      }
+    }
+    // Coalesce a contiguous run of recipe_save entries into chunked
+    // transactional RPC calls. Each recipe used to cost 6 sequential
+    // PostgREST round-trips; a large ToC approval enqueues dozens, which
+    // never drained inside the cycle timeout. See save_recipes_graph.
+    if (entry.kind === 'recipe_save') {
+      let j = i;
+      while (j < pending.length && pending[j]!.kind === 'recipe_save') j += 1;
+      const run = pending.slice(i, j);
+      const started = Date.now();
+      logSync('info', `push recipe_save run: ${run.length} items`);
+      try {
+        await pushRecipeSavesRun(client, run);
+        for (const e of run) await markDone(e.id);
+        ok += run.length;
+        logSync('info', `push recipe_save done in ${Date.now() - started}ms`, {
+          count: run.length,
+        });
+        i = j;
+        continue;
+      } catch (err) {
+        // Attribute to the first entry so its attempts/error surface; the
+        // whole run stays queued and re-pushes idempotently next cycle.
+        const msg = (err as Error).message;
+        await markFailed(run[0]!.id, msg);
+        failed += 1;
+        logSync('error', `push recipe_save run FAILED after ${Date.now() - started}ms`, {
           count: run.length,
           error: msg,
         });
@@ -2336,23 +2370,39 @@ async function pushCollection(
   if (error) throw error;
 }
 
-async function pushRecipe(
-  client: CookbooksClient,
+/** The jsonb shape one recipe contributes to the save_recipes_graph RPC. */
+interface RecipeGraphItem {
+  recipe: Record<string, unknown>;
+  ingredients: IngredientRow[];
+  instructions: Array<Record<string, unknown>>;
+  refs: InstructionRefRow[];
+}
+
+type RecipeLoadResult =
+  | { kind: 'gone' }
+  | { kind: 'delete' }
+  | { kind: 'save'; item: RecipeGraphItem };
+
+/**
+ * Read a recipe's full graph from local and normalize it into the shape
+ * the save_recipes_graph RPC consumes. Local SQLite stores array columns
+ * (equipment, page_numbers, sub_instructions) as JSON *text* and booleans
+ * as 0/1; we parse/normalize here so the server's jsonb_populate_record
+ * sees native arrays and real booleans.
+ */
+async function loadRecipeForPush(
+  db: Awaited<ReturnType<typeof getLocalDb>>,
   collectionId: string,
   id: string,
-): Promise<void> {
-  const db = await getLocalDb();
+): Promise<RecipeLoadResult> {
   const recipeRows = (await db.execO<RecipeRow & { deleted: number }>(
     `select * from recipes where id = ?`,
     [id],
   )) as (RecipeRow & { deleted: number })[];
   const recipe = recipeRows[0];
-  if (!recipe) return;
-  if (recipe.deleted) {
-    const { error } = await client.from('recipes').delete().eq('id', id);
-    if (error) throw error;
-    return;
-  }
+  if (!recipe) return { kind: 'gone' };
+  if (recipe.deleted) return { kind: 'delete' };
+
   const [ingRows, stepRows, refRows] = await Promise.all([
     db.execO<IngredientRow>(
       `select * from ingredients where recipe_id = ? order by sort_order asc`,
@@ -2371,58 +2421,101 @@ async function pushRecipe(
     ) as Promise<InstructionRefRow[]>,
   ]);
 
-  const { deleted, created_at: _rc, updated_at: _ru, ...recipeRow } = recipe as RecipeRow & {
+  // Drop client-only / trigger-owned columns; the RPC injects created_at /
+  // updated_at and the server has no `deleted` column.
+  const { deleted: _d, created_at: _rc, updated_at: _ru, ...recipeRow } = recipe as RecipeRow & {
     deleted: number;
     created_at?: unknown;
     updated_at?: unknown;
   };
-  // Local SQLite stores array-valued columns as JSON *text*; Postgres
-  // wants jsonb input. supabase-js would happily ship the text string
-  // through — which gets stored as a JSON string, not an array — so
-  // parse back to native arrays before upsert. Same on the
-  // instruction side below.
-  // SQLite stores boolean as 0/1; PostgREST rejects integers in a
-  // boolean column. Normalize before the upsert.
   const starredRaw = (recipeRow as { starred?: unknown }).starred;
-  const recipePayload = {
+  const recipePayload: Record<string, unknown> = {
     ...recipeRow,
     collection_id: collectionId,
     equipment: parseJsonField((recipeRow as { equipment?: unknown }).equipment),
     page_numbers: parseJsonField((recipeRow as { page_numbers?: unknown }).page_numbers),
     starred: starredRaw === true || starredRaw === 1,
-  } as RecipeRow;
-  const { error: rErr } = await client
-    .from('recipes')
-    .upsert(recipePayload, { onConflict: 'id' });
-  if (rErr) throw rErr;
+  };
+  const instructions = stepRows.map((s) => {
+    const sx = s as InstructionRow & { sub_instructions?: unknown };
+    return { ...s, sub_instructions: parseJsonField(sx.sub_instructions) };
+  });
+  return {
+    kind: 'save',
+    item: { recipe: recipePayload, ingredients: ingRows, instructions, refs: refRows },
+  };
+}
 
-  // Replace children wholesale. Matches the server-side save behavior.
-  const delIng = await client.from('ingredients').delete().eq('recipe_id', id);
-  if (delIng.error) throw delIng.error;
-  const delStep = await client.from('instructions').delete().eq('recipe_id', id);
-  if (delStep.error) throw delStep.error;
+/**
+ * Push a batch of recipe graphs in one transactional RPC round-trip
+ * (replaces the old 6-round-trips-per-recipe upsert/delete/insert dance —
+ * see migration 20260614000000). The RPC is SECURITY INVOKER, so RLS
+ * still gates every write exactly as the direct PostgREST calls did.
+ */
+async function saveRecipeGraphs(
+  client: CookbooksClient,
+  items: readonly RecipeGraphItem[],
+): Promise<void> {
+  if (items.length === 0) return;
+  const { error } = await client.rpc('save_recipes_graph', {
+    p_recipes: items as unknown as Json,
+  });
+  if (error) throw error;
+}
 
-  if (ingRows.length > 0) {
-    const { error } = await client.from('ingredients').insert(ingRows);
-    if (error) throw error;
+// Recipe graphs are larger than import-item rows; keep transactions short
+// on the constrained prod box and the request body under the gateway cap.
+const RECIPE_SAVE_PUSH_CHUNK = 25;
+
+/**
+ * Drain a contiguous run of recipe_save outbox entries. Non-deleted
+ * recipes are buffered and flushed in chunks through save_recipes_graph;
+ * deletes execute in order (a buffer flush precedes each, so a delete
+ * never races a buffered save of the same id). On any error this throws —
+ * the caller attributes the failure to the run's first entry and leaves
+ * the run queued; the next cycle re-pushes idempotently.
+ */
+async function pushRecipeSavesRun(
+  client: CookbooksClient,
+  run: readonly OutboxEntry[],
+): Promise<void> {
+  const db = await getLocalDb();
+  let buffer: RecipeGraphItem[] = [];
+  const flush = async () => {
+    if (buffer.length === 0) return;
+    await saveRecipeGraphs(client, buffer);
+    buffer = [];
+  };
+  for (const entry of run) {
+    if (!entry.collection_id) throw new Error('recipe_save entry missing collection_id');
+    const loaded = await loadRecipeForPush(db, entry.collection_id, entry.entity_id);
+    if (loaded.kind === 'gone') continue;
+    if (loaded.kind === 'delete') {
+      await flush();
+      const { error } = await client.from('recipes').delete().eq('id', entry.entity_id);
+      if (error) throw error;
+      continue;
+    }
+    buffer.push(loaded.item);
+    if (buffer.length >= RECIPE_SAVE_PUSH_CHUNK) await flush();
   }
-  if (stepRows.length > 0) {
-    const payload = stepRows.map((s) => {
-      const sx = s as InstructionRow & { sub_instructions?: unknown };
-      return {
-        ...s,
-        sub_instructions: parseJsonField(sx.sub_instructions),
-      } as InstructionRow;
-    });
-    const { error } = await client.from('instructions').insert(payload);
+  await flush();
+}
+
+async function pushRecipe(
+  client: CookbooksClient,
+  collectionId: string,
+  id: string,
+): Promise<void> {
+  const db = await getLocalDb();
+  const loaded = await loadRecipeForPush(db, collectionId, id);
+  if (loaded.kind === 'gone') return;
+  if (loaded.kind === 'delete') {
+    const { error } = await client.from('recipes').delete().eq('id', id);
     if (error) throw error;
+    return;
   }
-  // Refs cascade via FK when the parent instructions were deleted above,
-  // so no explicit delete is needed — just insert the current set.
-  if (refRows.length > 0) {
-    const { error } = await client.from('instruction_ingredient_refs').insert(refRows);
-    if (error) throw error;
-  }
+  await saveRecipeGraphs(client, [loaded.item]);
 }
 
 // Local SQLite stores array-valued columns (equipment, page_numbers,

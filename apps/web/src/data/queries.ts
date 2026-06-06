@@ -4,9 +4,11 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { useLocalDbReady, useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import {
   getRecipeSummary,
+  getRecipesByIds,
   listAdaptations,
   type CollectionPickerOption,
   type LibraryCollectionSummary,
+  type RecipeSearchHit,
   type RecipeSummary,
 } from '../local/repositories.js';
 import { collectionRepo, recipeRepo } from './repos.js';
@@ -40,6 +42,35 @@ export function useCollectionPickerOptions() {
     queryKey: ['collection-picker', user?.id],
     enabled,
     queryFn: () => collectionRepo(user!.id).listPickerOptions(),
+  });
+}
+
+/**
+ * SQL-backed library search (title + ingredient name). Returns lightweight
+ * hits — no full-library hydration. An empty query lists every recipe, so
+ * the shopping-list selector reuses it.
+ */
+export function useRecipeSearch(query: string) {
+  const { user } = useAuth();
+  const enabled = useLocalQueryEnabled();
+  return useQuery<RecipeSearchHit[]>({
+    queryKey: ['recipe-search', user?.id, query],
+    enabled,
+    queryFn: () => collectionRepo(user!.id).searchRecipes(query),
+  });
+}
+
+/** Fully hydrate a specific set of recipes (e.g. the shopping-list
+ *  selection) without materializing the rest of the library. */
+export function useRecipesByIds(ids: readonly string[]) {
+  const enabled = useLocalQueryEnabled();
+  // Stable, order-independent key so selecting {a,b} and {b,a} share a cache
+  // entry and re-selecting the same set doesn't refetch.
+  const key = [...ids].sort();
+  return useQuery<Recipe[]>({
+    queryKey: ['recipes-by-ids', key],
+    enabled: enabled && ids.length > 0,
+    queryFn: () => getRecipesByIds(ids),
   });
 }
 
@@ -110,6 +141,8 @@ export function useSaveRecipe(collectionId: string) {
       // app are potentially stale.
       qc.invalidateQueries({ queryKey: ['adaptations'] });
       qc.invalidateQueries({ queryKey: ['recipe-summary', recipe.id] });
+      qc.invalidateQueries({ queryKey: ['recipe-search'] });
+      qc.invalidateQueries({ queryKey: ['recipes-by-ids'] });
       void syncNow();
     },
   });
@@ -125,6 +158,8 @@ export function useDeleteRecipe(collectionId: string) {
       qc.invalidateQueries({ queryKey: ['collections', user?.id] });
       qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
+      qc.invalidateQueries({ queryKey: ['recipe-search'] });
+      qc.invalidateQueries({ queryKey: ['recipes-by-ids'] });
       void syncNow();
     },
   });

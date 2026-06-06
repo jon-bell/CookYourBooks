@@ -2620,6 +2620,10 @@ export type Database = {
         }
         Returns: string
       }
+      save_recipes_graph: {
+        Args: { p_recipes: Json }
+        Returns: undefined
+      }
       search_nutrition_foods: {
         Args: { p_limit?: number; p_query: string }
         Returns: {
