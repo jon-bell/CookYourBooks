@@ -103,8 +103,43 @@ feature detection — both paths live in `apps/web/src/`:
 - `import/camera.ts` — `Camera.getPhoto()` on native, `<input
   type="file" capture>` on web.
 - `pages/CookModePage.tsx` — `Haptics.impact()` on native, no-op on web.
+- `import/shareIntent.ts` — receives a shared video link from the OS
+  share sheet and routes to `/import/link?url=…`. It talks to the
+  `send-intent` and `@capacitor/app` plugins through the global
+  `Capacitor.Plugins` registry, so the web bundle never imports them; on
+  the web it's an inert no-op.
 
 No platform-specific fork of the UI is needed.
+
+### Share target: "Share to CookYourBooks"
+
+Lets a user share a YouTube/TikTok/Instagram link from another app into
+CookYourBooks, which deep-links into the import-from-link flow and
+auto-extracts. The JS deps (`@capacitor/app`, `send-intent`) are already
+in `package.json`, so `pnpm --filter @cookyourbooks/mobile sync` wires the
+pods/manifest. The pieces that need native project setup (do once, on a
+macOS machine, then commit the Xcode changes):
+
+1. **Android** — `send-intent` contributes the `ACTION_SEND`
+   (`text/plain`) intent filter to `AndroidManifest.xml` on `cap sync`.
+   Nothing else required.
+2. **iOS Share Extension** — add a Share Extension target in Xcode
+   following the `send-intent` README. Use bundle id
+   `app.cookyourbooks.ShareExtension` (already registered in `fastlane/
+   Matchfile`).
+3. **App Group** — add `group.app.cookyourbooks` to the App **and** the
+   Share Extension entitlements so the extension can hand the shared URL
+   to the host app.
+4. **URL scheme** — `cookyourbooks://` is already declared in the app's
+   `Info.plist` (`CFBundleURLTypes`); the extension wakes the host app via
+   this scheme and `@capacitor/app` delivers it to `shareIntent.ts`.
+5. **Provisioning** — run `fastlane match appstore` after adding the new
+   bundle id so the extension gets its profile (the Matchfile already
+   lists it).
+
+The web handler + the `/import/link?url=…` deep-link contract are covered
+by the Playwright suite; the actual share-sheet hop is a manual
+device/simulator smoke test.
 
 ---
 

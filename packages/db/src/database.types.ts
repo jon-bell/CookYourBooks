@@ -1711,6 +1711,7 @@ export type Database = {
           servings_description: string | null
           sort_order: number
           source_image_text: string | null
+          source_url: string | null
           starred: boolean
           time_estimate: string | null
           title: string
@@ -1731,6 +1732,7 @@ export type Database = {
           servings_description?: string | null
           sort_order?: number
           source_image_text?: string | null
+          source_url?: string | null
           starred?: boolean
           time_estimate?: string | null
           title: string
@@ -1751,6 +1753,7 @@ export type Database = {
           servings_description?: string | null
           sort_order?: number
           source_image_text?: string | null
+          source_url?: string | null
           starred?: boolean
           time_estimate?: string | null
           title?: string

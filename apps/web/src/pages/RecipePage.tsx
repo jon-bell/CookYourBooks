@@ -184,6 +184,18 @@ export function RecipePage() {
               : ''}
           </p>
         )}
+        {recipe.sourceUrl && (
+          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
+            <a
+              href={recipe.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="underline-offset-2 hover:underline"
+            >
+              ▶ Watch the source video
+            </a>
+          </p>
+        )}
         {importItems.length > 0 && (
           <button
             type="button"

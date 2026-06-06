@@ -51,11 +51,16 @@ export async function startFunctionsServer(): Promise<void> {
     throw new Error(`Supabase CLI not found at ${SUPABASE_BIN}. Run scripts/install-supabase-cli.sh.`);
   }
   mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(ENV_FILE, 'OCR_MOCK_MODE=1\n');
+  // Mock flags for the LLM-backed functions so E2E never reaches Gemini /
+  // oEmbed: import-worker reads OCR_MOCK_MODE, video-import reads
+  // VIDEO_IMPORT_MOCK_MODE (both fall back to the ocr_test_fixtures table).
+  writeFileSync(ENV_FILE, 'OCR_MOCK_MODE=1\nVIDEO_IMPORT_MOCK_MODE=1\n');
 
+  // Serve every function in supabase/functions (no name = all) so both
+  // import-worker and video-import are reachable on the same port.
   const child: ChildProcess = spawn(
     SUPABASE_BIN,
-    ['functions', 'serve', 'import-worker', '--no-verify-jwt', '--env-file', ENV_FILE],
+    ['functions', 'serve', '--no-verify-jwt', '--env-file', ENV_FILE],
     {
       cwd: REPO_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],

@@ -94,6 +94,12 @@ export function ImportListPage() {
           ★ Speed Importer
         </Link>
         <Link
+          to="/import/link"
+          className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+        >
+          From link
+        </Link>
+        <Link
           to="/import/new/bakeoff"
           className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
         >

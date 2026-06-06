@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -52,6 +52,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     book_title text,
     page_numbers text,         -- JSON array of numbers
     source_image_text text,
+    source_url text,           -- origin URL for video-imported recipes
     starred integer not null default 0,
     updated_at integer not null default 0,
     deleted integer not null default 0
@@ -360,6 +361,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipes add column book_title text`,
   `alter table recipes add column page_numbers text`,
   `alter table recipes add column source_image_text text`,
+  // Per-recipe origin URL for the video-import flow (2026-06-05).
+  `alter table recipes add column source_url text`,
   `alter table ingredients add column description text`,
   `alter table instructions add column temperature_value real`,
   `alter table instructions add column temperature_unit text`,
