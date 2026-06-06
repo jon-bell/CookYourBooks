@@ -155,7 +155,10 @@ export function getLocalDb(): Promise<LocalDb> {
 // earlier builds (before we bracketed ALTERs with begin/commit_alter)
 // keep stale triggers and INSERTs blow up with "expected N values,
 // got M".
-const CRR_TRIGGER_HEAL_VERSION = 1;
+// v2 (2026-06-18): cooking_events gained photo_paths; re-emit CRR triggers
+// so DBs that promoted the table before the column exists pick up the
+// widened shape (otherwise INSERTs hit "expected N values, got M").
+const CRR_TRIGGER_HEAL_VERSION = 2;
 
 async function initialize(): Promise<LocalDb> {
   setInitStep('init wasm');

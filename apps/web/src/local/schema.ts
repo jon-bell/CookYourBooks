@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -309,6 +309,70 @@ export const SCHEMA_STATEMENTS: string[] = [
   `create index if not exists nutrition_foods_essentials_data_type_idx
     on nutrition_foods_essentials(data_type)`,
 
+  // ---------- Cooking tracker (2026-06-17) ----------
+  //
+  // cooking_events: "I made this" (COOKED) + "make on <date>" (PLANNED).
+  // CRR-replicated. recipe_id is nullable (no default) so a cooked entry
+  // survives the recipe being deleted server-side (ON DELETE SET NULL) —
+  // the recipe_snapshot JSON keeps it readable. shared_with_household_id
+  // is a local-only marker set by the household pull (mirrors
+  // recipe_collections); the server has no such column.
+  `create table if not exists cooking_events (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text,
+    status text not null default 'PLANNED',
+    event_date text not null default '',     -- ISO day 'YYYY-MM-DD'
+    occasion_category text,
+    occasion_note text,
+    notes text,
+    adjustments text not null default '[]',  -- JSON RecipeAdjustment[]
+    recipe_snapshot text,                    -- JSON RecipeSnapshot or null
+    photo_paths text not null default '[]',  -- JSON array of cooking-photos storage paths
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists cooking_events_owner_date_idx
+    on cooking_events(owner_id, event_date)`,
+  `create index if not exists cooking_events_recipe_idx on cooking_events(recipe_id)`,
+  `create index if not exists cooking_events_household_idx
+    on cooking_events(shared_with_household_id)
+    where shared_with_household_id is not null`,
+
+  // recipe_tags: per-(owner, recipe) labels, distinct from `recipes.starred`.
+  // CRR-replicated. The server enforces unique(owner_id, recipe_id, label);
+  // we intentionally do NOT add a local UNIQUE index (cr-sqlite only
+  // supports the primary key as a uniqueness constraint) — the repository
+  // makes addTag idempotent by checking for an existing row first, and the
+  // push uses onConflict on the natural key.
+  `create table if not exists recipe_tags (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text not null default '',
+    label text not null default '',
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists recipe_tags_recipe_idx on recipe_tags(recipe_id)`,
+  `create index if not exists recipe_tags_owner_idx on recipe_tags(owner_id)`,
+  `create index if not exists recipe_tags_label_idx on recipe_tags(label)`,
+
+  // recipe_views: LOCAL-ONLY personal browsing history. NOT CRR, never
+  // synced, never shared — "your own record" stays on this device, and
+  // routing the app's highest-frequency write through sync would be a
+  // thundering-herd risk. Mirrors the outbox/sync_state local-only shape
+  // (autoincrement int PK, no updated_at/deleted).
+  `create table if not exists recipe_views (
+    id integer primary key autoincrement,
+    recipe_id text not null,
+    viewed_at integer not null,
+    source text
+  )`,
+  `create index if not exists recipe_views_recipe_idx on recipe_views(recipe_id, viewed_at)`,
+  `create index if not exists recipe_views_recent_idx on recipe_views(viewed_at)`,
+
   // Sync metadata — a singleton row per logical topic holding the
   // latest-seen remote `updated_at` (ms since epoch). Local-only, not CRR.
   `create table if not exists sync_state (
@@ -342,6 +406,8 @@ export const CRR_TABLES = [
   'import_toc_entries',
   'conversion_rules',
   'rewrite_jobs',
+  'cooking_events',
+  'recipe_tags',
 ];
 
 // Idempotent post-schema migrations. Appended to over time as columns
@@ -581,4 +647,50 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     on nutrition_foods_essentials(search_blob)`,
   `create index if not exists nutrition_foods_essentials_data_type_idx
     on nutrition_foods_essentials(data_type)`,
+  // ---------- Cooking tracker (2026-06-17) — idempotent post-schema migration ----------
+  `create table if not exists cooking_events (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text,
+    status text not null default 'PLANNED',
+    event_date text not null default '',
+    occasion_category text,
+    occasion_note text,
+    notes text,
+    adjustments text not null default '[]',
+    recipe_snapshot text,
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists cooking_events_owner_date_idx
+    on cooking_events(owner_id, event_date)`,
+  `create index if not exists cooking_events_recipe_idx on cooking_events(recipe_id)`,
+  `create index if not exists cooking_events_household_idx
+    on cooking_events(shared_with_household_id)
+    where shared_with_household_id is not null`,
+  `create table if not exists recipe_tags (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text not null default '',
+    label text not null default '',
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists recipe_tags_recipe_idx on recipe_tags(recipe_id)`,
+  `create index if not exists recipe_tags_owner_idx on recipe_tags(owner_id)`,
+  `create index if not exists recipe_tags_label_idx on recipe_tags(label)`,
+  `create table if not exists recipe_views (
+    id integer primary key autoincrement,
+    recipe_id text not null,
+    viewed_at integer not null,
+    source text
+  )`,
+  `create index if not exists recipe_views_recipe_idx on recipe_views(recipe_id, viewed_at)`,
+  `create index if not exists recipe_views_recent_idx on recipe_views(viewed_at)`,
+  // Photos on cooking entries (V2). Additive for any local DB that created
+  // cooking_events before this column existed; the create-table above
+  // already includes it for fresh DBs.
+  `alter table cooking_events add column photo_paths text not null default '[]'`,
 ];

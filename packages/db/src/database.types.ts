@@ -340,6 +340,69 @@ export type Database = {
           },
         ]
       }
+      cooking_events: {
+        Row: {
+          adjustments: Json
+          created_at: string
+          event_date: string
+          id: string
+          notes: string | null
+          occasion_category: string | null
+          occasion_note: string | null
+          owner_id: string
+          photo_paths: Json
+          recipe_id: string | null
+          recipe_snapshot: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          adjustments?: Json
+          created_at?: string
+          event_date: string
+          id?: string
+          notes?: string | null
+          occasion_category?: string | null
+          occasion_note?: string | null
+          owner_id: string
+          photo_paths?: Json
+          recipe_id?: string | null
+          recipe_snapshot?: Json | null
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          adjustments?: Json
+          created_at?: string
+          event_date?: string
+          id?: string
+          notes?: string | null
+          occasion_category?: string | null
+          occasion_note?: string | null
+          owner_id?: string
+          photo_paths?: Json
+          recipe_id?: string | null
+          recipe_snapshot?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cooking_events_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cooking_events_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       global_conversions: {
         Row: {
           created_at: string
@@ -1209,6 +1272,7 @@ export type Database = {
           id: string
           name: string
           notes: string | null
+          owner_id: string | null
           preparation: string | null
           quantity_amount: number | null
           quantity_denominator: number | null
@@ -1227,6 +1291,7 @@ export type Database = {
           id?: string
           name: string
           notes?: string | null
+          owner_id?: string | null
           preparation?: string | null
           quantity_amount?: number | null
           quantity_denominator?: number | null
@@ -1245,6 +1310,7 @@ export type Database = {
           id?: string
           name?: string
           notes?: string | null
+          owner_id?: string | null
           preparation?: string | null
           quantity_amount?: number | null
           quantity_denominator?: number | null
@@ -1280,6 +1346,7 @@ export type Database = {
           consumed_quantity_whole: number | null
           ingredient_id: string
           instruction_id: string
+          owner_id: string | null
         }
         Insert: {
           consumed_quantity_amount?: number | null
@@ -1292,6 +1359,7 @@ export type Database = {
           consumed_quantity_whole?: number | null
           ingredient_id: string
           instruction_id: string
+          owner_id?: string | null
         }
         Update: {
           consumed_quantity_amount?: number | null
@@ -1304,6 +1372,7 @@ export type Database = {
           consumed_quantity_whole?: number | null
           ingredient_id?: string
           instruction_id?: string
+          owner_id?: string | null
         }
         Relationships: [
           {
@@ -1326,6 +1395,7 @@ export type Database = {
         Row: {
           id: string
           notes: string | null
+          owner_id: string | null
           recipe_id: string
           simplified_steps: Json | null
           step_number: number
@@ -1337,6 +1407,7 @@ export type Database = {
         Insert: {
           id?: string
           notes?: string | null
+          owner_id?: string | null
           recipe_id: string
           simplified_steps?: Json | null
           step_number: number
@@ -1348,6 +1419,7 @@ export type Database = {
         Update: {
           id?: string
           notes?: string | null
+          owner_id?: string | null
           recipe_id?: string
           simplified_steps?: Json | null
           step_number?: number
@@ -1691,6 +1763,48 @@ export type Database = {
             columns: ["shared_with_household_id"]
             isOneToOne: false
             referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_tags: {
+        Row: {
+          created_at: string
+          id: string
+          label: string
+          owner_id: string
+          recipe_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label: string
+          owner_id: string
+          recipe_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string
+          owner_id?: string
+          recipe_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_tags_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_tags_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
             referencedColumns: ["id"]
           },
         ]
@@ -2404,16 +2518,16 @@ export type Database = {
         Returns: undefined
       }
       import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
-      import_set_item_toc: {
-        Args: { p_item_id: string; p_is_toc: boolean }
-        Returns: undefined
-      }
       import_retry_recitation_failures: {
         Args: { p_batch_id: string }
         Returns: number
       }
       import_set_batch_fallback: {
         Args: { p_batch_id: string; p_model: string; p_provider: string }
+        Returns: undefined
+      }
+      import_set_item_toc: {
+        Args: { p_is_toc: boolean; p_item_id: string }
         Returns: undefined
       }
       import_set_recitation_policy: {
@@ -2623,10 +2737,7 @@ export type Database = {
         }
         Returns: string
       }
-      save_recipes_graph: {
-        Args: { p_recipes: Json }
-        Returns: undefined
-      }
+      save_recipes_graph: { Args: { p_recipes: Json }; Returns: undefined }
       search_nutrition_foods: {
         Args: { p_limit?: number; p_query: string }
         Returns: {
