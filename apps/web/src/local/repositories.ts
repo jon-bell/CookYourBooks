@@ -20,6 +20,7 @@ import {
 } from '@cookyourbooks/db';
 import { getLocalDb } from './db.js';
 import { enqueue } from './outbox.js';
+import { shouldSuppressCrrTriggers } from './crrSuppression.js';
 
 // Milliseconds since epoch, good enough for a monotonic-ish write marker
 // on the local side.
@@ -161,7 +162,7 @@ export async function upsertCollectionsBatch(
     (r) => tsToMs(r.updated_at),
   );
   if (fresh.length === 0) return;
-  await withSuppressedCrrTriggers(['recipe_collections'], async () => {
+  await withSuppressedCrrTriggers(['recipe_collections'], fresh.length, async () => {
     await bulkInsertOnConflictId(
       'recipe_collections',
       COLLECTION_COLS,
@@ -387,17 +388,29 @@ const PULL_CRR_TABLES = [
  * Run `fn` with cr-sqlite's per-row change-tracking triggers suspended
  * on `tables`. cr-sqlite's crsql_begin_alter / crsql_commit_alter pair
  * drops the row triggers for the duration and recreates them on
- * commit_alter — exactly the property a pull needs, since pulled rows
- * are server-canonical and don't need to be re-propagated as outbound
- * CRDT changes. On iPad WASM SQLite each trigger fire is ~10–15ms;
- * disabling them is the single biggest win on bulk inserts. Must run
- * at the top level (not inside a SAVEPOINT / db.tx callback) so the
- * triggers re-attach cleanly even on caller failure.
+ * commit_alter — exactly the property a *bulk* pull needs, since pulled
+ * rows are server-canonical and don't need to be re-propagated as
+ * outbound CRDT changes.
+ *
+ * `rowCount` is the number of rows `fn` is about to write. Below
+ * {@link CRR_SUPPRESS_MIN_ROWS} we skip the begin/commit_alter dance and
+ * just run `fn` with triggers live — paying a handful of cheap per-row
+ * trigger fires instead of one table-sized commit_alter (see
+ * {@link shouldSuppressCrrTriggers}). Pass the total row count across all
+ * `tables` (e.g. recipes + ingredients + instructions + refs), since
+ * that's what the trigger cost tracks.
+ *
+ * Must run at the top level (not inside a SAVEPOINT / db.tx callback) so
+ * the triggers re-attach cleanly even on caller failure.
  */
 export async function withSuppressedCrrTriggers<T>(
   tables: readonly string[],
+  rowCount: number,
   fn: () => Promise<T>,
 ): Promise<T> {
+  if (!shouldSuppressCrrTriggers(rowCount)) {
+    return await fn();
+  }
   const db = await getLocalDb();
   const altered: string[] = [];
   try {
@@ -468,7 +481,13 @@ export async function upsertRecipesBatch(
   if (batch.length === 0) return;
   if (signal?.aborted) return;
   const db = await getLocalDb();
-  await withSuppressedCrrTriggers(PULL_CRR_TABLES, async () => {
+  // Trigger cost tracks total rows written, not recipe count — a single
+  // recipe drags in its ingredients / instructions / refs.
+  const totalRows = batch.reduce(
+    (acc, b) => acc + 1 + b.ingredients.length + b.instructions.length + b.refs.length,
+    0,
+  );
+  await withSuppressedCrrTriggers(PULL_CRR_TABLES, totalRows, async () => {
     await db.tx(async (tx) => {
       const ids = batch.map((b) => b.recipe.id);
       const existingMap = new Map<string, number>();
