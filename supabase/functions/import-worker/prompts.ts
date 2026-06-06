@@ -46,7 +46,7 @@ Rules:
 - consumedIngredients on each step lists which recipe ingredients are used. For measured items include their quantity; for vague items use { "ingredientName": "...", "vague": true }.
 - Include the full extracted page text in rawText.`;
 
-export const TOC_PROMPT = `This image is a cookbook table of contents (or index). Extract every visible entry and return JSON ONLY in this exact shape:
+export const TOC_PROMPT = `This image is a cookbook table of contents (or index). Its primary feature is a list of titles and page numbers, which might be formatted in a variety of ways (sometimes might not even say "page", but still has numbers aligned with titles). There may be other artifacts on the page. Extract every visible entry and return JSON ONLY in this exact shape:
 
 {
   "entries": [
