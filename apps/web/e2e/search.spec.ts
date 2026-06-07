@@ -3,6 +3,13 @@ import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Search', () => {
   test.beforeEach(async ({ authedPage: page }) => {
+    // The semantic search path lazy-downloads ~30 MB of model weights
+    // from a CDN on first /search visit. Disable it in tests via the
+    // shim hook so the substring fallback is exercised deterministically
+    // — the real-model semantic path is covered in semantic.spec.ts.
+    await page.addInitScript(() => {
+      (window as unknown as { __cybDisableEmbedder?: boolean }).__cybDisableEmbedder = true;
+    });
     await createRecipeViaUi(page, {
       collectionTitle: 'Dinners',
       recipeTitle: 'Chicken Soup',
@@ -33,25 +40,27 @@ test.describe('Search', () => {
 
   test('matches on recipe title (case insensitive)', async ({ authedPage: page }) => {
     await openSearch(page);
-    await page.getByPlaceholder(/Search by recipe title or ingredient/).fill('CHICKEN');
-    await expect(page.getByText('Chicken Soup')).toBeVisible();
+    await page.getByPlaceholder(/Search by recipe/).fill('CHICKEN');
+    // Debounce is 250ms; account for that plus the SQLite round-trip.
+    await expect(page.getByText('Chicken Soup')).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('Fruit Salad')).toHaveCount(0);
   });
 
   test('matches on an ingredient name', async ({ authedPage: page }) => {
     await openSearch(page);
-    await page.getByPlaceholder(/Search by recipe title or ingredient/).fill('parsley');
-    await expect(page.getByText('Chicken Soup')).toBeVisible();
+    await page.getByPlaceholder(/Search by recipe/).fill('parsley');
+    await expect(page.getByText('Chicken Soup')).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('Fruit Salad')).toHaveCount(0);
   });
 
-  test('empty query shows all recipes; unknown query shows none', async ({
+  test('empty query shows hint; unknown query shows zero results', async ({
     authedPage: page,
   }) => {
     await openSearch(page);
-    await expect(page.getByText(/^2 recipes$/)).toBeVisible();
+    // Empty input renders the "type to search" hint, not a counter.
+    await expect(page.getByText(/Type to search/)).toBeVisible();
 
-    await page.getByPlaceholder(/Search by recipe title or ingredient/).fill('anchovy');
-    await expect(page.getByText(/^0 results$/)).toBeVisible();
+    await page.getByPlaceholder(/Search by recipe/).fill('anchovy');
+    await expect(page.getByText(/^0 results$/)).toBeVisible({ timeout: 5000 });
   });
 });

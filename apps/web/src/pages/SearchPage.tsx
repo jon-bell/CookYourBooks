@@ -1,27 +1,39 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { SourceType } from '@cookyourbooks/domain';
-import { useRecipeSearch } from '../data/queries.js';
+import { useSearch } from '../search/useSearch.js';
+
 type Filter = '' | SourceType;
 
 export function SearchPage() {
+  const [raw, setRaw] = useState('');
   const [q, setQ] = useState('');
   const [sourceType, setSourceType] = useState<Filter>('');
-  // SQL-backed search — no full-library hydration. The query already
-  // matches title + ingredient name and sorts placeholders last.
-  const { data: allHits = [], isLoading } = useRecipeSearch(q);
-  const hits = sourceType
-    ? allHits.filter((h) => (h.sourceType as string) === sourceType)
-    : allHits;
+
+  // Debounce keystrokes; semantic search costs a model inference per
+  // query so we don't want one per keypress.
+  useEffect(() => {
+    const id = setTimeout(() => setQ(raw), 250);
+    return () => clearTimeout(id);
+  }, [raw]);
+
+  const { hits, isLoading, mode, embedderStatus } = useSearch(q);
+
+  const filteredHits = useMemo(() => {
+    if (!sourceType) return hits;
+    return hits.filter((h) => (h.sourceType as string) === sourceType);
+  }, [hits, sourceType]);
+
+  const status = embedderHint(embedderStatus, mode);
 
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-semibold">Search</h1>
       <div className="flex flex-wrap gap-3">
         <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search by recipe title or ingredient…"
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          placeholder="Search by recipe, ingredient, or idea (e.g. 'salad dressing')…"
           className="flex-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2"
           autoFocus
         />
@@ -37,17 +49,26 @@ export function SearchPage() {
           <option value="WEBSITE">Web</option>
         </select>
       </div>
-      {isLoading ? (
-        <p className="text-stone-500 dark:text-stone-400">Loading…</p>
+      {status && (
+        <div className="text-xs text-stone-500 dark:text-stone-400">{status}</div>
+      )}
+      {q.length === 0 ? (
+        <p className="text-stone-500 dark:text-stone-400">
+          Type to search across every recipe in your library.
+        </p>
+      ) : isLoading ? (
+        <p className="text-stone-500 dark:text-stone-400">Searching…</p>
       ) : (
         <>
           <div className="text-sm text-stone-600 dark:text-stone-400">
-            {q
-              ? `${hits.length} ${hits.length === 1 ? 'result' : 'results'}`
-              : `${hits.length} recipes`}
+            {filteredHits.length}{' '}
+            {filteredHits.length === 1 ? 'result' : 'results'}
+            {mode === 'substring' && embedderStatus === 'ready' && hits.length > 0 && (
+              <span> (semantic search found nothing — showing literal matches)</span>
+            )}
           </div>
           <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-            {hits.map((hit) => (
+            {filteredHits.map((hit) => (
               <li key={hit.recipeId}>
                 <Link
                   to={`/collections/${hit.collectionId}/recipes/${hit.recipeId}`}
@@ -80,4 +101,17 @@ export function SearchPage() {
       )}
     </div>
   );
+}
+
+function embedderHint(
+  status: 'idle' | 'loading' | 'ready' | 'unavailable',
+  mode: 'semantic' | 'substring' | 'empty',
+): string | null {
+  if (status === 'loading') {
+    return 'Preparing semantic search (first time only, ~30 MB download)…';
+  }
+  if (status === 'unavailable' && mode !== 'empty') {
+    return 'Semantic search unavailable — falling back to literal matches.';
+  }
+  return null;
 }

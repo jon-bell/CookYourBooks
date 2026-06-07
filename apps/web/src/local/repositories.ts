@@ -2100,3 +2100,193 @@ function tsToMs(ts: string | number | null | undefined): number {
   const parsed = Date.parse(ts);
   return Number.isFinite(parsed) ? parsed : now();
 }
+
+// ------------- Recipe embeddings (local mirror) -------------
+
+export interface LocalEmbeddingRow {
+  recipeId: string;
+  embedding: Float32Array;
+  textHash: string;
+  model: string;
+  updatedAtMs: number;
+}
+
+/**
+ * Pack a Float32Array into a byte view safe to write as a SQLite BLOB.
+ * Endianness: we never round-trip the bytes off-device, so the host's
+ * native little-endian layout is fine — both the browser and the
+ * sqlite VFS see the same machine.
+ */
+export function packEmbedding(vec: Float32Array): Uint8Array {
+  return new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
+}
+
+/**
+ * Unpack a SQLite BLOB back into a Float32Array. Copies into a fresh
+ * buffer so callers don't have to worry about the underlying storage
+ * lifetime (cr-sqlite hands us a borrowed view that the VFS may reuse).
+ */
+export function unpackEmbedding(bytes: Uint8Array): Float32Array {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return new Float32Array(copy);
+}
+
+export async function upsertLocalEmbedding(row: LocalEmbeddingRow): Promise<void> {
+  const db = await getLocalDb();
+  await db.exec(
+    `insert into recipe_embeddings (recipe_id, embedding, text_hash, model, updated_at)
+     values (?,?,?,?,?)
+     on conflict(recipe_id) do update set
+       embedding=excluded.embedding,
+       text_hash=excluded.text_hash,
+       model=excluded.model,
+       updated_at=excluded.updated_at
+     where excluded.updated_at >= recipe_embeddings.updated_at`,
+    [
+      row.recipeId,
+      packEmbedding(row.embedding),
+      row.textHash,
+      row.model,
+      row.updatedAtMs,
+    ],
+  );
+}
+
+export async function upsertLocalEmbeddingsBatch(
+  rows: readonly LocalEmbeddingRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  // Filter out stale incoming rows first, mirroring the recipes path.
+  const db = await getLocalDb();
+  const ids = rows.map((r) => r.recipeId);
+  const existing = new Map<string, number>();
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const ph = slice.map(() => '?').join(',');
+    const found = (await db.execO<{ recipe_id: string; updated_at: number }>(
+      `select recipe_id, updated_at from recipe_embeddings where recipe_id in (${ph})`,
+      slice,
+    )) as { recipe_id: string; updated_at: number }[];
+    for (const f of found) existing.set(f.recipe_id, f.updated_at);
+  }
+  for (const row of rows) {
+    const local = existing.get(row.recipeId);
+    if (local && local > row.updatedAtMs) continue;
+    await upsertLocalEmbedding(row);
+  }
+}
+
+/** Drop a single row — used when the canonical Postgres row is deleted. */
+export async function deleteLocalEmbedding(recipeId: string): Promise<void> {
+  const db = await getLocalDb();
+  await db.exec(`delete from recipe_embeddings where recipe_id = ?`, [recipeId]);
+}
+
+/**
+ * Look up the cached row for a recipe. Returns undefined when the
+ * worker / save path hasn't computed one yet.
+ */
+export async function getLocalEmbedding(
+  recipeId: string,
+): Promise<LocalEmbeddingRow | undefined> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{
+    recipe_id: string;
+    embedding: Uint8Array;
+    text_hash: string;
+    model: string;
+    updated_at: number;
+  }>(
+    `select recipe_id, embedding, text_hash, model, updated_at
+       from recipe_embeddings where recipe_id = ?`,
+    [recipeId],
+  )) as {
+    recipe_id: string;
+    embedding: Uint8Array;
+    text_hash: string;
+    model: string;
+    updated_at: number;
+  }[];
+  const r = rows[0];
+  if (!r) return undefined;
+  return {
+    recipeId: r.recipe_id,
+    embedding: unpackEmbedding(r.embedding),
+    textHash: r.text_hash,
+    model: r.model,
+    updatedAtMs: r.updated_at,
+  };
+}
+
+/**
+ * Walk every embedding the caller is allowed to search — joined to
+ * recipes + recipe_collections so we can filter soft-deletes and (when
+ * an owner id is supplied) restrict to that owner's library. Returns
+ * lightweight rows: title + collection metadata enough to render a
+ * result row without recipe hydration.
+ */
+export interface SearchableEmbedding {
+  recipeId: string;
+  recipeTitle: string;
+  collectionId: string;
+  collectionTitle: string;
+  sourceType: string;
+  /** True for a content-less placeholder (global-ToC entry not yet imported);
+   *  rendered with a "Not imported" badge, same as the literal search. */
+  isPlaceholder: boolean;
+  embedding: Float32Array;
+}
+
+export async function listSearchableEmbeddings(
+  ownerId: string,
+): Promise<SearchableEmbedding[]> {
+  const db = await getLocalDb();
+  // Own recipes + household-shared ones. Co-members' embeddings are pulled
+  // into the local mirror by pullHouseholdSharedContent (the recipe_embeddings
+  // claim-based RLS grants household reads, 20260624000000), and their
+  // collections carry the local-only `shared_with_household_id` marker — same
+  // visibility rule the literal searchRecipes uses.
+  const rows = (await db.execO<{
+    recipe_id: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: string;
+    title: string;
+    has_content: number;
+    embedding: Uint8Array;
+  }>(
+    `select e.recipe_id, e.embedding, r.collection_id, r.title,
+            c.title as collection_title, c.source_type,
+            (exists (select 1 from ingredients where recipe_id = r.id)
+             or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+       from recipe_embeddings e
+       join recipes r on r.id = e.recipe_id and r.deleted = 0
+       join recipe_collections c on c.id = r.collection_id and c.deleted = 0
+              and (c.owner_id = ? or c.shared_with_household_id is not null)`,
+    [ownerId],
+  )) as {
+    recipe_id: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: string;
+    title: string;
+    has_content: number;
+    embedding: Uint8Array;
+  }[];
+  return rows.map((r) => ({
+    recipeId: r.recipe_id,
+    recipeTitle: r.title,
+    collectionId: r.collection_id,
+    collectionTitle: r.collection_title,
+    sourceType: r.source_type,
+    isPlaceholder: !r.has_content,
+    embedding: unpackEmbedding(r.embedding),
+  }));
+}
+
+// Literal/offline fallback search now lives in the LocalRecipeCollectionRepository
+// (`searchRecipes`), which also covers household-shared recipes and "not
+// imported" placeholders. The semantic path falls back to it via
+// collectionRepo(ownerId).searchRecipes() in apps/web/src/search.

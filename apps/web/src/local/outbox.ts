@@ -19,6 +19,10 @@ export type OutboxKind =
   // house_conversion_upsert / house_conversion_delete RPCs.
   | 'conversion_rule_save'
   | 'conversion_rule_delete'
+  // Browser-computed recipe embedding ready to push to pgvector via the
+  // embed_upsert_client RPC. The entity_id is the recipe id; the
+  // payload lives in the local recipe_embeddings row.
+  | 'embedding_push'
   // Cooking tracker (2026-06-17). Plain PostgREST upsert/delete — no RPC.
   | 'cooking_event_save'
   | 'cooking_event_delete'

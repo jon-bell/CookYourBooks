@@ -23,6 +23,11 @@ import {
   filterFresherIncoming,
   bulkInsertOnConflictId,
   bulkInsertIgnoreId,
+  upsertLocalEmbeddingsBatch,
+  upsertLocalEmbedding,
+  deleteLocalEmbedding,
+  getLocalEmbedding,
+  type LocalEmbeddingRow,
 } from './repositories.js';
 import {
   listPending,
@@ -222,6 +227,7 @@ export interface PullResult {
   importTocEntries: number;
   conversionRules: number;
   rewriteJobs: number;
+  recipeEmbeddings: number;
   cookingEvents: number;
   recipeTags: number;
   /** Collections + their children pulled because they're shared into the user's household. */
@@ -354,6 +360,17 @@ interface ImportTocEntryRow {
   updated_at: string;
 }
 
+interface RecipeEmbeddingRow {
+  recipe_id: string;
+  /** Postgres `vector(384)` returns as either a numeric[] (when the
+   *  PostgREST cast handler is configured) or a textual `[1.23,...]`
+   *  representation. We accept both. */
+  embedding: number[] | string;
+  text_hash: string;
+  model: string;
+  updated_at: string;
+}
+
 interface RewriteJobRow {
   id: string;
   owner_id: string;
@@ -380,7 +397,9 @@ interface RewriteJobRow {
 // fixing a pull bug that could have stranded server rows.
 //
 // v5 (2026-06-17): added cooking_events + recipe_tags topics — reset so
-// existing users do a clean first pull of the new tables.
+// existing users do a clean first pull of the new tables. (The merge also
+// brought the recipe_embeddings topic; it's new, so it full-pulls from
+// watermark 0 on its own — included in the reset below as belt-and-suspenders.)
 const SYNC_RESET_VERSION = 5;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
@@ -389,7 +408,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -399,6 +418,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `import_toc_entries:${ownerId}`,
       `conversion_rules:${ownerId}`,
       `rewrite_jobs:${ownerId}`,
+      `recipe_embeddings:${ownerId}`,
       `cooking_events:${ownerId}`,
       `recipe_tags:${ownerId}`,
     ],
@@ -419,6 +439,7 @@ export interface PullCallbacks {
       | 'imports'
       | 'conversion_rules'
       | 'rewrite_jobs'
+      | 'recipe_embeddings'
       | 'cooking_events'
       | 'recipe_tags',
   ) => void;
@@ -641,21 +662,24 @@ export async function pullAll(
   );
   callbacks?.onPhaseComplete?.('recipes');
 
-  // Tail topics (imports, conversion_rules, rewrite_jobs) have no FK
-  // or RLS dependency on each other. Run them in parallel so network
-  // fetches overlap; their local-write phases still serialize on the
-  // SQLite mutex, but each phase is now O(few statements) thanks to
-  // bulk INSERTs + trigger suppression, so the contention is small.
+  // Tail topics (imports, conversion_rules, rewrite_jobs, embeddings)
+  // have no FK or RLS dependency on each other. Run them in parallel
+  // so network fetches overlap; their local-write phases still
+  // serialize on the SQLite mutex, but each phase is now O(few
+  // statements) thanks to bulk INSERTs + trigger suppression, so the
+  // contention is small.
   checkAbort('imports');
   const importPhase = Date.now();
   const convPhase = Date.now();
   const rewritePhase = Date.now();
+  const embedPhase = Date.now();
   const cookingPhase = Date.now();
   const tagsPhase = Date.now();
   const [
     importCounts,
     conversionRulesPulled,
     rewriteJobsPulled,
+    recipeEmbeddingsPulled,
     cookingEventsPulled,
     recipeTagsPulled,
   ] = await Promise.all([
@@ -678,6 +702,11 @@ export async function pullAll(
         `pull rewrite_jobs: ${n} rows in ${Date.now() - rewritePhase}ms`,
       );
       callbacks?.onPhaseComplete?.('rewrite_jobs');
+      return n;
+    }),
+    pullRecipeEmbeddings(client, ownerId).then((n) => {
+      logSync('info', `pull recipe_embeddings: ${n} rows in ${Date.now() - embedPhase}ms`);
+      callbacks?.onPhaseComplete?.('recipe_embeddings');
       return n;
     }),
     pullCookingEvents(client, ownerId).then((n) => {
@@ -722,6 +751,7 @@ export async function pullAll(
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
     rewriteJobs: rewriteJobsPulled,
+    recipeEmbeddings: recipeEmbeddingsPulled,
     cookingEvents: cookingEventsPulled,
     recipeTags: recipeTagsPulled,
     householdSharedCollections,
@@ -917,6 +947,11 @@ async function pullHouseholdSharedContent(
   // the caller only logs the collection count.
   await pullHouseholdCookingEvents(client, ownerId, householdId);
   await pullHouseholdRecipeTags(client, ownerId, householdId);
+  // Co-members' recipe vectors, so household-shared recipes are semantically
+  // searchable (not just literal-fallback). Tagged into the local mirror by
+  // recipe_id; the collection's shared_with_household_id marker is what
+  // listSearchableEmbeddings joins on to surface them.
+  await pullHouseholdEmbeddings(client, ownerId, householdId);
 
   return collections.length;
 }
@@ -1480,6 +1515,108 @@ async function pullRewriteJobs(
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
   return rows.length;
+}
+
+// ---------- pull: recipe embeddings ----------
+
+/**
+ * Postgres `vector(N)` round-trips through PostgREST as a string like
+ * "[0.123,-0.456,...]" by default. Some deployments cast it to a
+ * numeric array. Tolerate both: if we already got an array, just
+ * convert numbers; otherwise parse the JSON-ish bracketed form.
+ */
+function decodeVector(raw: number[] | string | null | undefined): Float32Array | null {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return Float32Array.from(raw);
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return Float32Array.from(parsed as number[]);
+    } catch {
+      // Fall through; pgvector text format is always JSON-array shape,
+      // so a parse failure means something else broke.
+    }
+  }
+  return null;
+}
+
+async function pullRecipeEmbeddings(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `recipe_embeddings:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  // recipe_embeddings now carries a denormalized owner_id (20260624000000),
+  // so filter on it directly — no recipe→collection join (mirrors the owned
+  // recipes pull's owner_id filter).
+  const rows = await fetchAllPages<RecipeEmbeddingRow>((from, to) =>
+    client
+      .from('recipe_embeddings')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('recipe_id', { ascending: true })
+      .range(from, to),
+  );
+  await applyPulledEmbeddings(rows);
+  let max = await getWatermark(topic);
+  for (const r of rows) max = Math.max(max, toMs(r.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+/**
+ * Co-members' embeddings — filtered by our household_id (+ owner_id <> me),
+ * indexed and join-free, exactly like the household recipe pull. The
+ * claim-based recipe_embeddings RLS (20260624000000) confirms read access.
+ * This is what makes household-shared recipes semantically searchable:
+ * their vectors land in the same local mirror, and listSearchableEmbeddings
+ * surfaces them via the collection's shared_with_household_id marker.
+ * Watermarked per-household so switching households forces a fresh pull.
+ */
+async function pullHouseholdEmbeddings(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<number> {
+  const topic = `household_embeddings:${ownerId}:${householdId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<RecipeEmbeddingRow>((from, to) =>
+    client
+      .from('recipe_embeddings')
+      .select('*')
+      .eq('household_id', householdId)
+      .neq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('recipe_id', { ascending: true })
+      .range(from, to),
+  );
+  await applyPulledEmbeddings(rows);
+  let max = await getWatermark(topic);
+  for (const r of rows) max = Math.max(max, toMs(r.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+/** Decode pulled pgvector rows and upsert them into the local mirror. */
+async function applyPulledEmbeddings(rows: RecipeEmbeddingRow[]): Promise<void> {
+  const local: LocalEmbeddingRow[] = [];
+  for (const r of rows) {
+    const vec = decodeVector(r.embedding);
+    if (!vec) continue;
+    local.push({
+      recipeId: r.recipe_id,
+      embedding: vec,
+      textHash: r.text_hash,
+      model: r.model,
+      updatedAtMs: toMs(r.updated_at),
+    });
+  }
+  await upsertLocalEmbeddingsBatch(local);
 }
 
 // ---------- pull: cooking tracker ----------
@@ -2230,6 +2367,14 @@ export function subscribeRealtime(
     )
     .on(
       'postgres_changes',
+      { event: '*', schema: 'public', table: 'recipe_embeddings' },
+      async (payload) => {
+        await handleRecipeEmbeddingEvent(payload);
+        onLocalUpdate();
+      },
+    )
+    .on(
+      'postgres_changes',
       { event: '*', schema: 'public', table: 'cooking_events', filter: `owner_id=eq.${ownerId}` },
       async (payload) => {
         await handleCookingEventEvent(payload);
@@ -2413,6 +2558,24 @@ async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
     return;
   }
   await upsertRewriteJobRow(payload.new as unknown as RewriteJobRow);
+}
+
+async function handleRecipeEmbeddingEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { recipe_id?: string }).recipe_id;
+    if (id) await deleteLocalEmbedding(id);
+    return;
+  }
+  const row = payload.new as unknown as RecipeEmbeddingRow;
+  const vec = decodeVector(row.embedding);
+  if (!vec) return;
+  await upsertLocalEmbedding({
+    recipeId: row.recipe_id,
+    embedding: vec,
+    textHash: row.text_hash,
+    model: row.model,
+    updatedAtMs: toMs(row.updated_at),
+  });
 }
 
 async function handleCookingEventEvent(payload: RealtimePayload): Promise<void> {
@@ -2653,6 +2816,8 @@ async function pushOne(
       if (error) throw error;
       return;
     }
+    case 'embedding_push':
+      return pushRecipeEmbedding(client, entry.entity_id);
     case 'cooking_event_save':
       return pushCookingEvent(client, ownerId, entry.entity_id);
     case 'cooking_event_delete': {
@@ -2668,6 +2833,30 @@ async function pushOne(
       return;
     }
   }
+}
+
+async function pushRecipeEmbedding(
+  client: CookbooksClient,
+  recipeId: string,
+): Promise<void> {
+  const local = await getLocalEmbedding(recipeId);
+  if (!local) {
+    // The save flow already deleted it (e.g. recipe purge), or the
+    // embedder never finished. Treat as a no-op — better than failing
+    // an outbox entry the user can't retry by hand.
+    return;
+  }
+  // Vector goes over the wire as a plain number[]; the RPC casts to
+  // vector(384). PostgREST happily serializes Float32Array as JSON
+  // numbers via Array.from.
+  const payload = Array.from(local.embedding);
+  const { error } = await client.rpc('embed_upsert_client', {
+    p_recipe_id: recipeId,
+    p_text_hash: local.textHash,
+    p_embedding: payload as unknown as number[],
+    p_model: local.model,
+  });
+  if (error) throw error;
 }
 
 async function pushCookingEvent(
