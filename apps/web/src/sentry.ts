@@ -110,6 +110,18 @@ export function initSentry(): void {
     return;
   }
 
+  // Never ingest from an automated browser. Playwright (and Selenium etc.)
+  // set `navigator.webdriver = true`; real web + Capacitor users have it
+  // false. The e2e suite deliberately drives error paths (wrong-password
+  // sign-in, RLS denials, OCR failures), and the QueryCache/MutationCache
+  // handlers now report those — without this guard every test run floods
+  // the real project. This covers both CI (vite preview) and local (dev)
+  // runs in one place, no build-flag plumbing.
+  if (typeof navigator !== 'undefined' && navigator.webdriver) {
+    skipReason = 'automated browser (navigator.webdriver)';
+    return;
+  }
+
   // We used to gate dev builds off (`enabled: PROD || ENABLE_DEV=1`)
   // so `pnpm dev` runs didn't pollute prod Sentry. That made the
   // "send logs" button silently no-op for anyone actively testing
