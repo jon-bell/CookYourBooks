@@ -34,3 +34,19 @@ export function firstVideoUrl(shared: string | null | undefined): string | null 
   }
   return detectVideoPlatform(shared.trim()) ? shared.trim() : null;
 }
+
+/**
+ * Pull the first http(s) URL out of an arbitrary shared string — any site,
+ * not just the supported video platforms. Used as the generic fallback for
+ * the share sheet now that we import from any recipe link. Returns null when
+ * no http(s) URL is present.
+ */
+export function firstHttpUrl(shared: string | null | undefined): string | null {
+  if (!shared) return null;
+  for (const token of shared.split(/\s+/)) {
+    const candidate = token.trim();
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+  }
+  const trimmed = shared.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : null;
+}

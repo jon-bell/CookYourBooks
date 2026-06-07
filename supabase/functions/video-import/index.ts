@@ -3,11 +3,14 @@
 //   POST /functions/v1/video-import { url: string, caption?: string }
 //     → { platform, sourceUrl, drafts: ParsedRecipeDraft[] }
 //
-// Extracts a recipe from a pasted social-video link, synchronously:
+// Extracts a recipe from a pasted link, synchronously:
 //   - YouTube  → Gemini "watches" the video natively (file_data fileUri).
 //   - TikTok   → caption/title via tokenless oEmbed → Gemini text extract.
 //   - Instagram→ caption via Graph oEmbed (IG_OEMBED_TOKEN) if configured,
 //                else the client supplies `caption` (NEEDS_CAPTION).
+//   - website  → any other http(s) URL: fetch the page, read schema.org
+//                Recipe JSON-LD if present (free, exact), else fall back to
+//                Gemini over the page text. See jsonld.ts.
 //
 // The user's own Gemini key is read from Vault via the `ocr_resolve_key`
 // RPC (same mechanism the OCR import-worker uses) so it never reaches the
@@ -21,6 +24,7 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
 import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
 import { parseLlmJson, type ParsedRecipeDraft } from './parser.ts';
+import { extractJsonLdRecipes, extractSiteName, schemaRecipeToContract } from './jsonld.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -61,28 +65,115 @@ const sb: SupabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 
 // ---------- platform detection ----------
 
-export type Platform = 'youtube' | 'tiktok' | 'instagram';
+export type Platform = 'youtube' | 'tiktok' | 'instagram' | 'website';
 
-/** Human-facing collection title per platform (also the find-or-create key). */
-const PLATFORM_TITLE: Record<Platform, string> = {
+/** Human-facing collection title for the social platforms (the find-or-create
+ * key). 'website' titles are derived per-domain from the page itself. */
+const SOCIAL_TITLE: Record<'youtube' | 'tiktok' | 'instagram', string> = {
   youtube: 'YouTube',
   tiktok: 'TikTok',
   instagram: 'Instagram',
 };
 
+/**
+ * Classify a pasted URL. Recognized social platforms get their dedicated
+ * extraction path; any other http(s) URL is treated as a generic recipe
+ * website. Returns null only for input that isn't an http(s) URL at all.
+ */
 export function detectPlatform(url: string): Platform | null {
-  let host: string;
+  let parsed: URL;
   try {
-    host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    parsed = new URL(url);
   } catch {
     return null;
   }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
   if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be') {
     return 'youtube';
   }
   if (host === 'tiktok.com' || host.endsWith('.tiktok.com')) return 'tiktok';
   if (host === 'instagram.com' || host.endsWith('.instagram.com')) return 'instagram';
-  return null;
+  return 'website';
+}
+
+// ---------- generic website fetch ----------
+
+// Block server-side requests to private / loopback / link-local hosts so a
+// pasted URL can't be used to probe internal services (SSRF). Hostname-based;
+// pairs with `redirect: 'manual'` so we don't follow a public→private bounce.
+function isSafePublicHttpUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  const host = u.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return false;
+  if (host.endsWith('.internal')) return false;
+  // Raw IPv4 in a private / loopback / link-local / metadata range.
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 10 || a === 127 || a === 0) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+  }
+  // IPv6 loopback / unique-local / link-local.
+  if (host === '[::1]' || host.startsWith('[fc') || host.startsWith('[fd') || host.startsWith('[fe80')) {
+    return false;
+  }
+  return true;
+}
+
+async function fetchPageHtml(url: string): Promise<string> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      headers: {
+        // Some sites 403 a bare fetch; a desktop UA gets the article HTML.
+        'User-Agent':
+          'Mozilla/5.0 (compatible; CookYourBooks/1.0; +https://cookyourbooks.app)',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+      redirect: 'manual',
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    throw new HttpError('EXTRACTION_FAILED', `Could not fetch the page: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  // A redirect to a private host would dodge the SSRF check, so refuse to follow.
+  if (resp.status >= 300 && resp.status < 400) {
+    const loc = resp.headers.get('location');
+    if (loc && isSafePublicHttpUrl(new URL(loc, url).toString())) {
+      return fetchPageHtml(new URL(loc, url).toString());
+    }
+    throw new HttpError('EXTRACTION_FAILED', 'The link redirected somewhere we can\'t fetch.');
+  }
+  if (!resp.ok) throw new HttpError('EXTRACTION_FAILED', `Page returned ${resp.status}.`);
+  // Cap the body so a giant page can't blow the isolate's memory / token budget.
+  const raw = await resp.text();
+  return raw.slice(0, 2_000_000);
+}
+
+/** Strip a page to readable text for the LLM fallback (no JSON-LD found). */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 24_000);
 }
 
 // ---------- extraction prompt ----------
@@ -114,6 +205,13 @@ Rules:
 - If a quantity is unclear or absent, emit a "vague" ingredient instead of guessing numbers.
 - Preserve every distinct step in order. Do not invent steps, ingredients, or amounts.
 - If the source is not a recipe, return { "recipes": [] }.`;
+
+// Website fallback: the page is a blog post / article that mixes a recipe in
+// with story, comments, and ads. Same JSON contract; just reframed for prose.
+const WEBSITE_EXTRACT_PROMPT = VIDEO_EXTRACT_PROMPT.replace(
+  'a social-media video (or its caption)',
+  'a recipe web page (which also contains unrelated story text, comments, and navigation)',
+);
 
 // ---------- Gemini ----------
 
@@ -330,63 +428,70 @@ async function handle(req: Request): Promise<Response> {
 
   const platform = detectPlatform(url);
   if (!platform) {
-    return json(
-      { error: 'Only YouTube, TikTok, and Instagram links are supported.', code: 'UNSUPPORTED_URL' },
-      400,
-    );
+    return json({ error: 'Paste a valid http(s) recipe link.', code: 'UNSUPPORTED_URL' }, 400);
   }
 
-  const needsCaption = () =>
-    json(
-      {
-        error: 'Could not read the caption. Paste the recipe caption to continue.',
-        code: 'NEEDS_CAPTION',
-        platform,
-        sourceUrl: url,
-      },
-      422,
-    );
-
-  // For the text-based platforms (TikTok / Instagram) resolve the caption
-  // up front — this is also where the NEEDS_CAPTION decision lives, and it
-  // doesn't depend on the LLM, so it runs the same in mock mode (minus the
-  // oEmbed network call).
-  let captionText: string | undefined;
-  if (platform !== 'youtube') {
-    if (MOCK_MODE) {
-      // Skip oEmbed; Instagram-with-no-token still needs a client caption.
-      if (platform === 'instagram' && !IG_OEMBED_TOKEN && !caption) return needsCaption();
-      captionText = caption || 'mock caption';
-    } else {
-      const fetched =
-        platform === 'tiktok'
-          ? await fetchTikTokCaption(url)
-          : ((await fetchInstagramCaption(url)) ?? (caption || undefined));
-      captionText = (fetched ?? (caption || '')).trim() || undefined;
-      if (!captionText) return needsCaption();
-    }
-  }
-
-  // Resolve LLM text. In mock mode we short-circuit the Gemini network call.
+  // Resolve the LLM text and the per-collection title. Each platform fills
+  // these in its own way; the shared tail below parses + returns them.
   let llmText: string;
-  if (MOCK_MODE) {
-    llmText = await mockText(url);
-  } else if (caller === 'service_role') {
-    // A real extraction needs a user's key; service-role callers (tools,
-    // tests) should run with VIDEO_IMPORT_MOCK_MODE instead.
-    throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
+  let platformTitle: string;
+
+  if (platform === 'website') {
+    ({ llmText, platformTitle } = await extractWebsite(url, caller));
   } else {
-    const apiKey = await resolveGeminiKey(caller);
-    llmText =
-      platform === 'youtube'
-        ? await callGemini(
-            apiKey,
-            [{ text: VIDEO_EXTRACT_PROMPT }, { file_data: { file_uri: url } }],
-            { lowMediaResolution: true },
-          )
-        : await callGemini(apiKey, [
-            { text: `${VIDEO_EXTRACT_PROMPT}\n\nVIDEO CAPTION:\n${captionText}` },
-          ]);
+    platformTitle = SOCIAL_TITLE[platform];
+
+    const needsCaption = () =>
+      json(
+        {
+          error: 'Could not read the caption. Paste the recipe caption to continue.',
+          code: 'NEEDS_CAPTION',
+          platform,
+          sourceUrl: url,
+        },
+        422,
+      );
+
+    // For the text-based platforms (TikTok / Instagram) resolve the caption
+    // up front — this is also where the NEEDS_CAPTION decision lives, and it
+    // doesn't depend on the LLM, so it runs the same in mock mode (minus the
+    // oEmbed network call).
+    let captionText: string | undefined;
+    if (platform !== 'youtube') {
+      if (MOCK_MODE) {
+        // Skip oEmbed; Instagram-with-no-token still needs a client caption.
+        if (platform === 'instagram' && !IG_OEMBED_TOKEN && !caption) return needsCaption();
+        captionText = caption || 'mock caption';
+      } else {
+        const fetched =
+          platform === 'tiktok'
+            ? await fetchTikTokCaption(url)
+            : ((await fetchInstagramCaption(url)) ?? (caption || undefined));
+        captionText = (fetched ?? (caption || '')).trim() || undefined;
+        if (!captionText) return needsCaption();
+      }
+    }
+
+    // Resolve LLM text. In mock mode we short-circuit the Gemini network call.
+    if (MOCK_MODE) {
+      llmText = await mockText(url);
+    } else if (caller === 'service_role') {
+      // A real extraction needs a user's key; service-role callers (tools,
+      // tests) should run with VIDEO_IMPORT_MOCK_MODE instead.
+      throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
+    } else {
+      const apiKey = await resolveGeminiKey(caller);
+      llmText =
+        platform === 'youtube'
+          ? await callGemini(
+              apiKey,
+              [{ text: VIDEO_EXTRACT_PROMPT }, { file_data: { file_uri: url } }],
+              { lowMediaResolution: true },
+            )
+          : await callGemini(apiKey, [
+              { text: `${VIDEO_EXTRACT_PROMPT}\n\nVIDEO CAPTION:\n${captionText}` },
+            ]);
+    }
   }
 
   let drafts: ParsedRecipeDraft[];
@@ -403,11 +508,50 @@ async function handle(req: Request): Promise<Response> {
     (d) => d.title || d.ingredients.length > 0 || d.instructions.length > 0,
   );
   if (!meaningful) {
+    const where = platform === 'website' ? 'on that page' : 'in that video';
     return json(
-      { error: 'No recipe found in that video.', code: 'EXTRACTION_FAILED', platform, sourceUrl: url },
+      { error: `No recipe found ${where}.`, code: 'EXTRACTION_FAILED', platform, sourceUrl: url },
       422,
     );
   }
 
-  return json({ platform, platformTitle: PLATFORM_TITLE[platform], sourceUrl: url, drafts });
+  return json({ platform, platformTitle, sourceUrl: url, drafts });
+}
+
+/**
+ * Generic recipe-website extraction. Tries schema.org/Recipe JSON-LD first
+ * (free, exact, no LLM); falls back to feeding the page's text to Gemini.
+ * Returns the LLM-contract text the shared tail parses, plus a per-domain
+ * collection title.
+ */
+async function extractWebsite(
+  url: string,
+  caller: string,
+): Promise<{ llmText: string; platformTitle: string }> {
+  if (MOCK_MODE) {
+    // Tests register a fixture keyed by URL (recipe JSON), same as social.
+    return { llmText: await mockText(url), platformTitle: extractSiteName('', url) };
+  }
+  if (!isSafePublicHttpUrl(url)) {
+    throw new HttpError('UNSUPPORTED_URL', 'That host is not reachable.');
+  }
+
+  const html = await fetchPageHtml(url);
+  const platformTitle = extractSiteName(html, url);
+
+  const recipes = extractJsonLdRecipes(html);
+  if (recipes.length > 0) {
+    return { llmText: JSON.stringify({ recipes: recipes.map(schemaRecipeToContract) }), platformTitle };
+  }
+
+  // No structured recipe on the page — fall back to the LLM over page text.
+  if (caller === 'service_role') {
+    throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
+  }
+  const apiKey = await resolveGeminiKey(caller);
+  const text = htmlToText(html);
+  const llmText = await callGemini(apiKey, [
+    { text: `${WEBSITE_EXTRACT_PROMPT}\n\nPAGE TEXT:\n${text}` },
+  ]);
+  return { llmText, platformTitle };
 }
