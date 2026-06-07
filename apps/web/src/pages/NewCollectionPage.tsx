@@ -8,7 +8,8 @@ import {
 import { useSaveCollection } from '../data/queries.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { BookMetadataFields } from '../books/BookMetadataFields.js';
-import { buildCookbookFromForm, emptyBookForm, type BookForm } from '../books/bookForm.js';
+import { emptyBookForm, type BookForm } from '../books/bookForm.js';
+import { buildCookbookFromForm } from '../books/buildCookbook.js';
 
 type Kind = 'PERSONAL' | 'PUBLISHED_BOOK' | 'WEBSITE';
 

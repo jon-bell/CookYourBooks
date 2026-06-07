@@ -3,7 +3,8 @@ import type { Cookbook } from '@cookyourbooks/domain';
 import { useSaveCollection } from '../data/queries.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { BookMetadataFields } from './BookMetadataFields.js';
-import { bookFormFromCookbook, buildCookbookFromForm, type BookForm } from './bookForm.js';
+import { bookFormFromCookbook, type BookForm } from './bookForm.js';
+import { buildCookbookFromForm } from './buildCookbook.js';
 
 /**
  * Edit a cookbook's metadata (title / author / ISBN / publisher / year /
