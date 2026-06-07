@@ -1,4 +1,6 @@
-import { test, expect } from './support/fixtures.js';
+import { test, expect, signIn } from './support/fixtures.js';
+import { createTestUser } from './support/admin.js';
+import { seedHousehold, seedMembership } from './support/household.js';
 import { createRecipeViaUi } from './support/helpers.js';
 import { createUserRecipe, waitForEmbedding } from './support/embeddings.js';
 
@@ -88,5 +90,50 @@ test.describe('Semantic search degradation', () => {
     await page.getByPlaceholder(/Search by recipe/).fill('chicken');
     await expect(page.getByText(/Semantic search unavailable/)).toBeVisible();
     await expect(page.getByText('Chicken Soup')).toBeVisible({ timeout: 5000 });
+  });
+});
+
+// Household-shared recipes are semantically searchable by co-members: their
+// vectors carry the denormalized owner_id/household_id, pass the claim-based
+// RLS, pull into the co-member's local mirror, and listSearchableEmbeddings
+// surfaces them. Full path: server denorm + claim RLS + household pull + real
+// browser model + local cosine.
+test.describe('Semantic search (household)', () => {
+  test.describe.configure({ timeout: 120_000 });
+
+  test('a co-member can semantically find a household-shared recipe', async ({ page, user }) => {
+    // Owner A: a sharing household + a recipe, embedded server-side (stamped
+    // owner_id=A, household_id=H from the parent recipe).
+    const owner = await createTestUser('embedowner');
+    try {
+      const hh = await seedHousehold({ ownerId: owner.id, name: 'Shared Kitchen' });
+      const shared = await createUserRecipe({
+        ownerId: owner.id,
+        collectionTitle: "Owner's Cookbook",
+        recipeTitle: 'Spaghetti Bolognese',
+        description: 'Classic Italian comfort dish.',
+        ingredients: ['ground beef', 'tomato', 'onion'],
+      });
+      await waitForEmbedding(shared.recipeId, { timeoutMs: 80_000 });
+
+      // `user` (B) joins A's household, THEN signs in fresh so the access
+      // token carries household_id=H — the claim the household pull + RLS need.
+      await seedMembership({ householdId: hh.householdId, userId: user.id });
+      await signIn(page, user);
+
+      // Fresh load → B's pull brings A's shared recipe + its vector local.
+      await page.goto('/search');
+      await expect(page.locator('header button', { hasText: 'Synced' })).toBeVisible({
+        timeout: 15_000,
+      });
+
+      // Lexically-disjoint query — only the semantic path can surface it, and
+      // only if B pulled A's household-shared embedding.
+      await page.getByPlaceholder(/Search by recipe/).fill('hearty pasta with meat ragu');
+      await expect(page.getByText('Spaghetti Bolognese')).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByText(/showing literal matches/)).toHaveCount(0);
+    } finally {
+      await owner.cleanup();
+    }
   });
 });

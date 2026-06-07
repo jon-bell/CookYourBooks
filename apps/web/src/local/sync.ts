@@ -947,6 +947,11 @@ async function pullHouseholdSharedContent(
   // the caller only logs the collection count.
   await pullHouseholdCookingEvents(client, ownerId, householdId);
   await pullHouseholdRecipeTags(client, ownerId, householdId);
+  // Co-members' recipe vectors, so household-shared recipes are semantically
+  // searchable (not just literal-fallback). Tagged into the local mirror by
+  // recipe_id; the collection's shared_with_household_id marker is what
+  // listSearchableEmbeddings joins on to surface them.
+  await pullHouseholdEmbeddings(client, ownerId, householdId);
 
   return collections.length;
 }
@@ -1543,25 +1548,64 @@ async function pullRecipeEmbeddings(
 ): Promise<number> {
   const topic = `recipe_embeddings:${ownerId}`;
   const since = new Date(await getWatermark(topic)).toISOString();
-  // Scope through the recipe → collection join — same trick we use for
-  // ingredients (the embeddings table doesn't carry an owner_id).
-  const rows = await fetchAllPages<RecipeEmbeddingRow & { recipes?: unknown }>(
-    (from, to) =>
-      client
-        .from('recipe_embeddings')
-        .select('*, recipes!inner(recipe_collections!inner(owner_id))')
-        .eq('recipes.recipe_collections.owner_id', ownerId)
-        .gte('updated_at', since)
-        .order('updated_at', { ascending: true })
-        .order('recipe_id', { ascending: true })
-        .range(from, to),
+  // recipe_embeddings now carries a denormalized owner_id (20260624000000),
+  // so filter on it directly — no recipe→collection join (mirrors the owned
+  // recipes pull's owner_id filter).
+  const rows = await fetchAllPages<RecipeEmbeddingRow>((from, to) =>
+    client
+      .from('recipe_embeddings')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('recipe_id', { ascending: true })
+      .range(from, to),
   );
-  const stripped = rows.map((row) => {
-    const { recipes: _r, ...rest } = row;
-    return rest as RecipeEmbeddingRow;
-  });
+  await applyPulledEmbeddings(rows);
+  let max = await getWatermark(topic);
+  for (const r of rows) max = Math.max(max, toMs(r.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+/**
+ * Co-members' embeddings — filtered by our household_id (+ owner_id <> me),
+ * indexed and join-free, exactly like the household recipe pull. The
+ * claim-based recipe_embeddings RLS (20260624000000) confirms read access.
+ * This is what makes household-shared recipes semantically searchable:
+ * their vectors land in the same local mirror, and listSearchableEmbeddings
+ * surfaces them via the collection's shared_with_household_id marker.
+ * Watermarked per-household so switching households forces a fresh pull.
+ */
+async function pullHouseholdEmbeddings(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<number> {
+  const topic = `household_embeddings:${ownerId}:${householdId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<RecipeEmbeddingRow>((from, to) =>
+    client
+      .from('recipe_embeddings')
+      .select('*')
+      .eq('household_id', householdId)
+      .neq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('recipe_id', { ascending: true })
+      .range(from, to),
+  );
+  await applyPulledEmbeddings(rows);
+  let max = await getWatermark(topic);
+  for (const r of rows) max = Math.max(max, toMs(r.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+/** Decode pulled pgvector rows and upsert them into the local mirror. */
+async function applyPulledEmbeddings(rows: RecipeEmbeddingRow[]): Promise<void> {
   const local: LocalEmbeddingRow[] = [];
-  for (const r of stripped) {
+  for (const r of rows) {
     const vec = decodeVector(r.embedding);
     if (!vec) continue;
     local.push({
@@ -1573,10 +1617,6 @@ async function pullRecipeEmbeddings(
     });
   }
   await upsertLocalEmbeddingsBatch(local);
-  let max = await getWatermark(topic);
-  for (const r of stripped) max = Math.max(max, toMs(r.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  return stripped.length;
 }
 
 // ---------- pull: cooking tracker ----------

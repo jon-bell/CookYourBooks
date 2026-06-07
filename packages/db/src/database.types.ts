@@ -2303,6 +2303,8 @@ export type Database = {
           embedding: string
           text_hash: string
           model: string
+          owner_id: string | null
+          household_id: string | null
           embedded_at: string
           updated_at: string
         }
@@ -2311,6 +2313,8 @@ export type Database = {
           embedding: string
           text_hash: string
           model: string
+          owner_id?: string | null
+          household_id?: string | null
           embedded_at?: string
           updated_at?: string
         }
@@ -2319,6 +2323,8 @@ export type Database = {
           embedding?: string
           text_hash?: string
           model?: string
+          owner_id?: string | null
+          household_id?: string | null
           embedded_at?: string
           updated_at?: string
         }

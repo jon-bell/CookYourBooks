@@ -2243,10 +2243,11 @@ export async function listSearchableEmbeddings(
   ownerId: string,
 ): Promise<SearchableEmbedding[]> {
   const db = await getLocalDb();
-  // Scoped to the user's own recipes: co-members' embeddings aren't pulled
-  // into the local mirror (and the recipe_embeddings RLS only grants
-  // owner/public reads), so household-shared recipes surface via the literal
-  // fallback (collectionRepo.searchRecipes), not the semantic path.
+  // Own recipes + household-shared ones. Co-members' embeddings are pulled
+  // into the local mirror by pullHouseholdSharedContent (the recipe_embeddings
+  // claim-based RLS grants household reads, 20260624000000), and their
+  // collections carry the local-only `shared_with_household_id` marker — same
+  // visibility rule the literal searchRecipes uses.
   const rows = (await db.execO<{
     recipe_id: string;
     collection_id: string;
@@ -2262,8 +2263,8 @@ export async function listSearchableEmbeddings(
              or exists (select 1 from instructions where recipe_id = r.id)) as has_content
        from recipe_embeddings e
        join recipes r on r.id = e.recipe_id and r.deleted = 0
-       join recipe_collections c on c.id = r.collection_id
-              and c.owner_id = ? and c.deleted = 0`,
+       join recipe_collections c on c.id = r.collection_id and c.deleted = 0
+              and (c.owner_id = ? or c.shared_with_household_id is not null)`,
     [ownerId],
   )) as {
     recipe_id: string;

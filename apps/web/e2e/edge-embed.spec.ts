@@ -1,5 +1,6 @@
 import { test, expect } from './support/fixtures.js';
 import { createTestUser } from './support/admin.js';
+import { seedHousehold, seedMembership } from './support/household.js';
 import { EMBEDDING_STORED_MODEL } from '@cookyourbooks/domain';
 import {
   cosine,
@@ -107,6 +108,41 @@ test.describe('Edge embedding worker', () => {
       expect(await userCanReadEmbedding(ownerToken, a.recipeId)).toBe(1);
     } finally {
       await intruder.cleanup();
+    }
+  });
+
+  test('household co-members can read a shared recipe embedding; outsiders cannot', async ({
+    user,
+  }) => {
+    // `user` (A) owns a recipe inside a sharing household; embed it. The
+    // recipe_embeddings row gets owner_id=A + household_id=H stamped from the
+    // parent recipe (20260624000000), so the claim-based read policy lets a
+    // co-member through with no join.
+    const hh = await seedHousehold({ ownerId: user.id, name: 'Embed House' });
+    const a = await createUserRecipe({
+      ownerId: user.id,
+      collectionTitle: 'Shared Shelf',
+      recipeTitle: 'Grandma Secret Stew',
+      description: 'Beef and root vegetables, slow-cooked.',
+      ingredients: ['beef', 'carrot', 'potato'],
+    });
+    await waitForEmbedding(a.recipeId, { timeoutMs: 75_000 });
+
+    const memberB = await createTestUser('embedmemberb');
+    const outsiderC = await createTestUser('embedoutsiderc');
+    try {
+      await seedMembership({ householdId: hh.householdId, userId: memberB.id });
+      // B's JWT carries household_id=H (the custom access-token hook), so the
+      // household branch of the policy matches; C has no household claim.
+      const bToken = await userAccessToken(memberB.email, memberB.password);
+      const cToken = await userAccessToken(outsiderC.email, outsiderC.password);
+      expect(await userCanReadEmbedding(bToken, a.recipeId)).toBe(1);
+      expect(await userCanReadEmbedding(cToken, a.recipeId)).toBe(0);
+      const aToken = await userAccessToken(user.email, user.password);
+      expect(await userCanReadEmbedding(aToken, a.recipeId)).toBe(1);
+    } finally {
+      await memberB.cleanup();
+      await outsiderC.cleanup();
     }
   });
 });
