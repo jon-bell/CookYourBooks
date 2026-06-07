@@ -34,13 +34,13 @@ function minPage(recipe: Recipe): number {
 }
 
 /** "p. 42" / "pp. 42, 51" / null when the recipe carries no page. */
-function formatPages(pageNumbers: readonly number[] | undefined): string | null {
+export function formatPages(pageNumbers: readonly number[] | undefined): string | null {
   const ps = [...(pageNumbers ?? [])].filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
   if (ps.length === 0) return null;
   return ps.length === 1 ? `p. ${ps[0]}` : `pp. ${ps.join(', ')}`;
 }
 
-function sortRecipes(recipes: readonly Recipe[], mode: RecipeSortMode): Recipe[] {
+export function sortRecipes(recipes: readonly Recipe[], mode: RecipeSortMode): Recipe[] {
   const arr = [...recipes];
   if (mode === 'name') {
     arr.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
@@ -226,12 +226,13 @@ function RecipeRowBody({
       )}
       <Link
         to={`/collections/${collectionId}/recipes/${recipe.id}`}
-        className={`flex flex-1 items-center justify-between py-3 pr-4 hover:bg-stone-50 dark:hover:bg-stone-900 ${
+        title={recipe.title}
+        className={`flex flex-1 flex-col gap-0.5 py-3 pr-4 hover:bg-stone-50 dark:hover:bg-stone-900 sm:flex-row sm:items-center sm:justify-between ${
           isPlaceholder ? 'text-stone-500 dark:text-stone-500' : ''
         }`}
       >
         <span className="flex items-center gap-2 min-w-0">
-          <span className={`truncate ${isPlaceholder ? '' : 'font-medium'}`}>{recipe.title}</span>
+          <span className={`line-clamp-2 min-w-0 ${isPlaceholder ? '' : 'font-medium'}`}>{recipe.title}</span>
           {pages && (
             <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">· {pages}</span>
           )}
@@ -241,7 +242,7 @@ function RecipeRowBody({
             </span>
           )}
         </span>
-        <span className="shrink-0 text-sm text-stone-500 dark:text-stone-400">
+        <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400 sm:text-sm">
           {isPlaceholder
             ? '—'
             : `${recipe.ingredients.length} ing · ${recipe.instructions.length} steps`}
