@@ -261,6 +261,14 @@ platform :ios do
         notify_external_testers: true,
         groups: ["Friends & Family"],
         changelog: ENV["BETA_CHANGELOG"] || "Internal build",
+        # First-build-in-version takes 24-48h for Apple Beta App Review.
+        # If a previous push's build is still queued for review when CI
+        # tries to ship the next one, ASC rejects the new submission
+        # with "Another build in the same train is already in beta
+        # review." Pilot's reject_build_waiting_for_review withdraws
+        # the older one first — correct policy for auto-deploy-on-push
+        # where the newest build always supersedes.
+        reject_build_waiting_for_review: true,
       )
     rescue => e
       msg = e.message.to_s
