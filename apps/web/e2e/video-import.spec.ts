@@ -178,12 +178,32 @@ test.describe('video link import', () => {
     expect(await recipesByTitle('Recipe One')).toHaveLength(0);
   });
 
-  test('rejects an unsupported URL without saving anything', async ({
+  test('imports a generic recipe website into a per-domain collection', async ({
     authedPage: page,
     user,
   }) => {
-    await extractViaUi(page, 'https://example.com/not-a-video');
-    await expect(page.getByText('supported', { exact: false })).toBeVisible({ timeout: 20_000 });
+    // Any non-social http(s) link is treated as a website; in mock mode the
+    // fixture stands in for the JSON-LD / LLM extraction, and the collection
+    // title is derived from the hostname (www stripped).
+    const url = 'https://www.seriouseats.com/classic-pancakes-recipe';
+    await seedVideo(url, recipeDraft('JSON-LD Pancakes', 'flour'));
+
+    await extractViaUi(page, url);
+    await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
+    await waitForSynced(page);
+
+    const site = await waitForWebCollectionTitled(user.id, 'seriouseats.com');
+    const recipe = await waitForRecipe('JSON-LD Pancakes');
+    expect(recipe.collection_id).toBe(site.id);
+    expect(recipe.source_url).toBe(url);
+  });
+
+  test('rejects a non-http URL without saving anything', async ({
+    authedPage: page,
+    user,
+  }) => {
+    await extractViaUi(page, 'ftp://example.com/not-a-recipe');
+    await expect(page.getByText('valid http', { exact: false })).toBeVisible({ timeout: 20_000 });
     expect(await webCollections(user.id)).toHaveLength(0);
   });
 

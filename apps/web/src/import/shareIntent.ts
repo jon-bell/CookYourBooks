@@ -24,7 +24,8 @@
 // real diagnostic signal when "share opens app but nothing happens."
 
 import { Sentry } from '../sentry.js';
-import { detectVideoPlatform, firstVideoUrl, type VideoPlatform } from './videoPlatform.js';
+import type { VideoPlatform } from './videoPlatform.js';
+import { urlFromIntent } from './shareUrlParse.js';
 
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
@@ -59,46 +60,9 @@ function breadcrumb(message: string, data?: Record<string, unknown>): void {
  * code path delivered it, useful for both Sentry tags and debugging.
  */
 export type ShareIntentOutcome =
-  | { kind: 'video'; url: string; platform: VideoPlatform; source: string }
-  | { kind: 'unsupported_url'; url: string; source: string }
+  // platform 'website' is any non-social http(s) recipe link.
+  | { kind: 'import'; url: string; platform: VideoPlatform | 'website'; source: string }
   | { kind: 'no_url'; source: string };
-
-interface ParsedIntent {
-  url: string | null;
-  platform: VideoPlatform | null;
-}
-
-/** Pull a usable URL out of a `SendIntent`/`appUrlOpen` payload, plus
- *  whether it's from a supported video platform. */
-function urlFromIntent(payload: unknown): ParsedIntent {
-  if (!payload || typeof payload !== 'object') return { url: null, platform: null };
-  const obj = payload as Record<string, unknown>;
-  const raw = typeof obj.url === 'string' ? obj.url : undefined;
-  if (raw) {
-    // Custom-scheme deep link → unwrap the embedded `url` query param.
-    if (/^cookyourbooks:/i.test(raw)) {
-      try {
-        const embedded = new URL(raw).searchParams.get('url');
-        if (embedded) {
-          const video = firstVideoUrl(embedded);
-          if (video) return { url: video, platform: detectVideoPlatform(video) };
-          if (/^https?:/i.test(embedded)) return { url: embedded, platform: null };
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-    const direct = firstVideoUrl(raw);
-    if (direct) return { url: direct, platform: detectVideoPlatform(direct) };
-    if (/^https?:/i.test(raw)) return { url: raw, platform: null };
-  }
-  if (typeof obj.title === 'string') {
-    const fromTitle = firstVideoUrl(obj.title);
-    if (fromTitle) return { url: fromTitle, platform: detectVideoPlatform(fromTitle) };
-    if (/^https?:/i.test(obj.title)) return { url: obj.title, platform: null };
-  }
-  return { url: null, platform: null };
-}
 
 /**
  * Start listening for shared links. Calls `onShare` once per share
@@ -128,17 +92,10 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
       rawPayloadKeys:
         payload && typeof payload === 'object' ? Object.keys(payload as object) : [],
     });
-    if (url && platform) {
-      onShare({ kind: 'video', url, platform, source });
-      return;
-    }
     if (url) {
-      Sentry.captureMessage('share-intent: URL not from supported video platform', {
-        level: 'info',
-        tags: { source, share_intent: 'unsupported_platform' },
-        extra: { shared_url: url },
-      });
-      onShare({ kind: 'unsupported_url', url, source });
+      // Social platform when detected, otherwise a generic recipe website —
+      // both import through the same link flow.
+      onShare({ kind: 'import', url, platform: platform ?? 'website', source });
       return;
     }
     if (payload && typeof payload === 'object') {

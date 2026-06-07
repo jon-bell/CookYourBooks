@@ -9,6 +9,7 @@ import {
   useSaveRecipe,
 } from '../data/queries.js';
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
+import { EditBookDetailsDialog } from '../books/EditBookDetailsDialog.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
 import { CollectionRecipeBrowser } from '../components/CollectionRecipeBrowser.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
@@ -28,6 +29,7 @@ export function CollectionPage() {
   const reorderRecipes = useReorderRecipes(collectionId ?? '');
   const saveRecipe = useSaveRecipe(collectionId ?? '');
   const [showPublishWarning, setShowPublishWarning] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(false);
   const [hasOpenSession, setHasOpenSession] = useState(false);
 
   // Cheap one-shot probe so the CTA can say "resume" when applicable.
@@ -132,6 +134,14 @@ export function CollectionPage() {
           Add recipe
         </Link>
         <ImportFromPhoto collectionId={c.id} />
+        {c.sourceType === 'PUBLISHED_BOOK' && (
+          <button
+            onClick={() => setEditingDetails(true)}
+            className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+          >
+            Edit details
+          </button>
+        )}
         <button
           onClick={onPublicClick}
           disabled={
@@ -208,6 +218,13 @@ export function CollectionPage() {
           recipes={c.recipes}
           onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
           onToggleStar={onToggleStar}
+        />
+      )}
+      {c.sourceType === 'PUBLISHED_BOOK' && (
+        <EditBookDetailsDialog
+          cookbook={c as Cookbook}
+          open={editingDetails}
+          onClose={() => setEditingDetails(false)}
         />
       )}
       <MakePublicDialog

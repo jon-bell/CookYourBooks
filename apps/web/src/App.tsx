@@ -409,7 +409,7 @@ function ShareIntentListener() {
 
   useEffect(() => {
     return initShareIntent((outcome: ShareIntentOutcome) => {
-      if (outcome.kind === 'video') {
+      if (outcome.kind === 'import') {
         if (!userRef.current) {
           // Stash the URL so /sign-in can redirect into the import flow
           // post-login. Surface the wait reason so the user understands
@@ -428,17 +428,11 @@ function ShareIntentListener() {
             ? 'YouTube'
             : outcome.platform === 'tiktok'
               ? 'TikTok'
-              : 'Instagram';
-        showToast(`Importing ${label} recipe…`, 'success');
+              : outcome.platform === 'instagram'
+                ? 'Instagram'
+                : '';
+        showToast(`Importing ${label ? `${label} ` : ''}recipe…`, 'success');
         navigate(`/import/link?url=${encodeURIComponent(outcome.url)}`);
-        return;
-      }
-      if (outcome.kind === 'unsupported_url') {
-        showToast(
-          'CookYourBooks can only import from YouTube, TikTok, and Instagram so far.',
-          'warn',
-          5000,
-        );
         return;
       }
       // no_url — the share extension ran but we couldn't find a URL.

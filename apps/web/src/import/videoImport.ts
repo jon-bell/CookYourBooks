@@ -9,11 +9,12 @@ import { supabase } from '../supabase.js';
 
 const FUNCTION_PATH = '/functions/v1/video-import';
 
-export type VideoPlatform = 'youtube' | 'tiktok' | 'instagram';
+export type VideoPlatform = 'youtube' | 'tiktok' | 'instagram' | 'website';
 
 export interface VideoImportResult {
   platform: VideoPlatform;
-  /** Display title for the per-platform collection, e.g. "YouTube". */
+  /** Display title for the per-platform collection, e.g. "YouTube" or the
+   * source site's name for a generic website. */
   platformTitle: string;
   sourceUrl: string;
   drafts: ParsedRecipeDraft[];

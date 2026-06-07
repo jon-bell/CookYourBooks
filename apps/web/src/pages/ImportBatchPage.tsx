@@ -892,6 +892,11 @@ export function ImportBatchPage() {
             Discard
           </button>
           <ReassignBulkButton onApply={(collectionId) => applyBulk({ assignedCollectionId: collectionId })} />
+          {selected.size === 1 && (
+            <span className="text-xs italic text-stone-500 dark:text-stone-400">
+              Select one more page to merge them into one recipe →
+            </span>
+          )}
           {selected.size >= 2 && (
             <button
               type="button"
@@ -942,12 +947,18 @@ export function ImportBatchPage() {
       )}
 
       {selected.size === 0 && filtered.length > 1 && (
-        <p className="text-xs text-stone-500 dark:text-stone-400">
-          Tip: tick the checkboxes on two or more pages to merge them
-          into a single item (re-OCR's them together — useful when a
-          recipe spans a page break), reassign cookbook, or discard in
-          bulk.
-        </p>
+        <div className="flex items-start gap-2 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 px-3 py-2 text-xs text-stone-600 dark:text-stone-400">
+          <span aria-hidden className="mt-px text-sm leading-none">⧉</span>
+          <span>
+            <strong className="font-medium text-stone-700 dark:text-stone-200">
+              Pages split wrong?
+            </strong>{' '}
+            Tick the checkbox on two or more scans to{' '}
+            <strong className="font-medium text-stone-700 dark:text-stone-200">merge</strong> them
+            into one recipe — they re-OCR together, so this fixes a recipe the scanner split across
+            a page break. You can also reassign the cookbook or discard selected pages.
+          </span>
+        </div>
       )}
 
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">

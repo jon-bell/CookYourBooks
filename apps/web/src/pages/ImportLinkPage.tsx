@@ -15,10 +15,10 @@ import {
 type Phase = 'idle' | 'extracting' | 'picking' | 'saving';
 
 /**
- * Paste a YouTube / TikTok / Instagram link → the `video-import` Edge
- * Function extracts the recipe(s) → save into a generic per-platform
- * collection. Also the deep-link landing for the mobile share target:
- * `?url=<link>` prefills and auto-extracts.
+ * Paste any recipe link — a YouTube / TikTok / Instagram video or a generic
+ * recipe website — and the `video-import` Edge Function extracts the
+ * recipe(s) → save into a per-source collection. Also the deep-link landing
+ * for the mobile share target: `?url=<link>` prefills and auto-extracts.
  */
 export function ImportLinkPage() {
   const navigate = useNavigate();
@@ -131,8 +131,9 @@ export function ImportLinkPage() {
     <main className="mx-auto max-w-xl p-4">
       <h1 className="mb-1 text-xl font-semibold">Import from a link</h1>
       <p className="mb-4 text-sm text-stone-600 dark:text-stone-400">
-        Paste a YouTube, TikTok, or Instagram recipe link. We'll extract the
-        recipe and add it to a collection for that site.
+        Paste any recipe link — a YouTube, TikTok, or Instagram video, or a
+        recipe website. We'll extract the recipe and add it to a collection for
+        that site.
       </p>
 
       <form
@@ -145,8 +146,8 @@ export function ImportLinkPage() {
         <input
           type="url"
           inputMode="url"
-          aria-label="Video URL"
-          placeholder="https://www.youtube.com/watch?v=…"
+          aria-label="Recipe URL"
+          placeholder="https://… (video or recipe site)"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           disabled={busy}

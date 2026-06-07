@@ -396,6 +396,16 @@ verify_jwt = false
 [functions.nutrition]
 verify_jwt = false
 
+# video-import and isbn-scan are called from the browser and do their own
+# JWT validation in requireAuth(). verify_jwt must be off so the CORS
+# preflight (OPTIONS, no Authorization header) reaches the function instead
+# of being rejected by the gateway — same rationale as nutrition above.
+[functions.video-import]
+verify_jwt = false
+
+[functions.isbn-scan]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427

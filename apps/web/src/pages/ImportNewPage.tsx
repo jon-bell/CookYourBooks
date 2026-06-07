@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createCookbook, type RecipeCollection } from '@cookyourbooks/domain';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.js';
+import { BookMetadataFields } from '../books/BookMetadataFields.js';
+import { emptyBookForm, type BookForm } from '../books/bookForm.js';
+import { buildCookbookFromForm } from '../books/buildCookbook.js';
 import { useOcrKeys } from '../import/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
@@ -40,8 +42,7 @@ export function ImportNewPage() {
   // flows are untouched.
   const [importMode, setImportMode] = useState<'ocr-first' | 'group-first'>('ocr-first');
   const [creatingCookbook, setCreatingCookbook] = useState(false);
-  const [newCookbookTitle, setNewCookbookTitle] = useState('');
-  const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
+  const [newBook, setNewBook] = useState<BookForm>(emptyBookForm);
   const [provider, setProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [model, setModel] = useState('');
   const [fallbackProvider, setFallbackProvider] = useState<
@@ -166,18 +167,13 @@ export function ImportNewPage() {
   }
 
   async function onCreateCookbook() {
-    const title = newCookbookTitle.trim();
-    if (!title) return;
-    const cookbook: RecipeCollection = createCookbook({
-      title,
-      author: newCookbookAuthor.trim() || undefined,
-    });
+    if (!newBook.title.trim() || !user) return;
     try {
+      const cookbook = await buildCookbookFromForm(newBook, { userId: user.id, seedToc: true });
       await saveCollection.mutateAsync(cookbook);
       setTargetCollectionId(cookbook.id);
       setCreatingCookbook(false);
-      setNewCookbookTitle('');
-      setNewCookbookAuthor('');
+      setNewBook(emptyBookForm());
     } catch (e) {
       setError(`Could not create cookbook: ${(e as Error).message}`);
     }
@@ -438,25 +434,13 @@ export function ImportNewPage() {
             </Field>
             <Field label="Target cookbook">
               {creatingCookbook ? (
-                <div className="space-y-2 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2">
-                  <input
-                    autoFocus
-                    placeholder="Cookbook title"
-                    value={newCookbookTitle}
-                    onChange={(e) => setNewCookbookTitle(e.target.value)}
-                    className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
-                  />
-                  <input
-                    placeholder="Author (optional)"
-                    value={newCookbookAuthor}
-                    onChange={(e) => setNewCookbookAuthor(e.target.value)}
-                    className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
-                  />
+                <div className="space-y-3 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-3">
+                  <BookMetadataFields value={newBook} onChange={setNewBook} />
                   <div className="flex gap-2">
                     <button
                       type="button"
                       onClick={onCreateCookbook}
-                      disabled={!newCookbookTitle.trim() || saveCollection.isPending}
+                      disabled={!newBook.title.trim() || saveCollection.isPending}
                       className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
                     >
                       {saveCollection.isPending ? 'Creating…' : 'Create'}
@@ -465,8 +449,7 @@ export function ImportNewPage() {
                       type="button"
                       onClick={() => {
                         setCreatingCookbook(false);
-                        setNewCookbookTitle('');
-                        setNewCookbookAuthor('');
+                        setNewBook(emptyBookForm());
                       }}
                       className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
                     >
