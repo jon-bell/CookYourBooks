@@ -183,7 +183,8 @@ function LookupHint({ lookup }: { lookup: ReturnType<typeof useBookMetadataLooku
   return (
     <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">
       Found “{m.title}”{m.author ? ` · ${m.author}` : ''} via {source}.
-      {m.tocEntries && m.tocEntries.length > 0 && ` ${m.tocEntries.length} known recipes.`}
+      {m.tocEntries && m.tocEntries.length > 0 &&
+        ` ${m.tocEntries.length} known recipes in the catalog.`}
     </p>
   );
 }
