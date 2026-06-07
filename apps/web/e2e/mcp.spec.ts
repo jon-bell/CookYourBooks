@@ -145,9 +145,12 @@ test.describe('Pantry UI', () => {
     await page.getByRole('link', { name: /Shopping/ }).click();
     await expect(page.getByTestId('pantry-section')).toBeVisible();
 
+    const pantry = page.getByTestId('pantry-section');
     await page.getByLabel('Pantry item').fill('whole milk');
     await page.getByLabel('Quantity').fill('1 gallon');
-    await page.getByRole('button', { name: 'Add' }).click();
+    // Scope to the pantry section — the Shopping page now has more than one
+    // button whose accessible name contains "Add" (name match is a substring).
+    await pantry.getByRole('button', { name: 'Add' }).click();
 
     await expect(
       page.getByTestId('pantry-section').getByText('whole milk', { exact: false }),

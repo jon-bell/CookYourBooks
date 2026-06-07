@@ -6,5 +6,7 @@ storage_mode("git")
 # pulls dev profiles instead when working on a new dev machine.
 type("appstore")
 
-app_identifier(["app.cookyourbooks"])
+# The Share Extension target (Share to CookYourBooks) ships as its own
+# bundle id and needs its own provisioning profile.
+app_identifier(["app.cookyourbooks", "app.cookyourbooks.ShareExtension"])
 username(ENV["FASTLANE_APPLE_ID"]) if ENV["FASTLANE_APPLE_ID"]

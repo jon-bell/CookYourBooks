@@ -35,7 +35,10 @@ cookyourbooks/
 - **OCR import:** `apps/web/src/import/ocr.ts` calls a multimodal LLM (Gemini or any OpenAI-compatible vision model) to convert a photo straight into JSON matching our domain shape. The validator in `apps/web/src/import/llm.ts` is tolerant — malformed ingredients fall into `leftover` instead of throwing. Settings (provider / key / model / prompt) live in `localStorage` under `cookyourbooks.ocr.v1` and never sync through Supabase. Tests override via `window.__cybOcrShim`.
 - **Mobile:** `apps/mobile` is a Capacitor shell over `apps/web/dist`. Native surfaces are camera (`@capacitor/camera`) and haptics (`@capacitor/haptics`). Both code paths live in `apps/web` and feature-detect Capacitor at runtime, so no code forks by platform. The iOS native project (`apps/mobile/ios/`) is committed; release flow is fastlane-driven from `apps/mobile/ios/fastlane/` (`fastlane beta` → TestFlight, `fastlane release` → App Store). Bundle ID `app.cookyourbooks`, team `YNDYJ3A9CQ`, signing material in the private `jon-bell/cookyourbooks-certs` repo via `fastlane match`. See `apps/mobile/README.md` for the full workflow.
 - **Keyboard shortcuts:** `apps/web/src/keyboard/shortcuts.ts` binds `/`, `n`, `e`, `c`, `?`, and `g l`/`g d`/`g s` chords. The global listener ignores keystrokes originating inside `input`/`textarea`/`contenteditable`.
-- **Semantic search:** `/search` runs cosine similarity in JS over locally-cached recipe vectors. The same embedding model (`Xenova/bge-small-en-v1.5`, 384d via `@huggingface/transformers`) runs both in the browser (lazy-loaded on first visit, ~30 MB weights cached in IndexedDB) and in the Edge Function worker. The model id + helper text-builder live in `packages/domain/src/services/embeddingModel.ts` so both sides agree on the SHA-256 of the recipe text. Vectors are stored canonically in `public.recipe_embeddings` (pgvector) and mirrored to local SQLite as packed `Float32Array` BLOBs (`recipe_embeddings` table, not CRR). On recipe save the browser embeds locally and pushes via `embed_upsert_client` (outbox `embedding_push` kind); database triggers also enqueue `recipe_embedding_jobs` which the import-worker drains with `runEmbedLoop`. When the embedder is unavailable (cold cache, model failed to load, `window.__cybDisableEmbedder` set for tests) the page degrades to a SQL `LIKE` substring search over the same six fields the embedding text covers (title, description, ingredients, notes, book title, equipment — instructions skipped).
+- **Semantic search:** `/search` runs cosine similarity in JS over locally-cached recipe vectors. Model is **`gte-small` (384d)**, run two ways that produce cosine-comparable vectors: the browser loads `Xenova/gte-small` via `@huggingface/transformers` (lazy on first visit, ~30 MB weights cached in IndexedDB), and the Edge Function worker uses the runtime-native `Supabase.ai.Session('gte-small')` (transformers.js has no working ONNX backend in the edge runtime). `packages/domain/src/services/embeddingModel.ts` splits `EMBEDDING_MODEL_ID` (the browser HF loader id) from `EMBEDDING_STORED_MODEL` (`'gte-small'`, the value written to / compared in `recipe_embeddings.model`) and holds the shared text-builder + SHA-256. Vectors are stored canonically in `public.recipe_embeddings` (pgvector) and mirrored to local SQLite as packed `Float32Array` BLOBs (`recipe_embeddings` table, not CRR). On recipe save the browser embeds locally and pushes via `embed_upsert_client` (outbox `embedding_push` kind); database triggers also enqueue `recipe_embedding_jobs` which the import-worker drains with `runEmbedLoop`. A modest cosine `FLOOR` (`apps/web/src/search/semanticSearch.ts`) trims the tail; gte-small's similarities are compressed/high, so ranking carries relevance. When the embedder is unavailable (cold cache, model failed to load, `window.__cybDisableEmbedder` set for tests) the page degrades to a SQL `LIKE` substring search.
+- **Household sharing:** A user can be in at most one household at a time (≤ 6 members). Sharing is **library-wide and membership-driven**, not per-collection: an active member's whole library (every collection they own + all recipes/ingredients/instructions) is readable by the other active members. The `household_members.library_shared` flag (default `true` — on by default; see `supabase/migrations/20260609000000_household_library_sharing.sql`) gates it; `set_library_sharing(p_household_id, p_enabled, p_attestation)` toggles it, with enabling requiring a one-time rights attestation recorded in `audit_log`. RLS read access is granted by `viewer_can_read_owner_library(owner_id)`, and **every household-read policy short-circuits on `owner_id <> auth.uid()`** so the security-definer function is never evaluated for the owner's own-row changes — evaluating it there breaks Supabase Realtime delivery. Co-members' new content (e.g. a recipe added to an already-shared cookbook) has no per-row realtime signal, so `SyncProvider` re-pulls household content on tab focus + a slow interval (`HOUSEHOLD_POLL_MS`); the pull (`pullHouseholdSharedContent` in `sync.ts`) fetches everything `owner_id <> me` by `updated_at` watermark and tags each row locally with `shared_with_household_id` (a local-only marker; the server column is vestigial). Other server-side enforcement: a partial unique index on `household_members(user_id) where left_at is null` enforces one-active-membership; `accept_household_invite` enforces the 6-member cap and 7-day cooldown; the `enforce_household_public_cascade` trigger blocks `is_public = true` on a collection whose owner shares their library unless `last_share_attested_at` is within 5 minutes (the `attest_public_share` RPC bumps it) — and that ToS+attestation gate lives *inside* the library-shared branch so plain publishes aren't gated (per `20260606000600`). Every state change records an `audit_log` row via the `record_audit` helper. Frontend lives under `apps/web/src/household/` (api, queries, `LibrarySharingSection`, audit-log view) plus `pages/HouseholdPage.tsx` and `pages/HouseholdJoinPage.tsx`; the collection page shows a read-only `CollectionShareSection` badge.
+- **Terms of Service gate:** Sharing / publishing actions call `require_current_tos()` server-side. If the caller's `profiles.tos_version` is below `current_tos_version()`, the RPC raises with `TOS_NOT_ACCEPTED:` prefix; the frontend catches this in `isTosNotAcceptedError` and opens `AcceptTosGate`. Legal text lives in `apps/web/src/legal/content.ts`; the `LegalPage` component renders it under `/legal/{terms,aup,dmca,privacy}`. Bumping the version requires a follow-up migration so the legal record is checked into the schema.
+- **Nutrition analysis:** Per-recipe nutrition uses USDA FoodData Central as the primary source and Open Food Facts as the fallback. Lookups go through the `nutrition` Edge Function (Vault secret `nutrition_worker_config` holds `{ function_url, service_role_key, usda_fdc_key }`), which writes every hit into `nutrition_facts_cache` keyed by `(source, source_id)` so the second view of any recipe is network-free. `ingredient_nutrition_mappings` is the per-user (with platform-default fallback) "this ingredient string → that USDA entry" override table; the `resolve_nutrition_mapping` RPC handles the user-row-then-platform-row lookup. The math lives in `packages/domain/src/services/nutritionMath.ts` (pure functions: `quantityToGrams` for unit conversion, `totalNutrition` to aggregate per-100g facts × grams, `scaleToServing` with proportion-of-yield and by-weight modes). UI sits on the recipe page via `RecipeNutritionPanel` + `IngredientMatchOverrideDialog`.
 
 ## Domain model overview
 
@@ -132,15 +135,29 @@ changes.
 ## Sentry (self-hosted)
 
 Errors + perf tracing + error-only session replay land in the
-self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud`, split
-across three projects so each surface has its own release tracking,
-symbolication artifacts, and quota:
+self-hosted Sentry at `https://sentry-cyb.work.ripley.cloud` under the
+org slug `cyb`, split across projects so each surface has its own
+release tracking, symbolication artifacts, and quota. The DSN suffix is
+the numeric project id; the human-readable slug is what
+`@sentry/vite-plugin` / `sentry-cli` / fastlane upload against:
 
-| Surface | Project | DSN suffix | SDK |
+| Surface | Project slug | DSN suffix | SDK |
 | --- | --- | --- | --- |
-| Web (Vercel) | `cookyourbooks-web` | `…/2` | `@sentry/react` |
-| iOS via Capacitor | `cookyourbooks-mobile` | `…/4` | `@sentry/capacitor` (wraps `@sentry/react` + native Cocoa SDK) |
-| Edge function (Deno) | `cookyourbooks-edge` | `…/3` | `@sentry/deno` via esm.sh |
+| Web (Vercel) | `cyb-react` | `…/2` | `@sentry/react` |
+| iOS via Capacitor | `cyb-capacitor` | `…/4` | `@sentry/capacitor` (wraps `@sentry/react` + native Cocoa SDK) |
+| Edge functions (Deno) | `cyb-deno` | `…/3` | `@sentry/deno` via esm.sh |
+
+Both Deno edge functions (`import-worker`, `nutrition`) report to the
+single `cyb-deno` project via one shared `SENTRY_DSN` secret —
+edge-function secrets are global to the Supabase project, so there's one
+value for every function.
+
+> **Build defaults:** `vite.config.ts` defaults `SENTRY_ORG=cyb` /
+> `SENTRY_PROJECT=cyb-react`, so the Vercel build only needs
+> `SENTRY_AUTH_TOKEN` set to upload source maps (the plugin runs
+> `silent: true`, so a missing token / wrong slug fails quietly). The
+> mobile CI build overrides `SENTRY_PROJECT=cyb-capacitor` so the bundle
+> shipped in the IPA uploads its JS maps to the project its events go to.
 
 The browser bundle picks its DSN at runtime via Capacitor platform
 detection (`apps/web/src/sentry.ts`): on iOS/Android it routes through
@@ -198,6 +215,37 @@ is what captures JS/React errors, network breadcrumbs, and replay.
   `localStorage.cookyourbooks.sync.consoleMirror = '1'` in the
   browser console to re-enable info-level sync log mirroring (off by
   default to save IPC cost on iPad / under Playwright).
+
+## Setting up the nutrition worker
+
+The `nutrition` Edge Function calls USDA FoodData Central (primary, free
+key, https://fdc.nal.usda.gov/api-key-signup.html) and Open Food Facts
+(fallback, no key). Setup mirrors the OCR worker — the key lives in
+Vault, never in the client bundle.
+
+### Local development
+
+```bash
+# 1. Start Supabase, serve the nutrition function alongside import-worker.
+./.bin/supabase start
+./.bin/supabase functions serve nutrition --no-verify-jwt
+
+# 2. Register the secret. Service-role key from `./.bin/supabase status`.
+./.bin/supabase db psql <<'SQL'
+select vault.create_secret(
+  json_build_object(
+    'function_url', 'http://host.docker.internal:54321/functions/v1/nutrition',
+    'service_role_key', 'PASTE_FROM_supabase_status',
+    'usda_fdc_key', 'YOUR_USDA_FDC_KEY'
+  )::text,
+  'nutrition_worker_config',
+  'Nutrition lookup endpoint + USDA key'
+);
+SQL
+```
+
+The Open Food Facts fallback fires automatically when USDA returns no
+hits; no extra config required.
 
 ## Setting up the OCR worker
 

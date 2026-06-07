@@ -1,16 +1,16 @@
-import { listSearchableEmbeddings, searchRecipesLocalSubstring } from '../local/repositories.js';
+import { listSearchableEmbeddings, type RecipeSearchHit } from '../local/repositories.js';
+import { collectionRepo } from '../data/repos.js';
 import { embedText } from './embedder.js';
 import SearchWorker from './searchWorker.ts?worker';
 
-export interface SearchHit {
-  recipeId: string;
-  collectionId: string;
-  collectionTitle: string;
-  collectionSourceType: string;
-  title: string;
-  /** 0..1 cosine similarity for semantic hits, undefined for substring hits. */
+/** A search result row. Same shape the literal search returns
+ *  (`RecipeSearchHit`, incl. the `isPlaceholder` "not imported" flag) plus an
+ *  optional cosine `score` for semantic hits. One shape so the page renders
+ *  semantic + fallback results identically. */
+export type SearchHit = RecipeSearchHit & {
+  /** 0..1 cosine similarity for semantic hits, undefined for literal hits. */
   score?: number;
-}
+};
 
 // gte-small dim. Hard-coded here too rather than imported from domain
 // so the worker file can stay framework-free.
@@ -119,23 +119,20 @@ export async function searchSemantic(
     const c = candidates[s.idx]!;
     out.push({
       recipeId: c.recipeId,
+      recipeTitle: c.recipeTitle,
       collectionId: c.collectionId,
       collectionTitle: c.collectionTitle,
-      collectionSourceType: c.collectionSourceType,
-      title: c.title,
+      sourceType: c.sourceType,
+      isPlaceholder: c.isPlaceholder,
       score: s.score,
     });
   }
   return out;
 }
 
-/** Substring fallback shim — exposed alongside semantic so callers can
- *  swap in one place. Returns hits in the same shape. */
-export async function searchSubstring(
-  ownerId: string,
-  q: string,
-  limit = 50,
-): Promise<SearchHit[]> {
-  const rows = await searchRecipesLocalSubstring(ownerId, q, limit);
-  return rows.map((r) => ({ ...r }));
+/** Literal fallback — used when the embedder is unavailable or the local
+ *  vector cache is cold. Delegates to the repository's literal search, which
+ *  also covers household-shared recipes and "not imported" placeholders. */
+export async function searchSubstring(ownerId: string, q: string): Promise<SearchHit[]> {
+  return collectionRepo(ownerId).searchRecipes(q);
 }

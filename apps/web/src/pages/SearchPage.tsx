@@ -21,7 +21,7 @@ export function SearchPage() {
 
   const filteredHits = useMemo(() => {
     if (!sourceType) return hits;
-    return hits.filter((h) => h.collectionSourceType === sourceType);
+    return hits.filter((h) => (h.sourceType as string) === sourceType);
   }, [hits, sourceType]);
 
   const status = embedderHint(embedderStatus, mode);
@@ -72,10 +72,19 @@ export function SearchPage() {
               <li key={hit.recipeId}>
                 <Link
                   to={`/collections/${hit.collectionId}/recipes/${hit.recipeId}`}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900"
+                  className={`flex items-center justify-between px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900 ${
+                    hit.isPlaceholder ? 'text-stone-500 dark:text-stone-500' : ''
+                  }`}
                 >
                   <span className="flex items-center gap-2 min-w-0">
-                    <span className="truncate font-medium">{hit.title}</span>
+                    <span className={`truncate ${hit.isPlaceholder ? '' : 'font-medium'}`}>
+                      {hit.recipeTitle}
+                    </span>
+                    {hit.isPlaceholder && (
+                      <span className="shrink-0 rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                        Not imported
+                      </span>
+                    )}
                     <span className="ml-2 truncate text-sm text-stone-500 dark:text-stone-400">
                       · {hit.collectionTitle}
                     </span>

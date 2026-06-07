@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 6;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -27,10 +27,17 @@ export const SCHEMA_STATEMENTS: string[] = [
     cover_image_path text,
     moderation_state text not null default 'ACTIVE',
     moderation_reason text,
+    shared_with_household_id text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
 
+  // recipe_collections_household_idx is created in POST_SCHEMA_MIGRATIONS,
+  // AFTER the shared_with_household_id backfill ALTER — deliberately not here.
+  // SCHEMA_STATEMENTS runs before that ALTER, so on an existing DB whose
+  // recipe_collections predates the column, creating this index throws
+  // "no such column: shared_with_household_id" and aborts the whole DB init —
+  // and because init dies before the ALTER, the DB can never self-heal.
   `create table if not exists recipes (
     id text primary key not null default '',
     collection_id text not null default '',
@@ -47,6 +54,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     book_title text,
     page_numbers text,         -- JSON array of numbers
     source_image_text text,
+    source_url text,           -- origin URL for video-imported recipes
     starred integer not null default 0,
     updated_at integer not null default 0,
     deleted integer not null default 0
@@ -133,6 +141,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     total_items integer not null default 0,
     batch_kind text not null default 'STANDARD',
     is_planner integer not null default 0,
+    default_prompt text,
+    key_owner_id text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -227,6 +237,147 @@ export const SCHEMA_STATEMENTS: string[] = [
   )`,
   `create index if not exists conversion_rules_owner_idx on conversion_rules(owner_id)`,
 
+  // ---------- Nutrition cache (2026-06-07) ----------
+  //
+  // Lazy mirror of `nutrition_facts_cache`. Populated opportunistically
+  // when the nutrition hook resolves a fact (either via the local-table
+  // read path or the edge-function search). Not CRR — these are
+  // system-wide reference rows that the server is the canonical
+  // owner of; the local copy is purely an offline read cache.
+  `create table if not exists nutrition_facts (
+    source text not null default '',
+    source_id text not null default '',
+    description text not null default '',
+    brand text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    fetched_at integer not null default 0,
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_facts_description_idx
+    on nutrition_facts(description)`,
+
+  // Per-user mapping mirror. The server holds owner_id NULL rows
+  // (platform defaults) plus owner_id = me rows; we mirror both so
+  // the resolver matches the server's user-then-platform fallback.
+  `create table if not exists nutrition_mappings (
+    -- '' for platform-default rows, the user's uuid otherwise.
+    owner_id text not null default '',
+    ingredient_key text not null default '',
+    source text not null default '',
+    source_id text not null default '',
+    custom_grams_per_unit text not null default '{}',
+    updated_at integer not null default 0,
+    primary key (owner_id, ingredient_key)
+  )`,
+  `create index if not exists nutrition_mappings_key_idx
+    on nutrition_mappings(ingredient_key)`,
+
+  // Bulk-loaded snapshot of USDA Foundation + SR Legacy from
+  // `nutrition_foods_master` on the server. Pulled once per session on
+  // first boot (one-shot, not incremental — these update once or twice
+  // a year). Powers offline ingredient → USDA matching: ~8k rows, ~5 MB
+  // on disk. Branded stays server-only because it's 500k+ rows.
+  // Not CRR — pure reference data, server is canonical.
+  `create table if not exists nutrition_foods_essentials (
+    source text not null default '',
+    source_id text not null default '',
+    data_type text not null default '',
+    description text not null default '',
+    brand text,
+    brand_owner text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    -- Pre-lowercased "description | brand | brand_owner" blob for
+    -- substring matching. ~8k rows so plain LIKE is fast enough; no
+    -- need for FTS5 + triggers + content-table choreography yet.
+    search_blob text not null default '',
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_foods_essentials_blob_idx
+    on nutrition_foods_essentials(search_blob)`,
+  `create index if not exists nutrition_foods_essentials_data_type_idx
+    on nutrition_foods_essentials(data_type)`,
+
+  // ---------- Cooking tracker (2026-06-17) ----------
+  //
+  // cooking_events: "I made this" (COOKED) + "make on <date>" (PLANNED).
+  // CRR-replicated. recipe_id is nullable (no default) so a cooked entry
+  // survives the recipe being deleted server-side (ON DELETE SET NULL) —
+  // the recipe_snapshot JSON keeps it readable. shared_with_household_id
+  // is a local-only marker set by the household pull (mirrors
+  // recipe_collections); the server has no such column.
+  `create table if not exists cooking_events (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text,
+    status text not null default 'PLANNED',
+    event_date text not null default '',     -- ISO day 'YYYY-MM-DD'
+    occasion_category text,
+    meal_slot text,
+    occasion_note text,
+    notes text,
+    adjustments text not null default '[]',  -- JSON RecipeAdjustment[]
+    recipe_snapshot text,                    -- JSON RecipeSnapshot or null
+    photo_paths text not null default '[]',  -- JSON array of cooking-photos storage paths
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists cooking_events_owner_date_idx
+    on cooking_events(owner_id, event_date)`,
+  `create index if not exists cooking_events_recipe_idx on cooking_events(recipe_id)`,
+  // cooking_events_household_idx is created in POST_SCHEMA_MIGRATIONS after the
+  // shared_with_household_id backfill ALTER — same ordering hazard as
+  // recipe_collections above (an existing pre-column table would abort init).
+
+  // recipe_tags: per-(owner, recipe) labels, distinct from `recipes.starred`.
+  // CRR-replicated. The server enforces unique(owner_id, recipe_id, label);
+  // we intentionally do NOT add a local UNIQUE index (cr-sqlite only
+  // supports the primary key as a uniqueness constraint) — the repository
+  // makes addTag idempotent by checking for an existing row first, and the
+  // push uses onConflict on the natural key.
+  `create table if not exists recipe_tags (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text not null default '',
+    label text not null default '',
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists recipe_tags_recipe_idx on recipe_tags(recipe_id)`,
+  `create index if not exists recipe_tags_owner_idx on recipe_tags(owner_id)`,
+  `create index if not exists recipe_tags_label_idx on recipe_tags(label)`,
+
+  // recipe_views: LOCAL-ONLY personal browsing history. NOT CRR, never
+  // synced, never shared — "your own record" stays on this device, and
+  // routing the app's highest-frequency write through sync would be a
+  // thundering-herd risk. Mirrors the outbox/sync_state local-only shape
+  // (autoincrement int PK, no updated_at/deleted).
+  `create table if not exists recipe_views (
+    id integer primary key autoincrement,
+    recipe_id text not null,
+    viewed_at integer not null,
+    source text
+  )`,
+  `create index if not exists recipe_views_recipe_idx on recipe_views(recipe_id, viewed_at)`,
+  `create index if not exists recipe_views_recent_idx on recipe_views(viewed_at)`,
+
   // Sync metadata — a singleton row per logical topic holding the
   // latest-seen remote `updated_at` (ms since epoch). Local-only, not CRR.
   `create table if not exists sync_state (
@@ -260,6 +411,8 @@ export const CRR_TABLES = [
   'import_toc_entries',
   'conversion_rules',
   'rewrite_jobs',
+  'cooking_events',
+  'recipe_tags',
 ];
 
 // Idempotent post-schema migrations. Appended to over time as columns
@@ -279,6 +432,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipes add column book_title text`,
   `alter table recipes add column page_numbers text`,
   `alter table recipes add column source_image_text text`,
+  // Per-recipe origin URL for the video-import flow (2026-06-05).
+  `alter table recipes add column source_url text`,
   `alter table ingredients add column description text`,
   `alter table instructions add column temperature_value real`,
   `alter table instructions add column temperature_unit text`,
@@ -309,6 +464,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     status text not null default 'OPEN',
     total_items integer not null default 0,
     batch_kind text not null default 'STANDARD',
+    default_prompt text,
+    key_owner_id text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -446,4 +603,131 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     updated_at integer not null default 0
   )`,
   `create index if not exists recipe_embeddings_updated_idx on recipe_embeddings(updated_at)`,
+  // ---------- Household sharing (2026-06-06) ----------
+  // shared_with_household_id flags a collection as visible to members of
+  // the given household via the server-side RLS policy. Local code reads
+  // it to render the "Shared with household" badge and to gate edits
+  // (members can read but not write).
+  `alter table recipe_collections add column shared_with_household_id text`,
+  `create index if not exists recipe_collections_household_idx
+    on recipe_collections(shared_with_household_id)
+    where shared_with_household_id is not null`,
+  // ---------- Nutrition cache (2026-06-07) — idempotent post-schema migration ----------
+  `create table if not exists nutrition_facts (
+    source text not null default '',
+    source_id text not null default '',
+    description text not null default '',
+    brand text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    fetched_at integer not null default 0,
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_facts_description_idx
+    on nutrition_facts(description)`,
+  `create table if not exists nutrition_mappings (
+    owner_id text not null default '',
+    ingredient_key text not null default '',
+    source text not null default '',
+    source_id text not null default '',
+    custom_grams_per_unit text not null default '{}',
+    updated_at integer not null default 0,
+    primary key (owner_id, ingredient_key)
+  )`,
+  `create index if not exists nutrition_mappings_key_idx
+    on nutrition_mappings(ingredient_key)`,
+  // ---------- USDA essentials bulk mirror (2026-06-08) ----------
+  `create table if not exists nutrition_foods_essentials (
+    source text not null default '',
+    source_id text not null default '',
+    data_type text not null default '',
+    description text not null default '',
+    brand text,
+    brand_owner text,
+    calories_kcal real,
+    protein_g real,
+    fat_g real,
+    saturated_fat_g real,
+    carbs_g real,
+    sugar_g real,
+    fiber_g real,
+    sodium_mg real,
+    portions text not null default '[]',
+    search_blob text not null default '',
+    primary key (source, source_id)
+  )`,
+  `create index if not exists nutrition_foods_essentials_blob_idx
+    on nutrition_foods_essentials(search_blob)`,
+  `create index if not exists nutrition_foods_essentials_data_type_idx
+    on nutrition_foods_essentials(data_type)`,
+  // ---------- Cooking tracker (2026-06-17) — idempotent post-schema migration ----------
+  `create table if not exists cooking_events (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text,
+    status text not null default 'PLANNED',
+    event_date text not null default '',
+    occasion_category text,
+    occasion_note text,
+    notes text,
+    adjustments text not null default '[]',
+    recipe_snapshot text,
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists cooking_events_owner_date_idx
+    on cooking_events(owner_id, event_date)`,
+  `create index if not exists cooking_events_recipe_idx on cooking_events(recipe_id)`,
+  // shared_with_household_id is in the create-table above for fresh DBs, but a
+  // local DB that created cooking_events before the column existed won't gain
+  // it from create-table-if-not-exists. Backfill it BEFORE the household index
+  // below references it (no-op where already present).
+  `alter table cooking_events add column shared_with_household_id text`,
+  `create index if not exists cooking_events_household_idx
+    on cooking_events(shared_with_household_id)
+    where shared_with_household_id is not null`,
+  `create table if not exists recipe_tags (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text not null default '',
+    label text not null default '',
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  // Same backfill for recipe_tags: it has no index on the column, so an older
+  // DB silently lacks it until the sync push references it — that's the iOS
+  // "no such column: shared_with_household_id" on sync.
+  `alter table recipe_tags add column shared_with_household_id text`,
+  `create index if not exists recipe_tags_recipe_idx on recipe_tags(recipe_id)`,
+  `create index if not exists recipe_tags_owner_idx on recipe_tags(owner_id)`,
+  `create index if not exists recipe_tags_label_idx on recipe_tags(label)`,
+  `create table if not exists recipe_views (
+    id integer primary key autoincrement,
+    recipe_id text not null,
+    viewed_at integer not null,
+    source text
+  )`,
+  `create index if not exists recipe_views_recipe_idx on recipe_views(recipe_id, viewed_at)`,
+  `create index if not exists recipe_views_recent_idx on recipe_views(viewed_at)`,
+  // Photos on cooking entries (V2). Additive for any local DB that created
+  // cooking_events before this column existed; the create-table above
+  // already includes it for fresh DBs.
+  `alter table cooking_events add column photo_paths text not null default '[]'`,
+  // Meal slot (breakfast/lunch/dinner/snack). Nullable, additive.
+  `alter table cooking_events add column meal_slot text`,
+  // Bulk OCR (2026-06-22): snapshot the effective prompt onto the batch so
+  // the worker uses the user's / household's prompt (was always falling back
+  // to the built-in RECIPE_PROMPT), and record which member's key paid when
+  // the config came from a household. Both nullable + additive.
+  `alter table import_batches add column default_prompt text`,
+  `alter table import_batches add column key_owner_id text`,
 ];

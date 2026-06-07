@@ -10,11 +10,12 @@ import {
 } from '../data/queries.js';
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
-import { SortableRecipeList } from '../components/SortableRecipeList.js';
+import { SortableRecipeList, type RecipeSortMode } from '../components/SortableRecipeList.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
 import { ShareToGlobalButton } from '../components/ShareToGlobalButton.js';
 import { MakePublicDialog } from '../components/MakePublicDialog.js';
+import { CollectionShareSection } from '../household/CollectionShareSection.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { findOpenPlannerSession } from '../import/localRepos.js';
 export function CollectionPage() {
@@ -28,6 +29,7 @@ export function CollectionPage() {
   const saveRecipe = useSaveRecipe(collectionId ?? '');
   const [showPublishWarning, setShowPublishWarning] = useState(false);
   const [hasOpenSession, setHasOpenSession] = useState(false);
+  const [sortMode, setSortMode] = useState<RecipeSortMode>('manual');
 
   // Cheap one-shot probe so the CTA can say "resume" when applicable.
   // Re-runs whenever the collection's recipe list changes (which is also
@@ -142,7 +144,7 @@ export function CollectionPage() {
             c.moderationState === 'TAKEN_DOWN'
               ? 'Taken down by a moderator'
               : isbnBlocksPublic && !c.isPublic
-                ? "Cookbooks with an ISBN can't be made public — those recipes belong to the publisher. Email dmca@cookyourbooks.app to report a violation."
+                ? "Cookbooks with an ISBN can't be made public — those recipes belong to the publisher. See /legal/dmca to report a violation."
                 : undefined
           }
           className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
@@ -157,6 +159,9 @@ export function CollectionPage() {
         )}
         {c.sourceType === 'PUBLISHED_BOOK' && c.moderationState !== 'TAKEN_DOWN' && (
           <ShareToGlobalButton cookbook={c} />
+        )}
+        {c.moderationState !== 'TAKEN_DOWN' && (
+          <CollectionShareSection />
         )}
         <button
           onClick={async () => {
@@ -199,12 +204,35 @@ export function CollectionPage() {
       {c.recipes.length === 0 ? (
         <p className="text-stone-600 dark:text-stone-400">No recipes yet.</p>
       ) : (
-        <SortableRecipeList
-          collectionId={c.id}
-          recipes={c.recipes}
-          onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
-          onToggleStar={onToggleStar}
-        />
+        <div className="space-y-2">
+          <div className="flex items-center justify-end gap-2 text-sm">
+            <label htmlFor="recipe-sort" className="text-stone-500 dark:text-stone-400">
+              Sort
+            </label>
+            <select
+              id="recipe-sort"
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as RecipeSortMode)}
+              className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 text-sm"
+            >
+              <option value="manual">Manual order</option>
+              <option value="name">Name (A–Z)</option>
+              <option value="page">Page number</option>
+            </select>
+          </div>
+          {sortMode !== 'manual' && (
+            <p className="text-right text-xs text-stone-400 dark:text-stone-500">
+              Drag-to-reorder is available in Manual order.
+            </p>
+          )}
+          <SortableRecipeList
+            collectionId={c.id}
+            recipes={c.recipes}
+            onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
+            onToggleStar={onToggleStar}
+            sortMode={sortMode}
+          />
+        </div>
       )}
       <MakePublicDialog
         open={showPublishWarning}

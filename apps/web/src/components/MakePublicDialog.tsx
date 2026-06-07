@@ -61,12 +61,9 @@ export function MakePublicDialog({
             belong to the publisher.
           </p>
           <p className="mt-1">
-            Rights holders can report a violation to{' '}
-            <a
-              href="mailto:dmca@cookyourbooks.app"
-              className="font-medium underline hover:no-underline"
-            >
-              dmca@cookyourbooks.app
+            Rights holders can report a violation through our{' '}
+            <a href="/legal/dmca" className="font-medium underline hover:no-underline">
+              registered Copyright Agent
             </a>
             . Confirmed violations result in a <strong>lifetime account ban</strong>.
           </p>

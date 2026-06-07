@@ -22,7 +22,12 @@ export type OutboxKind =
   // Browser-computed recipe embedding ready to push to pgvector via the
   // embed_upsert_client RPC. The entity_id is the recipe id; the
   // payload lives in the local recipe_embeddings row.
-  | 'embedding_push';
+  | 'embedding_push'
+  // Cooking tracker (2026-06-17). Plain PostgREST upsert/delete — no RPC.
+  | 'cooking_event_save'
+  | 'cooking_event_delete'
+  | 'recipe_tag_save'
+  | 'recipe_tag_delete';
 
 export interface OutboxEntry {
   id: number;

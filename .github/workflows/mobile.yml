@@ -89,11 +89,22 @@ jobs:
       # We can't blank these at the job level (empty string ≠ unset; an
       # empty GEM_PATH stops Ruby from finding minitest under cocoapods).
       MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-      # Sentry dSYM upload. Org slug is `cyb` — the Fastfile's default
-      # is `sentry` (a leftover from the sentry-cli docs), so we set it
-      # explicitly here. Org isn't sensitive; only the auth token is.
+      # Sentry dSYM upload. Org + project slugs aren't sensitive — only
+      # the auth token is. Org is `cyb`, the iOS/Capacitor project is
+      # `cyb-capacitor` (these match the Fastfile defaults; set here
+      # explicitly so the env is self-documenting).
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_ORG: cyb
+      SENTRY_PROJECT_MOBILE: cyb-capacitor
+      # The web build feeding `cap sync` ships inside the IPA, and its JS
+      # errors report to the Capacitor project — so its source maps must
+      # upload there too, not to the web project. @sentry/vite-plugin
+      # reads SENTRY_PROJECT; point it at the Capacitor project for this
+      # build. (Native dSYMs use SENTRY_PROJECT_MOBILE above — same slug.)
+      SENTRY_PROJECT: cyb-capacitor
+      # Tag both the uploaded maps and the runtime JS events with the
+      # commit SHA so they line up by release as well as by Debug ID.
+      VITE_SENTRY_RELEASE: ${{ github.sha }}
       CYB_ASC_KEY_ID: ${{ secrets.CYB_ASC_KEY_ID }}
       CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -119,6 +130,12 @@ jobs:
           set +e
           find ~/Library/Developer/Xcode/DerivedData -mindepth 1 -maxdepth 1 -mtime +2 -exec rm -rf {} +
           find /Users/jon/actions-runner/_work/CookYourBooks/CookYourBooks/apps/mobile/ios/build -mindepth 1 -mtime +2 -exec rm -rf {} + 2>/dev/null
+          # Shut down any simulators left booted by a previous job /
+          # local dev session. A booted sim keeps its mediaanalysisd
+          # alive, which on a busy day pegs 5-6 cores indexing the sim's
+          # photo library and starves this build of CPU. Idempotent
+          # no-op if nothing is booted.
+          xcrun simctl shutdown all 2>/dev/null
           # Pre-flight: confirm the login keychain is unlocked. The
           # LaunchAgent at scripts/runner/app.cookyourbooks.unlock-keychain.plist
           # should keep it unlocked across reboots; this surfaces a clear

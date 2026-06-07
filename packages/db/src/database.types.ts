@@ -70,6 +70,54 @@ export type Database = {
           },
         ]
       }
+      audit_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          created_at: string
+          household_id: string | null
+          id: string
+          metadata: Json
+          target_id: string | null
+          target_type: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          metadata?: Json
+          target_id?: string | null
+          target_type: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          metadata?: Json
+          target_id?: string | null
+          target_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bakeoff_runs: {
         Row: {
           created_at: string
@@ -101,7 +149,15 @@ export type Database = {
           task_kind?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "bakeoff_runs_input_recipe_id_fkey"
+            columns: ["input_recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       bakeoff_variants: {
         Row: {
@@ -284,6 +340,72 @@ export type Database = {
           },
         ]
       }
+      cooking_events: {
+        Row: {
+          adjustments: Json
+          created_at: string
+          event_date: string
+          id: string
+          meal_slot: string | null
+          notes: string | null
+          occasion_category: string | null
+          occasion_note: string | null
+          owner_id: string
+          photo_paths: Json
+          recipe_id: string | null
+          recipe_snapshot: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          adjustments?: Json
+          created_at?: string
+          event_date: string
+          id?: string
+          meal_slot?: string | null
+          notes?: string | null
+          occasion_category?: string | null
+          occasion_note?: string | null
+          owner_id: string
+          photo_paths?: Json
+          recipe_id?: string | null
+          recipe_snapshot?: Json | null
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          adjustments?: Json
+          created_at?: string
+          event_date?: string
+          id?: string
+          meal_slot?: string | null
+          notes?: string | null
+          occasion_category?: string | null
+          occasion_note?: string | null
+          owner_id?: string
+          photo_paths?: Json
+          recipe_id?: string | null
+          recipe_snapshot?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cooking_events_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cooking_events_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       global_conversions: {
         Row: {
           created_at: string
@@ -440,91 +562,235 @@ export type Database = {
           },
         ]
       }
-      import_batches: {
+      household_invites: {
         Row: {
-          batch_kind: string
           created_at: string
-          default_model: string
-          default_prompt: string | null
-          default_provider: string
-          fallback_model: string | null
-          fallback_provider: string | null
+          created_by: string
+          expires_at: string
+          household_id: string
           id: string
-          is_planner: boolean
-          name: string
-          owner_id: string
-          recitation_policy: string
-          source_kind: string
-          status: string
-          target_collection_id: string | null
-          total_items: number
-          updated_at: string
+          revoked_at: string | null
+          token: string
+          used_at: string | null
+          used_by: string | null
         }
         Insert: {
-          batch_kind?: string
           created_at?: string
-          default_model?: string
-          default_prompt?: string | null
-          default_provider?: string
-          fallback_model?: string | null
-          fallback_provider?: string | null
+          created_by: string
+          expires_at: string
+          household_id: string
           id?: string
-          is_planner?: boolean
-          name?: string
-          owner_id: string
-          recitation_policy?: string
-          source_kind?: string
-          status?: string
-          target_collection_id?: string | null
-          total_items?: number
-          updated_at?: string
+          revoked_at?: string | null
+          token: string
+          used_at?: string | null
+          used_by?: string | null
         }
         Update: {
-          batch_kind?: string
           created_at?: string
-          default_model?: string
-          default_prompt?: string | null
-          default_provider?: string
-          fallback_model?: string | null
-          fallback_provider?: string | null
+          created_by?: string
+          expires_at?: string
+          household_id?: string
           id?: string
-          is_planner?: boolean
-          name?: string
-          owner_id?: string
-          recitation_policy?: string
-          source_kind?: string
-          status?: string
-          target_collection_id?: string | null
-          total_items?: number
-          updated_at?: string
+          revoked_at?: string | null
+          token?: string
+          used_at?: string | null
+          used_by?: string | null
         }
         Relationships: [
           {
-            foreignKeyName: "import_batches_owner_id_fkey"
-            columns: ["owner_id"]
+            foreignKeyName: "household_invites_created_by_fkey"
+            columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "import_batches_target_collection_id_fkey"
-            columns: ["target_collection_id"]
+            foreignKeyName: "household_invites_household_id_fkey"
+            columns: ["household_id"]
             isOneToOne: false
-            referencedRelation: "admin_global_toc_import_candidates"
-            referencedColumns: ["collection_id"]
-          },
-          {
-            foreignKeyName: "import_batches_target_collection_id_fkey"
-            columns: ["target_collection_id"]
-            isOneToOne: false
-            referencedRelation: "public_collections"
+            referencedRelation: "households"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "import_batches_target_collection_id_fkey"
-            columns: ["target_collection_id"]
+            foreignKeyName: "household_invites_used_by_fkey"
+            columns: ["used_by"]
             isOneToOne: false
-            referencedRelation: "recipe_collections"
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      household_join_cooldowns: {
+        Row: {
+          eligible_at: string
+          reason: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          eligible_at: string
+          reason?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          eligible_at?: string
+          reason?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_join_cooldowns_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      household_members: {
+        Row: {
+          attested_tos_version: number
+          household_id: string
+          id: string
+          joined_at: string
+          left_at: string | null
+          library_share_attestation: string | null
+          library_share_attested_at: string | null
+          library_shared: boolean
+          role: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          attested_tos_version?: number
+          household_id: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          library_share_attestation?: string | null
+          library_share_attested_at?: string | null
+          library_shared?: boolean
+          role?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          attested_tos_version?: number
+          household_id?: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          library_share_attestation?: string | null
+          library_share_attested_at?: string | null
+          library_shared?: boolean
+          role?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_members_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      household_ocr_config: {
+        Row: {
+          created_at: string
+          fallback_model: string | null
+          fallback_provider: string | null
+          household_id: string
+          key_owner_id: string
+          model: string
+          ocr_share_enabled: boolean
+          prompt: string | null
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          fallback_model?: string | null
+          fallback_provider?: string | null
+          household_id: string
+          key_owner_id: string
+          model?: string
+          ocr_share_enabled?: boolean
+          prompt?: string | null
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          fallback_model?: string | null
+          fallback_provider?: string | null
+          household_id?: string
+          key_owner_id?: string
+          model?: string
+          ocr_share_enabled?: boolean
+          prompt?: string | null
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_ocr_config_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: true
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_ocr_config_key_owner_id_fkey"
+            columns: ["key_owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      households: {
+        Row: {
+          created_at: string
+          id: string
+          max_members: number
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          max_members?: number
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          max_members?: number
+          name?: string
+          owner_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "households_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -569,70 +835,114 @@ export type Database = {
           sort_index?: number
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "import_batch_variants_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "import_batches"
+            referencedColumns: ["id"]
+          },
+        ]
       }
-      import_item_variant_results: {
+      import_batches: {
         Row: {
-          attempts: number
-          claim_expires_at: string
-          claim_token: string | null
-          completion_tokens: number | null
-          cost_usd_micros: number | null
+          batch_kind: string
           created_at: string
-          drafts: Json | null
-          error_kind: string | null
-          error_message: string | null
+          default_model: string
+          default_prompt: string | null
+          default_provider: string
+          fallback_model: string | null
+          fallback_provider: string | null
           id: string
-          item_id: string
-          latency_ms: number | null
+          is_planner: boolean
+          key_owner_id: string | null
+          name: string
           owner_id: string
-          prompt_tokens: number | null
-          raw_text: string | null
+          recitation_policy: string
+          source_kind: string
           status: string
+          target_collection_id: string | null
+          total_items: number
           updated_at: string
-          variant_id: string
         }
         Insert: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number | null
-          cost_usd_micros?: number | null
+          batch_kind?: string
           created_at?: string
-          drafts?: Json | null
-          error_kind?: string | null
-          error_message?: string | null
+          default_model?: string
+          default_prompt?: string | null
+          default_provider?: string
+          fallback_model?: string | null
+          fallback_provider?: string | null
           id?: string
-          item_id: string
-          latency_ms?: number | null
+          is_planner?: boolean
+          key_owner_id?: string | null
+          name?: string
           owner_id: string
-          prompt_tokens?: number | null
-          raw_text?: string | null
+          recitation_policy?: string
+          source_kind?: string
           status?: string
+          target_collection_id?: string | null
+          total_items?: number
           updated_at?: string
-          variant_id: string
         }
         Update: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number | null
-          cost_usd_micros?: number | null
+          batch_kind?: string
           created_at?: string
-          drafts?: Json | null
-          error_kind?: string | null
-          error_message?: string | null
+          default_model?: string
+          default_prompt?: string | null
+          default_provider?: string
+          fallback_model?: string | null
+          fallback_provider?: string | null
           id?: string
-          item_id?: string
-          latency_ms?: number | null
+          is_planner?: boolean
+          key_owner_id?: string | null
+          name?: string
           owner_id?: string
-          prompt_tokens?: number | null
-          raw_text?: string | null
+          recitation_policy?: string
+          source_kind?: string
           status?: string
+          target_collection_id?: string | null
+          total_items?: number
           updated_at?: string
-          variant_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "import_batches_key_owner_id_fkey"
+            columns: ["key_owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_batches_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_batches_target_collection_id_fkey"
+            columns: ["target_collection_id"]
+            isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
+          },
+          {
+            foreignKeyName: "import_batches_target_collection_id_fkey"
+            columns: ["target_collection_id"]
+            isOneToOne: false
+            referencedRelation: "public_collections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_batches_target_collection_id_fkey"
+            columns: ["target_collection_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_collections"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       import_item_attempts: {
         Row: {
@@ -699,6 +1009,84 @@ export type Database = {
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      import_item_variant_results: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string
+          drafts: Json | null
+          error_kind: string | null
+          error_message: string | null
+          id: string
+          item_id: string
+          latency_ms: number | null
+          owner_id: string
+          prompt_tokens: number | null
+          raw_text: string | null
+          status: string
+          updated_at: string
+          variant_id: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          item_id: string
+          latency_ms?: number | null
+          owner_id: string
+          prompt_tokens?: number | null
+          raw_text?: string | null
+          status?: string
+          updated_at?: string
+          variant_id: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number | null
+          cost_usd_micros?: number | null
+          created_at?: string
+          drafts?: Json | null
+          error_kind?: string | null
+          error_message?: string | null
+          id?: string
+          item_id?: string
+          latency_ms?: number | null
+          owner_id?: string
+          prompt_tokens?: number | null
+          raw_text?: string | null
+          status?: string
+          updated_at?: string
+          variant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "import_item_variant_results_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "import_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_item_variant_results_variant_id_fkey"
+            columns: ["variant_id"]
+            isOneToOne: false
+            referencedRelation: "import_batch_variants"
             referencedColumns: ["id"]
           },
         ]
@@ -817,6 +1205,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "import_items_assigned_recipe_id_fkey"
+            columns: ["assigned_recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "import_items_batch_id_fkey"
             columns: ["batch_id"]
             isOneToOne: false
@@ -828,6 +1223,13 @@ export type Database = {
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "import_items_selected_variant_fkey"
+            columns: ["selected_variant_id"]
+            isOneToOne: false
+            referencedRelation: "import_batch_variants"
             referencedColumns: ["id"]
           },
         ]
@@ -890,12 +1292,54 @@ export type Database = {
           },
         ]
       }
+      ingredient_nutrition_mappings: {
+        Row: {
+          created_at: string
+          custom_grams_per_unit: Json
+          id: string
+          ingredient_key: string
+          owner_id: string | null
+          source: string
+          source_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          custom_grams_per_unit?: Json
+          id?: string
+          ingredient_key: string
+          owner_id?: string | null
+          source: string
+          source_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          custom_grams_per_unit?: Json
+          id?: string
+          ingredient_key?: string
+          owner_id?: string | null
+          source?: string
+          source_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_nutrition_mappings_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ingredients: {
         Row: {
           description: string | null
           id: string
           name: string
           notes: string | null
+          owner_id: string | null
           preparation: string | null
           quantity_amount: number | null
           quantity_denominator: number | null
@@ -914,6 +1358,7 @@ export type Database = {
           id?: string
           name: string
           notes?: string | null
+          owner_id?: string | null
           preparation?: string | null
           quantity_amount?: number | null
           quantity_denominator?: number | null
@@ -932,6 +1377,7 @@ export type Database = {
           id?: string
           name?: string
           notes?: string | null
+          owner_id?: string | null
           preparation?: string | null
           quantity_amount?: number | null
           quantity_denominator?: number | null
@@ -967,6 +1413,7 @@ export type Database = {
           consumed_quantity_whole: number | null
           ingredient_id: string
           instruction_id: string
+          owner_id: string | null
         }
         Insert: {
           consumed_quantity_amount?: number | null
@@ -979,6 +1426,7 @@ export type Database = {
           consumed_quantity_whole?: number | null
           ingredient_id: string
           instruction_id: string
+          owner_id?: string | null
         }
         Update: {
           consumed_quantity_amount?: number | null
@@ -991,6 +1439,7 @@ export type Database = {
           consumed_quantity_whole?: number | null
           ingredient_id?: string
           instruction_id?: string
+          owner_id?: string | null
         }
         Relationships: [
           {
@@ -1013,6 +1462,7 @@ export type Database = {
         Row: {
           id: string
           notes: string | null
+          owner_id: string | null
           recipe_id: string
           simplified_steps: Json | null
           step_number: number
@@ -1024,6 +1474,7 @@ export type Database = {
         Insert: {
           id?: string
           notes?: string | null
+          owner_id?: string | null
           recipe_id: string
           simplified_steps?: Json | null
           step_number: number
@@ -1035,6 +1486,7 @@ export type Database = {
         Update: {
           id?: string
           notes?: string | null
+          owner_id?: string | null
           recipe_id?: string
           simplified_steps?: Json | null
           step_number?: number
@@ -1052,6 +1504,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      model_pricing: {
+        Row: {
+          fetched_at: string
+          input_usd_per_mtok: number
+          model: string
+          output_usd_per_mtok: number
+          provider: string
+          source: string
+        }
+        Insert: {
+          fetched_at?: string
+          input_usd_per_mtok: number
+          model: string
+          output_usd_per_mtok: number
+          provider: string
+          source: string
+        }
+        Update: {
+          fetched_at?: string
+          input_usd_per_mtok?: number
+          model?: string
+          output_usd_per_mtok?: number
+          provider?: string
+          source?: string
+        }
+        Relationships: []
       }
       moderation_actions: {
         Row: {
@@ -1091,6 +1570,120 @@ export type Database = {
           },
         ]
       }
+      nutrition_facts_cache: {
+        Row: {
+          brand: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          description: string
+          fat_g: number | null
+          fetched_at: string
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          raw_response: Json | null
+          saturated_fat_g: number | null
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+        }
+        Insert: {
+          brand?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          description: string
+          fat_g?: number | null
+          fetched_at?: string
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          raw_response?: Json | null
+          saturated_fat_g?: number | null
+          sodium_mg?: number | null
+          source: string
+          source_id: string
+          sugar_g?: number | null
+        }
+        Update: {
+          brand?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          description?: string
+          fat_g?: number | null
+          fetched_at?: string
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          raw_response?: Json | null
+          saturated_fat_g?: number | null
+          sodium_mg?: number | null
+          source?: string
+          source_id?: string
+          sugar_g?: number | null
+        }
+        Relationships: []
+      }
+      nutrition_foods_master: {
+        Row: {
+          brand: string | null
+          brand_owner: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          data_type: string
+          description: string
+          fat_g: number | null
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          saturated_fat_g: number | null
+          search_tsv: unknown
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+          updated_at: string
+        }
+        Insert: {
+          brand?: string | null
+          brand_owner?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          data_type: string
+          description: string
+          fat_g?: number | null
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          saturated_fat_g?: number | null
+          search_tsv?: unknown
+          sodium_mg?: number | null
+          source: string
+          source_id: string
+          sugar_g?: number | null
+          updated_at?: string
+        }
+        Update: {
+          brand?: string | null
+          brand_owner?: string | null
+          calories_kcal?: number | null
+          carbs_g?: number | null
+          data_type?: string
+          description?: string
+          fat_g?: number | null
+          fiber_g?: number | null
+          portions?: Json
+          protein_g?: number | null
+          saturated_fat_g?: number | null
+          search_tsv?: unknown
+          sodium_mg?: number | null
+          source?: string
+          source_id?: string
+          sugar_g?: number | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       ocr_test_fixtures: {
         Row: {
           created_at: string
@@ -1129,6 +1722,8 @@ export type Database = {
           disabled_reason: string | null
           display_name: string | null
           id: string
+          tos_accepted_at: string | null
+          tos_version: number
         }
         Insert: {
           avatar_url?: string | null
@@ -1137,6 +1732,8 @@ export type Database = {
           disabled_reason?: string | null
           display_name?: string | null
           id: string
+          tos_accepted_at?: string | null
+          tos_version?: number
         }
         Update: {
           avatar_url?: string | null
@@ -1145,6 +1742,8 @@ export type Database = {
           disabled_reason?: string | null
           display_name?: string | null
           id?: string
+          tos_accepted_at?: string | null
+          tos_version?: number
         }
         Relationships: []
       }
@@ -1159,12 +1758,15 @@ export type Database = {
           id: string
           is_public: boolean
           isbn: string | null
+          last_share_attestation: string | null
+          last_share_attested_at: string | null
           moderation_reason: string | null
           moderation_state: string
           notes: string | null
           owner_id: string
           publication_year: number | null
           publisher: string | null
+          shared_with_household_id: string | null
           site_name: string | null
           source_type: string
           source_url: string | null
@@ -1181,12 +1783,15 @@ export type Database = {
           id?: string
           is_public?: boolean
           isbn?: string | null
+          last_share_attestation?: string | null
+          last_share_attested_at?: string | null
           moderation_reason?: string | null
           moderation_state?: string
           notes?: string | null
           owner_id: string
           publication_year?: number | null
           publisher?: string | null
+          shared_with_household_id?: string | null
           site_name?: string | null
           source_type: string
           source_url?: string | null
@@ -1203,12 +1808,15 @@ export type Database = {
           id?: string
           is_public?: boolean
           isbn?: string | null
+          last_share_attestation?: string | null
+          last_share_attested_at?: string | null
           moderation_reason?: string | null
           moderation_state?: string
           notes?: string | null
           owner_id?: string
           publication_year?: number | null
           publisher?: string | null
+          shared_with_household_id?: string | null
           site_name?: string | null
           source_type?: string
           source_url?: string | null
@@ -1244,6 +1852,55 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "recipe_collections_shared_with_household_id_fkey"
+            columns: ["shared_with_household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_tags: {
+        Row: {
+          created_at: string
+          id: string
+          label: string
+          owner_id: string
+          recipe_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label: string
+          owner_id: string
+          recipe_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string
+          owner_id?: string
+          recipe_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_tags_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_tags_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
         ]
       }
       recipes: {
@@ -1262,6 +1919,7 @@ export type Database = {
           servings_description: string | null
           sort_order: number
           source_image_text: string | null
+          source_url: string | null
           starred: boolean
           time_estimate: string | null
           title: string
@@ -1282,6 +1940,7 @@ export type Database = {
           servings_description?: string | null
           sort_order?: number
           source_image_text?: string | null
+          source_url?: string | null
           starred?: boolean
           time_estimate?: string | null
           title: string
@@ -1302,6 +1961,7 @@ export type Database = {
           servings_description?: string | null
           sort_order?: number
           source_image_text?: string | null
+          source_url?: string | null
           starred?: boolean
           time_estimate?: string | null
           title?: string
@@ -1391,6 +2051,114 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      rewrite_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          id: string
+          last_error: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number
+          provider: string
+          recipe_id: string
+          result_json: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id?: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id?: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rewrite_jobs_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rewrite_jobs_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rewrite_test_fixtures: {
+        Row: {
+          created_at: string
+          error_kind: string | null
+          latency_ms: number
+          model: string
+          provider: string
+          recipe_id: string
+          response_json: Json
+        }
+        Insert: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Update: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Relationships: []
       }
       shopping_list_items: {
         Row: {
@@ -1594,84 +2362,6 @@ export type Database = {
           },
         ]
       }
-      rewrite_jobs: {
-        Row: {
-          attempts: number
-          claim_expires_at: string
-          claim_token: string | null
-          completion_tokens: number
-          cost_usd_micros: number
-          created_at: string
-          id: string
-          last_error: string | null
-          latency_ms: number
-          model: string
-          owner_id: string
-          prompt: string
-          prompt_tokens: number
-          provider: string
-          recipe_id: string
-          result_json: Json | null
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number
-          cost_usd_micros?: number
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          latency_ms?: number
-          model?: string
-          owner_id: string
-          prompt?: string
-          prompt_tokens?: number
-          provider?: string
-          recipe_id: string
-          result_json?: Json | null
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          completion_tokens?: number
-          cost_usd_micros?: number
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          latency_ms?: number
-          model?: string
-          owner_id?: string
-          prompt?: string
-          prompt_tokens?: number
-          provider?: string
-          recipe_id?: string
-          result_json?: Json | null
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "rewrite_jobs_owner_id_fkey"
-            columns: ["owner_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "rewrite_jobs_recipe_id_fkey"
-            columns: ["recipe_id"]
-            isOneToOne: false
-            referencedRelation: "recipes"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       user_rewrite_prefs: {
         Row: {
           model: string
@@ -1693,36 +2383,6 @@ export type Database = {
           prompt?: string
           provider?: string
           updated_at?: string
-        }
-        Relationships: []
-      }
-      rewrite_test_fixtures: {
-        Row: {
-          created_at: string
-          error_kind: string | null
-          latency_ms: number
-          model: string
-          provider: string
-          recipe_id: string
-          response_json: Json
-        }
-        Insert: {
-          created_at?: string
-          error_kind?: string | null
-          latency_ms?: number
-          model?: string
-          provider?: string
-          recipe_id?: string
-          response_json?: Json
-        }
-        Update: {
-          created_at?: string
-          error_kind?: string | null
-          latency_ms?: number
-          model?: string
-          provider?: string
-          recipe_id?: string
-          response_json?: Json
         }
         Relationships: []
       }
@@ -1767,6 +2427,30 @@ export type Database = {
       }
     }
     Functions: {
+      accept_household_invite: { Args: { p_token: string }; Returns: string }
+      accept_tos: { Args: { p_version: number }; Returns: undefined }
+      admin_nutrition_upsert_fact: {
+        Args: {
+          p_brand?: string
+          p_calories_kcal?: number
+          p_carbs_g?: number
+          p_description: string
+          p_fat_g?: number
+          p_fiber_g?: number
+          p_portions?: Json
+          p_protein_g?: number
+          p_saturated_fat_g?: number
+          p_sodium_mg?: number
+          p_source: string
+          p_source_id: string
+          p_sugar_g?: number
+        }
+        Returns: undefined
+      }
+      attest_public_share: {
+        Args: { p_attestation: string; p_collection_id: string }
+        Returns: undefined
+      }
       bakeoff_claim_next: {
         Args: {
           p_lease_seconds?: number
@@ -1819,61 +2503,19 @@ export type Database = {
         }
         Returns: boolean
       }
-      import_bakeoff_promote: { Args: { p_variant_id: string }; Returns: undefined }
-      import_bakeoff_seed: {
-        Args: { p_batch_id: string; p_variants: Json }
-        Returns: undefined
-      }
-      import_bakeoff_select_winner: {
-        Args: { p_item_id: string; p_variant_id: string }
-        Returns: undefined
-      }
-      import_variant_claim_next: {
-        Args: {
-          p_lease_seconds?: number
-          p_limit?: number
-          p_worker_id: string
-        }
-        Returns: Json[]
-      }
-      import_variant_complete: {
-        Args: { p_claim_token: string; p_payload: Json; p_result_id: string }
-        Returns: boolean
-      }
-      import_variant_fail: {
-        Args: {
-          p_claim_token: string
-          p_error_kind: string
-          p_error_message: string
-          p_latency_ms: number
-          p_result_id: string
-        }
-        Returns: boolean
-      }
       bakeoff_promote: { Args: { p_variant_id: string }; Returns: undefined }
       bakeoff_start: {
         Args: {
-          p_image_storage_path: string | null
-          p_variants: Json
+          p_image_storage_path: string
+          p_input_recipe_id?: string
           p_task_kind?: string
-          p_input_recipe_id?: string | null
+          p_variants: Json
         }
         Returns: string
       }
-      rewrite_start: {
-        Args: {
-          p_recipe_id: string
-          p_provider: string
-          p_model: string
-          p_prompt: string
-        }
-        Returns: string
-      }
-      rewrite_cancel: { Args: { p_job_id: string }; Returns: boolean }
-      rewrite_kick: { Args: { p_recipe_id?: string | null }; Returns: undefined }
-      user_rewrite_prefs_set: {
-        Args: { p_provider: string; p_model: string; p_prompt: string }
-        Returns: undefined
+      clear_my_import_storage: {
+        Args: { p_id?: string; p_scope: string }
+        Returns: string[]
       }
       embed_upsert_client: {
         Args: {
@@ -1939,6 +2581,11 @@ export type Database = {
         Returns: Json
       }
       cli_verify_token: { Args: { raw_token: string }; Returns: string }
+      create_household: { Args: { p_name: string }; Returns: string }
+      current_household_id: { Args: { p_user_id: string }; Returns: string }
+      current_tos_version: { Args: never; Returns: number }
+      delete_household: { Args: { p_household_id: string }; Returns: undefined }
+      delete_my_account: { Args: never; Returns: undefined }
       fork_collection: {
         Args: { source_collection_id: string }
         Returns: string
@@ -1948,9 +2595,9 @@ export type Database = {
         Args: {
           p_factor: number
           p_from_unit: string
-          p_id: string | null
-          p_ingredient_name: string | null
-          p_notes: string | null
+          p_id?: string
+          p_ingredient_name?: string
+          p_notes?: string
           p_to_unit: string
         }
         Returns: string
@@ -1973,11 +2620,24 @@ export type Database = {
           p_factor: number
           p_from_unit: string
           p_id: string
-          p_ingredient_name: string | null
-          p_notes?: string | null
+          p_ingredient_name?: string
+          p_notes?: string
           p_to_unit: string
         }
         Returns: string
+      }
+      household_cooldown_days: { Args: never; Returns: number }
+      import_bakeoff_promote: {
+        Args: { p_variant_id: string }
+        Returns: undefined
+      }
+      import_bakeoff_seed: {
+        Args: { p_batch_id: string; p_variants: Json }
+        Returns: undefined
+      }
+      import_bakeoff_select_winner: {
+        Args: { p_item_id: string; p_variant_id: string }
+        Returns: undefined
       }
       import_claim_next: {
         Args: {
@@ -1989,6 +2649,7 @@ export type Database = {
         Returns: {
           assigned_collection_id: string | null
           assigned_page_number: number | null
+          assigned_recipe_id: string | null
           attempts: number
           batch_id: string
           claim_expires_at: string
@@ -2007,6 +2668,7 @@ export type Database = {
           page_index: number
           parsed_drafts_json: Json | null
           prompt_tokens: number
+          selected_variant_id: string | null
           source_pdf_page: number | null
           source_pdf_path: string | null
           status: string
@@ -2057,11 +2719,68 @@ export type Database = {
         Args: { p_batch_id: string; p_model: string; p_provider: string }
         Returns: undefined
       }
+      import_set_item_toc: {
+        Args: { p_is_toc: boolean; p_item_id: string }
+        Returns: undefined
+      }
       import_set_recitation_policy: {
         Args: { p_batch_id: string; p_policy: string }
         Returns: undefined
       }
+      import_variant_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string
+          drafts: Json | null
+          error_kind: string | null
+          error_message: string | null
+          id: string
+          item_id: string
+          latency_ms: number | null
+          owner_id: string
+          prompt_tokens: number | null
+          raw_text: string | null
+          status: string
+          updated_at: string
+          variant_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "import_item_variant_results"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      import_variant_complete: {
+        Args: { p_claim_token: string; p_payload: Json; p_result_id: string }
+        Returns: boolean
+      }
+      import_variant_fail: {
+        Args: {
+          p_claim_token: string
+          p_error_kind: string
+          p_error_message: string
+          p_latency_ms: number
+          p_result_id: string
+        }
+        Returns: boolean
+      }
+      invite_to_household: { Args: { p_household_id: string }; Returns: string }
       is_admin: { Args: { uid: string }; Returns: boolean }
+      is_household_member: {
+        Args: { p_household_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      leave_household: { Args: never; Returns: undefined }
       moderation_ban_user: {
         Args: { reason: string; target_user_id: string }
         Returns: undefined
@@ -2091,12 +2810,22 @@ export type Database = {
         Returns: undefined
       }
       normalize_isbn: { Args: { raw: string }; Returns: string }
+      nutrition_get_config: { Args: never; Returns: Json }
+      nutrition_health: { Args: never; Returns: boolean }
       ocr_key_delete: { Args: { p_provider: string }; Returns: undefined }
       ocr_key_set: {
         Args: { p_base_url?: string; p_provider: string; p_raw_key: string }
         Returns: undefined
       }
       ocr_kick: { Args: { p_batch_id?: string }; Returns: undefined }
+      ocr_resolve_effective_key: {
+        Args: { p_owner_id: string; p_provider: string }
+        Returns: {
+          api_key: string
+          base_url: string
+          key_owner_id: string
+        }[]
+      }
       ocr_resolve_key: {
         Args: { p_owner_id: string; p_provider: string }
         Returns: {
@@ -2104,10 +2833,180 @@ export type Database = {
           base_url: string
         }[]
       }
+      preview_household_invite: {
+        Args: { p_token: string }
+        Returns: {
+          expires_at: string
+          household_id: string
+          household_name: string
+          invited_by_name: string
+          revoked: boolean
+          used: boolean
+        }[]
+      }
+      record_audit: {
+        Args: {
+          p_action: string
+          p_household_id: string
+          p_metadata: Json
+          p_target_id: string
+          p_target_type: string
+        }
+        Returns: undefined
+      }
+      remove_household_member: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
+      rename_household: {
+        Args: { p_household_id: string; p_name: string }
+        Returns: undefined
+      }
+      require_current_tos: { Args: never; Returns: undefined }
+      resolve_nutrition_mapping: {
+        Args: { p_ingredient_key: string }
+        Returns: {
+          custom_grams_per_unit: Json
+          origin: string
+          source: string
+          source_id: string
+        }[]
+      }
+      revoke_household_invite: {
+        Args: { p_invite_id: string }
+        Returns: undefined
+      }
+      rewrite_cancel: { Args: { p_job_id: string }; Returns: boolean }
+      rewrite_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          id: string
+          last_error: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number
+          provider: string
+          recipe_id: string
+          result_json: Json | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "rewrite_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rewrite_complete: {
+        Args: {
+          p_attempt: Json
+          p_claim_token: string
+          p_job_id: string
+          p_result: Json
+        }
+        Returns: boolean
+      }
+      rewrite_fail: {
+        Args: {
+          p_attempt: Json
+          p_claim_token: string
+          p_job_id: string
+          p_next_state: string
+        }
+        Returns: boolean
+      }
+      rewrite_kick: { Args: { p_recipe_id?: string }; Returns: undefined }
+      rewrite_start: {
+        Args: {
+          p_model: string
+          p_prompt: string
+          p_provider: string
+          p_recipe_id: string
+        }
+        Returns: string
+      }
+      save_recipes_graph: { Args: { p_recipes: Json }; Returns: undefined }
+      search_nutrition_foods: {
+        Args: { p_limit?: number; p_query: string }
+        Returns: {
+          brand: string | null
+          brand_owner: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          data_type: string
+          description: string
+          fat_g: number | null
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          saturated_fat_g: number | null
+          search_tsv: unknown
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "nutrition_foods_master"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      set_household_ocr_config: {
+        Args: {
+          p_enabled: boolean
+          p_fallback_model?: string
+          p_fallback_provider?: string
+          p_household_id: string
+          p_key_owner_id?: string
+          p_model: string
+          p_prompt?: string
+          p_provider: string
+        }
+        Returns: undefined
+      }
+      set_library_sharing: {
+        Args: {
+          p_attestation?: string
+          p_enabled: boolean
+          p_household_id: string
+        }
+        Returns: undefined
+      }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
+      transfer_household_ownership: {
+        Args: { p_new_owner_id: string }
+        Returns: undefined
+      }
       user_ocr_prefs_set: {
         Args: { p_model: string; p_prompt: string; p_provider: string }
         Returns: undefined
       }
+      user_rewrite_prefs_set: {
+        Args: { p_model: string; p_prompt: string; p_provider: string }
+        Returns: undefined
+      }
+      viewer_can_read_owner_library: {
+        Args: { p_owner: string }
+        Returns: boolean
+      }
+      worker_has_pending_work: { Args: never; Returns: boolean }
     }
     Enums: {
       [_ in never]: never

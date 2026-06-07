@@ -4,7 +4,7 @@ import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
 import { capturePhoto, pickPhoto } from './camera.js';
-import { getUserOcrPrefs, listOcrKeys } from './api.js';
+import { getEffectiveOcrConfig, listOcrKeys } from './api.js';
 import { LocalImportItemRepository } from './localRepos.js';
 import { uploadBatch } from './uploadBatch.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
@@ -90,7 +90,22 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
     if (!photo || !user) return;
     setBusy(true);
     try {
-      if (hasKey === false) {
+      // Initial mount fires listOcrKeys() async. If the user clicks
+      // "Take photo" before that resolves, hasKey is undefined and we
+      // can't tell whether OCR is configured. Re-fetch synchronously
+      // here so the "OCR not configured" surface is deterministic.
+      let resolvedHasKey = hasKey;
+      if (resolvedHasKey === undefined) {
+        try {
+          const keys = await listOcrKeys();
+          resolvedHasKey = keys.length > 0;
+          setHasKey(resolvedHasKey);
+        } catch {
+          resolvedHasKey = false;
+          setHasKey(false);
+        }
+      }
+      if (resolvedHasKey === false) {
         setError(
           <>
             OCR not configured.{' '}
@@ -106,19 +121,27 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       const file = new File([photo.blob], photo.name || 'photo.jpg', {
         type: photo.blob.type || 'image/jpeg',
       });
-      const prefs = await getUserOcrPrefs().catch(() => null);
-      const { fallbackProvider, fallbackModel } = resolveImportFallback();
+      const cfg = await getEffectiveOcrConfig().catch(() => null);
+      // Household config carries its own fallback; own config uses the
+      // localStorage fallback prefs.
+      const localFallback = resolveImportFallback();
+      const fallbackProvider =
+        cfg?.source === 'household' ? cfg.fallbackProvider : localFallback.fallbackProvider;
+      const fallbackModel =
+        cfg?.source === 'household' ? cfg.fallbackModel : localFallback.fallbackModel;
       setProgress({ status: 'uploading' });
-      const defaultProvider = prefs?.provider ?? 'gemini';
+      const defaultProvider = cfg?.provider ?? 'gemini';
       const { batchId, itemIds } = await uploadBatch(
         {
           ownerId: user.id,
           name: `Photo ${new Date().toLocaleString()}`,
           targetCollectionId: collectionId,
           defaultProvider,
-          defaultModel: prefs?.model || DEFAULT_MODEL_BY_PROVIDER[defaultProvider],
+          defaultModel: cfg?.model || DEFAULT_MODEL_BY_PROVIDER[defaultProvider],
+          defaultPrompt: cfg?.prompt ?? null,
           fallbackProvider,
           fallbackModel,
+          keyOwnerId: cfg?.source === 'household' ? cfg.keyOwnerId : null,
           sourceKind: 'IMAGES',
           files: [file],
         },

@@ -1,6 +1,8 @@
 PODS:
   - Capacitor (6.2.1):
     - CapacitorCordova
+  - CapacitorApp (6.0.3):
+    - Capacitor
   - CapacitorCamera (6.1.3):
     - Capacitor
   - CapacitorCommunityAppleSignIn (6.0.0):
@@ -9,6 +11,8 @@ PODS:
   - CapacitorHaptics (6.0.3):
     - Capacitor
   - CapacitorShare (6.0.4):
+    - Capacitor
+  - SendIntent (6.0.3):
     - Capacitor
   - Sentry (9.8.0):
     - Sentry/Core (= 9.8.0)
@@ -19,11 +23,13 @@ PODS:
 
 DEPENDENCIES:
   - "Capacitor (from `../../../../node_modules/.pnpm/@capacitor+ios@6.2.1_@capacitor+core@6.2.1/node_modules/@capacitor/ios`)"
+  - "CapacitorApp (from `../../../../node_modules/.pnpm/@capacitor+app@6.0.3_@capacitor+core@6.2.1/node_modules/@capacitor/app`)"
   - "CapacitorCamera (from `../../../../node_modules/.pnpm/@capacitor+camera@6.1.3_@capacitor+core@6.2.1/node_modules/@capacitor/camera`)"
   - "CapacitorCommunityAppleSignIn (from `../../../../node_modules/.pnpm/@capacitor-community+apple-sign-in@6.0.0_@capacitor+core@6.2.1/node_modules/@capacitor-community/apple-sign-in`)"
   - "CapacitorCordova (from `../../../../node_modules/.pnpm/@capacitor+ios@6.2.1_@capacitor+core@6.2.1/node_modules/@capacitor/ios`)"
   - "CapacitorHaptics (from `../../../../node_modules/.pnpm/@capacitor+haptics@6.0.3_@capacitor+core@6.2.1/node_modules/@capacitor/haptics`)"
   - "CapacitorShare (from `../../../../node_modules/.pnpm/@capacitor+share@6.0.4_@capacitor+core@6.2.1/node_modules/@capacitor/share`)"
+  - "SendIntent (from `../../../../node_modules/.pnpm/send-intent@6.0.3_@capacitor+core@6.2.1/node_modules/send-intent`)"
   - "SentryCapacitor (from `../../../../node_modules/.pnpm/@sentry+capacitor@4.0.0_@capacitor+core@6.2.1_@sentry+react@10.43.0_react@19.2.5_/node_modules/@sentry/capacitor`)"
 
 SPEC REPOS:
@@ -33,6 +39,8 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   Capacitor:
     :path: "../../../../node_modules/.pnpm/@capacitor+ios@6.2.1_@capacitor+core@6.2.1/node_modules/@capacitor/ios"
+  CapacitorApp:
+    :path: "../../../../node_modules/.pnpm/@capacitor+app@6.0.3_@capacitor+core@6.2.1/node_modules/@capacitor/app"
   CapacitorCamera:
     :path: "../../../../node_modules/.pnpm/@capacitor+camera@6.1.3_@capacitor+core@6.2.1/node_modules/@capacitor/camera"
   CapacitorCommunityAppleSignIn:
@@ -43,19 +51,23 @@ EXTERNAL SOURCES:
     :path: "../../../../node_modules/.pnpm/@capacitor+haptics@6.0.3_@capacitor+core@6.2.1/node_modules/@capacitor/haptics"
   CapacitorShare:
     :path: "../../../../node_modules/.pnpm/@capacitor+share@6.0.4_@capacitor+core@6.2.1/node_modules/@capacitor/share"
+  SendIntent:
+    :path: "../../../../node_modules/.pnpm/send-intent@6.0.3_@capacitor+core@6.2.1/node_modules/send-intent"
   SentryCapacitor:
     :path: "../../../../node_modules/.pnpm/@sentry+capacitor@4.0.0_@capacitor+core@6.2.1_@sentry+react@10.43.0_react@19.2.5_/node_modules/@sentry/capacitor"
 
 SPEC CHECKSUMS:
   Capacitor: c95400d761e376be9da6be5a05f226c0e865cebf
+  CapacitorApp: a19ccb4f5f32d2534be5c6f524d5a9b614a1e8a7
   CapacitorCamera: 5ba135b0cb55a788758139fa2404d726bf60f0f3
   CapacitorCommunityAppleSignIn: c9c2541ee7580618055a91b3516c3f0313fe2544
   CapacitorCordova: 8d93e14982f440181be7304aa9559ca631d77fff
   CapacitorHaptics: 40f83026feeee9cfe36e89e9c98a3baaaf20c450
   CapacitorShare: 77ff779e3b7c6ae9fb5461e52cf7ef805d429491
+  SendIntent: 20ca8a9cb829cfc599b1a01c4663bff2890ba452
   Sentry: 88746bf877eff714bc45315a39ad1d1efea2cdda
   SentryCapacitor: 1d620200b850ef6f4e7056f5e20d7860e7c04572
 
-PODFILE CHECKSUM: f6d974bf1dbd757bf61a52316f88860376336ea4
+PODFILE CHECKSUM: 1f8ded31d7341219033656113bc2c61126bd7afd
 
 COCOAPODS: 1.16.2

@@ -22,7 +22,33 @@ export interface PreparedPage {
 }
 
 async function blobToImageBitmap(blob: Blob): Promise<ImageBitmap> {
-  return createImageBitmap(blob);
+  // `imageOrientation: 'from-image'` bakes the EXIF orientation into the
+  // pixels. The browser canvas otherwise ignores EXIF, so a portrait phone
+  // photo with an orientation flag would land sideways in the JPEG we ship
+  // to the OCR worker. (Native capture already pre-rotates via Capacitor's
+  // `correctOrientation`, so this mainly fixes the web file-picker path.)
+  return createImageBitmap(blob, { imageOrientation: 'from-image' });
+}
+
+function makeCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
+  const c = document.createElement('canvas');
+  c.width = width;
+  c.height = height;
+  return c;
+}
+
+async function canvasToJpeg(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<Blob> {
+  if (canvas instanceof OffscreenCanvas) {
+    return canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
+  }
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))),
+      'image/jpeg',
+      JPEG_QUALITY,
+    ),
+  );
 }
 
 async function bitmapToJpeg(
@@ -32,34 +58,70 @@ async function bitmapToJpeg(
   const scale = Math.min(1, targetWidth / bitmap.width);
   const width = Math.round(bitmap.width * scale);
   const height = Math.round(bitmap.height * scale);
-  const canvas =
-    typeof OffscreenCanvas !== 'undefined'
-      ? new OffscreenCanvas(width, height)
-      : (() => {
-          const c = document.createElement('canvas');
-          c.width = width;
-          c.height = height;
-          return c;
-        })();
+  const canvas = makeCanvas(width, height);
   const ctx = (canvas as HTMLCanvasElement | OffscreenCanvas).getContext('2d') as
     | CanvasRenderingContext2D
     | OffscreenCanvasRenderingContext2D
     | null;
   if (!ctx) throw new Error('Could not acquire 2D canvas context');
   ctx.drawImage(bitmap, 0, 0, width, height);
-  let blob: Blob;
-  if (canvas instanceof OffscreenCanvas) {
-    blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
-  } else {
-    blob = await new Promise<Blob>((resolve, reject) =>
-      (canvas as HTMLCanvasElement).toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))),
-        'image/jpeg',
-        JPEG_QUALITY,
-      ),
-    );
-  }
+  const blob = await canvasToJpeg(canvas);
   return { blob, width, height };
+}
+
+/**
+ * Draw `bitmap` rotated by `quarterTurns` × 90° clockwise, downscaled so
+ * the *rotated* width is at most `targetWidth`, and re-encode as JPEG. Used
+ * by the manual page-rotate control in the grouping UI.
+ */
+async function bitmapToRotatedJpeg(
+  bitmap: ImageBitmap,
+  quarterTurns: number,
+  targetWidth: number,
+): Promise<{ blob: Blob; width: number; height: number }> {
+  const turns = ((quarterTurns % 4) + 4) % 4;
+  const swap = turns === 1 || turns === 3;
+  const rotW = swap ? bitmap.height : bitmap.width;
+  const scale = Math.min(1, targetWidth / rotW);
+  const outW = Math.round((swap ? bitmap.height : bitmap.width) * scale);
+  const outH = Math.round((swap ? bitmap.width : bitmap.height) * scale);
+  const drawW = Math.round(bitmap.width * scale);
+  const drawH = Math.round(bitmap.height * scale);
+  const canvas = makeCanvas(outW, outH);
+  const ctx = (canvas as HTMLCanvasElement | OffscreenCanvas).getContext('2d') as
+    | CanvasRenderingContext2D
+    | OffscreenCanvasRenderingContext2D
+    | null;
+  if (!ctx) throw new Error('Could not acquire 2D canvas context');
+  ctx.translate(outW / 2, outH / 2);
+  ctx.rotate((turns * Math.PI) / 2);
+  ctx.drawImage(bitmap, -drawW / 2, -drawH / 2, drawW, drawH);
+  const blob = await canvasToJpeg(canvas);
+  return { blob, width: outW, height: outH };
+}
+
+/**
+ * Re-render an already-prepared page image rotated by `quarterTurns` × 90°
+ * clockwise, producing a fresh full-size + thumbnail JPEG pair. Honors EXIF
+ * on decode so a re-rotate composes correctly.
+ */
+export async function rotateImageBlob(
+  blob: Blob,
+  quarterTurns: number,
+): Promise<PreparedPage> {
+  const bitmap = await blobToImageBitmap(blob);
+  try {
+    const full = await bitmapToRotatedJpeg(bitmap, quarterTurns, PAGE_WIDTH);
+    const thumb = await bitmapToRotatedJpeg(bitmap, quarterTurns, THUMB_WIDTH);
+    return {
+      fullJpeg: full.blob,
+      thumbJpeg: thumb.blob,
+      width: full.width,
+      height: full.height,
+    };
+  } finally {
+    bitmap.close();
+  }
 }
 
 export async function prepareImage(file: File): Promise<PreparedPage> {

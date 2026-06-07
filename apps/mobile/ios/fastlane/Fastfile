@@ -133,14 +133,16 @@ platform :ios do
     )
   end
 
-  desc "Bump the build number (CURRENT_PROJECT_VERSION) to one above the highest already on TestFlight. Run before `beta` or `release`."
+  desc "Bump CURRENT_PROJECT_VERSION to the commit count on HEAD. Monotonic on a linear-history repo, no network round-trip — avoids the ASC SSL flakes that latest_testflight_build_number used to throw on every other run. Must be a strictly greater number than the highest already on TestFlight; that holds as long as commits-on-main only goes up, which is the project's normal cadence (merges count as commits)."
   lane :bump_build do
-    latest = latest_testflight_build_number(
-      app_identifier: "app.cookyourbooks",
-      api_key: asc_api_key
-    )
+    # `git rev-list --count HEAD` is deterministic and doesn't depend on a
+    # working tree state. We run fastlane from apps/mobile/ios so back up
+    # to the repo root for the count.
+    count = `git -C "#{File.expand_path('../../../..', __dir__)}" rev-list --count HEAD`.strip.to_i
+    UI.user_error!("git rev-list returned 0 — bump_build can't determine a build number") if count.zero?
+    UI.message("bump_build: setting CURRENT_PROJECT_VERSION = #{count} (commits on HEAD)")
     increment_build_number(
-      build_number: latest + 1,
+      build_number: count,
       xcodeproj: "App/App.xcodeproj"
     )
   end
@@ -159,8 +161,8 @@ platform :ios do
     sentry_debug_files_upload(
       url: ENV["SENTRY_URL"] || "https://sentry-cyb.work.ripley.cloud",
       auth_token: ENV["SENTRY_AUTH_TOKEN"],
-      org_slug: ENV["SENTRY_ORG"] || "sentry",
-      project_slug: ENV["SENTRY_PROJECT_MOBILE"] || "cookyourbooks-mobile",
+      org_slug: ENV["SENTRY_ORG"] || "cyb",
+      project_slug: ENV["SENTRY_PROJECT_MOBILE"] || "cyb-capacitor",
       path: dsym,
       # The Capacitor wrapper's Swift surface is tiny; symbol names
       # alone are enough for stack traces. Skip source upload to keep
@@ -212,7 +214,14 @@ platform :ios do
       api_key: asc_api_key,
       ipa: "build/CookYourBooks.ipa",
       skip_waiting_for_build_processing: true,
-      # Beta groups + changelog can be filled in later via App Store Connect UI.
+      # Attach every build to the external "Friends & Family" group so
+      # once Apple approves the first build in a version, subsequent
+      # builds reach external testers automatically without another
+      # ASC click. First-build-in-version still needs Beta App Review;
+      # the group attachment is what queues it up.
+      distribute_external: true,
+      notify_external_testers: true,
+      groups: ["Friends & Family"],
       changelog: ENV["BETA_CHANGELOG"] || "Internal build"
     )
   end

@@ -1,9 +1,15 @@
 import type {
+  CookingEvent,
+  CookingEventRepository,
   Recipe,
   RecipeCollection,
   RecipeCollectionRepository,
   RecipeRepository,
+  RecipeSnapshot,
+  RecipeTagRepository,
+  Tag,
 } from '@cookyourbooks/domain';
+import { createWebCollection, newCookingEventId, newTagId, normalizeLabel } from '@cookyourbooks/domain';
 import {
   rowToCollection,
   rowsToRecipe,
@@ -20,6 +26,7 @@ import {
 } from '@cookyourbooks/db';
 import { getLocalDb } from './db.js';
 import { enqueue } from './outbox.js';
+import { shouldSuppressCrrTriggers } from './crrSuppression.js';
 
 // Milliseconds since epoch, good enough for a monotonic-ish write marker
 // on the local side.
@@ -33,15 +40,16 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
   const rowX = row as CollectionRow & {
     moderation_state?: string | null;
     moderation_reason?: string | null;
+    shared_with_household_id?: string | null;
   };
   await db.exec(
     `insert into recipe_collections
        (id, owner_id, title, source_type, author, isbn, publisher, publication_year,
         description, notes, source_url, date_accessed, site_name,
         is_public, forked_from, cover_image_path,
-        moderation_state, moderation_reason,
+        moderation_state, moderation_reason, shared_with_household_id,
         updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        title=excluded.title,
@@ -60,6 +68,7 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
        cover_image_path=excluded.cover_image_path,
        moderation_state=excluded.moderation_state,
        moderation_reason=excluded.moderation_reason,
+       shared_with_household_id=excluded.shared_with_household_id,
        updated_at=excluded.updated_at,
        deleted=0
      where excluded.updated_at >= recipe_collections.updated_at`,
@@ -82,6 +91,7 @@ export async function upsertCollectionRow(row: CollectionRow): Promise<void> {
       row.cover_image_path,
       rowX.moderation_state ?? 'ACTIVE',
       rowX.moderation_reason ?? null,
+      rowX.shared_with_household_id ?? null,
       tsToMs(row.updated_at),
     ],
   );
@@ -106,6 +116,7 @@ const COLLECTION_COLS = [
   'cover_image_path',
   'moderation_state',
   'moderation_reason',
+  'shared_with_household_id',
   'updated_at',
   'deleted',
 ] as const;
@@ -114,6 +125,7 @@ function collectionToParams(row: CollectionRow): readonly unknown[] {
   const rowX = row as CollectionRow & {
     moderation_state?: string | null;
     moderation_reason?: string | null;
+    shared_with_household_id?: string | null;
   };
   return [
     row.id,
@@ -134,6 +146,7 @@ function collectionToParams(row: CollectionRow): readonly unknown[] {
     row.cover_image_path,
     rowX.moderation_state ?? 'ACTIVE',
     rowX.moderation_reason ?? null,
+    rowX.shared_with_household_id ?? null,
     tsToMs(row.updated_at),
     0,
   ];
@@ -155,7 +168,7 @@ export async function upsertCollectionsBatch(
     (r) => tsToMs(r.updated_at),
   );
   if (fresh.length === 0) return;
-  await withSuppressedCrrTriggers(['recipe_collections'], async () => {
+  await withSuppressedCrrTriggers(['recipe_collections'], fresh.length, async () => {
     await bulkInsertOnConflictId(
       'recipe_collections',
       COLLECTION_COLS,
@@ -163,6 +176,114 @@ export async function upsertCollectionsBatch(
       collectionToParams,
     );
   });
+}
+
+// ---------- cooking tracker: per-row upserts ----------
+//
+// Used by both the realtime owner-filtered handler in sync.ts and the
+// local repositories' save paths. Always an owned row: shared_with_household_id
+// stays null on insert and is left untouched on conflict, so a household-pull
+// marker is never clobbered. The `updated_at >= existing` guard refuses to
+// regress a fresher local row with a stale incoming one.
+
+/** Flexible input for upsertCookingEventRow — server row (realtime) or a local save. */
+export interface CookingEventUpsertInput {
+  id: string;
+  owner_id: string;
+  recipe_id: string | null;
+  status: string;
+  event_date: string;
+  occasion_category: string | null;
+  meal_slot: string | null;
+  occasion_note: string | null;
+  notes: string | null;
+  /** Object (stringified here) or an already-serialized JSON string. */
+  adjustments: unknown;
+  recipe_snapshot: unknown;
+  photo_paths: unknown;
+  updated_at: string | number;
+}
+
+export async function upsertCookingEventRow(row: CookingEventUpsertInput): Promise<void> {
+  const db = await getLocalDb();
+  const ts = tsToMs(row.updated_at);
+  const adjustments =
+    typeof row.adjustments === 'string'
+      ? row.adjustments
+      : JSON.stringify(row.adjustments ?? []);
+  const snapshot =
+    row.recipe_snapshot === null || row.recipe_snapshot === undefined
+      ? null
+      : typeof row.recipe_snapshot === 'string'
+        ? row.recipe_snapshot
+        : JSON.stringify(row.recipe_snapshot);
+  const photoPaths =
+    typeof row.photo_paths === 'string'
+      ? row.photo_paths
+      : JSON.stringify(row.photo_paths ?? []);
+  await db.exec(
+    `insert into cooking_events
+       (id, owner_id, recipe_id, status, event_date, occasion_category,
+        meal_slot, occasion_note, notes, adjustments, recipe_snapshot, photo_paths,
+        shared_with_household_id, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       status=excluded.status,
+       event_date=excluded.event_date,
+       occasion_category=excluded.occasion_category,
+       meal_slot=excluded.meal_slot,
+       occasion_note=excluded.occasion_note,
+       notes=excluded.notes,
+       adjustments=excluded.adjustments,
+       recipe_snapshot=excluded.recipe_snapshot,
+       photo_paths=excluded.photo_paths,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= cooking_events.updated_at`,
+    [
+      row.id,
+      row.owner_id,
+      row.recipe_id,
+      row.status,
+      row.event_date,
+      row.occasion_category,
+      row.meal_slot,
+      row.occasion_note,
+      row.notes,
+      adjustments,
+      snapshot,
+      photoPaths,
+      ts,
+    ],
+  );
+}
+
+export interface RecipeTagUpsertInput {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  label: string;
+  updated_at: string | number;
+}
+
+export async function upsertRecipeTagRow(row: RecipeTagUpsertInput): Promise<void> {
+  const db = await getLocalDb();
+  const ts = tsToMs(row.updated_at);
+  await db.exec(
+    `insert into recipe_tags
+       (id, owner_id, recipe_id, label, shared_with_household_id, updated_at, deleted)
+     values (?,?,?,?,NULL,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       label=excluded.label,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= recipe_tags.updated_at`,
+    [row.id, row.owner_id, row.recipe_id, row.label, ts],
+  );
 }
 
 /** Upsert a recipe row and replace its child ingredients/instructions + step refs. */
@@ -194,6 +315,7 @@ export async function upsertRecipeRow(
       book_title?: string | null;
       page_numbers?: unknown;
       source_image_text?: string | null;
+      source_url?: string | null;
       starred?: boolean | number | null;
     };
     // Array-ish columns live as TEXT (JSON) in SQLite; the Postgres
@@ -207,8 +329,8 @@ export async function upsertRecipeRow(
          (id, collection_id, title, servings_amount, servings_description,
           servings_amount_max, sort_order, notes, parent_recipe_id,
           description, time_estimate, equipment, book_title, page_numbers,
-          source_image_text, starred, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+          source_image_text, source_url, starred, updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
        on conflict(id) do update set
          collection_id=excluded.collection_id,
          title=excluded.title,
@@ -224,6 +346,7 @@ export async function upsertRecipeRow(
          book_title=excluded.book_title,
          page_numbers=excluded.page_numbers,
          source_image_text=excluded.source_image_text,
+         source_url=excluded.source_url,
          starred=excluded.starred,
          updated_at=excluded.updated_at,
          deleted=0`,
@@ -243,6 +366,7 @@ export async function upsertRecipeRow(
         recipeRowX.book_title ?? null,
         pageNumbersJson,
         recipeRowX.source_image_text ?? null,
+        recipeRowX.source_url ?? null,
         starredInt,
         incomingTs,
       ],
@@ -381,17 +505,29 @@ const PULL_CRR_TABLES = [
  * Run `fn` with cr-sqlite's per-row change-tracking triggers suspended
  * on `tables`. cr-sqlite's crsql_begin_alter / crsql_commit_alter pair
  * drops the row triggers for the duration and recreates them on
- * commit_alter — exactly the property a pull needs, since pulled rows
- * are server-canonical and don't need to be re-propagated as outbound
- * CRDT changes. On iPad WASM SQLite each trigger fire is ~10–15ms;
- * disabling them is the single biggest win on bulk inserts. Must run
- * at the top level (not inside a SAVEPOINT / db.tx callback) so the
- * triggers re-attach cleanly even on caller failure.
+ * commit_alter — exactly the property a *bulk* pull needs, since pulled
+ * rows are server-canonical and don't need to be re-propagated as
+ * outbound CRDT changes.
+ *
+ * `rowCount` is the number of rows `fn` is about to write. Below
+ * {@link CRR_SUPPRESS_MIN_ROWS} we skip the begin/commit_alter dance and
+ * just run `fn` with triggers live — paying a handful of cheap per-row
+ * trigger fires instead of one table-sized commit_alter (see
+ * {@link shouldSuppressCrrTriggers}). Pass the total row count across all
+ * `tables` (e.g. recipes + ingredients + instructions + refs), since
+ * that's what the trigger cost tracks.
+ *
+ * Must run at the top level (not inside a SAVEPOINT / db.tx callback) so
+ * the triggers re-attach cleanly even on caller failure.
  */
 export async function withSuppressedCrrTriggers<T>(
   tables: readonly string[],
+  rowCount: number,
   fn: () => Promise<T>,
 ): Promise<T> {
+  if (!shouldSuppressCrrTriggers(rowCount)) {
+    return await fn();
+  }
   const db = await getLocalDb();
   const altered: string[] = [];
   try {
@@ -462,7 +598,13 @@ export async function upsertRecipesBatch(
   if (batch.length === 0) return;
   if (signal?.aborted) return;
   const db = await getLocalDb();
-  await withSuppressedCrrTriggers(PULL_CRR_TABLES, async () => {
+  // Trigger cost tracks total rows written, not recipe count — a single
+  // recipe drags in its ingredients / instructions / refs.
+  const totalRows = batch.reduce(
+    (acc, b) => acc + 1 + b.ingredients.length + b.instructions.length + b.refs.length,
+    0,
+  );
+  await withSuppressedCrrTriggers(PULL_CRR_TABLES, totalRows, async () => {
     await db.tx(async (tx) => {
       const ids = batch.map((b) => b.recipe.id);
       const existingMap = new Map<string, number>();
@@ -509,7 +651,7 @@ interface RecipeTx {
 
 // Multi-row INSERT chunk size — only here to stay under SQLite's
 // SQLITE_MAX_VARIABLE_NUMBER (32766 in modern builds). With the widest
-// table (recipes, 18 cols), 1500 rows × 18 cols = 27000 params, safely
+// table (recipes, 19 cols), 1500 rows × 19 cols = 28500 params, safely
 // under the cap. For libraries up to ~1500 recipes this is one INSERT
 // statement per table.
 const MAX_ROWS_PER_INSERT = 1500;
@@ -625,6 +767,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
     'book_title',
     'page_numbers',
     'source_image_text',
+    'source_url',
     'starred',
     'updated_at',
     'deleted',
@@ -648,6 +791,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         book_title?: string | null;
         page_numbers?: unknown;
         source_image_text?: string | null;
+        source_url?: string | null;
         starred?: boolean | number | null;
       };
       const starredRaw: unknown = rx.starred;
@@ -667,6 +811,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         rx.book_title ?? null,
         toJsonText(rx.page_numbers),
         rx.source_image_text ?? null,
+        rx.source_url ?? null,
         starredRaw === true || starredRaw === 1 ? 1 : 0,
         tsToMs(r.updated_at),
         0,
@@ -1026,7 +1171,8 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
                   or exists (select 1 from instructions where recipe_id = r.id))
            group by r.collection_id
        ) fc on fc.collection_id = c.id
-       where c.owner_id = ? and c.deleted = 0
+       where (c.owner_id = ? or c.shared_with_household_id is not null)
+         and c.deleted = 0
        order by (filled_count > 0) desc, coalesce(c.updated_at, 0) desc`,
       [this.ownerId],
     )) as {
@@ -1055,9 +1201,12 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
 
   async list(): Promise<RecipeCollection[]> {
     const db = await getLocalDb();
+    // Includes household-shared collections from other members; pullAll
+    // only places visible-to-me collections in local SQLite so a simple
+    // OR is sufficient.
     const colRows = (await db.execO<CollectionRow>(
       `select * from recipe_collections
-       where owner_id = ? and deleted = 0
+       where (owner_id = ? or shared_with_household_id is not null) and deleted = 0
        order by coalesce(updated_at, 0) desc`,
       [this.ownerId],
     )) as CollectionRow[];
@@ -1073,6 +1222,65 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     const row = rows[0];
     if (!row) return undefined;
     return hydrateCollection(row);
+  }
+
+  /**
+   * SQL-backed library search — title OR any ingredient name, case
+   * insensitive. Returns lightweight hits and does NOT hydrate recipe
+   * graphs (the old SearchPage hydrated the entire library into JS just
+   * to read titles + match ingredient names, saturating the single
+   * cr-sqlite connection on large libraries). An empty query returns
+   * every recipe, so callers can reuse it as a plain recipe list.
+   * Placeholders (no ingredients and no instructions) sort last, matching
+   * the previous in-memory ranking.
+   */
+  async searchRecipes(query: string): Promise<RecipeSearchHit[]> {
+    const db = await getLocalDb();
+    const q = query.trim().toLowerCase();
+    const params: unknown[] = [this.ownerId];
+    let filter = '';
+    if (q) {
+      const like = `%${escapeLike(q)}%`;
+      filter = ` and (lower(r.title) like ? escape '\\'
+                 or exists (select 1 from ingredients i
+                            where i.recipe_id = r.id and lower(i.name) like ? escape '\\'))`;
+      params.push(like, like);
+    }
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      collection_id: string;
+      collection_title: string;
+      source_type: CollectionRow['source_type'];
+      has_content: number;
+    }>(
+      `select r.id, r.title, r.collection_id,
+              c.title as collection_title, c.source_type,
+              (exists (select 1 from ingredients where recipe_id = r.id)
+               or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+         from recipes r
+         join recipe_collections c on c.id = r.collection_id
+        where r.deleted = 0 and c.deleted = 0
+          and (c.owner_id = ? or c.shared_with_household_id is not null)
+          ${filter}
+        order by has_content desc, c.title asc, r.sort_order asc`,
+      params as (string | number)[],
+    )) as Array<{
+      id: string;
+      title: string;
+      collection_id: string;
+      collection_title: string;
+      source_type: CollectionRow['source_type'];
+      has_content: number;
+    }>;
+    return rows.map((r) => ({
+      recipeId: r.id,
+      recipeTitle: r.title,
+      collectionId: r.collection_id,
+      collectionTitle: r.collection_title,
+      sourceType: r.source_type,
+      isPlaceholder: !r.has_content,
+    }));
   }
 
   async save(collection: RecipeCollection): Promise<void> {
@@ -1109,6 +1317,29 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     }
 
     await enqueue({ kind: 'collection_save', entity_id: collection.id });
+  }
+
+  /**
+   * Resolve the generic per-platform WebCollection a video-imported
+   * recipe lands in (e.g. "YouTube"), creating it on first use. Matches
+   * an existing WEBSITE collection by exact title so repeated imports
+   * from the same platform reuse one collection rather than spawning a
+   * duplicate. Returns the collection id.
+   */
+  async findOrCreateWebCollectionByPlatform(platform: string): Promise<string> {
+    const db = await getLocalDb();
+    const existing = (await db.execO<{ id: string }>(
+      `select id from recipe_collections
+        where owner_id = ? and deleted = 0
+          and source_type = 'WEBSITE' and title = ?
+        order by coalesce(updated_at, 0) asc
+        limit 1`,
+      [this.ownerId, platform],
+    )) as { id: string }[];
+    if (existing[0]) return existing[0].id;
+    const collection = createWebCollection({ title: platform, siteName: platform });
+    await this.save(collection);
+    return collection.id;
   }
 
   async delete(id: string): Promise<void> {
@@ -1150,7 +1381,7 @@ export class LocalRecipeRepository implements RecipeRepository {
        order by sort_order asc`,
       [this.collectionId],
     )) as RecipeRow[];
-    return Promise.all(rows.map((r) => hydrateRecipe(r)));
+    return hydrateRecipeRowsForCollection(this.collectionId, rows);
   }
 
   async get(id: string): Promise<Recipe | undefined> {
@@ -1205,6 +1436,372 @@ export class LocalRecipeRepository implements RecipeRepository {
   }
 }
 
+// ============================================================
+// Cooking tracker repositories
+// ============================================================
+
+/** Raw local cooking_events row shape (SQLite types). */
+interface CookingEventLocalRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string | null;
+  status: string;
+  event_date: string;
+  occasion_category: string | null;
+  meal_slot: string | null;
+  occasion_note: string | null;
+  notes: string | null;
+  adjustments: string;
+  recipe_snapshot: string | null;
+  photo_paths: string;
+  shared_with_household_id: string | null;
+  updated_at: number;
+  deleted: number;
+}
+
+/**
+ * A cooking event as the web UI consumes it: the pure domain CookingEvent
+ * fields plus the owner + household-share marker needed for attribution
+ * ("Alice made this") in a shared household. CookingEventRecord extends
+ * CookingEvent so it satisfies the domain CookingEventRepository contract.
+ */
+export interface CookingEventRecord extends CookingEvent {
+  ownerId: string;
+  /** Non-null when this row was pulled because a co-member shared their library. */
+  sharedWithHouseholdId: string | null;
+}
+
+function parseAdjustments(text: string | null): CookingEvent['adjustments'] {
+  if (!text) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed as CookingEvent['adjustments']) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseSnapshot(text: string | null): RecipeSnapshot | undefined {
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as RecipeSnapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseStringArray(text: string | null): string[] {
+  if (!text) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function rowToCookingEventRecord(row: CookingEventLocalRow): CookingEventRecord {
+  return {
+    id: row.id,
+    recipeId: row.recipe_id,
+    status: row.status === 'COOKED' ? 'COOKED' : 'PLANNED',
+    eventDate: row.event_date,
+    occasionCategory:
+      (row.occasion_category as CookingEvent['occasionCategory']) ?? undefined,
+    mealSlot: (row.meal_slot as CookingEvent['mealSlot']) ?? undefined,
+    occasionNote: row.occasion_note ?? undefined,
+    notes: row.notes ?? undefined,
+    adjustments: parseAdjustments(row.adjustments),
+    photoPaths: parseStringArray(row.photo_paths),
+    recipeSnapshot: parseSnapshot(row.recipe_snapshot),
+    ownerId: row.owner_id,
+    sharedWithHouseholdId: row.shared_with_household_id,
+  };
+}
+
+/** A calendar entry: a cooking event enriched with its recipe's title +
+ *  collection id (via LEFT JOIN, so both are null once the recipe is
+ *  deleted — the snapshot title still renders for COOKED events). */
+export interface CalendarEntry extends CookingEventRecord {
+  recipeTitle: string | null;
+  collectionId: string | null;
+}
+
+export class LocalCookingEventRepository implements CookingEventRepository {
+  constructor(private readonly ownerId: string) {}
+
+  /** Calendar entries (own + household-shared) in [fromISO, toISO], with
+   *  recipe title + collection id joined for linking/display. */
+  async listCalendarEntries(fromISO: string, toISO: string): Promise<CalendarEntry[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow & {
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>(
+      `select ce.*, r.title as recipe_title, r.collection_id as collection_id
+         from cooking_events ce
+         left join recipes r on r.id = ce.recipe_id and r.deleted = 0
+        where ce.deleted = 0
+          and (ce.owner_id = ? or ce.shared_with_household_id is not null)
+          and ce.event_date >= ? and ce.event_date <= ?
+        order by ce.event_date asc, ce.updated_at asc`,
+      [this.ownerId, fromISO, toISO],
+    )) as Array<CookingEventLocalRow & {
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>;
+    return rows.map((row) => ({
+      ...rowToCookingEventRecord(row),
+      recipeTitle: row.recipe_title ?? null,
+      collectionId: row.collection_id ?? null,
+    }));
+  }
+
+  /** Distinct free-form occasions previously used (own + shared) — the
+   *  vocabulary for the occasion autocomplete, most-recent first. */
+  async listOccasions(): Promise<string[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ occasion_note: string }>(
+      `select occasion_note, max(updated_at) as last_used
+         from cooking_events
+        where deleted = 0
+          and occasion_note is not null and trim(occasion_note) <> ''
+          and (owner_id = ? or shared_with_household_id is not null)
+        group by occasion_note
+        order by last_used desc`,
+      [this.ownerId],
+    )) as { occasion_note: string }[];
+    return rows.map((r) => r.occasion_note);
+  }
+
+  /** Past + upcoming events for one recipe (own + household-shared), newest first. */
+  async listForRecipe(recipeId: string): Promise<CookingEventRecord[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow>(
+      `select * from cooking_events
+        where recipe_id = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+        order by event_date desc, updated_at desc`,
+      [recipeId, this.ownerId],
+    )) as CookingEventLocalRow[];
+    return rows.map(rowToCookingEventRecord);
+  }
+
+  /** All events (own + household-shared) whose eventDate is in [fromISO, toISO]. */
+  async listInDateRange(fromISO: string, toISO: string): Promise<CookingEventRecord[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow>(
+      `select * from cooking_events
+        where deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+          and event_date >= ? and event_date <= ?
+        order by event_date asc, updated_at asc`,
+      [this.ownerId, fromISO, toISO],
+    )) as CookingEventLocalRow[];
+    return rows.map(rowToCookingEventRecord);
+  }
+
+  async get(id: string): Promise<CookingEventRecord | undefined> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CookingEventLocalRow>(
+      `select * from cooking_events where id = ? and deleted = 0`,
+      [id],
+    )) as CookingEventLocalRow[];
+    const row = rows[0];
+    return row ? rowToCookingEventRecord(row) : undefined;
+  }
+
+  async save(event: CookingEvent): Promise<void> {
+    await upsertCookingEventRow({
+      id: event.id,
+      owner_id: this.ownerId,
+      recipe_id: event.recipeId,
+      status: event.status,
+      event_date: event.eventDate,
+      occasion_category: event.occasionCategory ?? null,
+      meal_slot: event.mealSlot ?? null,
+      occasion_note: event.occasionNote ?? null,
+      notes: event.notes ?? null,
+      adjustments: event.adjustments,
+      recipe_snapshot: event.recipeSnapshot ?? null,
+      photo_paths: event.photoPaths,
+      updated_at: now(),
+    });
+    await enqueue({ kind: 'cooking_event_save', entity_id: event.id });
+  }
+
+  /** PLANNED -> COOKED, capturing the recipe snapshot at cook time. */
+  async markCooked(id: string, snapshot: RecipeSnapshot): Promise<void> {
+    const db = await getLocalDb();
+    await db.exec(
+      `update cooking_events
+          set status = 'COOKED', recipe_snapshot = ?, updated_at = ?, deleted = 0
+        where id = ? and owner_id = ?`,
+      [JSON.stringify(snapshot), now(), id, this.ownerId],
+    );
+    await enqueue({ kind: 'cooking_event_save', entity_id: id });
+  }
+
+  async delete(id: string): Promise<void> {
+    const db = await getLocalDb();
+    await db.exec(
+      `update cooking_events set deleted = 1, updated_at = ? where id = ? and owner_id = ?`,
+      [now(), id, this.ownerId],
+    );
+    await enqueue({ kind: 'cooking_event_delete', entity_id: id });
+  }
+}
+
+/** Raw local recipe_tags row shape. */
+interface RecipeTagLocalRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  label: string;
+  shared_with_household_id: string | null;
+  updated_at: number;
+  deleted: number;
+}
+
+export class LocalRecipeTagRepository implements RecipeTagRepository {
+  constructor(private readonly ownerId: string) {}
+
+  async listForRecipe(recipeId: string): Promise<Tag[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<RecipeTagLocalRow>(
+      `select * from recipe_tags
+        where recipe_id = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+        order by label asc`,
+      [recipeId, this.ownerId],
+    )) as RecipeTagLocalRow[];
+    return rows.map((r) => ({ id: r.id, recipeId: r.recipe_id, label: r.label }));
+  }
+
+  async listAllLabels(): Promise<string[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ label: string }>(
+      `select distinct label from recipe_tags
+        where deleted = 0 and (owner_id = ? or shared_with_household_id is not null)
+        order by label asc`,
+      [this.ownerId],
+    )) as { label: string }[];
+    return rows.map((r) => r.label);
+  }
+
+  async listRecipesByLabel(label: string): Promise<string[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ recipe_id: string }>(
+      `select distinct recipe_id from recipe_tags
+        where label = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)`,
+      [normalizeLabel(label), this.ownerId],
+    )) as { recipe_id: string }[];
+    return rows.map((r) => r.recipe_id);
+  }
+
+  /** Idempotent: a no-op if the (owner, recipe, label) tag already exists. */
+  async addTag(recipeId: string, label: string): Promise<void> {
+    const normalized = normalizeLabel(label);
+    if (normalized.length === 0) return;
+    const db = await getLocalDb();
+    const existing = (await db.execO<{ id: string }>(
+      `select id from recipe_tags
+        where owner_id = ? and recipe_id = ? and label = ? and deleted = 0
+        limit 1`,
+      [this.ownerId, recipeId, normalized],
+    )) as { id: string }[];
+    if (existing.length > 0) return;
+    const id = newTagId();
+    await upsertRecipeTagRow({
+      id,
+      owner_id: this.ownerId,
+      recipe_id: recipeId,
+      label: normalized,
+      updated_at: now(),
+    });
+    await enqueue({ kind: 'recipe_tag_save', entity_id: id });
+  }
+
+  /** Hard-delete locally (frees the natural-key slot for re-add) + queue server delete. */
+  async removeTag(recipeId: string, label: string): Promise<void> {
+    const normalized = normalizeLabel(label);
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ id: string }>(
+      `select id from recipe_tags
+        where owner_id = ? and recipe_id = ? and label = ?`,
+      [this.ownerId, recipeId, normalized],
+    )) as { id: string }[];
+    for (const r of rows) {
+      await db.exec(`delete from recipe_tags where id = ?`, [r.id]);
+      await enqueue({ kind: 'recipe_tag_delete', entity_id: r.id });
+    }
+  }
+}
+
+/** Summary of a recently-viewed recipe (local-only analytics). */
+export interface RecentlyViewedEntry {
+  recipeId: string;
+  viewedAt: number;
+  recipeTitle: string | null;
+  collectionId: string | null;
+}
+
+/**
+ * LOCAL-ONLY personal browsing history. Never synced, never shared — this
+ * is "your own record" and lives only on this device. No outbox, no CRR.
+ */
+export class LocalRecipeViewRepository {
+  async recordView(recipeId: string, source?: string): Promise<void> {
+    const db = await getLocalDb();
+    await db.exec(
+      `insert into recipe_views (recipe_id, viewed_at, source) values (?,?,?)`,
+      [recipeId, now(), source ?? null],
+    );
+  }
+
+  /** Distinct recipes by most-recent view, newest first. Only surfaces
+   *  recipes that still exist locally (a deleted recipe drops out). */
+  async listRecentlyViewed(limit = 50): Promise<RecentlyViewedEntry[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{
+      recipe_id: string;
+      viewed_at: number;
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>(
+      `select v.recipe_id, max(v.viewed_at) as viewed_at,
+              r.title as recipe_title, r.collection_id as collection_id
+         from recipe_views v
+         join recipes r on r.id = v.recipe_id and r.deleted = 0
+        group by v.recipe_id
+        order by viewed_at desc
+        limit ?`,
+      [limit],
+    )) as Array<{
+      recipe_id: string;
+      viewed_at: number;
+      recipe_title: string | null;
+      collection_id: string | null;
+    }>;
+    return rows.map((r) => ({
+      recipeId: r.recipe_id,
+      viewedAt: r.viewed_at,
+      recipeTitle: r.recipe_title ?? null,
+      collectionId: r.collection_id ?? null,
+    }));
+  }
+
+  async viewCount(recipeId: string): Promise<number> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ c: number }>(
+      `select count(*) as c from recipe_views where recipe_id = ?`,
+      [recipeId],
+    )) as { c: number }[];
+    return rows[0]?.c ?? 0;
+  }
+}
+
 // ------------- helpers -------------
 
 async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> {
@@ -1224,8 +1821,69 @@ async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> 
          sort_order asc`,
     [row.id],
   )) as RecipeRow[];
-  const recipes = await Promise.all(recipeRows.map(hydrateRecipe));
+  const recipes = await hydrateRecipeRowsForCollection(row.id, recipeRows);
   return rowToCollection(row, recipes);
+}
+
+/**
+ * Hydrate every recipe in a collection with a *fixed* number of child
+ * queries (three) instead of three-per-recipe.
+ *
+ * `hydrateRecipe` issues one ingredients + one instructions + one refs
+ * query per recipe. Looping it (the old `recipeRows.map(hydrateRecipe)`)
+ * was a textbook N+1: a 100-recipe cookbook fired ~300 reads that all
+ * serialize on the single cr-sqlite connection. When a cookbook grew —
+ * e.g. after approving a Table-of-Contents import that mints dozens of
+ * placeholder recipes — that read storm starved the outbox push's own
+ * small reads/writes, so each `recipe_save` ballooned to many seconds
+ * even for empty placeholders and the push cycle kept timing out.
+ *
+ * Here we fetch all children for the collection in three queries, scoped
+ * by `recipe_id in (select id from recipes where collection_id = ?)` so
+ * the reads ride the collection index rather than a giant IN-list, then
+ * group in JS. `rowsToRecipe` already sorts ingredients by sort_order and
+ * instructions by step_number, so no ORDER BY is needed here.
+ */
+async function hydrateRecipeRowsForCollection(
+  collectionId: string,
+  recipeRows: RecipeRow[],
+): Promise<Recipe[]> {
+  if (recipeRows.length === 0) return [];
+  const db = await getLocalDb();
+  const inCollection = `recipe_id in (select id from recipes where collection_id = ? and deleted = 0)`;
+  const [ingredients, instructions, refs] = await Promise.all([
+    db.execO<IngredientRow>(`select * from ingredients where ${inCollection}`, [collectionId]),
+    db.execO<InstructionRow>(`select * from instructions where ${inCollection}`, [collectionId]),
+    // refs carry no recipe_id of their own — surface the parent recipe via
+    // the join so we can bucket them without a per-recipe query.
+    db.execO<InstructionRefRow & { recipe_id: string }>(
+      `select r.*, i.recipe_id
+         from instruction_ingredient_refs r
+         join instructions i on i.id = r.instruction_id
+         where i.${inCollection}`,
+      [collectionId],
+    ),
+  ]);
+  const bucket = <T extends { recipe_id: string }>(rows: T[]): Map<string, T[]> => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) {
+      const list = m.get(r.recipe_id);
+      if (list) list.push(r);
+      else m.set(r.recipe_id, [r]);
+    }
+    return m;
+  };
+  const ingByRecipe = bucket(ingredients as Array<IngredientRow & { recipe_id: string }>);
+  const insByRecipe = bucket(instructions as Array<InstructionRow & { recipe_id: string }>);
+  const refsByRecipe = bucket(refs as Array<InstructionRefRow & { recipe_id: string }>);
+  return recipeRows.map((row) =>
+    rowsToRecipe(
+      row,
+      (ingByRecipe.get(row.id) ?? []) as IngredientRow[],
+      (insByRecipe.get(row.id) ?? []) as InstructionRow[],
+      (refsByRecipe.get(row.id) ?? []) as InstructionRefRow[],
+    ),
+  );
 }
 
 async function hydrateRecipe(row: RecipeRow): Promise<Recipe> {
@@ -1300,6 +1958,128 @@ export async function getRecipeSummary(id: string): Promise<RecipeSummary | unde
   const row = rows[0];
   if (!row) return undefined;
   return { id: row.id, title: row.title, collectionId: row.collection_id };
+}
+
+export interface RecipeSearchHit {
+  recipeId: string;
+  recipeTitle: string;
+  collectionId: string;
+  collectionTitle: string;
+  sourceType: CollectionRow['source_type'];
+  isPlaceholder: boolean;
+}
+
+/**
+ * Recipes carrying ANY of the given tag labels (own + household-shared),
+ * returned as search hits so the tag-browse grid reuses the same card
+ * markup as search/shopping. Labels are normalized to match how they're
+ * stored.
+ */
+export async function searchRecipesByTags(
+  ownerId: string,
+  labels: readonly string[],
+): Promise<RecipeSearchHit[]> {
+  const normalized = labels.map((l) => normalizeLabel(l)).filter((l) => l.length > 0);
+  if (normalized.length === 0) return [];
+  const db = await getLocalDb();
+  const placeholders = normalized.map(() => '?').join(',');
+  const rows = (await db.execO<{
+    id: string;
+    title: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: CollectionRow['source_type'];
+    has_content: number;
+  }>(
+    `select distinct r.id, r.title, r.collection_id,
+            c.title as collection_title, c.source_type,
+            (exists (select 1 from ingredients where recipe_id = r.id)
+             or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+       from recipe_tags t
+       join recipes r on r.id = t.recipe_id
+       join recipe_collections c on c.id = r.collection_id
+      where t.deleted = 0 and r.deleted = 0 and c.deleted = 0
+        and (t.owner_id = ? or t.shared_with_household_id is not null)
+        and t.label in (${placeholders})
+      order by has_content desc, c.title asc, r.sort_order asc`,
+    [ownerId, ...normalized],
+  )) as Array<{
+    id: string;
+    title: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: CollectionRow['source_type'];
+    has_content: number;
+  }>;
+  return rows.map((r) => ({
+    recipeId: r.id,
+    recipeTitle: r.title,
+    collectionId: r.collection_id,
+    collectionTitle: r.collection_title,
+    sourceType: r.source_type,
+    isPlaceholder: !r.has_content,
+  }));
+}
+
+/** Escape LIKE wildcards so a user's query is matched literally (paired
+ *  with `escape '\'` in the SQL). */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
+/**
+ * Fully hydrate a specific set of recipes by id, in a fixed number of
+ * queries (not per-recipe). Used by the shopping list to hydrate only the
+ * recipes the user actually selected, instead of materializing the whole
+ * library. Same batch-and-bucket shape as hydrateRecipeRowsForCollection.
+ */
+export async function getRecipesByIds(ids: readonly string[]): Promise<Recipe[]> {
+  if (ids.length === 0) return [];
+  const db = await getLocalDb();
+  const ph = ids.map(() => '?').join(',');
+  const args = ids as readonly string[] as string[];
+  const recipeRows = (await db.execO<RecipeRow>(
+    `select * from recipes where id in (${ph}) and deleted = 0`,
+    args,
+  )) as RecipeRow[];
+  if (recipeRows.length === 0) return [];
+  const inIds = `recipe_id in (${ph})`;
+  const [ingredients, instructions, refs] = await Promise.all([
+    db.execO<IngredientRow>(`select * from ingredients where ${inIds}`, args),
+    db.execO<InstructionRow>(`select * from instructions where ${inIds}`, args),
+    db.execO<InstructionRefRow & { recipe_id: string }>(
+      `select r.*, i.recipe_id
+         from instruction_ingredient_refs r
+         join instructions i on i.id = r.instruction_id
+         where i.${inIds}`,
+      args,
+    ),
+  ]);
+  const bucket = <T extends { recipe_id: string }>(rows: T[]): Map<string, T[]> => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) {
+      const list = m.get(r.recipe_id);
+      if (list) list.push(r);
+      else m.set(r.recipe_id, [r]);
+    }
+    return m;
+  };
+  const ingByRecipe = bucket(ingredients as Array<IngredientRow & { recipe_id: string }>);
+  const insByRecipe = bucket(instructions as Array<InstructionRow & { recipe_id: string }>);
+  const refsByRecipe = bucket(refs as Array<InstructionRefRow & { recipe_id: string }>);
+  // Preserve the caller's requested order.
+  const byId = new Map(recipeRows.map((r) => [r.id, r]));
+  return ids
+    .map((id) => byId.get(id))
+    .filter((r): r is RecipeRow => r != null)
+    .map((row) =>
+      rowsToRecipe(
+        row,
+        (ingByRecipe.get(row.id) ?? []) as IngredientRow[],
+        (insByRecipe.get(row.id) ?? []) as InstructionRow[],
+        (refsByRecipe.get(row.id) ?? []) as InstructionRefRow[],
+      ),
+    );
 }
 
 /** List direct adaptations of a recipe, regardless of collection. */
@@ -1449,10 +2229,13 @@ export async function getLocalEmbedding(
  */
 export interface SearchableEmbedding {
   recipeId: string;
+  recipeTitle: string;
   collectionId: string;
   collectionTitle: string;
-  collectionSourceType: string;
-  title: string;
+  sourceType: string;
+  /** True for a content-less placeholder (global-ToC entry not yet imported);
+   *  rendered with a "Not imported" badge, same as the literal search. */
+  isPlaceholder: boolean;
   embedding: Float32Array;
 }
 
@@ -1460,16 +2243,23 @@ export async function listSearchableEmbeddings(
   ownerId: string,
 ): Promise<SearchableEmbedding[]> {
   const db = await getLocalDb();
+  // Scoped to the user's own recipes: co-members' embeddings aren't pulled
+  // into the local mirror (and the recipe_embeddings RLS only grants
+  // owner/public reads), so household-shared recipes surface via the literal
+  // fallback (collectionRepo.searchRecipes), not the semantic path.
   const rows = (await db.execO<{
     recipe_id: string;
     collection_id: string;
     collection_title: string;
     source_type: string;
     title: string;
+    has_content: number;
     embedding: Uint8Array;
   }>(
     `select e.recipe_id, e.embedding, r.collection_id, r.title,
-            c.title as collection_title, c.source_type
+            c.title as collection_title, c.source_type,
+            (exists (select 1 from ingredients where recipe_id = r.id)
+             or exists (select 1 from instructions where recipe_id = r.id)) as has_content
        from recipe_embeddings e
        join recipes r on r.id = e.recipe_id and r.deleted = 0
        join recipe_collections c on c.id = r.collection_id
@@ -1481,97 +2271,21 @@ export async function listSearchableEmbeddings(
     collection_title: string;
     source_type: string;
     title: string;
+    has_content: number;
     embedding: Uint8Array;
   }[];
   return rows.map((r) => ({
     recipeId: r.recipe_id,
+    recipeTitle: r.title,
     collectionId: r.collection_id,
     collectionTitle: r.collection_title,
-    collectionSourceType: r.source_type,
-    title: r.title,
+    sourceType: r.source_type,
+    isPlaceholder: !r.has_content,
     embedding: unpackEmbedding(r.embedding),
   }));
 }
 
-/**
- * Lightweight, SQL-only substring search used as the offline /
- * cold-cache fallback. Covers the same six fields the embedding text
- * does. Returns at most `limit` rows, lightly ranked: title hit beats
- * description hit beats ingredient hit beats notes/equipment.
- */
-export interface SubstringHit {
-  recipeId: string;
-  collectionId: string;
-  collectionTitle: string;
-  collectionSourceType: string;
-  title: string;
-}
-
-export async function searchRecipesLocalSubstring(
-  ownerId: string,
-  q: string,
-  limit = 50,
-): Promise<SubstringHit[]> {
-  const trimmed = q.trim().toLowerCase();
-  if (!trimmed) return [];
-  const db = await getLocalDb();
-  const needle = `%${trimmed}%`;
-  const rows = (await db.execO<{
-    recipe_id: string;
-    collection_id: string;
-    collection_title: string;
-    source_type: string;
-    title: string;
-    rank: number;
-  }>(
-    `select r.id as recipe_id,
-            r.collection_id,
-            c.title as collection_title,
-            c.source_type,
-            r.title,
-            case
-              when lower(r.title) like ? then 0
-              when lower(coalesce(r.description, '')) like ? then 1
-              when exists (select 1 from ingredients i where i.recipe_id = r.id and lower(i.name) like ?) then 2
-              when lower(coalesce(r.notes, '')) like ? then 3
-              when lower(coalesce(r.book_title, '')) like ? then 3
-              when lower(coalesce(r.equipment, '')) like ? then 3
-              else 4
-            end as rank
-       from recipes r
-       join recipe_collections c on c.id = r.collection_id
-       where r.deleted = 0
-         and c.owner_id = ?
-         and c.deleted = 0
-         and (
-           lower(r.title) like ?
-           or lower(coalesce(r.description, '')) like ?
-           or lower(coalesce(r.notes, '')) like ?
-           or lower(coalesce(r.book_title, '')) like ?
-           or lower(coalesce(r.equipment, '')) like ?
-           or exists (select 1 from ingredients i where i.recipe_id = r.id and lower(i.name) like ?)
-         )
-       order by rank asc, lower(r.title) asc
-       limit ?`,
-    [
-      needle, needle, needle, needle, needle, needle,
-      ownerId,
-      needle, needle, needle, needle, needle, needle,
-      limit,
-    ],
-  )) as {
-    recipe_id: string;
-    collection_id: string;
-    collection_title: string;
-    source_type: string;
-    title: string;
-    rank: number;
-  }[];
-  return rows.map((r) => ({
-    recipeId: r.recipe_id,
-    collectionId: r.collection_id,
-    collectionTitle: r.collection_title,
-    collectionSourceType: r.source_type,
-    title: r.title,
-  }));
-}
+// Literal/offline fallback search now lives in the LocalRecipeCollectionRepository
+// (`searchRecipes`), which also covers household-shared recipes and "not
+// imported" placeholders. The semantic path falls back to it via
+// collectionRepo(ownerId).searchRecipes() in apps/web/src/search.

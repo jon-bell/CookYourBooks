@@ -108,7 +108,10 @@ test.describe('bulk OCR imports', () => {
       timeout: 15_000,
     });
 
-    await page.getByRole('button', { name: 'Save as recipe' }).click();
+    // Two "Save as recipe" buttons render: one in the sticky top-nav,
+    // one in the body. Both fire the same handler; .first() targets the
+    // sticky one deterministically.
+    await page.getByRole('button', { name: 'Save as recipe' }).first().click();
     // Save auto-advances: if more reviewable items remain in the batch
     // the page navigates to the next one; only when the batch is fully
     // reviewed does it fall back to the batch board. Both URLs are

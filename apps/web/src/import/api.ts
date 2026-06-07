@@ -38,6 +38,26 @@ export async function resetImportItem(itemId: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Flip an item's Table-of-Contents flag and re-arm it for a fresh OCR
+ * pass, server-side. The client can't push this through the outbox — the
+ * push scrub drops any client status change that isn't REVIEWED /
+ * DISCARDED, so a page already OCR'd as a recipe could never be re-read
+ * as a ToC (and vice versa). This RPC resets the row to PENDING, clears
+ * the stale drafts + any prior ToC entries, and sets is_toc in one shot;
+ * the caller then kicks the worker so the re-OCR starts immediately.
+ */
+export async function setImportItemToc(
+  itemId: string,
+  isToc: boolean,
+): Promise<void> {
+  const { error } = await supabase.rpc('import_set_item_toc', {
+    p_item_id: itemId,
+    p_is_toc: isToc,
+  });
+  if (error) throw error;
+}
+
 // ---------- bakeoff ----------
 
 export interface BakeoffVariantInput {
@@ -85,12 +105,16 @@ export async function startBakeoff(
   opts: { taskKind?: 'OCR' | 'REWRITE'; inputRecipeId?: string | null } = {},
 ): Promise<string> {
   const { data, error } = await supabase.rpc('bakeoff_start', {
-    p_image_storage_path: imageStoragePath,
+    // The OCR path requires a non-null string here; the REWRITE path
+    // accepts any value (the body inserts null into the column for
+    // REWRITE). Coerce null → '' so the type stays `string` without
+    // having to reorder args around the required p_variants.
+    p_image_storage_path: imageStoragePath ?? '',
     // PostgREST's typed Json parameter accepts arrays-of-objects fine at
     // runtime, but the generated type alias is too narrow for it.
     p_variants: variants as unknown as never,
     p_task_kind: opts.taskKind ?? 'OCR',
-    p_input_recipe_id: opts.inputRecipeId ?? null,
+    p_input_recipe_id: opts.inputRecipeId ?? undefined,
   });
   if (error) throw error;
   return data as string;
@@ -231,6 +255,142 @@ export async function setUserOcrPrefs(prefs: {
     p_prompt: prefs.prompt,
   });
   if (error) throw error;
+}
+
+// ---------- shared household OCR config ----------
+
+export interface HouseholdOcrConfig {
+  household_id: string;
+  ocr_share_enabled: boolean;
+  provider: OcrProvider;
+  model: string;
+  prompt: string | null;
+  fallback_provider: OcrProvider | null;
+  fallback_model: string | null;
+  key_owner_id: string;
+  updated_at: string;
+}
+
+/** The caller's household OCR config, if any (RLS scopes it to their household). */
+export async function getHouseholdOcrConfig(): Promise<HouseholdOcrConfig | null> {
+  const { data, error } = await supabase
+    .from('household_ocr_config')
+    .select(
+      'household_id, ocr_share_enabled, provider, model, prompt, fallback_provider, fallback_model, key_owner_id, updated_at',
+    )
+    .maybeSingle();
+  if (error) throw error;
+  return (data as HouseholdOcrConfig | null) ?? null;
+}
+
+/** Owner-only: set/toggle the household's shared OCR config. */
+export async function setHouseholdOcrConfig(params: {
+  householdId: string;
+  enabled: boolean;
+  provider: OcrProvider;
+  model: string;
+  prompt?: string | null;
+  fallbackProvider?: OcrProvider | null;
+  fallbackModel?: string | null;
+  keyOwnerId?: string | null;
+}): Promise<void> {
+  const { error } = await supabase.rpc('set_household_ocr_config', {
+    p_household_id: params.householdId,
+    p_enabled: params.enabled,
+    p_provider: params.provider,
+    p_model: params.model,
+    p_prompt: params.prompt ?? undefined,
+    p_fallback_provider: params.fallbackProvider ?? undefined,
+    p_fallback_model: params.fallbackModel ?? undefined,
+    p_key_owner_id: params.keyOwnerId ?? undefined,
+  });
+  if (error) throw error;
+}
+
+// ---------- effective OCR config (own, else household-shared) ----------
+
+export interface EffectiveOcrConfig {
+  provider: OcrProvider;
+  model: string;
+  prompt: string | null;
+  fallbackProvider: OcrProvider | null;
+  fallbackModel: string | null;
+  /** Where the config came from. 'household' drives the onboarding shortcut. */
+  source: 'own' | 'household';
+  /** For household source: the member whose key/account is borrowed. */
+  keyOwnerId: string | null;
+}
+
+/**
+ * Resolve the OCR config to use for a bulk import: the member's own prefs
+ * (when they also have a key for that provider) win; otherwise the
+ * household's shared config if sharing is enabled. Returns null when the
+ * user has neither — the import entry then shows the onboarding guide.
+ *
+ * Never exposes a key: the household row carries only a key_owner_id
+ * pointer; the worker resolves the actual Vault key at run time.
+ */
+export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null> {
+  const [prefs, ownKeys] = await Promise.all([
+    getUserOcrPrefs().catch(() => null),
+    listOcrKeys().catch(() => [] as OcrKeySummary[]),
+  ]);
+  const hasOwnKeyForPrefs =
+    prefs != null && ownKeys.some((k) => k.provider === prefs.provider);
+  if (prefs && hasOwnKeyForPrefs) {
+    return {
+      provider: prefs.provider,
+      model: prefs.model,
+      prompt: prefs.prompt,
+      fallbackProvider: null,
+      fallbackModel: null,
+      source: 'own',
+      keyOwnerId: null,
+    };
+  }
+
+  const household = await getHouseholdOcrConfig().catch(() => null);
+  if (household && household.ocr_share_enabled) {
+    return {
+      provider: household.provider,
+      model: household.model,
+      prompt: household.prompt,
+      fallbackProvider: household.fallback_provider,
+      fallbackModel: household.fallback_model,
+      source: 'household',
+      keyOwnerId: household.key_owner_id,
+    };
+  }
+
+  // No usable household config: fall back to own prefs if present (lets the
+  // form seed even before a key is added).
+  if (prefs) {
+    return {
+      provider: prefs.provider,
+      model: prefs.model,
+      prompt: prefs.prompt,
+      fallbackProvider: null,
+      fallbackModel: null,
+      source: 'own',
+      keyOwnerId: null,
+    };
+  }
+  // No prefs but a key exists → usable with a default model (not onboarding).
+  if (ownKeys.length > 0) {
+    const provider: OcrProvider =
+      ownKeys[0]!.provider === 'openai-compatible' ? 'openai-compatible' : 'gemini';
+    return {
+      provider,
+      model: '',
+      prompt: null,
+      fallbackProvider: null,
+      fallbackModel: null,
+      source: 'own',
+      keyOwnerId: null,
+    };
+  }
+  // Nothing configured anywhere → caller shows the onboarding guide.
+  return null;
 }
 
 export async function mergeImportItems(
@@ -384,7 +544,7 @@ export async function cancelRewrite(jobId: string): Promise<void> {
 
 export async function kickRewrite(recipeId?: string): Promise<void> {
   const { error } = await supabase.rpc('rewrite_kick', {
-    p_recipe_id: recipeId ?? null,
+    p_recipe_id: recipeId ?? undefined,
   });
   if (error) {
     // Same error class as kickOcr — the underlying vault secret is shared,

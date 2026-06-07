@@ -236,12 +236,12 @@ export async function upsertGlobalConversion(input: {
   notes: string | null;
 }): Promise<string> {
   const { data, error } = await supabase.rpc('global_conversion_upsert', {
-    p_id: input.id ?? null,
+    p_id: input.id ?? undefined,
     p_from_unit: input.fromUnit,
     p_to_unit: input.toUnit,
     p_factor: input.factor,
-    p_ingredient_name: input.ingredientName,
-    p_notes: input.notes,
+    p_ingredient_name: input.ingredientName ?? undefined,
+    p_notes: input.notes ?? undefined,
   });
   if (error) throw error;
   return data as string;

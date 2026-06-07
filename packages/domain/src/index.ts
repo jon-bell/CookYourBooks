@@ -6,6 +6,8 @@ export * from './model/instruction.js';
 export * from './model/servings.js';
 export * from './model/recipe.js';
 export * from './model/collection.js';
+export * from './model/cookingEvent.js';
+export * from './model/tag.js';
 
 // Conversion
 export * from './conversion/rules.js';
@@ -18,6 +20,7 @@ export * from './services/shoppingList.js';
 export * from './services/parseIngredient.js';
 export * from './services/parseRecipeText.js';
 export * from './services/embeddingModel.js';
+export * from './services/nutritionMath.js';
 
 // Export
 export * from './export/markdown.js';

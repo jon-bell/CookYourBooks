@@ -4,8 +4,15 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { supabase } from '../supabase.js';
 import { getLocalDb } from './db.js';
 import { countPending } from './outbox.js';
-import { pullAll, pushOutbox, subscribeRealtime, type RealtimeHandle } from './sync.js';
+import {
+  pullAll,
+  pullNutritionEssentials,
+  pushOutbox,
+  subscribeRealtime,
+  type RealtimeHandle,
+} from './sync.js';
 import { logSync } from './syncLog.js';
+import { reportError } from '../sentry.js';
 import {
   ensureLeaderElection,
   getTabRole,
@@ -110,6 +117,13 @@ const CYCLE_TIMEOUT_MS = 45_000;
 // dangling 'syncing' setState that no one comes back to clear. The
 // watchdog gives us a recovery path without a reload.
 const WATCHDOG_INTERVAL_MS = 5_000;
+// Co-members' libraries (other people's content) have no reliable
+// per-row realtime signal — a recipe someone adds to an already-shared
+// collection doesn't change any row we're subscribed to. So while we're
+// in a household we poll on a slow cadence (and on tab focus) to pull
+// their new content. Cheap: an incremental watermark pull returns
+// nothing when nothing changed.
+const HOUSEHOLD_POLL_MS = 30_000;
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -165,6 +179,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setStatus(next);
   }
 
+  const householdIdRef = useRef<string | null>(null);
+
   async function cycle(ownerId: string) {
     if (inFlight.current) {
       pullPending.current = true;
@@ -196,7 +212,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         );
         logSync('info', 'cycle: pushOutbox returned', pushRes);
         logSync('info', 'cycle: invoking pullAll');
-        await withTimeout(
+        const pullRes = await withTimeout(
           pullAll(supabase, ownerId, ac.signal, {
             // Invalidate React Query incrementally so the library card
             // grid hydrates the moment recipes land, instead of waiting
@@ -209,7 +225,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           'pull',
           () => ac.abort(),
         );
+        householdIdRef.current = pullRes.householdId;
         logSync('info', 'cycle: pullAll returned');
+        // Fire-and-forget: reference data doesn't gate the UI, and
+        // failures shouldn't show up as a sync error to the user.
+        // Throttled internally — only refetches once a month.
+        pullNutritionEssentials(supabase).catch((err) => {
+          logSync('warn', 'nutrition essentials pull failed', { error: stringifyError(err) });
+        });
         setLastSyncedAt(Date.now());
         setSettled('idle');
         logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
@@ -226,6 +249,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         console.error('[sync] cycle threw:', err);
         setSettled('error', msg);
         logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
+        // The cycle catch only sees pull / cycle-timeout failures (pushOutbox
+        // handles its own per-entry errors internally). Report them so prod
+        // sync stalls — e.g. a pull statement timing out — are visible.
+        reportError(err, { operation: 'sync_cycle' });
       } finally {
         if (currentAbort.current === ac) currentAbort.current = null;
         await refreshPendingCount();
@@ -314,14 +341,42 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       await cycle(user.id);
       if (cancelled) return;
       setHydrated(true);
-      handle = subscribeRealtime(supabase, user.id, {
-        onLocalUpdate: scheduleInvalidate,
-        onNeedsPull: () => schedulePull(user.id),
-      });
+      handle = subscribeRealtime(
+        supabase,
+        user.id,
+        {
+          onLocalUpdate: scheduleInvalidate,
+          onNeedsPull: () => schedulePull(user.id),
+        },
+        householdIdRef.current,
+      );
     })();
     return () => {
       cancelled = true;
       void handle?.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, tabRole]);
+
+  // Poll for co-members' new content while in a household: re-pull on
+  // tab focus and on a slow interval. This is what makes a recipe a
+  // co-member adds *after* sharing show up without a manual refresh —
+  // there's no per-row realtime event we can subscribe to for it.
+  useEffect(() => {
+    if (!user || tabRole !== 'leader') return;
+    const ownerId = user.id;
+    function repullHousehold() {
+      if (!householdIdRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void cycle(ownerId);
+    }
+    window.addEventListener('focus', repullHousehold);
+    document.addEventListener('visibilitychange', repullHousehold);
+    const poll = setInterval(repullHousehold, HOUSEHOLD_POLL_MS);
+    return () => {
+      window.removeEventListener('focus', repullHousehold);
+      document.removeEventListener('visibilitychange', repullHousehold);
+      clearInterval(poll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, tabRole]);

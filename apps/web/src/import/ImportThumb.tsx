@@ -57,3 +57,14 @@ export function ImportThumb({ path, alt, className }: Props) {
 export async function getSignedImportUrl(path: string): Promise<string> {
   return signedUrl(path);
 }
+
+/**
+ * Forget the cached signed URL for a path so the next `signedUrl` /
+ * `getSignedImportUrl` re-signs it. After overwriting an object in place
+ * (e.g. a manual page rotate re-uploads to the same path), re-signing
+ * yields a URL with a fresh token query, which also defeats the browser /
+ * CDN image cache for the old bytes.
+ */
+export function bustSignedUrl(path: string): void {
+  cache.delete(path);
+}

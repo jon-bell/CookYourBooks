@@ -36,3 +36,36 @@ export async function listPublicCollections(
   if (error) throw error;
   return (data as PublicCollectionSummary[] | null) ?? [];
 }
+
+/**
+ * Bulk-fetch recipe titles for a set of public collection ids. RLS on
+ * `recipes` already allows anon to read rows whose parent collection
+ * has `is_public = true`, so this works for signed-out visitors as
+ * well. Used by the Discover page to expand multiple cards without
+ * N+1 round-trips.
+ */
+export async function listPublicCollectionRecipeTitles(
+  client: CookbooksClient,
+  collectionIds: readonly string[],
+): Promise<Map<string, { id: string; title: string; sort_order: number }[]>> {
+  const out = new Map<string, { id: string; title: string; sort_order: number }[]>();
+  if (collectionIds.length === 0) return out;
+  const { data, error } = await client
+    .from('recipes')
+    .select('id, title, sort_order, collection_id')
+    .in('collection_id', collectionIds as string[])
+    .order('collection_id', { ascending: true })
+    .order('sort_order', { ascending: true });
+  if (error) throw error;
+  for (const row of (data ?? []) as {
+    id: string;
+    title: string;
+    sort_order: number;
+    collection_id: string;
+  }[]) {
+    const arr = out.get(row.collection_id) ?? [];
+    arr.push({ id: row.id, title: row.title, sort_order: row.sort_order });
+    out.set(row.collection_id, arr);
+  }
+  return out;
+}

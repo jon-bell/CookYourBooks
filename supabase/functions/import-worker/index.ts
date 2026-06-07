@@ -15,7 +15,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
 import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
-import pricingCard from './pricing.json' with { type: 'json' };
+import { costFromMap, loadPricing, seedFromBundled, type RateMap } from './pricing.ts';
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
 import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
@@ -28,11 +28,12 @@ import {
   type EmbedRecipeInput,
 } from './embed.ts';
 
-// Self-hosted Sentry for the import worker. Reports to the dedicated
-// cookyourbooks-edge project (/3) so edge-runtime events don't share
-// release tracking / quotas with the web + iOS surfaces. Set
-// `SENTRY_DSN` via `./.bin/supabase secrets set SENTRY_DSN=...` (or
-// the prod Vault) to enable; the SDK no-ops cleanly when unset.
+// Self-hosted Sentry for the import worker. Both Deno edge functions
+// report to the same `cyb-deno` project via the shared `SENTRY_DSN`
+// secret (edge-function secrets are global to the Supabase project, so
+// there's one value for all functions). The baked-in DSN below is the
+// /3 fallback for when the secret is unset; DSNs are public (ingest-
+// only), so it's safe to embed.
 const SENTRY_DSN =
   Deno.env.get('SENTRY_DSN') ??
   'https://21890fed80bff992c7c0e48d97b868f4@sentry-cyb.work.ripley.cloud/3';
@@ -41,9 +42,14 @@ if (SENTRY_DSN) {
     dsn: SENTRY_DSN,
     release: Deno.env.get('SENTRY_RELEASE') ?? undefined,
     environment: Deno.env.get('SENTRY_ENVIRONMENT') ?? 'production',
-    // Edge function invocations are short-lived; sample every trace so
-    // we get end-to-end timing for the worker loop. Adjust if volume
-    // climbs.
+    // @sentry/deno can't instrument Deno.serve, so a warm isolate shares
+    // one global scope across requests. Disabling the default
+    // integrations turns off the auto global error/breadcrumb handlers
+    // that would otherwise bleed one request's context into the next;
+    // we scope each request explicitly via Sentry.withScope below.
+    // (Trade-off: no automatic tracing spans — captureException still
+    // works, and these functions don't create manual spans.)
+    defaultIntegrations: false,
     tracesSampleRate: 1.0,
     // Tag every event so issues land under a dedicated component on
     // the dashboard.
@@ -133,17 +139,11 @@ interface UserKey {
   baseUrl: string | null;
 }
 
-interface PricingEntry {
-  provider: string;
-  model: string;
-  input_usd_per_mtok: number;
-  output_usd_per_mtok: number;
-}
-interface PricingCard {
-  entries: PricingEntry[];
-  fallback: { input_usd_per_mtok: number; output_usd_per_mtok: number };
-}
-const PRICING = pricingCard as PricingCard;
+// Rate map populated per-invocation from the model_pricing table (refreshed
+// from models.dev / OpenRouter), seeded from the bundled pricing.json so it's
+// usable before the first load and as the offline fallback.
+let pricingMap: RateMap = seedFromBundled();
+let pricingLoadedAt = 0;
 
 // Per-invocation wall clock. Has to be larger than the longest per-
 // item OCR call (see ocrTimeoutForImages in ocr.ts) so an in-flight
@@ -255,6 +255,11 @@ function authorized(req: Request): boolean {
 }
 
 Deno.serve(async (req) => {
+  // Isolate Sentry scope to this request. Deno.serve isn't instrumented
+  // by the SDK, so without this a reused warm isolate would share tags /
+  // breadcrumbs across requests. withScope runs the callback against a
+  // fresh child scope and discards it on return.
+  return await Sentry.withScope(async () => {
   // Capture any unhandled exception or rejection from inside the
   // handler — `Deno.serve` swallows them by default which makes the
   // function look "fine" to Supabase while it's actually 500ing for
@@ -283,6 +288,7 @@ Deno.serve(async (req) => {
     const workerId = `edge:${crypto.randomUUID()}`;
     const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
     wLog.info('invocation start');
+    await ensurePricing(wLog);
     const summary = await runLoop(workerId, batchId, wLog);
     // Drain any pending bakeoff variants in the same invocation. Variants
     // are per-user, so we don't filter by batch — the page that just
@@ -319,7 +325,14 @@ Deno.serve(async (req) => {
     if (SENTRY_DSN) Sentry.captureException(err);
     logLine('error', 'unhandled invocation error', {}, { error: String(err) });
     return json({ error: 'internal' }, 500);
+  } finally {
+    // The edge isolate can be frozen the instant we return a Response,
+    // which kills the async Sentry transport before it has POSTed the
+    // event. Block on the flush so captured exceptions actually ship.
+    // No-ops when Sentry was never initialized.
+    if (SENTRY_DSN) await Sentry.flush(2000);
   }
+  });
 });
 
 // ---------- main loop ----------
@@ -1951,18 +1964,27 @@ async function loadUserKey(
 ): Promise<UserKey | null> {
   // The vault schema isn't exposed through PostgREST, so we tunnel the
   // decrypt through a security-definer RPC that lives in `public`.
-  const { data, error } = await supabase.rpc('ocr_resolve_key', {
+  // ocr_resolve_effective_key returns the member's own key, or — if they're
+  // in a household sharing OCR — the household key owner's key (constrained
+  // to the household's shared provider). key_owner_id tells us whose key/
+  // provider account is actually billed, for traceability.
+  const { data, error } = await supabase.rpc('ocr_resolve_effective_key', {
     p_owner_id: ownerId,
     p_provider: provider,
   });
   if (error) {
-    log.error('ocr_resolve_key', { code: error.code, message: error.message });
+    log.error('ocr_resolve_effective_key', { code: error.code, message: error.message });
     return null;
   }
-  const row = (data as Array<{ api_key: string; base_url: string | null }> | null)?.[0];
+  const row = (
+    data as Array<{ api_key: string; base_url: string | null; key_owner_id: string }> | null
+  )?.[0];
   if (!row) {
-    log.warn('no key row for owner+provider', { provider });
+    log.warn('no effective key for owner+provider', { provider });
     return null;
+  }
+  if (row.key_owner_id !== ownerId) {
+    log.info('using household-shared OCR key', { provider, keyOwnerId: row.key_owner_id });
   }
   return { apiKey: row.api_key, baseUrl: row.base_url };
 }
@@ -2014,12 +2036,15 @@ async function uploadRaw(
 }
 
 function costUsdMicros(provider: string, model: string, prompt: number, completion: number): number {
-  const hit = PRICING.entries.find((p) => p.provider === provider && p.model === model);
-  const rate = hit
-    ? { in: hit.input_usd_per_mtok, out: hit.output_usd_per_mtok }
-    : { in: PRICING.fallback.input_usd_per_mtok, out: PRICING.fallback.output_usd_per_mtok };
-  const usd = (prompt * rate.in + completion * rate.out) / 1_000_000;
-  return Math.round(usd * 1_000_000);
+  return costFromMap(pricingMap, provider, model, prompt, completion);
+}
+
+// Load pricing once per warm isolate (re-load if older than the stale window).
+// Best-effort: failures leave the bundled snapshot in `pricingMap`.
+async function ensurePricing(log: ReturnType<typeof makeLog>): Promise<void> {
+  if (Date.now() - pricingLoadedAt < 60 * 60 * 1000) return;
+  pricingMap = await loadPricing(supabase, log, { mock: MOCK_MODE });
+  pricingLoadedAt = Date.now();
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  createRecipe,
   createCookbook,
   exact,
   formatQuantity,
@@ -31,15 +30,19 @@ import {
   useImportTocEntries,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr, resetImportItem } from '../import/api.js';
+import { kickOcr, resetImportItem, setImportItemToc } from '../import/api.js';
+import { buildRecipeFromDraft } from '../import/promoteDraft.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { TocReviewPanel } from '../import/TocReviewPanel.js';
 import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
+import type { CollectionPickerOption } from '../local/repositories.js';
 import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
 import { canReOcr } from '../import/ocrStatus.js';
 import { useSync } from '../local/SyncProvider.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
+import { deleteOcrStorage } from '../import/deleteStorage.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -55,7 +58,6 @@ export function ImportItemPage() {
   const resolvedTargetId =
     item?.assignedCollectionId ?? batch?.targetCollectionId ?? '';
   const { data: targetCollection } = useCollection(resolvedTargetId);
-  const saveCollection = useSaveCollection();
   const updateItem = useUpdateImportItem();
   const { syncNow, status: syncStatus, localReady, hydrated } = useSync();
   const navigate = useNavigate();
@@ -70,11 +72,8 @@ export function ImportItemPage() {
   const [pageNumberStr, setPageNumberStr] = useState('');
   const [showTocSuggestions, setShowTocSuggestions] = useState(false);
   const [draftPatches, setDraftPatches] = useState<Record<number, ParsedRecipeDraft>>({});
-  const [creatingCookbook, setCreatingCookbook] = useState(false);
-  const [newCookbookTitle, setNewCookbookTitle] = useState('');
-  const [newCookbookAuthor, setNewCookbookAuthor] = useState('');
-  const [cookbookError, setCookbookError] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | undefined>();
+  const [togglingToc, setTogglingToc] = useState(false);
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
   const pinch = useRef<{
@@ -351,26 +350,70 @@ export function ImportItemPage() {
   const targetCollectionId =
     assignedCollectionId || batch.targetCollectionId || '';
 
+  // ToC entries belonging to *this* page (a batch may hold several ToC
+  // scans). Feeds the review/approve panel below.
+  const itemTocEntries = tocEntries.filter((e) => e.itemId === item.id);
+
   const reOcrAllowed = canReOcr(item.status);
 
+  // Called by TocReviewPanel once it has minted the approved placeholder
+  // recipes. Persist the chosen cookbook, close the item out as REVIEWED,
+  // and advance to the next thing that still needs attention.
+  async function onTocApproved(created: number) {
+    if (!item || !batch) return;
+    setActionError(undefined);
+    try {
+      await updateItem.mutateAsync({
+        id: item.id,
+        patch: {
+          assignedCollectionId: targetCollectionId || null,
+          status: 'REVIEWED',
+        },
+      });
+      await syncNow();
+      showToast(
+        setToast,
+        created === 0
+          ? 'Entries already in the cookbook — nothing new to add.'
+          : `Created ${created} placeholder recipe${created === 1 ? '' : 's'}.`,
+      );
+      const next = findReviewable(batchItems, item.id, 'next');
+      navigate(next ? `/import/${batch.id}/items/${next.id}` : `/import/${batch.id}`);
+    } catch (e) {
+      setActionError(`Couldn't finish the table-of-contents review: ${(e as Error).message}`);
+    }
+  }
+
+  // Flag (or un-flag) this page as a Table of Contents. Flipping the
+  // flag always re-runs OCR: a page first read as a recipe has to be
+  // re-read with the ToC prompt to yield entries (and vice versa). The
+  // client can't drive that PENDING transition through the outbox — the
+  // push scrub only honours REVIEWED / DISCARDED — so it goes through a
+  // server RPC that resets the row, clears the stale drafts + any prior
+  // ToC entries, and sets is_toc atomically. We then kick the worker.
   async function toggleIsToc() {
-    if (!item) return;
+    if (!item || !batch || togglingToc) return;
+    setActionError(undefined);
+    setTogglingToc(true);
     const next = !item.isToc;
-    await updateItem.mutateAsync({
-      id: item.id,
-      patch: {
-        isToc: next,
-        status: next ? 'PENDING' : item.status,
-        // Drop drafts when promoting to ToC so the worker re-OCRs.
-        parsedDrafts: next ? [] : item.parsedDrafts,
-      },
-    });
-    if (next) {
+    try {
+      await setImportItemToc(item.id, next);
+      await syncNow();
       try {
-        await kickOcr(batch!.id);
+        await kickOcr(batch.id);
       } catch {
-        // pg_cron will pick up the slack.
+        // pg_cron / the next user kick will pick up the slack.
       }
+      showToast(
+        setToast,
+        next
+          ? 'Marked as Table of Contents — re-reading the page…'
+          : 'Unmarked — re-reading the page as a recipe…',
+      );
+    } catch (e) {
+      setActionError(`Couldn't re-OCR this page: ${(e as Error).message}`);
+    } finally {
+      setTogglingToc(false);
     }
   }
 
@@ -390,18 +433,6 @@ export function ImportItemPage() {
         : currentDraft.pageNumbers
           ? [...currentDraft.pageNumbers]
           : undefined;
-    // Re-mint ingredient + instruction ids so a retry (or two drafts
-    // happening to share an id) never trips the global UNIQUE on
-    // ingredients.id / instructions.id.
-    const { ingredients, instructions } = withFreshIds(currentDraft);
-    // bookTitle: if the batch has a target cookbook, that wins —
-    // OCR-extracted bookTitle is just a hint and the user has
-    // explicitly chosen where this recipe belongs.
-    const bookTitle = targetCollection?.title ?? currentDraft.bookTitle;
-    // Planner pre-binding takes precedence over fuzzy match. Neither
-    // wins → mint a fresh id.
-    const recipeId = plannedRecipe?.id ?? matchedExisting?.id;
-    const overwriteTitle = plannedRecipe?.title ?? matchedExisting?.title;
     const remainingAfter = drafts.length - 1; // local count of drafts still left on this item
     const nextItem = remainingAfter === 0 ? findReviewable(batchItems, item.id, 'next') : undefined;
     // Toast immediately so the user has feedback before the network
@@ -414,21 +445,14 @@ export function ImportItemPage() {
     } else {
       showToast(setToast, 'Saving recipe — batch complete!');
     }
-    const recipe = createRecipe({
-      id: recipeId,
-      title: currentDraft.title?.trim() || overwriteTitle || 'Untitled',
-      servings: currentDraft.servings,
-      ingredients,
-      instructions,
-      description: currentDraft.description,
-      timeEstimate: currentDraft.timeEstimate,
-      equipment: currentDraft.equipment,
-      bookTitle,
+    // Planner pre-binding takes precedence over fuzzy match (both feed
+    // recipeId/overwriteTitle); the target cookbook's title wins for
+    // bookTitle. See buildRecipeFromDraft.
+    const recipe = buildRecipeFromDraft(currentDraft, {
+      collectionTitle: targetCollection?.title,
+      recipeId: plannedRecipe?.id ?? matchedExisting?.id,
+      overwriteTitle: plannedRecipe?.title ?? matchedExisting?.title,
       pageNumbers,
-      sourceImageText: currentDraft.sourceImageText,
-      // Filling the placeholder clears its planner star — the user's
-      // wish has been granted, drop it from the queue.
-      starred: false,
     });
     try {
       await saveRecipe.mutateAsync(recipe);
@@ -677,136 +701,93 @@ export function ImportItemPage() {
           <OcrStatusBanner item={item} batchItems={batchItems} />
 
           <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm">
-            <label className="flex items-center gap-2">
+            <label className={`flex items-center gap-2 ${togglingToc ? 'cursor-progress opacity-70' : ''}`}>
               <input
                 type="checkbox"
                 checked={item.isToc}
+                disabled={togglingToc}
                 onChange={() => void toggleIsToc()}
               />
               <span>This is a Table of Contents page</span>
+              {togglingToc && (
+                <Spinner className="text-stone-400" label="Re-reading page…" />
+              )}
             </label>
+            <p className="mt-1 pl-6 text-xs text-stone-500 dark:text-stone-400">
+              Toggling re-runs OCR on this page with the matching prompt —
+              the table-of-contents reader or the recipe reader.
+            </p>
           </div>
 
-          {!item.isToc && (
+          {/* Target cookbook — both the recipe-save path and the ToC
+              placeholder-creation path need somewhere to put their
+              output, so the picker lives outside the isToc gate. */}
+          <Field label="Cookbook">
+            <CookbookField
+              options={pickerOptions}
+              value={assignedCollectionId}
+              onChange={setAssignedCollectionId}
+              loading={pickerLoading}
+              matchedExistingTitle={item.isToc ? undefined : matchedExisting?.title}
+            />
+          </Field>
+
+          {item.isToc ? (
             <>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Cookbook">
-                  {creatingCookbook ? (
-                    <div className="space-y-2 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2">
-                      <input
-                        autoFocus
-                        placeholder="Cookbook title"
-                        value={newCookbookTitle}
-                        onChange={(e) => setNewCookbookTitle(e.target.value)}
-                        className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-                      />
-                      <input
-                        placeholder="Author (optional)"
-                        value={newCookbookAuthor}
-                        onChange={(e) => setNewCookbookAuthor(e.target.value)}
-                        className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const title = newCookbookTitle.trim();
-                            if (!title) return;
-                            const cookbook: RecipeCollection = createCookbook({
-                              title,
-                              author: newCookbookAuthor.trim() || undefined,
-                            });
-                            try {
-                              await saveCollection.mutateAsync(cookbook);
-                              setAssignedCollectionId(cookbook.id);
-                              setCreatingCookbook(false);
-                              setNewCookbookTitle('');
-                              setNewCookbookAuthor('');
-                              setCookbookError(undefined);
-                            } catch (err) {
-                              setCookbookError((err as Error).message);
-                            }
-                          }}
-                          disabled={!newCookbookTitle.trim() || saveCollection.isPending}
-                          className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
-                        >
-                          {saveCollection.isPending ? 'Creating…' : 'Create'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCreatingCookbook(false);
-                            setNewCookbookTitle('');
-                            setNewCookbookAuthor('');
-                          }}
-                          className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                      {cookbookError && (
-                        <p className="text-xs text-red-700 dark:text-red-300">{cookbookError}</p>
-                      )}
+              <TocReviewPanel
+                entries={itemTocEntries}
+                targetCollectionId={targetCollectionId}
+                itemStatus={item.status}
+                onApproved={onTocApproved}
+              />
+              {actionError && (
+                <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                  {actionError}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <Field label="Page number">
+                <div className="relative">
+                  <input
+                    value={pageNumberStr}
+                    onChange={(e) => setPageNumberStr(e.target.value)}
+                    onFocus={() => setShowTocSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowTocSuggestions(false), 150)}
+                    className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1.5 text-sm"
+                    placeholder="e.g. 42"
+                  />
+                  {showTocSuggestions && tocSuggestions.length > 0 && (
+                    <div className="absolute z-20 mt-1 w-full rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-md">
+                      <ul className="max-h-48 overflow-auto py-1 text-xs">
+                        {tocSuggestions.map((s) => (
+                          <li key={s.entry.id}>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (s.entry.pageNumber != null) {
+                                  setPageNumberStr(String(s.entry.pageNumber));
+                                }
+                                setShowTocSuggestions(false);
+                              }}
+                              className="block w-full px-3 py-1.5 text-left hover:bg-stone-100 dark:hover:bg-stone-800"
+                            >
+                              <span className="font-medium">{s.entry.title}</span>
+                              {s.entry.pageNumber != null && (
+                                <span className="ml-2 text-stone-500 dark:text-stone-400">
+                                  p. {s.entry.pageNumber}
+                                </span>
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  ) : (
-                    <>
-                      <CookbookCombobox
-                        options={pickerOptions}
-                        value={assignedCollectionId}
-                        onChange={setAssignedCollectionId}
-                        onCreateNew={() => setCreatingCookbook(true)}
-                        loading={pickerLoading}
-                        matchedExistingTitle={matchedExisting?.title}
-                      />
-                      {!pickerLoading && pickerOptions.length === 0 && (
-                        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-                          No cookbooks yet — create one to save this recipe.
-                        </p>
-                      )}
-                    </>
                   )}
-                </Field>
-                <Field label="Page number">
-                  <div className="relative">
-                    <input
-                      value={pageNumberStr}
-                      onChange={(e) => setPageNumberStr(e.target.value)}
-                      onFocus={() => setShowTocSuggestions(true)}
-                      onBlur={() => setTimeout(() => setShowTocSuggestions(false), 150)}
-                      className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1.5 text-sm"
-                      placeholder="e.g. 42"
-                    />
-                    {showTocSuggestions && tocSuggestions.length > 0 && (
-                      <div className="absolute z-20 mt-1 w-full rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-md">
-                        <ul className="max-h-48 overflow-auto py-1 text-xs">
-                          {tocSuggestions.map((s) => (
-                            <li key={s.entry.id}>
-                              <button
-                                type="button"
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  if (s.entry.pageNumber != null) {
-                                    setPageNumberStr(String(s.entry.pageNumber));
-                                  }
-                                  setShowTocSuggestions(false);
-                                }}
-                                className="block w-full px-3 py-1.5 text-left hover:bg-stone-100 dark:hover:bg-stone-800"
-                              >
-                                <span className="font-medium">{s.entry.title}</span>
-                                {s.entry.pageNumber != null && (
-                                  <span className="ml-2 text-stone-500 dark:text-stone-400">
-                                    p. {s.entry.pageNumber}
-                                  </span>
-                                )}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </Field>
-              </div>
+                </div>
+              </Field>
 
               {drafts.length > 1 && (
                 <div
@@ -929,6 +910,7 @@ export function ImportItemPage() {
                 >
                   Discard entire item
                 </button>
+                <ItemDeleteStorageButton itemId={item.id} hasImage={!!item.storagePath} />
               </div>
 
               {(actionError || saveRecipe.isError) && (
@@ -1363,55 +1345,6 @@ function showToast(
 ): void {
   setToast(message);
   window.setTimeout(() => setToast(undefined), ms);
-}
-
-/**
- * Clone a draft's ingredients + instructions with fresh ids and remap
- * step→ingredient refs through the id map. Without this, promoting a
- * draft to a real recipe collides on the global UNIQUE(ingredients.id)
- * any time the user retries a save, or two drafts on the same image
- * happened to share an id.
- */
-function withFreshIds(draft: ParsedRecipeDraft): { ingredients: Ingredient[]; instructions: Instruction[] } {
-  const idMap = new Map<string, string>();
-  const ingredients: Ingredient[] = draft.ingredients.map((ing) => {
-    const newId = crypto.randomUUID();
-    idMap.set(ing.id, newId);
-    if (isMeasured(ing)) {
-      return measured({
-        id: newId,
-        name: ing.name,
-        preparation: ing.preparation,
-        notes: ing.notes,
-        quantity: ing.quantity,
-      });
-    }
-    return vague({
-      id: newId,
-      name: ing.name,
-      preparation: ing.preparation,
-      notes: ing.notes,
-      description: ing.description,
-    });
-  });
-  const instructions: Instruction[] = draft.instructions.map((step, i) =>
-    instruction({
-      id: crypto.randomUUID(),
-      stepNumber: i + 1,
-      text: step.text,
-      ingredientRefs: step.ingredientRefs
-        .map((ref) => {
-          const nextId = idMap.get(ref.ingredientId);
-          if (!nextId) return undefined;
-          return { ingredientId: nextId, quantity: ref.quantity };
-        })
-        .filter((r): r is { ingredientId: string; quantity: typeof step.ingredientRefs[number]['quantity'] } => r !== undefined),
-      temperature: step.temperature,
-      subInstructions: step.subInstructions,
-      notes: step.notes,
-    }),
-  );
-  return { ingredients, instructions };
 }
 
 function DraftEditor({
@@ -2025,11 +1958,177 @@ function ViewRawLink({ path }: { path: string }) {
   );
 }
 
+function Spinner({ className = '', label }: { className?: string; label: string }) {
+  return (
+    <span
+      role="status"
+      aria-label={label}
+      className={`inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent ${className}`}
+    />
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">{label}</span>
       {children}
     </label>
+  );
+}
+
+/**
+ * Target-cookbook picker with an inline "create a new cookbook" form.
+ * Self-contained — owns its own create state and persistence — so both
+ * the recipe-save path and the ToC placeholder path can drop it in
+ * without duplicating the create flow. On a successful create it selects
+ * the new cookbook via `onChange`.
+ */
+function CookbookField({
+  options,
+  value,
+  onChange,
+  loading = false,
+  matchedExistingTitle,
+}: {
+  options: readonly CollectionPickerOption[];
+  value: string;
+  onChange: (id: string) => void;
+  loading?: boolean;
+  matchedExistingTitle?: string;
+}) {
+  const saveCollection = useSaveCollection();
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState('');
+  const [author, setAuthor] = useState('');
+  const [error, setError] = useState<string | undefined>();
+
+  if (creating) {
+    return (
+      <div className="space-y-2 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2">
+        <input
+          autoFocus
+          placeholder="Cookbook title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+        />
+        <input
+          placeholder="Author (optional)"
+          value={author}
+          onChange={(e) => setAuthor(e.target.value)}
+          className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+        />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              const t = title.trim();
+              if (!t) return;
+              const cookbook: RecipeCollection = createCookbook({
+                title: t,
+                author: author.trim() || undefined,
+              });
+              try {
+                await saveCollection.mutateAsync(cookbook);
+                onChange(cookbook.id);
+                setCreating(false);
+                setTitle('');
+                setAuthor('');
+                setError(undefined);
+              } catch (err) {
+                setError((err as Error).message);
+              }
+            }}
+            disabled={!title.trim() || saveCollection.isPending}
+            className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
+          >
+            {saveCollection.isPending ? 'Creating…' : 'Create'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCreating(false);
+              setTitle('');
+              setAuthor('');
+            }}
+            className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
+          >
+            Cancel
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-700 dark:text-red-300">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <CookbookCombobox
+        options={options}
+        value={value}
+        onChange={onChange}
+        onCreateNew={() => setCreating(true)}
+        loading={loading}
+        matchedExistingTitle={matchedExistingTitle}
+      />
+      {!loading && options.length === 0 && (
+        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+          No cookbooks yet — create one to save this recipe.
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * Per-item "Delete uploaded image" button. Wipes the storage paths
+ * (primary, thumb, source PDF, extra merged pages) for one item.
+ * Recipes promoted from this item stay; only the source picture goes
+ * away. The button is hidden when `hasImage` is false because there's
+ * nothing left to delete.
+ */
+function ItemDeleteStorageButton({ itemId, hasImage }: { itemId: string; hasImage: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { syncNow } = useSync();
+
+  if (!hasImage) return null;
+
+  async function onClick() {
+    if (
+      !confirm(
+        'Delete the uploaded image for this item? The OCR result and any recipes promoted from it will stay. This cannot be undone.',
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteOcrStorage({ kind: 'item', itemId });
+      await syncNow();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void onClick()}
+        disabled={busy}
+        data-testid="item-delete-storage"
+        className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-60"
+      >
+        {busy ? 'Deleting image…' : 'Delete uploaded image'}
+      </button>
+      {error && (
+        <span className="text-xs text-red-700 dark:text-red-300">{error}</span>
+      )}
+    </>
   );
 }
