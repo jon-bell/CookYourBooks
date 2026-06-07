@@ -2509,6 +2509,7 @@ export type Database = {
       create_household: { Args: { p_name: string }; Returns: string }
       current_household_id: { Args: { p_user_id: string }; Returns: string }
       current_tos_version: { Args: never; Returns: number }
+      custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       delete_household: { Args: { p_household_id: string }; Returns: undefined }
       delete_my_account: { Args: never; Returns: undefined }
       fork_collection: {
@@ -2758,6 +2759,7 @@ export type Database = {
           base_url: string
         }[]
       }
+      owner_shared_household: { Args: { p_owner: string }; Returns: string }
       preview_household_invite: {
         Args: { p_token: string }
         Returns: {
@@ -2777,6 +2779,10 @@ export type Database = {
           p_target_id: string
           p_target_type: string
         }
+        Returns: undefined
+      }
+      refresh_household_denorm: {
+        Args: { p_owner: string }
         Returns: undefined
       }
       remove_household_member: {
@@ -2926,10 +2932,6 @@ export type Database = {
       user_rewrite_prefs_set: {
         Args: { p_model: string; p_prompt: string; p_provider: string }
         Returns: undefined
-      }
-      viewer_can_read_owner_library: {
-        Args: { p_owner: string }
-        Returns: boolean
       }
       worker_has_pending_work: { Args: never; Returns: boolean }
     }
