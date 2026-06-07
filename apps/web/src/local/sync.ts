@@ -410,7 +410,17 @@ export async function pullAll(
 
   checkAbort('recipes');
   const recipeTopic = `recipes:${ownerId}`;
-  const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
+  const recipeSinceMs = await getWatermark(recipeTopic);
+  const recipesSince = new Date(recipeSinceMs).toISOString();
+  // On a full pull (fresh / reset / corrupted local DB → watermark 0) the
+  // `recipes.updated_at >= since` filter matches every recipe, so the
+  // children's `recipes!inner` join is pure overhead — and on prod it drags
+  // the 16k-row `recipes` table + its RLS into each child query, which is
+  // what 57014s under contention. Full pull: fetch children by their own
+  // indexed `owner_id` and skip the recipes join entirely. Incremental
+  // pulls keep the join (tiny result, cheap) since children have no
+  // `updated_at` of their own to filter on.
+  const fullPull = recipeSinceMs === 0;
   const recipesPhase = Date.now();
 
   // Recipes (+ their ingredients / instructions / refs) are scoped via
@@ -452,36 +462,51 @@ export async function pullAll(
     // table is paginated independently — the join filter keeps the URL
     // small no matter how many parents matched.
     const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
-      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
-        client
-          .from('ingredients')
-          .select('*, recipes!inner(updated_at)')
-          .eq('owner_id', ownerId)
-          .gte('recipes.updated_at', recipesSince)
+      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) => {
+        const q = client.from('ingredients');
+        return (
+          fullPull
+            ? q.select('*').eq('owner_id', ownerId)
+            : q
+                .select('*, recipes!inner(updated_at)')
+                .eq('owner_id', ownerId)
+                .gte('recipes.updated_at', recipesSince)
+        )
           .order('recipe_id', { ascending: true })
           .order('sort_order', { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
-        client
-          .from('instructions')
-          .select('*, recipes!inner(updated_at)')
-          .eq('owner_id', ownerId)
-          .gte('recipes.updated_at', recipesSince)
+          .range(from, to);
+      }),
+      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) => {
+        const q = client.from('instructions');
+        return (
+          fullPull
+            ? q.select('*').eq('owner_id', ownerId)
+            : q
+                .select('*, recipes!inner(updated_at)')
+                .eq('owner_id', ownerId)
+                .gte('recipes.updated_at', recipesSince)
+        )
           .order('recipe_id', { ascending: true })
           .order('step_number', { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
-        (from, to) =>
-          client
-            .from('instruction_ingredient_refs')
-            .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
-            .eq('owner_id', ownerId)
-            .gte('instructions.recipes.updated_at', recipesSince)
-            .order('instruction_id', { ascending: true })
-            .range(from, to),
-      ),
+          .range(from, to);
+      }),
+      // iir has no recipe_id of its own — it needs the parent recipe id for
+      // grouping, so it keeps a light `instructions(recipe_id)` join. On a
+      // full pull that join stops at `instructions` (small, owner-RLS only);
+      // incrementally it walks up to `recipes.updated_at` for the watermark.
+      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>((from, to) => {
+        const q = client.from('instruction_ingredient_refs');
+        return (
+          fullPull
+            ? q.select('*, instructions!inner(recipe_id)').eq('owner_id', ownerId)
+            : q
+                .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
+                .eq('owner_id', ownerId)
+                .gte('instructions.recipes.updated_at', recipesSince)
+        )
+          .order('instruction_id', { ascending: true })
+          .range(from, to);
+      }),
     ]);
 
     const ings = stripEmbedded(ingsRaw, 'recipes');
@@ -675,7 +700,11 @@ async function pullHouseholdSharedContent(
   // collection's owner scopes us to other people's recipes; RLS narrows
   // that to library-sharing co-members. Pagination identical to the
   // owned-content path.
-  const recipesSince = new Date(await getWatermark(recipeTopic)).toISOString();
+  const recipeSinceMs = await getWatermark(recipeTopic);
+  const recipesSince = new Date(recipeSinceMs).toISOString();
+  // Same full-pull optimization as the owned path: skip the children's
+  // recipes join on the first (watermark-0) household pull.
+  const fullPull = recipeSinceMs === 0;
   const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
     (from, to) =>
       client
@@ -694,35 +723,48 @@ async function pullHouseholdSharedContent(
 
   if (recipes.length > 0) {
     const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
-      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
-        client
-          .from('ingredients')
-          .select('*, recipes!inner(updated_at)')
-          .neq('owner_id', ownerId)
-          .gte('recipes.updated_at', recipesSince)
+      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) => {
+        const q = client.from('ingredients');
+        return (
+          fullPull
+            ? q.select('*').neq('owner_id', ownerId)
+            : q
+                .select('*, recipes!inner(updated_at)')
+                .neq('owner_id', ownerId)
+                .gte('recipes.updated_at', recipesSince)
+        )
           .order('recipe_id', { ascending: true })
           .order('sort_order', { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
-        client
-          .from('instructions')
-          .select('*, recipes!inner(updated_at)')
-          .neq('owner_id', ownerId)
-          .gte('recipes.updated_at', recipesSince)
+          .range(from, to);
+      }),
+      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) => {
+        const q = client.from('instructions');
+        return (
+          fullPull
+            ? q.select('*').neq('owner_id', ownerId)
+            : q
+                .select('*, recipes!inner(updated_at)')
+                .neq('owner_id', ownerId)
+                .gte('recipes.updated_at', recipesSince)
+        )
           .order('recipe_id', { ascending: true })
           .order('step_number', { ascending: true })
-          .range(from, to),
-      ),
+          .range(from, to);
+      }),
       fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
-        (from, to) =>
-          client
-            .from('instruction_ingredient_refs')
-            .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
-            .neq('owner_id', ownerId)
-            .gte('instructions.recipes.updated_at', recipesSince)
+        (from, to) => {
+          const q = client.from('instruction_ingredient_refs');
+          return (
+            fullPull
+              ? q.select('*, instructions!inner(recipe_id)').neq('owner_id', ownerId)
+              : q
+                  .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
+                  .neq('owner_id', ownerId)
+                  .gte('instructions.recipes.updated_at', recipesSince)
+          )
             .order('instruction_id', { ascending: true })
-            .range(from, to),
+            .range(from, to);
+        },
       ),
     ]);
 
