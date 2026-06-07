@@ -75,7 +75,7 @@ export function ImportListPage() {
   return (
     <div className="space-y-6">
       {showOnboarding && <OnboardingModal onDismiss={dismissOnboarding} />}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold">Import OCR</h1>
         <button
           type="button"
@@ -87,6 +87,12 @@ export function ImportListPage() {
         >
           How it works
         </button>
+        <Link
+          to="/import/scan"
+          className="inline-flex items-center gap-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+        >
+          <span aria-hidden>📷</span> Scan pages
+        </Link>
         <Link
           to="/import/speed"
           className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"

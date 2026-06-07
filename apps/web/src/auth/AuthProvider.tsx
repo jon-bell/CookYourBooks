@@ -2,11 +2,16 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../supabase.js';
 import { setSentryUser } from '../sentry.js';
+import { claimsFromSession } from './claims.js';
 
 interface AuthState {
   session: Session | null;
   user: User | null;
   loading: boolean;
+  /** `household_id` JWT claim (custom_access_token_hook), or null. */
+  householdId: string | null;
+  /** `is_admin` JWT claim. */
+  isAdmin: boolean;
   signOut: () => Promise<void>;
 }
 
@@ -36,17 +41,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const value = useMemo<AuthState>(
-    () => ({
+  const value = useMemo<AuthState>(() => {
+    const { householdId, isAdmin } = claimsFromSession(session);
+    return {
       session,
       user: session?.user ?? null,
       loading,
+      householdId,
+      isAdmin,
       signOut: async () => {
         await supabase.auth.signOut();
       },
-    }),
-    [session, loading],
-  );
+    };
+  }, [session, loading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

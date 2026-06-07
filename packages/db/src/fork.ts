@@ -50,22 +50,28 @@ export async function listPublicCollectionRecipeTitles(
 ): Promise<Map<string, { id: string; title: string; sort_order: number }[]>> {
   const out = new Map<string, { id: string; title: string; sort_order: number }[]>();
   if (collectionIds.length === 0) return out;
-  const { data, error } = await client
-    .from('recipes')
-    .select('id, title, sort_order, collection_id')
-    .in('collection_id', collectionIds as string[])
-    .order('collection_id', { ascending: true })
-    .order('sort_order', { ascending: true });
-  if (error) throw error;
-  for (const row of (data ?? []) as {
-    id: string;
-    title: string;
-    sort_order: number;
-    collection_id: string;
-  }[]) {
-    const arr = out.get(row.collection_id) ?? [];
-    arr.push({ id: row.id, title: row.title, sort_order: row.sort_order });
-    out.set(row.collection_id, arr);
+  // Chunk the IN list so a Discover page with many cards can't overflow the
+  // PostgREST/Kong URL cap (UUIDs run ~36 chars each).
+  const CHUNK = 200;
+  for (let i = 0; i < collectionIds.length; i += CHUNK) {
+    const slice = collectionIds.slice(i, i + CHUNK) as string[];
+    const { data, error } = await client
+      .from('recipes')
+      .select('id, title, sort_order, collection_id')
+      .in('collection_id', slice)
+      .order('collection_id', { ascending: true })
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    for (const row of (data ?? []) as {
+      id: string;
+      title: string;
+      sort_order: number;
+      collection_id: string;
+    }[]) {
+      const arr = out.get(row.collection_id) ?? [];
+      arr.push({ id: row.id, title: row.title, sort_order: row.sort_order });
+      out.set(row.collection_id, arr);
+    }
   }
   return out;
 }

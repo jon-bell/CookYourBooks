@@ -28,12 +28,15 @@ import { ImportItemPage } from './pages/ImportItemPage.js';
 import { ImportBakeoffNewPage } from './pages/ImportBakeoffNewPage.js';
 import { SpeedImporterPage } from './pages/SpeedImporterPage.js';
 import { ImportLinkPage } from './pages/ImportLinkPage.js';
+import { ScanPagesPage } from './pages/ScanPagesPage.js';
 import { SignInPage } from './auth/SignInPage.js';
 import { SignUpPage } from './auth/SignUpPage.js';
 import { RequireAuth } from './auth/RequireAuth.js';
 import { UserMenu } from './components/UserMenu.js';
 import { SyncBadge } from './components/SyncBadge.js';
 import { ThemePicker } from './theme/ThemePicker.js';
+import { MobileNav } from './nav/MobileNav.js';
+import { PRIMARY_NAV } from './nav/navItems.js';
 import { useAuth } from './auth/AuthProvider.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
@@ -57,39 +60,36 @@ export function App() {
           <Link to="/" className="text-lg font-semibold tracking-tight">
             CookYourBooks
           </Link>
-          <nav aria-label="Primary" className="flex items-center gap-4 text-sm text-stone-600 dark:text-stone-400">
-            <Link to="/" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
-              Library
-            </Link>
-            <Link to="/discover" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
-              Discover
-            </Link>
-            <Link to="/search" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
-              Search
-            </Link>
-            <Link to="/shopping" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
-              Shopping
-            </Link>
-            <Link to="/cooking" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
-              Cooking
-            </Link>
-            <Link to="/import" className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4">
-              Import
-            </Link>
+          <nav
+            aria-label="Primary"
+            className="hidden items-center gap-4 text-sm text-stone-600 dark:text-stone-400 md:flex"
+          >
+            {PRIMARY_NAV.map((item) => (
+              <Link
+                key={item.to}
+                to={item.to}
+                className="hover:text-stone-900 dark:hover:text-stone-100 focus-visible:outline-offset-4"
+              >
+                {item.label}
+              </Link>
+            ))}
           </nav>
           <div className="ml-auto flex items-center gap-3">
             {user && <SyncBadge />}
-            <ThemePicker />
-            {user ? (
-              <UserMenu />
-            ) : (
-              <Link
-                to="/sign-in"
-                className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
-              >
-                Sign in
-              </Link>
-            )}
+            <div className="hidden items-center gap-3 md:flex">
+              <ThemePicker />
+              {user ? (
+                <UserMenu />
+              ) : (
+                <Link
+                  to="/sign-in"
+                  className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
+                >
+                  Sign in
+                </Link>
+              )}
+            </div>
+            <MobileNav />
           </div>
         </div>
       </header>
@@ -248,6 +248,14 @@ export function App() {
             element={
               <RequireAuth>
                 <ImportLinkPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/scan"
+            element={
+              <RequireAuth>
+                <ScanPagesPage />
               </RequireAuth>
             }
           />

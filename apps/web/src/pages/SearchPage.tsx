@@ -72,12 +72,15 @@ export function SearchPage() {
               <li key={hit.recipeId}>
                 <Link
                   to={`/collections/${hit.collectionId}/recipes/${hit.recipeId}`}
-                  className={`flex items-center justify-between px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900 ${
+                  className={`flex items-center justify-between gap-2 px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900 ${
                     hit.isPlaceholder ? 'text-stone-500 dark:text-stone-500' : ''
                   }`}
                 >
                   <span className="flex items-center gap-2 min-w-0">
-                    <span className={`truncate ${hit.isPlaceholder ? '' : 'font-medium'}`}>
+                    <span
+                      title={hit.recipeTitle}
+                      className={`line-clamp-2 min-w-0 ${hit.isPlaceholder ? '' : 'font-medium'}`}
+                    >
                       {hit.recipeTitle}
                     </span>
                     {hit.isPlaceholder && (
@@ -89,7 +92,7 @@ export function SearchPage() {
                       · {hit.collectionTitle}
                     </span>
                   </span>
-                  <span className="text-sm text-stone-400">→</span>
+                  <span className="shrink-0 text-sm text-stone-400">→</span>
                 </Link>
               </li>
             ))}

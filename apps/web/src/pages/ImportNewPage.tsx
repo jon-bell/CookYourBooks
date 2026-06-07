@@ -12,10 +12,8 @@ import {
   DEFAULT_FALLBACK_MODEL,
   loadFallbackPrefs,
 } from '../settings/FallbackModelSection.js';
-import {
-  captureMultiShot,
-  isMultiShotAvailable,
-} from '../import/multiShotShim.js';
+import { isMultiShotAvailable } from '../import/multiShotShim.js';
+import { scanPages, isLiveViewfinderSupported } from '../import/scanPages.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 
@@ -154,7 +152,7 @@ export function ImportNewPage() {
 
   async function onTakePhotos() {
     try {
-      const captured = await captureMultiShot();
+      const captured = await scanPages();
       if (captured.length > 0) addFiles(captured);
     } catch (e) {
       setError((e as Error).message);
@@ -310,8 +308,8 @@ export function ImportNewPage() {
               label="Upload PDF"
               onClick={() => pdfInputRef.current?.click()}
             />
-            {multiShotReady && (
-              <SourceButton label="Take photos" onClick={onTakePhotos} />
+            {(isLiveViewfinderSupported() || multiShotReady) && (
+              <SourceButton label="Scan with camera" onClick={onTakePhotos} />
             )}
           </div>
           <input
