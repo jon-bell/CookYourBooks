@@ -6,6 +6,7 @@ import { RecipeEditorPage } from './pages/RecipeEditorPage.js';
 import { SearchPage } from './pages/SearchPage.js';
 import { ShoppingListPage } from './pages/ShoppingListPage.js';
 import { CookingTrackerPage } from './pages/CookingTrackerPage.js';
+import { CookSessionPage } from './pages/CookSessionPage.js';
 import { RecentlyViewedPage } from './pages/RecentlyViewedPage.js';
 import { TagBrowsePage } from './pages/TagBrowsePage.js';
 import { NewCollectionPage } from './pages/NewCollectionPage.js';
@@ -175,6 +176,14 @@ export function App() {
             element={
               <RequireAuth>
                 <RecentlyViewedPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/cooking/cook/:date"
+            element={
+              <RequireAuth>
+                <CookSessionPage />
               </RequireAuth>
             }
           />

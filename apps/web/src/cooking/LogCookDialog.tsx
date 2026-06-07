@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { OccasionCategory, Recipe, RecipeAdjustment } from '@cookyourbooks/domain';
+import CreatableSelect from 'react-select/creatable';
+import type { MealSlot, Recipe, RecipeAdjustment } from '@cookyourbooks/domain';
 import { todayISO } from './dateGrid.js';
-import { OCCASION_OPTIONS } from './format.js';
+import { MEAL_SLOT_OPTIONS } from './format.js';
+import { useOccasionSuggestions } from './queries.js';
 import { AdjustmentsEditor } from './AdjustmentsEditor.js';
 
 export type CookMode = 'made' | 'schedule';
@@ -26,7 +28,7 @@ export function LogCookDialog({
   initialDate?: string;
   onSubmit: (input: {
     date: string;
-    occasionCategory?: OccasionCategory;
+    mealSlot?: MealSlot;
     occasionNote?: string;
     notes?: string;
     adjustments?: RecipeAdjustment[];
@@ -36,12 +38,13 @@ export function LogCookDialog({
   busy?: boolean;
 }) {
   const [date, setDate] = useState(initialDate ?? todayISO());
-  const [occasionCategory, setOccasionCategory] = useState<OccasionCategory | ''>('');
+  const [mealSlot, setMealSlot] = useState<MealSlot | null>(null);
   const [occasionNote, setOccasionNote] = useState('');
   const [notes, setNotes] = useState('');
   const [adjustments, setAdjustments] = useState<RecipeAdjustment[]>([]);
   const [photos, setPhotos] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
+  const { data: occasionSuggestions = [] } = useOccasionSuggestions();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -63,7 +66,7 @@ export function LogCookDialog({
   function submit() {
     onSubmit({
       date,
-      occasionCategory: occasionCategory || undefined,
+      mealSlot: mealSlot ?? undefined,
       occasionNote: occasionNote.trim() || undefined,
       notes: notes.trim() || undefined,
       adjustments: adjustments.length > 0 ? adjustments : undefined,
@@ -109,33 +112,46 @@ export function LogCookDialog({
             />
           </label>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-sm font-medium">Occasion</span>
-              <select
-                value={occasionCategory}
-                onChange={(e) => setOccasionCategory(e.target.value as OccasionCategory | '')}
-                className={`mt-1 ${inputCls}`}
-              >
-                <option value="">— none —</option>
-                {OCCASION_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
+          <div>
+            <span className="text-sm font-medium">Meal</span>
+            <div className="mt-1 flex flex-wrap gap-2" data-testid="meal-slot">
+              {MEAL_SLOT_OPTIONS.map((o) => {
+                const active = mealSlot === o.value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setMealSlot(active ? null : o.value)}
+                    className={`rounded-full px-3 py-1 text-sm ${
+                      active
+                        ? 'bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900'
+                        : 'border border-stone-300 dark:border-stone-600 hover:bg-stone-100 dark:hover:bg-stone-800'
+                    }`}
+                  >
                     {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm font-medium">Occasion note</span>
-              <input
-                type="text"
-                value={occasionNote}
-                placeholder="e.g. Mum's birthday"
-                onChange={(e) => setOccasionNote(e.target.value)}
-                className={`mt-1 ${inputCls}`}
-              />
-            </label>
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
+          <label className="block">
+            <span className="text-sm font-medium">Occasion</span>
+            <CreatableSelect
+              isClearable
+              classNamePrefix="cyb-select"
+              placeholder="Any occasion… (e.g. Mum's birthday)"
+              value={occasionNote ? { value: occasionNote, label: occasionNote } : null}
+              onChange={(opt) => setOccasionNote(opt?.value ?? '')}
+              onCreateOption={(input) => setOccasionNote(input)}
+              options={occasionSuggestions.map((o) => ({ value: o, label: o }))}
+              // Render the menu in a portal so it isn't clipped by the modal.
+              menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+              styles={{ menuPortal: (base) => ({ ...base, zIndex: 60 }) }}
+              aria-label="Occasion"
+            />
+          </label>
 
           <label className="block">
             <span className="text-sm font-medium">Notes</span>

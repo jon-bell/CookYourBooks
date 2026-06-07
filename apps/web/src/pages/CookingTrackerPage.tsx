@@ -5,7 +5,7 @@ import { useCookingCalendar } from '../cooking/queries.js';
 import { useAttribution } from '../cooking/useAttribution.js';
 import { CalendarMonth, selectedDateLabel, type CalendarBadge } from '../cooking/CalendarMonth.js';
 import { monthGridRange, todayISO } from '../cooking/dateGrid.js';
-import { occasionLabel } from '../cooking/format.js';
+import { mealSlotLabel, occasionLabel } from '../cooking/format.js';
 import type { CalendarEntry } from '../local/repositories.js';
 
 export function CookingTrackerPage() {
@@ -75,7 +75,18 @@ export function CookingTrackerPage() {
         </div>
 
         <div data-testid="calendar-day-detail">
-          <h2 className="text-base font-semibold">{selectedDateLabel(selectedDate)}</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold">{selectedDateLabel(selectedDate)}</h2>
+            {dayEntries.length > 1 && (
+              <Link
+                to={`/cooking/cook/${selectedDate}`}
+                className="rounded-md border border-stone-300 dark:border-stone-600 px-2.5 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
+                data-testid="cook-together"
+              >
+                Cook these together ({dayEntries.length})
+              </Link>
+            )}
+          </div>
           {dayEntries.length === 0 ? (
             <p className="mt-2 text-sm text-stone-500">Nothing cooked or planned for this day.</p>
           ) : (
@@ -119,6 +130,7 @@ function CalendarDayEntry({ entry, attributedTo }: { entry: CalendarEntry; attri
       </div>
       <p className="mt-0.5 text-xs text-stone-500">
         {attributedTo}
+        {entry.mealSlot ? ` · ${mealSlotLabel(entry.mealSlot)}` : ''}
         {entry.occasionCategory ? ` · ${occasionLabel(entry.occasionCategory)}` : ''}
         {entry.occasionNote ? ` · ${entry.occasionNote}` : ''}
       </p>
