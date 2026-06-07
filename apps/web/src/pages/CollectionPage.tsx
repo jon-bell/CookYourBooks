@@ -10,7 +10,7 @@ import {
 } from '../data/queries.js';
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
-import { SortableRecipeList, type RecipeSortMode } from '../components/SortableRecipeList.js';
+import { CollectionRecipeBrowser } from '../components/CollectionRecipeBrowser.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
 import { ShareToGlobalButton } from '../components/ShareToGlobalButton.js';
@@ -29,7 +29,6 @@ export function CollectionPage() {
   const saveRecipe = useSaveRecipe(collectionId ?? '');
   const [showPublishWarning, setShowPublishWarning] = useState(false);
   const [hasOpenSession, setHasOpenSession] = useState(false);
-  const [sortMode, setSortMode] = useState<RecipeSortMode>('manual');
 
   // Cheap one-shot probe so the CTA can say "resume" when applicable.
   // Re-runs whenever the collection's recipe list changes (which is also
@@ -204,35 +203,12 @@ export function CollectionPage() {
       {c.recipes.length === 0 ? (
         <p className="text-stone-600 dark:text-stone-400">No recipes yet.</p>
       ) : (
-        <div className="space-y-2">
-          <div className="flex items-center justify-end gap-2 text-sm">
-            <label htmlFor="recipe-sort" className="text-stone-500 dark:text-stone-400">
-              Sort
-            </label>
-            <select
-              id="recipe-sort"
-              value={sortMode}
-              onChange={(e) => setSortMode(e.target.value as RecipeSortMode)}
-              className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 text-sm"
-            >
-              <option value="manual">Manual order</option>
-              <option value="name">Name (A–Z)</option>
-              <option value="page">Page number</option>
-            </select>
-          </div>
-          {sortMode !== 'manual' && (
-            <p className="text-right text-xs text-stone-400 dark:text-stone-500">
-              Drag-to-reorder is available in Manual order.
-            </p>
-          )}
-          <SortableRecipeList
-            collectionId={c.id}
-            recipes={c.recipes}
-            onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
-            onToggleStar={onToggleStar}
-            sortMode={sortMode}
-          />
-        </div>
+        <CollectionRecipeBrowser
+          collectionId={c.id}
+          recipes={c.recipes}
+          onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
+          onToggleStar={onToggleStar}
+        />
       )}
       <MakePublicDialog
         open={showPublishWarning}

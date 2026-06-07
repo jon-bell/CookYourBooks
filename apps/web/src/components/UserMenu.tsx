@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
+import { ACCOUNT_NAV, ADMIN_NAV } from '../nav/navItems.js';
 
 export function UserMenu() {
   const { user, signOut } = useAuth();
@@ -15,24 +16,21 @@ export function UserMenu() {
       <span className="text-stone-600 dark:text-stone-400">{label}</span>
       {isAdmin && (
         <Link
-          to="/admin"
+          to={ADMIN_NAV.to}
           className="rounded-md px-2 py-1 text-amber-800 dark:text-amber-300 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400"
         >
-          Admin
+          {ADMIN_NAV.label}
         </Link>
       )}
-      <Link
-        to="/household"
-        className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
-      >
-        Household
-      </Link>
-      <Link
-        to="/settings"
-        className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
-      >
-        Settings
-      </Link>
+      {ACCOUNT_NAV.map((item) => (
+        <Link
+          key={item.to}
+          to={item.to}
+          className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+        >
+          {item.label}
+        </Link>
+      ))}
       <button
         onClick={() => signOut()}
         className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"

@@ -417,6 +417,31 @@ export async function uploadTestImages(page: Page, fileNames: string[]): Promise
     .setInputFiles(buffers);
 }
 
+/**
+ * Install `window.__cybScanShim` so the live-viewfinder camera
+ * (CameraScanner) is bypassed and `scanPages()` returns canned page images
+ * instead. Registered via `addInitScript` so it survives the navigation to
+ * /import/scan. The bytes are real PNG fixtures so the upload pipeline's
+ * `prepareImage` decode succeeds.
+ */
+export async function installScanShim(page: Page, fileNames: string[]): Promise<void> {
+  const files = fileNames.map((name) => ({
+    name,
+    type: name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
+    base64: readFileSync(resolve(FIXTURES_DIR, name)).toString('base64'),
+  }));
+  await page.addInitScript((items: { name: string; type: string; base64: string }[]) => {
+    function b64ToFile(it: { name: string; type: string; base64: string }): File {
+      const bin = atob(it.base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+      return new File([bytes], it.name, { type: it.type });
+    }
+    (window as unknown as { __cybScanShim?: () => Promise<File[]> }).__cybScanShim = async () =>
+      items.map(b64ToFile);
+  }, files);
+}
+
 export async function triggerWorker(batchId?: string | null): Promise<{
   processed: number;
   failed: number;
