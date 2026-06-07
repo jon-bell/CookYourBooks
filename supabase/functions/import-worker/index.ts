@@ -15,7 +15,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
 import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
-import pricingCard from './pricing.json' with { type: 'json' };
+import { costFromMap, loadPricing, seedFromBundled, type RateMap } from './pricing.ts';
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
 import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
@@ -131,17 +131,11 @@ interface UserKey {
   baseUrl: string | null;
 }
 
-interface PricingEntry {
-  provider: string;
-  model: string;
-  input_usd_per_mtok: number;
-  output_usd_per_mtok: number;
-}
-interface PricingCard {
-  entries: PricingEntry[];
-  fallback: { input_usd_per_mtok: number; output_usd_per_mtok: number };
-}
-const PRICING = pricingCard as PricingCard;
+// Rate map populated per-invocation from the model_pricing table (refreshed
+// from models.dev / OpenRouter), seeded from the bundled pricing.json so it's
+// usable before the first load and as the offline fallback.
+let pricingMap: RateMap = seedFromBundled();
+let pricingLoadedAt = 0;
 
 // Per-invocation wall clock. Has to be larger than the longest per-
 // item OCR call (see ocrTimeoutForImages in ocr.ts) so an in-flight
@@ -286,6 +280,7 @@ Deno.serve(async (req) => {
     const workerId = `edge:${crypto.randomUUID()}`;
     const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
     wLog.info('invocation start');
+    await ensurePricing(wLog);
     const summary = await runLoop(workerId, batchId, wLog);
     // Drain any pending bakeoff variants in the same invocation. Variants
     // are per-user, so we don't filter by batch — the page that just
@@ -1725,18 +1720,27 @@ async function loadUserKey(
 ): Promise<UserKey | null> {
   // The vault schema isn't exposed through PostgREST, so we tunnel the
   // decrypt through a security-definer RPC that lives in `public`.
-  const { data, error } = await supabase.rpc('ocr_resolve_key', {
+  // ocr_resolve_effective_key returns the member's own key, or — if they're
+  // in a household sharing OCR — the household key owner's key (constrained
+  // to the household's shared provider). key_owner_id tells us whose key/
+  // provider account is actually billed, for traceability.
+  const { data, error } = await supabase.rpc('ocr_resolve_effective_key', {
     p_owner_id: ownerId,
     p_provider: provider,
   });
   if (error) {
-    log.error('ocr_resolve_key', { code: error.code, message: error.message });
+    log.error('ocr_resolve_effective_key', { code: error.code, message: error.message });
     return null;
   }
-  const row = (data as Array<{ api_key: string; base_url: string | null }> | null)?.[0];
+  const row = (
+    data as Array<{ api_key: string; base_url: string | null; key_owner_id: string }> | null
+  )?.[0];
   if (!row) {
-    log.warn('no key row for owner+provider', { provider });
+    log.warn('no effective key for owner+provider', { provider });
     return null;
+  }
+  if (row.key_owner_id !== ownerId) {
+    log.info('using household-shared OCR key', { provider, keyOwnerId: row.key_owner_id });
   }
   return { apiKey: row.api_key, baseUrl: row.base_url };
 }
@@ -1788,12 +1792,15 @@ async function uploadRaw(
 }
 
 function costUsdMicros(provider: string, model: string, prompt: number, completion: number): number {
-  const hit = PRICING.entries.find((p) => p.provider === provider && p.model === model);
-  const rate = hit
-    ? { in: hit.input_usd_per_mtok, out: hit.output_usd_per_mtok }
-    : { in: PRICING.fallback.input_usd_per_mtok, out: PRICING.fallback.output_usd_per_mtok };
-  const usd = (prompt * rate.in + completion * rate.out) / 1_000_000;
-  return Math.round(usd * 1_000_000);
+  return costFromMap(pricingMap, provider, model, prompt, completion);
+}
+
+// Load pricing once per warm isolate (re-load if older than the stale window).
+// Best-effort: failures leave the bundled snapshot in `pricingMap`.
+async function ensurePricing(log: ReturnType<typeof makeLog>): Promise<void> {
+  if (Date.now() - pricingLoadedAt < 60 * 60 * 1000) return;
+  pricingMap = await loadPricing(supabase, log, { mock: MOCK_MODE });
+  pricingLoadedAt = Date.now();
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

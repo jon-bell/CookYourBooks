@@ -12,6 +12,7 @@ import {
   useBakeoffVariantState,
 } from '../import/BakeoffVariantEditor.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 
 type Step = 'source' | 'review' | 'uploading';
 
@@ -162,15 +163,7 @@ export function ImportBakeoffNewPage() {
         </p>
       </header>
 
-      {ocrKeys.length === 0 && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          Configure an OCR API key in{' '}
-          <Link to="/settings" className="underline">
-            Settings
-          </Link>{' '}
-          first.
-        </div>
-      )}
+      {ocrKeys.length === 0 && <OcrSetupGuide />}
 
       {step === 'source' && (
         <section className="space-y-3">

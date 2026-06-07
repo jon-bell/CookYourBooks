@@ -706,6 +706,60 @@ export type Database = {
           },
         ]
       }
+      household_ocr_config: {
+        Row: {
+          created_at: string
+          fallback_model: string | null
+          fallback_provider: string | null
+          household_id: string
+          key_owner_id: string
+          model: string
+          ocr_share_enabled: boolean
+          prompt: string | null
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          fallback_model?: string | null
+          fallback_provider?: string | null
+          household_id: string
+          key_owner_id: string
+          model?: string
+          ocr_share_enabled?: boolean
+          prompt?: string | null
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          fallback_model?: string | null
+          fallback_provider?: string | null
+          household_id?: string
+          key_owner_id?: string
+          model?: string
+          ocr_share_enabled?: boolean
+          prompt?: string | null
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_ocr_config_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: true
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_ocr_config_key_owner_id_fkey"
+            columns: ["key_owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       households: {
         Row: {
           created_at: string
@@ -802,6 +856,7 @@ export type Database = {
           fallback_provider: string | null
           id: string
           is_planner: boolean
+          key_owner_id: string | null
           name: string
           owner_id: string
           recitation_policy: string
@@ -821,6 +876,7 @@ export type Database = {
           fallback_provider?: string | null
           id?: string
           is_planner?: boolean
+          key_owner_id?: string | null
           name?: string
           owner_id: string
           recitation_policy?: string
@@ -840,6 +896,7 @@ export type Database = {
           fallback_provider?: string | null
           id?: string
           is_planner?: boolean
+          key_owner_id?: string | null
           name?: string
           owner_id?: string
           recitation_policy?: string
@@ -850,6 +907,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "import_batches_key_owner_id_fkey"
+            columns: ["key_owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "import_batches_owner_id_fkey"
             columns: ["owner_id"]
@@ -1440,6 +1504,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      model_pricing: {
+        Row: {
+          fetched_at: string
+          input_usd_per_mtok: number
+          model: string
+          output_usd_per_mtok: number
+          provider: string
+          source: string
+        }
+        Insert: {
+          fetched_at?: string
+          input_usd_per_mtok: number
+          model: string
+          output_usd_per_mtok: number
+          provider: string
+          source: string
+        }
+        Update: {
+          fetched_at?: string
+          input_usd_per_mtok?: number
+          model?: string
+          output_usd_per_mtok?: number
+          provider?: string
+          source?: string
+        }
+        Relationships: []
       }
       moderation_actions: {
         Row: {
@@ -2628,6 +2719,14 @@ export type Database = {
         Returns: undefined
       }
       ocr_kick: { Args: { p_batch_id?: string }; Returns: undefined }
+      ocr_resolve_effective_key: {
+        Args: { p_owner_id: string; p_provider: string }
+        Returns: {
+          api_key: string
+          base_url: string
+          key_owner_id: string
+        }[]
+      }
       ocr_resolve_key: {
         Args: { p_owner_id: string; p_provider: string }
         Returns: {
@@ -2769,6 +2868,19 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      set_household_ocr_config: {
+        Args: {
+          p_enabled: boolean
+          p_fallback_model?: string
+          p_fallback_provider?: string
+          p_household_id: string
+          p_key_owner_id?: string
+          p_model: string
+          p_prompt?: string
+          p_provider: string
+        }
+        Returns: undefined
+      }
       set_library_sharing: {
         Args: {
           p_attestation?: string
@@ -2795,6 +2907,7 @@ export type Database = {
         Args: { p_owner: string }
         Returns: boolean
       }
+      worker_has_pending_work: { Args: never; Returns: boolean }
     }
     Enums: {
       [_ in never]: never
