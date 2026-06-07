@@ -26,6 +26,10 @@ class ShareViewController: UIViewController {
     }
     
     private func sendData() {
+        NSLog("[CYB-Share] sendData: \(shareItems.count) item(s)")
+        for (i, item) in shareItems.enumerated() {
+            NSLog("[CYB-Share]   item[\(i)] title=\(item.title ?? "nil") type=\(item.type ?? "nil") url=\(item.url ?? "nil")")
+        }
         let queryItems = shareItems.map {
             [
                 URLQueryItem(
@@ -42,7 +46,12 @@ class ShareViewController: UIViewController {
         }.flatMap({ $0 })
         var urlComps = URLComponents(string: "cookyourbooks://")!
         urlComps.queryItems = queryItems
-        openURL(urlComps.url!)
+        guard let finalUrl = urlComps.url else {
+            NSLog("[CYB-Share] sendData: failed to build final URL")
+            return
+        }
+        NSLog("[CYB-Share] sendData: opening \(finalUrl.absoluteString)")
+        openURL(finalUrl)
     }
     
     fileprivate func createSharedFileUrl(_ url: URL?) -> String {
@@ -196,11 +205,15 @@ class ShareViewController: UIViewController {
         var responder: UIResponder? = self
         while responder != nil {
             if let application = responder as? UIApplication {
-                application.open(url, options: [:], completionHandler: nil)
+                NSLog("[CYB-Share] openURL: dispatching via UIApplication.open")
+                application.open(url, options: [:], completionHandler: { ok in
+                    NSLog("[CYB-Share] openURL: completion ok=\(ok)")
+                })
                 return
             }
             responder = responder?.next
         }
+        NSLog("[CYB-Share] openURL: no UIApplication responder found, URL not delivered")
     }
     
 }

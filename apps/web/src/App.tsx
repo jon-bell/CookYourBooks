@@ -37,15 +37,15 @@ import { ThemePicker } from './theme/ThemePicker.js';
 import { useAuth } from './auth/AuthProvider.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
-import { useEffect } from 'react';
-import { initShareIntent } from './import/shareIntent.js';
+import { useEffect, useRef, useState } from 'react';
+import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
 
 export function App() {
   const { user } = useAuth();
   const { showHelp, closeHelp } = useKeyboardShortcuts(APP_SHORTCUTS);
   return (
     <div className="min-h-full flex flex-col">
-      {user && <ShareIntentListener />}
+      <ShareIntentListener />
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-[max(0.5rem,env(safe-area-inset-top))] focus:z-50 focus:rounded focus:bg-stone-900 focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
@@ -348,14 +348,116 @@ export function App() {
 // a supported video link to us, route to the import-from-link flow with the
 // URL prefilled (it auto-extracts). Inert on the web — initShareIntent only
 // wires up native Capacitor plugins.
+//
+// We always mount this (not gated on `user`) so a share that arrives
+// during the auth-bootstrap window isn't dropped. A toast surfaces the
+// outcome so the user gets feedback no matter what: success, unsupported
+// platform, no URL, or not-signed-in. Replaces the previous "white
+// screen of nothing" behavior on the share flow.
 function ShareIntentListener() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // useRef so the listener (which never re-registers) always reads the
+  // current user without forcing the effect to re-run.
+  const userRef = useRef(user);
   useEffect(() => {
-    return initShareIntent((url) => {
-      navigate(`/import/link?url=${encodeURIComponent(url)}`);
+    userRef.current = user;
+  }, [user]);
+
+  const [toast, setToast] = useState<{
+    text: string;
+    tone: 'info' | 'success' | 'warn';
+  } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const showToast = (text: string, tone: 'info' | 'success' | 'warn', ms = 4000): void => {
+    setToast({ text, tone });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), ms);
+  };
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
+
+  // If the user signs in after being bounced from a share, finish the
+  // import flow by consuming the URL we stashed in sessionStorage.
+  useEffect(() => {
+    if (!user) return;
+    let pending: string | null = null;
+    try {
+      pending = sessionStorage.getItem('cookyourbooks.pendingShare');
+      if (pending) sessionStorage.removeItem('cookyourbooks.pendingShare');
+    } catch {
+      /* private mode — nothing to do */
+    }
+    if (pending) {
+      showToast('Resuming import after sign-in…', 'success');
+      navigate(`/import/link?url=${encodeURIComponent(pending)}`);
+    }
+    // showToast is stable (defined inline above, refs are stable);
+    // disabling exhaustive-deps would be noisy — list the real deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, navigate]);
+
+  useEffect(() => {
+    return initShareIntent((outcome: ShareIntentOutcome) => {
+      if (outcome.kind === 'video') {
+        if (!userRef.current) {
+          // Stash the URL so /sign-in can redirect into the import flow
+          // post-login. Surface the wait reason so the user understands
+          // why they're seeing the sign-in page after sharing.
+          try {
+            sessionStorage.setItem('cookyourbooks.pendingShare', outcome.url);
+          } catch {
+            /* private mode or quota — non-fatal */
+          }
+          showToast('Sign in to finish importing this recipe.', 'info');
+          navigate('/sign-in');
+          return;
+        }
+        const label =
+          outcome.platform === 'youtube'
+            ? 'YouTube'
+            : outcome.platform === 'tiktok'
+              ? 'TikTok'
+              : 'Instagram';
+        showToast(`Importing ${label} recipe…`, 'success');
+        navigate(`/import/link?url=${encodeURIComponent(outcome.url)}`);
+        return;
+      }
+      if (outcome.kind === 'unsupported_url') {
+        showToast(
+          'CookYourBooks can only import from YouTube, TikTok, and Instagram so far.',
+          'warn',
+          5000,
+        );
+        return;
+      }
+      // no_url — the share extension ran but we couldn't find a URL.
+      showToast(
+        "Couldn't read a link from that share. Try sharing the URL directly.",
+        'warn',
+        5000,
+      );
     });
   }, [navigate]);
-  return null;
+
+  if (!toast) return null;
+  const palette =
+    toast.tone === 'success'
+      ? 'bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950'
+      : toast.tone === 'warn'
+        ? 'bg-amber-600 text-white dark:bg-amber-400 dark:text-amber-950'
+        : 'bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900';
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`pointer-events-none fixed left-1/2 top-[max(1rem,env(safe-area-inset-top))] z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-medium shadow-lg ${palette}`}
+    >
+      {toast.text}
+    </div>
+  );
 }
 
 // Branches on auth state so `/` is a marketing page for visitors and a
