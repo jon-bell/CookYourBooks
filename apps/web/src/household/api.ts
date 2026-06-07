@@ -175,9 +175,27 @@ export async function listMyAuditLog(opts: { limit?: number } = {}): Promise<Aud
 
 // ---------- Mutations ----------
 
+/**
+ * Re-mint the access token so the custom_access_token_hook restamps the
+ * `household_id` claim after a membership change — without this the claim
+ * (and therefore RLS household visibility) stays stale until the next
+ * auto-refresh. Best-effort: the membership write already committed, so a
+ * transient refresh failure self-heals on the next auto-refresh rather
+ * than failing the whole operation. `onAuthStateChange('TOKEN_REFRESHED')`
+ * propagates the new claim to AuthProvider / SyncProvider.
+ */
+async function refreshClaims(): Promise<void> {
+  try {
+    await supabase.auth.refreshSession();
+  } catch {
+    /* stale claim self-heals on the next auto-refresh (≤ jwt_expiry) */
+  }
+}
+
 export async function createHousehold(name: string): Promise<string> {
   const { data, error } = await supabase.rpc('create_household', { p_name: name });
   if (error) throw error;
+  await refreshClaims();
   return data as string;
 }
 
@@ -192,6 +210,8 @@ export async function renameHousehold(householdId: string, name: string): Promis
 export async function deleteHousehold(householdId: string): Promise<void> {
   const { error } = await supabase.rpc('delete_household', { p_household_id: householdId });
   if (error) throw error;
+  // Deleting cascades away the owner's membership row → clear the claim.
+  await refreshClaims();
 }
 
 export async function inviteToHousehold(householdId: string): Promise<string> {
@@ -210,12 +230,14 @@ export async function revokeHouseholdInvite(inviteId: string): Promise<void> {
 export async function acceptHouseholdInvite(token: string): Promise<string> {
   const { data, error } = await supabase.rpc('accept_household_invite', { p_token: token });
   if (error) throw error;
+  await refreshClaims();
   return data as string;
 }
 
 export async function leaveHousehold(): Promise<void> {
   const { error } = await supabase.rpc('leave_household');
   if (error) throw error;
+  await refreshClaims();
 }
 
 export async function removeHouseholdMember(userId: string): Promise<void> {
