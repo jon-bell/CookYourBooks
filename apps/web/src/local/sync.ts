@@ -81,8 +81,9 @@ const PAGE_SIZE = 1000;
 
 // Modest — the prod PG instance is small (512MB / fractional CPU), so we
 // fan out a handful of pages at a time rather than opening a connection
-// per page.
-const PAGE_CONCURRENCY = 4;
+// per page. Kept low because the full-pull fan-out otherwise floods the
+// box with concurrent queries and trips the 8s statement timeout (57014).
+const PAGE_CONCURRENCY = 2;
 
 // Local upsert + watermark-checkpoint chunk for the recipes pull. The
 // recipe rows come back ordered by (updated_at, id), so upserting them in
@@ -137,6 +138,33 @@ async function fetchAllPages<T>(
       if (rows.length < PAGE_SIZE) reachedEnd = true;
     }
     if (reachedEnd) break;
+  }
+  return out;
+}
+
+/**
+ * Keyset pagination by `id`, sequential. Each page is `where id > <last id>
+ * order by id limit PAGE_SIZE`, so it's an O(PAGE_SIZE) primary-key range
+ * scan regardless of depth — unlike `.range()`/OFFSET, which re-scans
+ * O(offset) rows per page (a 16k-row table scans the whole table on every
+ * deep page). Used for the big full-pull queries where OFFSET depth +
+ * concurrency were tripping the 8s statement timeout. The caller's result
+ * order doesn't matter here — children are grouped by recipe_id locally and
+ * recipes are upserted by id — so ordering by id (instead of updated_at) is
+ * fine, and it's the column with a usable keyset index (the PK).
+ */
+async function fetchAllByIdKeyset<T extends { id: string }>(
+  build: (afterId: string | null) => PromiseLike<PageResult>,
+): Promise<T[]> {
+  const out: T[] = [];
+  let afterId: string | null = null;
+  while (true) {
+    const { data, error } = await build(afterId);
+    if (error) throw error;
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+    afterId = rows[rows.length - 1]!.id;
   }
   return out;
 }
@@ -435,17 +463,32 @@ export async function pullAll(
   // (1000), so we loop until exhausted — without this, libraries past
   // 1000 recipes never sync the rows beyond the cap and newly-saved
   // recipes silently fail to appear on other devices.
-  const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
-    (from, to) =>
-      client
-        .from('recipes')
-        .select('*, recipe_collections!inner(owner_id)')
-        .eq('recipe_collections.owner_id', ownerId)
-        .gte('updated_at', recipesSince)
-        .order('updated_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to),
-  );
+  // Full pull (watermark 0, ~16k rows): keyset by id — PK range scan,
+  // O(PAGE_SIZE) per page, sequential, so deep pages don't re-scan the table
+  // and we don't flood the box with concurrent deep-OFFSET scans (the 57014).
+  // Incremental: tiny result, offset pagination is fine and keeps the
+  // updated_at watermark ordering.
+  const recipeRowsRaw = fullPull
+    ? await fetchAllByIdKeyset<RecipeRow & { recipe_collections?: unknown }>((afterId) => {
+        let q = client
+          .from('recipes')
+          .select('*, recipe_collections!inner(owner_id)')
+          .eq('recipe_collections.owner_id', ownerId)
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+        if (afterId) q = q.gt('id', afterId);
+        return q;
+      })
+    : await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>((from, to) =>
+        client
+          .from('recipes')
+          .select('*, recipe_collections!inner(owner_id)')
+          .eq('recipe_collections.owner_id', ownerId)
+          .gte('updated_at', recipesSince)
+          .order('updated_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to),
+      );
   const recipesFetched: RecipeRow[] = recipeRowsRaw.map((row) => {
     const { recipe_collections: _rc, ...rest } = row;
     return rest as RecipeRow;
@@ -461,39 +504,55 @@ export async function pullAll(
     // parent's updated_at moving is a sufficient signal. Each child
     // table is paginated independently — the join filter keeps the URL
     // small no matter how many parents matched.
+    // Full pull: keyset by id (PK range scan, O(PAGE_SIZE) per page) and no
+    // recipes join — children are grouped by recipe_id locally and sort
+    // order is a stored column, so id ordering is fine. Incremental: offset
+    // pagination + the recipes!inner(updated_at) watermark join (tiny result).
+    // iir has no `id` (composite PK), so it stays on offset; it's bounded by
+    // the instructions join and small.
     const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
-      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) => {
-        const q = client.from('ingredients');
-        return (
-          fullPull
-            ? q.select('*').eq('owner_id', ownerId)
-            : q
-                .select('*, recipes!inner(updated_at)')
-                .eq('owner_id', ownerId)
-                .gte('recipes.updated_at', recipesSince)
-        )
-          .order('recipe_id', { ascending: true })
-          .order('sort_order', { ascending: true })
-          .range(from, to);
-      }),
-      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) => {
-        const q = client.from('instructions');
-        return (
-          fullPull
-            ? q.select('*').eq('owner_id', ownerId)
-            : q
-                .select('*, recipes!inner(updated_at)')
-                .eq('owner_id', ownerId)
-                .gte('recipes.updated_at', recipesSince)
-        )
-          .order('recipe_id', { ascending: true })
-          .order('step_number', { ascending: true })
-          .range(from, to);
-      }),
-      // iir has no recipe_id of its own — it needs the parent recipe id for
-      // grouping, so it keeps a light `instructions(recipe_id)` join. On a
-      // full pull that join stops at `instructions` (small, owner-RLS only);
-      // incrementally it walks up to `recipes.updated_at` for the watermark.
+      fullPull
+        ? fetchAllByIdKeyset<IngredientRow & { recipes?: unknown }>((afterId) => {
+            let q = client
+              .from('ingredients')
+              .select('*')
+              .eq('owner_id', ownerId)
+              .order('id', { ascending: true })
+              .limit(PAGE_SIZE);
+            if (afterId) q = q.gt('id', afterId);
+            return q;
+          })
+        : fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
+            client
+              .from('ingredients')
+              .select('*, recipes!inner(updated_at)')
+              .eq('owner_id', ownerId)
+              .gte('recipes.updated_at', recipesSince)
+              .order('recipe_id', { ascending: true })
+              .order('sort_order', { ascending: true })
+              .range(from, to),
+          ),
+      fullPull
+        ? fetchAllByIdKeyset<InstructionRow & { recipes?: unknown }>((afterId) => {
+            let q = client
+              .from('instructions')
+              .select('*')
+              .eq('owner_id', ownerId)
+              .order('id', { ascending: true })
+              .limit(PAGE_SIZE);
+            if (afterId) q = q.gt('id', afterId);
+            return q;
+          })
+        : fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
+            client
+              .from('instructions')
+              .select('*, recipes!inner(updated_at)')
+              .eq('owner_id', ownerId)
+              .gte('recipes.updated_at', recipesSince)
+              .order('recipe_id', { ascending: true })
+              .order('step_number', { ascending: true })
+              .range(from, to),
+          ),
       fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>((from, to) => {
         const q = client.from('instruction_ingredient_refs');
         return (
@@ -535,10 +594,14 @@ export async function pullAll(
       instructions: stepsByRecipe.get(r.id) ?? [],
       refs: refsByRecipe.get(r.id) ?? [],
     }));
-    // Upsert + checkpoint in ordered chunks. `batch` is ordered by
-    // (updated_at, id), so after a chunk lands locally every recipe with a
-    // smaller updated_at is already present; bumping the watermark to the
-    // chunk's max is safe (the >= refetch on resume is idempotent).
+    // Upsert in chunks. Watermark handling differs by pull type:
+    //  - Incremental: `batch` is ordered by (updated_at, id), so after each
+    //    chunk every recipe with a smaller updated_at is present — bumping to
+    //    the chunk's max is a safe resume point (the >= refetch is idempotent).
+    //  - Full pull: `batch` is ordered by *id*, not updated_at, so a chunk's
+    //    max updated_at is NOT a safe watermark (older recipes may still be in
+    //    a later id-chunk). Bump once at the end, to the max across all rows.
+    let maxRecipeTs = 0;
     for (let i = 0; i < batch.length; i += RECIPE_CHECKPOINT_CHUNK) {
       if (signal?.aborted) break;
       const chunk = batch.slice(i, i + RECIPE_CHECKPOINT_CHUNK);
@@ -549,7 +612,13 @@ export async function pullAll(
         stepTotal += instructions.length;
         chunkMaxTs = Math.max(chunkMaxTs, toMs(recipe.updated_at));
       }
-      if (chunkMaxTs > 0) await bumpWatermark(recipeTopic, chunkMaxTs);
+      maxRecipeTs = Math.max(maxRecipeTs, chunkMaxTs);
+      if (!fullPull && chunkMaxTs > 0) await bumpWatermark(recipeTopic, chunkMaxTs);
+    }
+    // Full pull: only checkpoint once the whole library has landed, so an
+    // interrupted full pull restarts clean rather than skipping older rows.
+    if (fullPull && !signal?.aborted && maxRecipeTs > 0) {
+      await bumpWatermark(recipeTopic, maxRecipeTs);
     }
   }
   logSync(
@@ -705,17 +774,27 @@ async function pullHouseholdSharedContent(
   // Same full-pull optimization as the owned path: skip the children's
   // recipes join on the first (watermark-0) household pull.
   const fullPull = recipeSinceMs === 0;
-  const recipeRowsRaw = await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>(
-    (from, to) =>
-      client
-        .from('recipes')
-        .select('*, recipe_collections!inner(owner_id)')
-        .neq('recipe_collections.owner_id', ownerId)
-        .gte('updated_at', recipesSince)
-        .order('updated_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to),
-  );
+  const recipeRowsRaw = fullPull
+    ? await fetchAllByIdKeyset<RecipeRow & { recipe_collections?: unknown }>((afterId) => {
+        let q = client
+          .from('recipes')
+          .select('*, recipe_collections!inner(owner_id)')
+          .neq('recipe_collections.owner_id', ownerId)
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+        if (afterId) q = q.gt('id', afterId);
+        return q;
+      })
+    : await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>((from, to) =>
+        client
+          .from('recipes')
+          .select('*, recipe_collections!inner(owner_id)')
+          .neq('recipe_collections.owner_id', ownerId)
+          .gte('updated_at', recipesSince)
+          .order('updated_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to),
+      );
   const recipes: RecipeRow[] = recipeRowsRaw.map((row) => {
     const { recipe_collections: _rc, ...rest } = row;
     return rest as RecipeRow;
