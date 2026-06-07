@@ -6,7 +6,7 @@ import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.j
 import { useOcrKeys } from '../import/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
-import { getUserOcrPrefs } from '../import/api.js';
+import { getEffectiveOcrConfig } from '../import/api.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import {
   DEFAULT_FALLBACK_MODEL,
@@ -17,6 +17,7 @@ import {
   isMultiShotAvailable,
 } from '../import/multiShotShim.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 
 type Step = 'source' | 'review' | 'settings' | 'uploading';
 
@@ -49,6 +50,13 @@ export function ImportNewPage() {
     '' | 'gemini' | 'openai-compatible'
   >(() => loadFallbackPrefs().provider);
   const [fallbackModel, setFallbackModel] = useState(() => loadFallbackPrefs().model);
+  // Effective OCR config: own prefs, else the household's shared config.
+  // The prompt + keyOwnerId aren't edited in this form — they're snapshotted
+  // onto the batch so the worker uses them (prompt) / bills the right account.
+  const [ocrPrompt, setOcrPrompt] = useState<string | null>(null);
+  const [keyOwnerId, setKeyOwnerId] = useState<string | null>(null);
+  const [configSource, setConfigSource] = useState<'own' | 'household' | null>(null);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [multiShotReady, setMultiShotReady] = useState(false);
@@ -58,14 +66,24 @@ export function ImportNewPage() {
   // to whichever provider has a key configured, then a hardcoded default.
   useEffect(() => {
     let cancelled = false;
-    // Prefer server-side prefs (user_ocr_prefs); fall back to a sensible
-    // default keyed off whichever provider already has a vault key.
-    void getUserOcrPrefs()
-      .then((prefs) => {
+    // Effective config: the user's own prefs+key, else the household's
+    // shared config (provider/model/prompt/fallback + borrowed key).
+    void getEffectiveOcrConfig()
+      .then((cfg) => {
         if (cancelled) return;
-        if (prefs && prefs.model) {
-          setProvider(prefs.provider);
-          setModel(prefs.model);
+        setNeedsSetup(cfg === null);
+        if (cfg) {
+          setProvider(cfg.provider);
+          setModel(cfg.model || DEFAULT_MODEL_BY_PROVIDER[cfg.provider]);
+          setOcrPrompt(cfg.prompt);
+          setConfigSource(cfg.source);
+          setKeyOwnerId(cfg.source === 'household' ? cfg.keyOwnerId : null);
+          if (cfg.source === 'household') {
+            // Household config carries its own fallback choice.
+            setFallbackProvider(cfg.fallbackProvider ?? '');
+            setFallbackModel(cfg.fallbackModel ?? '');
+            return;
+          }
         } else if (ocrKeys.length > 0) {
           const k = ocrKeys[0]!;
           const p = k.provider === 'openai-compatible' ? 'openai-compatible' : 'gemini';
@@ -74,8 +92,7 @@ export function ImportNewPage() {
         } else {
           setModel(DEFAULT_MODEL_BY_PROVIDER.gemini);
         }
-        // Fallback model still lives in localStorage (Speed Importer +
-        // fallback prefs share the same form).
+        // Own/own-default path: fallback still lives in localStorage.
         const fallback = loadFallbackPrefs();
         setFallbackProvider(fallback.provider);
         setFallbackModel(fallback.model);
@@ -181,10 +198,12 @@ export function ImportNewPage() {
           targetCollectionId: targetCollectionId || null,
           defaultProvider: provider,
           defaultModel: model.trim() || DEFAULT_MODEL_BY_PROVIDER[provider],
+          defaultPrompt: ocrPrompt,
           fallbackProvider: fallbackProvider || null,
           fallbackModel: fallbackProvider
             ? fallbackModel.trim() || DEFAULT_FALLBACK_MODEL
             : null,
+          keyOwnerId,
           sourceKind,
           files,
           awaitGrouping: importMode === 'group-first',
@@ -251,6 +270,16 @@ export function ImportNewPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">New import batch</h1>
+
+      {needsSetup && <OcrSetupGuide />}
+      {configSource === 'household' && (
+        <div
+          data-testid="ocr-household-note"
+          className="rounded-md border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-200"
+        >
+          Your household set up OCR for you — you're ready to import.
+        </div>
+      )}
 
       {step === 'source' && (
         <section className="space-y-4">

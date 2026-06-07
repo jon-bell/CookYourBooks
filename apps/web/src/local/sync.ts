@@ -214,8 +214,10 @@ interface ImportBatchRow {
   target_collection_id: string | null;
   default_model: string;
   default_provider: 'gemini' | 'openai-compatible';
+  default_prompt: string | null;
   fallback_model: string | null;
   fallback_provider: 'gemini' | 'openai-compatible' | null;
+  key_owner_id: string | null;
   recitation_policy: 'ASK' | 'FALLBACK' | 'FAIL';
   status: 'OPEN' | 'ARCHIVED';
   total_items: number;
@@ -983,8 +985,10 @@ const IMPORT_BATCH_COLS = [
   'target_collection_id',
   'default_model',
   'default_provider',
+  'default_prompt',
   'fallback_model',
   'fallback_provider',
+  'key_owner_id',
   'recitation_policy',
   'status',
   'total_items',
@@ -1157,8 +1161,10 @@ function importBatchToParams(row: ImportBatchRow): readonly unknown[] {
     row.target_collection_id,
     row.default_model,
     row.default_provider,
+    row.default_prompt ?? null,
     row.fallback_model,
     row.fallback_provider,
+    row.key_owner_id ?? null,
     row.recitation_policy,
     row.status,
     row.total_items,
@@ -2593,9 +2599,11 @@ async function pushImportBatchInsert(
     target_collection_id: (local.target_collection_id as string | null) ?? null,
     default_model: local.default_model as string,
     default_provider: local.default_provider as 'gemini' | 'openai-compatible',
+    default_prompt: (local.default_prompt as string | null) ?? null,
     fallback_model: (local.fallback_model as string | null) ?? null,
     fallback_provider:
       (local.fallback_provider as 'gemini' | 'openai-compatible' | null) ?? null,
+    key_owner_id: (local.key_owner_id as string | null) ?? null,
     status: local.status as 'OPEN' | 'ARCHIVED',
     is_planner: local.is_planner === 1 || local.is_planner === true,
   } as BatchInsert;

@@ -257,6 +257,142 @@ export async function setUserOcrPrefs(prefs: {
   if (error) throw error;
 }
 
+// ---------- shared household OCR config ----------
+
+export interface HouseholdOcrConfig {
+  household_id: string;
+  ocr_share_enabled: boolean;
+  provider: OcrProvider;
+  model: string;
+  prompt: string | null;
+  fallback_provider: OcrProvider | null;
+  fallback_model: string | null;
+  key_owner_id: string;
+  updated_at: string;
+}
+
+/** The caller's household OCR config, if any (RLS scopes it to their household). */
+export async function getHouseholdOcrConfig(): Promise<HouseholdOcrConfig | null> {
+  const { data, error } = await supabase
+    .from('household_ocr_config')
+    .select(
+      'household_id, ocr_share_enabled, provider, model, prompt, fallback_provider, fallback_model, key_owner_id, updated_at',
+    )
+    .maybeSingle();
+  if (error) throw error;
+  return (data as HouseholdOcrConfig | null) ?? null;
+}
+
+/** Owner-only: set/toggle the household's shared OCR config. */
+export async function setHouseholdOcrConfig(params: {
+  householdId: string;
+  enabled: boolean;
+  provider: OcrProvider;
+  model: string;
+  prompt?: string | null;
+  fallbackProvider?: OcrProvider | null;
+  fallbackModel?: string | null;
+  keyOwnerId?: string | null;
+}): Promise<void> {
+  const { error } = await supabase.rpc('set_household_ocr_config', {
+    p_household_id: params.householdId,
+    p_enabled: params.enabled,
+    p_provider: params.provider,
+    p_model: params.model,
+    p_prompt: params.prompt ?? undefined,
+    p_fallback_provider: params.fallbackProvider ?? undefined,
+    p_fallback_model: params.fallbackModel ?? undefined,
+    p_key_owner_id: params.keyOwnerId ?? undefined,
+  });
+  if (error) throw error;
+}
+
+// ---------- effective OCR config (own, else household-shared) ----------
+
+export interface EffectiveOcrConfig {
+  provider: OcrProvider;
+  model: string;
+  prompt: string | null;
+  fallbackProvider: OcrProvider | null;
+  fallbackModel: string | null;
+  /** Where the config came from. 'household' drives the onboarding shortcut. */
+  source: 'own' | 'household';
+  /** For household source: the member whose key/account is borrowed. */
+  keyOwnerId: string | null;
+}
+
+/**
+ * Resolve the OCR config to use for a bulk import: the member's own prefs
+ * (when they also have a key for that provider) win; otherwise the
+ * household's shared config if sharing is enabled. Returns null when the
+ * user has neither — the import entry then shows the onboarding guide.
+ *
+ * Never exposes a key: the household row carries only a key_owner_id
+ * pointer; the worker resolves the actual Vault key at run time.
+ */
+export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null> {
+  const [prefs, ownKeys] = await Promise.all([
+    getUserOcrPrefs().catch(() => null),
+    listOcrKeys().catch(() => [] as OcrKeySummary[]),
+  ]);
+  const hasOwnKeyForPrefs =
+    prefs != null && ownKeys.some((k) => k.provider === prefs.provider);
+  if (prefs && hasOwnKeyForPrefs) {
+    return {
+      provider: prefs.provider,
+      model: prefs.model,
+      prompt: prefs.prompt,
+      fallbackProvider: null,
+      fallbackModel: null,
+      source: 'own',
+      keyOwnerId: null,
+    };
+  }
+
+  const household = await getHouseholdOcrConfig().catch(() => null);
+  if (household && household.ocr_share_enabled) {
+    return {
+      provider: household.provider,
+      model: household.model,
+      prompt: household.prompt,
+      fallbackProvider: household.fallback_provider,
+      fallbackModel: household.fallback_model,
+      source: 'household',
+      keyOwnerId: household.key_owner_id,
+    };
+  }
+
+  // No usable household config: fall back to own prefs if present (lets the
+  // form seed even before a key is added).
+  if (prefs) {
+    return {
+      provider: prefs.provider,
+      model: prefs.model,
+      prompt: prefs.prompt,
+      fallbackProvider: null,
+      fallbackModel: null,
+      source: 'own',
+      keyOwnerId: null,
+    };
+  }
+  // No prefs but a key exists → usable with a default model (not onboarding).
+  if (ownKeys.length > 0) {
+    const provider: OcrProvider =
+      ownKeys[0]!.provider === 'openai-compatible' ? 'openai-compatible' : 'gemini';
+    return {
+      provider,
+      model: '',
+      prompt: null,
+      fallbackProvider: null,
+      fallbackModel: null,
+      source: 'own',
+      keyOwnerId: null,
+    };
+  }
+  // Nothing configured anywhere → caller shows the onboarding guide.
+  return null;
+}
+
 export async function mergeImportItems(
   primaryId: string,
   absorbIds: readonly string[],

@@ -17,6 +17,7 @@ import {
 import { AcceptTosGate } from '../household/AcceptTosGate.js';
 import { AuditLogSection } from '../household/AuditLogSection.js';
 import { LibrarySharingSection } from '../household/LibrarySharingSection.js';
+import { HouseholdOcrSection } from '../household/HouseholdOcrSection.js';
 import { isTosNotAcceptedError } from '../household/api.js';
 
 /**
@@ -278,6 +279,13 @@ function HouseholdView({
         householdId={household.id}
         householdName={household.name}
         libraryShared={libraryShared}
+      />
+
+      <HouseholdOcrSection
+        householdId={household.id}
+        householdName={household.name}
+        isOwner={isOwner}
+        members={members}
       />
 
       <div>

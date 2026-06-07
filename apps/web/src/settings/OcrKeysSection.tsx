@@ -81,6 +81,18 @@ export function OcrKeysSection() {
           service role) can decrypt them. The browser never reads the key back. The same keys
           power the bulk import flow and the bakeoff page.
         </p>
+        <p className="mt-1 text-sm text-stone-600">
+          Need a key? Create a free Google Gemini key at{' '}
+          <a
+            href="https://aistudio.google.com/apikey"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            Google AI Studio
+          </a>
+          , or use any OpenAI-compatible provider (OpenAI, Groq, Together, OpenRouter…).
+        </p>
       </div>
 
       {error && (

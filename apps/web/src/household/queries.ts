@@ -7,6 +7,11 @@ import {
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
 import * as api from './api.js';
+import {
+  getHouseholdOcrConfig,
+  setHouseholdOcrConfig,
+  listOcrKeys,
+} from '../import/api.js';
 
 /** Active household + members + role for the signed-in user. */
 export function useMyHousehold(): UseQueryResult<
@@ -160,6 +165,33 @@ export function useSetLibrarySharing() {
       await invalidate();
       await qc.invalidateQueries({ queryKey: ['collections'] });
     },
+  });
+}
+
+export function useHouseholdOcrConfig() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['household', 'ocr', user?.id],
+    queryFn: getHouseholdOcrConfig,
+    enabled: !!user,
+  });
+}
+
+/** The caller's own OCR keys — used by the owner to pick which to share. */
+export function useOwnOcrKeys() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['ocr', 'keys', user?.id],
+    queryFn: listOcrKeys,
+    enabled: !!user,
+  });
+}
+
+export function useSetHouseholdOcrConfig() {
+  const invalidate = useInvalidateHousehold();
+  return useMutation({
+    mutationFn: setHouseholdOcrConfig,
+    onSuccess: invalidate,
   });
 }
 

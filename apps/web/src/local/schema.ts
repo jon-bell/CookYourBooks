@@ -141,6 +141,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     total_items integer not null default 0,
     batch_kind text not null default 'STANDARD',
     is_planner integer not null default 0,
+    default_prompt text,
+    key_owner_id text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -462,6 +464,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     status text not null default 'OPEN',
     total_items integer not null default 0,
     batch_kind text not null default 'STANDARD',
+    default_prompt text,
+    key_owner_id text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -707,4 +711,10 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table cooking_events add column photo_paths text not null default '[]'`,
   // Meal slot (breakfast/lunch/dinner/snack). Nullable, additive.
   `alter table cooking_events add column meal_slot text`,
+  // Bulk OCR (2026-06-22): snapshot the effective prompt onto the batch so
+  // the worker uses the user's / household's prompt (was always falling back
+  // to the built-in RECIPE_PROMPT), and record which member's key paid when
+  // the config came from a household. Both nullable + additive.
+  `alter table import_batches add column default_prompt text`,
+  `alter table import_batches add column key_owner_id text`,
 ];
