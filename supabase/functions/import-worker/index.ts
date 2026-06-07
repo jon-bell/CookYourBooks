@@ -23,9 +23,8 @@ import {
   buildRecipeEmbedText,
   embedBatch,
   EMBEDDING_DIM,
-  EMBEDDING_MODEL_ID,
+  EMBEDDING_STORED_MODEL,
   hashEmbedText,
-  preloadEmbedder,
   type EmbedRecipeInput,
 } from './embed.ts';
 
@@ -1675,27 +1674,12 @@ async function runEmbedLoop(
   if (jobs.length === 0) return { processed, failed };
   log.info('claimed embed jobs', { count: jobs.length });
 
-  // Load the BGE pipeline once for the whole invocation. Cold start
-  // pays the model download (~30 MB, cached in /tmp); warm starts
-  // reuse the same in-memory pipeline.
-  try {
-    await preloadEmbedder();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error('embed pipeline preload failed', { error: msg });
-    // Fail every claimed job back to PENDING so a future invocation
-    // (maybe on a healthier instance) can retry them.
-    for (const job of jobs) {
-      await supabase.rpc('embed_fail', {
-        p_job_id: job.id,
-        p_claim_token: workerId,
-        p_error: `pipeline load: ${msg}`,
-        p_next_state: 'PENDING',
-      });
-    }
-    return { processed, failed: jobs.length };
-  }
-
+  // No model preload step: the native Supabase.ai session is constructed
+  // lazily inside embedBatch (cheap, no CDN download). If the runtime
+  // can't construct it, the throw surfaces per-job in processEmbedJob,
+  // which honours MAX_EMBED_RETRIES and dead-letters to FAILED — so a
+  // persistently broken runtime bounds out instead of re-queueing every
+  // job to PENDING forever (the old preload-failure loop).
   for (const job of jobs) {
     const outcome = await processEmbedJob(
       job,
@@ -1715,7 +1699,6 @@ interface EmbedRecipeRow {
   notes: string | null;
   book_title: string | null;
   equipment: string[] | null;
-  deleted: boolean;
 }
 
 interface EmbedIngredientRow {
@@ -1734,9 +1717,13 @@ async function processEmbedJob(
 ): Promise<'DONE' | 'FAILED'> {
   log.info('embed start', { recipe: shortId(job.recipe_id), attempts: job.attempts });
 
+  // No `deleted` column: server-side `recipes` has no tombstone (that's a
+  // cr-sqlite local-only concern). A deleted recipe simply doesn't exist
+  // here, so `!recipeRow` below is the deletion check. Selecting `deleted`
+  // would 42703 and dead-letter every job.
   const { data: recipeRow, error: rErr } = await supabase
     .from('recipes')
-    .select('id, title, description, notes, book_title, equipment, deleted')
+    .select('id, title, description, notes, book_title, equipment')
     .eq('id', job.recipe_id)
     .maybeSingle();
   if (rErr) {
@@ -1745,16 +1732,12 @@ async function processEmbedJob(
     return 'FAILED';
   }
   if (!recipeRow) {
-    // Recipe was deleted out from under us — mark the job DONE so it
+    // Recipe was deleted out from under us — mark the job FAILED so it
     // stops re-queueing on every cron tick.
     await failEmbedJob(job, workerId, 'recipe missing', 'FAILED');
     return 'FAILED';
   }
   const recipe = recipeRow as EmbedRecipeRow;
-  if (recipe.deleted) {
-    await failEmbedJob(job, workerId, 'recipe deleted', 'FAILED');
-    return 'FAILED';
-  }
 
   const { data: ingRows, error: iErr } = await supabase
     .from('ingredients')
@@ -1793,7 +1776,7 @@ async function processEmbedJob(
   if (
     existing &&
     (existing as { text_hash: string }).text_hash === textHash &&
-    (existing as { model: string }).model === EMBEDDING_MODEL_ID
+    (existing as { model: string }).model === EMBEDDING_STORED_MODEL
   ) {
     log.info('embed cache hit', { recipe: shortId(job.recipe_id) });
     // Mark the job done with the existing vector — embed_complete needs
@@ -1845,7 +1828,7 @@ async function completeEmbedJob(
     p_claim_token: workerId,
     p_text_hash: textHash,
     p_embedding: Array.from(vec) as unknown as number[],
-    p_model: EMBEDDING_MODEL_ID,
+    p_model: EMBEDDING_STORED_MODEL,
   });
   if (error) {
     log.error('embed_complete rpc error', { code: error.code, message: error.message });

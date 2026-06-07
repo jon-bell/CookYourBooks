@@ -1,11 +1,22 @@
 import type { Recipe } from '../model/recipe.js';
 
-// Pinned model identity. Both the browser and the Deno Edge Function
-// load weights against this id; bumping it requires re-embedding the
-// whole corpus (delete from recipe_embeddings where model <> $current
-// then re-enqueue jobs). The text_hash + model columns let the worker
-// short-circuit a recompute when neither has drifted.
-export const EMBEDDING_MODEL_ID = 'Xenova/bge-small-en-v1.5';
+// Pinned model identity. The browser loads gte-small via
+// @huggingface/transformers (`EMBEDDING_MODEL_ID`, an HF repo id); the
+// Deno Edge Function runs the same gte-small weights through the native
+// `Supabase.ai.Session('gte-small')` API. They are different runtime
+// artifacts of the same model, so they produce cosine-comparable 384-d
+// vectors — but they are NOT the same loader string. The value actually
+// stored in `recipe_embeddings.model` (and compared for cache hits on
+// both sides) is the logical `EMBEDDING_STORED_MODEL`; bumping THAT is
+// what requires re-embedding the whole corpus (delete from
+// recipe_embeddings where model <> $current then re-enqueue jobs). The
+// text_hash + model columns let the worker short-circuit a recompute
+// when neither has drifted.
+//
+// gte-small is symmetric — it needs no query-instruction prefix (unlike
+// bge/e5), so queries and documents are embedded identically.
+export const EMBEDDING_MODEL_ID = 'Xenova/gte-small';
+export const EMBEDDING_STORED_MODEL = 'gte-small';
 export const EMBEDDING_DIM = 384;
 
 /**

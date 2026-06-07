@@ -1468,7 +1468,7 @@ export async function listSearchableEmbeddings(
     title: string;
     embedding: Uint8Array;
   }>(
-    `select e.recipe_id, r.collection_id, r.title,
+    `select e.recipe_id, e.embedding, r.collection_id, r.title,
             c.title as collection_title, c.source_type
        from recipe_embeddings e
        join recipes r on r.id = e.recipe_id and r.deleted = 0

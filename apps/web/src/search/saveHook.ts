@@ -1,6 +1,6 @@
 import {
   buildRecipeEmbedText,
-  EMBEDDING_MODEL_ID,
+  EMBEDDING_STORED_MODEL,
   hashEmbedText,
   type Recipe,
 } from '@cookyourbooks/domain';
@@ -28,7 +28,7 @@ export async function embedAndPushRecipe(recipe: Recipe): Promise<void> {
   const text = buildRecipeEmbedText(recipe);
   const textHash = await hashEmbedText(text);
   const cached = await getLocalEmbedding(recipe.id);
-  if (cached && cached.textHash === textHash && cached.model === EMBEDDING_MODEL_ID) {
+  if (cached && cached.textHash === textHash && cached.model === EMBEDDING_STORED_MODEL) {
     // No-op: the recipe's searchable text hasn't moved.
     return;
   }
@@ -45,7 +45,7 @@ export async function embedAndPushRecipe(recipe: Recipe): Promise<void> {
     recipeId: recipe.id,
     embedding: vector,
     textHash,
-    model: EMBEDDING_MODEL_ID,
+    model: EMBEDDING_STORED_MODEL,
     updatedAtMs: Date.now(),
   });
   await enqueue({ kind: 'embedding_push', entity_id: recipe.id });

@@ -1,53 +1,61 @@
 // Recipe embedding pipeline (worker side).
 //
-// Same model + tokenizer + dimensions as the browser path. Loaded once
-// per cold start of the Edge Function; subsequent invocations of the
-// same instance reuse the cached pipeline.
-//
-// The deno bundle of @huggingface/transformers ships ONNX Runtime Web
-// alongside; weight downloads are cached in the function's
-// `/tmp/transformers-cache` directory for the lifetime of the instance.
+// Runs gte-small through the Supabase Edge Runtime's native AI inference
+// API (`Supabase.ai.Session`). transformers.js does NOT work in this
+// runtime — its ONNX backend exposes no execution provider, so
+// `pipeline('feature-extraction', …)` throws `Unsupported device: "cpu"`.
+// The native session is the Supabase-supported path: fast (sub-second
+// warm, ~5s cold incl. model load), no request-time CDN download, and
+// 384-d. gte-small is symmetric (no query-instruction prefix), matching
+// the browser's Xenova/gte-small so the vectors are cosine-comparable.
 
-import { pipeline } from 'https://esm.sh/@huggingface/transformers@3.7.4';
-
-// Pinned identifiers. Keep in lockstep with
-// packages/domain/src/services/embeddingModel.ts — bumping either
-// requires re-embedding the whole corpus.
-export const EMBEDDING_MODEL_ID = 'Xenova/bge-small-en-v1.5';
+// Logical stored-model id. Keep in lockstep with
+// packages/domain/src/services/embeddingModel.ts (EMBEDDING_STORED_MODEL):
+// this is the value written to recipe_embeddings.model and compared for
+// cache hits on both browser and edge. Bumping it requires re-embedding
+// the whole corpus.
+export const EMBEDDING_STORED_MODEL = 'gte-small';
 export const EMBEDDING_DIM = 384;
 
-type FeatureExtractor = (
-  input: string | string[],
-  opts?: { pooling?: 'mean' | 'cls' | 'none'; normalize?: boolean },
-) => Promise<{ data: Float32Array | number[]; dims?: number[] }>;
+// The native session's bundled model name. Conceptually distinct from
+// EMBEDDING_STORED_MODEL (the loader id vs the stored id) even though
+// they share a string today.
+const GTE_SESSION_MODEL = 'gte-small';
 
-let pipePromise: Promise<FeatureExtractor> | undefined;
+// `Supabase` is an ambient global injected by the Edge Runtime. Declare
+// it so the Deno LSP / `deno check` are clean (edge functions are not in
+// the pnpm typecheck gate). With `mean_pool: true` the session returns a
+// single mean-pooled vector as a plain number[] — NOT a transformers.js
+// `{ data }` tensor.
+type AiSession = {
+  run(
+    input: string,
+    opts?: { mean_pool?: boolean; normalize?: boolean },
+  ): Promise<number[] | Float32Array>;
+};
+declare const Supabase: { ai: { Session: new (model: string) => AiSession } };
 
-export function preloadEmbedder(): Promise<FeatureExtractor> {
-  if (!pipePromise) {
-    pipePromise = (async () => {
-      const p = await pipeline('feature-extraction', EMBEDDING_MODEL_ID, {
-        dtype: 'q8',
-      });
-      return p as unknown as FeatureExtractor;
-    })();
+// One session per warm instance. Constructed lazily — if the runtime
+// lacks the model the constructor throws here, which surfaces through
+// embedBatch to the per-job retry budget in index.ts (no infinite loop).
+let sessionSingleton: AiSession | undefined;
+function getSession(): AiSession {
+  if (!sessionSingleton) {
+    sessionSingleton = new Supabase.ai.Session(GTE_SESSION_MODEL);
   }
-  return pipePromise;
+  return sessionSingleton;
 }
 
 export async function embedBatch(texts: readonly string[]): Promise<Float32Array[]> {
   if (texts.length === 0) return [];
-  const pipe = await preloadEmbedder();
+  const session = getSession();
   const out: Float32Array[] = [];
-  // Process serially. Library batches internally when given an array,
-  // but its return shape concatenates into a (N*dim) flat buffer that
-  // we'd have to chunk back apart. A small per-job loop is plenty fast
-  // for the queue rate we expect (single-digit batches per cron tick).
+  // Process serially — single-digit batches per tick, so the simple loop
+  // is plenty fast. mean_pool + normalize yield one L2-normalized 384-d
+  // vector per text (dot product = cosine).
   for (const text of texts) {
-    const res = await pipe(text, { pooling: 'mean', normalize: true });
-    const arr = res.data instanceof Float32Array
-      ? new Float32Array(res.data)
-      : Float32Array.from(res.data);
+    const res = await session.run(text, { mean_pool: true, normalize: true });
+    const arr = res instanceof Float32Array ? res : Float32Array.from(res as ArrayLike<number>);
     if (arr.length !== EMBEDDING_DIM) {
       throw new Error(
         `Embedder returned ${arr.length} dims, expected ${EMBEDDING_DIM}.`,

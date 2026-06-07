@@ -63,8 +63,8 @@ export function SearchPage() {
           <div className="text-sm text-stone-600 dark:text-stone-400">
             {filteredHits.length}{' '}
             {filteredHits.length === 1 ? 'result' : 'results'}
-            {mode === 'substring' && embedderStatus === 'ready' && hits.length === 0 && (
-              <span> (no semantic matches — showing substring hits)</span>
+            {mode === 'substring' && embedderStatus === 'ready' && hits.length > 0 && (
+              <span> (semantic search found nothing — showing literal matches)</span>
             )}
           </div>
           <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">

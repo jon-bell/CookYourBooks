@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EMBEDDING_DIM,
   EMBEDDING_MODEL_ID,
+  EMBEDDING_STORED_MODEL,
   buildRecipeEmbedText,
   hashEmbedText,
 } from '../src/services/embeddingModel.js';
@@ -11,7 +12,8 @@ import { exact } from '../src/model/quantity.js';
 
 describe('embedding model constants', () => {
   it('matches the dimension of the chosen model', () => {
-    expect(EMBEDDING_MODEL_ID).toBe('Xenova/bge-small-en-v1.5');
+    expect(EMBEDDING_MODEL_ID).toBe('Xenova/gte-small');
+    expect(EMBEDDING_STORED_MODEL).toBe('gte-small');
     expect(EMBEDDING_DIM).toBe(384);
   });
 });

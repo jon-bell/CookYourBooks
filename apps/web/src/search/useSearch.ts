@@ -51,20 +51,21 @@ export function useSearch(q: string): UseSearchResult {
 
   const useSemantic = enabled && embedderStatus === 'ready';
 
-  const { data, isLoading } = useQuery<SearchHit[]>({
+  const { data, isLoading } = useQuery<{ hits: SearchHit[]; mode: 'semantic' | 'substring' }>({
     queryKey: ['search', ownerId, trimmed, useSemantic ? 'sem' : 'sub'],
     enabled,
     queryFn: async () => {
-      if (!ownerId || !trimmed) return [];
+      if (!ownerId || !trimmed) return { hits: [], mode: 'substring' as const };
       if (useSemantic) {
         const semantic = await searchSemantic(ownerId, trimmed);
-        if (semantic.length > 0) return semantic;
+        if (semantic.length > 0) return { hits: semantic, mode: 'semantic' as const };
         // Cold cache: no vectors have been pulled / computed yet. Fall
-        // through to substring so the user gets *something* useful
-        // while the worker drains.
-        return searchSubstring(ownerId, trimmed);
+        // through to substring so the user gets *something* useful while
+        // the worker drains — and report the mode we ACTUALLY used so the
+        // UI can tell the user it's showing literal matches.
+        return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
       }
-      return searchSubstring(ownerId, trimmed);
+      return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
     },
     staleTime: 60_000,
   });
@@ -73,9 +74,12 @@ export function useSearch(q: string): UseSearchResult {
     return { hits: [], isLoading: false, mode: 'empty', embedderStatus };
   }
   return {
-    hits: data ?? [],
+    hits: data?.hits ?? [],
     isLoading,
-    mode: useSemantic ? 'semantic' : 'substring',
+    // Reflect the path actually taken — semantic can fall back to
+    // substring on a cold cache. Before the query resolves, report the
+    // intended mode.
+    mode: data?.mode ?? (useSemantic ? 'semantic' : 'substring'),
     embedderStatus,
   };
 }

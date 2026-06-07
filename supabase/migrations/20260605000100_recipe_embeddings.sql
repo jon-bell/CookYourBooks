@@ -1,6 +1,6 @@
 -- Semantic recipe search via embeddings.
 --
--- Recipes get a 384-dim vector embedding (bge-small-en-v1.5) keyed off
+-- Recipes get a 384-dim vector embedding (gte-small) keyed off
 -- a deterministic SHA-256 of the recipe's searchable text (title,
 -- description, ingredients, notes, book title, equipment — instructions
 -- are deliberately excluded). The same model runs in three places:
@@ -50,7 +50,7 @@ create policy "recipe_embeddings_read" on public.recipe_embeddings
         from public.recipes r
         join public.recipe_collections c on c.id = r.collection_id
         where r.id = recipe_embeddings.recipe_id
-          and (c.owner_id = auth.uid() or c.is_public = true)
+          and (c.owner_id = (select auth.uid()) or c.is_public = true)
     )
   );
 
@@ -94,7 +94,7 @@ create index recipe_embedding_jobs_owner_status_idx
 alter table public.recipe_embedding_jobs enable row level security;
 
 create policy "recipe_embedding_jobs_read_own" on public.recipe_embedding_jobs
-  for select using (owner_id = auth.uid());
+  for select using (owner_id = (select auth.uid()));
 
 create trigger recipe_embedding_jobs_updated
   before update on public.recipe_embedding_jobs
@@ -334,7 +334,11 @@ grant execute on function public.embed_fail(uuid, text, text, text) to service_r
 -- job (if any) is marked DONE so the worker doesn't redo the work.
 --
 -- Dimension validation lives here so a malformed client can't poison
--- the table.
+-- the table. We trust the caller's text_hash + vector otherwise: a
+-- caller can only affect their OWN recipes' search quality (the
+-- ownership check below is RLS-equivalent), and the worker re-embeds
+-- server-side on the next text change — so verifying the vector here
+-- isn't worth a second server-side embed.
 
 create or replace function public.embed_upsert_client(
   p_recipe_id uuid,

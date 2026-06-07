@@ -6,7 +6,7 @@ test.describe('Search', () => {
     // The semantic search path lazy-downloads ~30 MB of model weights
     // from a CDN on first /search visit. Disable it in tests via the
     // shim hook so the substring fallback is exercised deterministically
-    // — the semantic path is covered separately.
+    // — the real-model semantic path is covered in semantic.spec.ts.
     await page.addInitScript(() => {
       (window as unknown as { __cybDisableEmbedder?: boolean }).__cybDisableEmbedder = true;
     });

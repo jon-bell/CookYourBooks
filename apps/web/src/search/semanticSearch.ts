@@ -12,15 +12,20 @@ export interface SearchHit {
   score?: number;
 }
 
-// BGE-small dim. Hard-coded here too rather than imported from domain
+// gte-small dim. Hard-coded here too rather than imported from domain
 // so the worker file can stay framework-free.
 const DIM = 384;
 
-// BGE cosine on totally-unrelated text lands around 0.30–0.35; ramen
-// versus "ramen" is closer to 0.85. A modest floor keeps the tail of
-// 5000-recipe libraries from drowning real matches with off-topic
-// noise. Tune downward if real matches feel missing.
-const FLOOR = 0.35;
+// Calibrated for gte-small. Its cosine distribution is compressed and
+// shifted high (very unlike bge's ~0.30–0.35 for unrelated text):
+// measured over a recipe corpus, true matches land ~0.85–0.91 while
+// unrelated recipe/query pairs sit ~0.78–0.86 — the two overlap, so no
+// floor cleanly separates "relevant" from "not". Ranking (sort by score,
+// top-N) carries relevance; this FLOOR is a coarse tail-cut that drops
+// genuinely off-topic results without amputating true matches near the
+// bottom of the relevant band. 0.80 keeps the relevant band intact while
+// trimming the lower tail. Tune downward if real matches feel missing.
+const FLOOR = 0.8;
 
 // Singleton worker. Created lazily so /search-less sessions don't pay
 // for the worker boot, and reused across queries to avoid re-create

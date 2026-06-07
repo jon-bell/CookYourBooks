@@ -92,9 +92,10 @@ async function loadPipeline(): Promise<FeatureExtractor> {
   // Dynamic import keeps the ~MB-sized library out of the initial
   // bundle — only fetched when the user actually visits /search.
   const transformers = await import('@huggingface/transformers');
-  // Quantized weights are the small ones (~33 MB) — fine for the
-  // browser. The library auto-picks WebGPU when present and falls
-  // back to WASM otherwise.
+  // gte-small quantized weights (~30 MB) — fine for the browser. The
+  // library auto-picks WebGPU when present and falls back to WASM.
+  // EMBEDDING_MODEL_ID is the HF repo id ('Xenova/gte-small'); the Edge
+  // Function runs the same model through the native Supabase.ai API.
   const extractor = await transformers.pipeline(
     'feature-extraction',
     EMBEDDING_MODEL_ID,
@@ -108,6 +109,10 @@ async function loadPipeline(): Promise<FeatureExtractor> {
  * of EMBEDDING_DIM floats — both the recipe vectors and the query
  * vector come from this same call, so the dot product is the cosine
  * similarity directly.
+ *
+ * gte-small is symmetric: no query-instruction prefix is applied (unlike
+ * bge/e5), so queries and documents are embedded identically — keep it
+ * that way or query/document vectors stop being comparable.
  */
 export async function embedText(text: string): Promise<Float32Array> {
   const pipe = await preloadEmbedder();
