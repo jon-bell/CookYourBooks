@@ -494,7 +494,7 @@ export async function upsertRecipeRow(
  * iPad WASM SQLite each trigger fire is ~10–15ms; disabling them
  * collapses an 87-recipe pull from ~38s to seconds.
  */
-const PULL_CRR_TABLES = [
+export const PULL_CRR_TABLES = [
   'instruction_ingredient_refs',
   'instructions',
   'ingredients',
@@ -586,62 +586,92 @@ export async function filterFresherIncoming<T>(
   });
 }
 
-export async function upsertRecipesBatch(
-  batch: ReadonlyArray<{
-    recipe: RecipeRow;
-    ingredients: IngredientRow[];
-    instructions: InstructionRow[];
-    refs: InstructionRefRow[];
-  }>,
+export type RecipeBatchEntry = {
+  recipe: RecipeRow;
+  ingredients: IngredientRow[];
+  instructions: InstructionRow[];
+  refs: InstructionRefRow[];
+};
+
+/** Total rows a recipe batch writes — a recipe drags in its children. */
+export function recipeBatchRowCount(batch: ReadonlyArray<RecipeBatchEntry>): number {
+  return batch.reduce(
+    (acc, b) => acc + 1 + b.ingredients.length + b.instructions.length + b.refs.length,
+    0,
+  );
+}
+
+/**
+ * Upsert one recipe chunk in a single tx, assuming the caller already holds
+ * the CRR-trigger suppression. Use this when draining a large pull in
+ * checkpointed chunks under ONE {@link withSuppressedCrrTriggers} boundary:
+ * `crsql_commit_alter` is O(table size), so suppressing per-chunk pays that
+ * full-table cost once per chunk (64 × O(16k) wedged a large library's pull
+ * past the 45s watchdog). Hoisting the boundary to wrap the whole loop makes
+ * it run exactly once regardless of library size. Callers writing a small
+ * one-off batch (realtime echoes) should use {@link upsertRecipesBatch},
+ * which manages the boundary itself.
+ */
+export async function upsertRecipesBatchInner(
+  batch: ReadonlyArray<RecipeBatchEntry>,
   signal?: AbortSignal,
 ): Promise<void> {
   if (batch.length === 0) return;
   if (signal?.aborted) return;
   const db = await getLocalDb();
-  // Trigger cost tracks total rows written, not recipe count — a single
-  // recipe drags in its ingredients / instructions / refs.
-  const totalRows = batch.reduce(
-    (acc, b) => acc + 1 + b.ingredients.length + b.instructions.length + b.refs.length,
-    0,
-  );
-  await withSuppressedCrrTriggers(PULL_CRR_TABLES, totalRows, async () => {
-    await db.tx(async (tx) => {
-      const ids = batch.map((b) => b.recipe.id);
-      const existingMap = new Map<string, number>();
-      const placeholders = ids.map(() => '?').join(',');
-      const rows = (await tx.execO(
-        `select id, updated_at from recipes where id in (${placeholders})`,
-        ids,
-      )) as { id: string; updated_at: number }[];
-      for (const r of rows) existingMap.set(r.id, r.updated_at);
+  await db.tx(async (tx) => {
+    const ids = batch.map((b) => b.recipe.id);
+    const existingMap = new Map<string, number>();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = (await tx.execO(
+      `select id, updated_at from recipes where id in (${placeholders})`,
+      ids,
+    )) as { id: string; updated_at: number }[];
+    for (const r of rows) existingMap.set(r.id, r.updated_at);
 
-      const fresh = batch.filter((b) => {
-        const local = existingMap.get(b.recipe.id);
-        return !local || local <= tsToMs(b.recipe.updated_at);
-      });
-      if (fresh.length === 0) return;
-
-      const freshIds = fresh.map((b) => b.recipe.id);
-      await execInChunks(tx, freshIds, (chunk, ph) => [
-        `delete from instruction_ingredient_refs
-         where instruction_id in (select id from instructions where recipe_id in (${ph}))`,
-        chunk,
-      ]);
-      await execInChunks(tx, freshIds, (chunk, ph) => [
-        `delete from ingredients where recipe_id in (${ph})`,
-        chunk,
-      ]);
-      await execInChunks(tx, freshIds, (chunk, ph) => [
-        `delete from instructions where recipe_id in (${ph})`,
-        chunk,
-      ]);
-
-      await bulkUpsertRecipes(tx, fresh.map((b) => b.recipe));
-      await bulkInsertIngredients(tx, fresh.flatMap((b) => b.ingredients));
-      await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
-      await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
+    const fresh = batch.filter((b) => {
+      const local = existingMap.get(b.recipe.id);
+      return !local || local <= tsToMs(b.recipe.updated_at);
     });
+    if (fresh.length === 0) return;
+
+    const freshIds = fresh.map((b) => b.recipe.id);
+    await execInChunks(tx, freshIds, (chunk, ph) => [
+      `delete from instruction_ingredient_refs
+       where instruction_id in (select id from instructions where recipe_id in (${ph}))`,
+      chunk,
+    ]);
+    await execInChunks(tx, freshIds, (chunk, ph) => [
+      `delete from ingredients where recipe_id in (${ph})`,
+      chunk,
+    ]);
+    await execInChunks(tx, freshIds, (chunk, ph) => [
+      `delete from instructions where recipe_id in (${ph})`,
+      chunk,
+    ]);
+
+    await bulkUpsertRecipes(tx, fresh.map((b) => b.recipe));
+    await bulkInsertIngredients(tx, fresh.flatMap((b) => b.ingredients));
+    await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
+    await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
   });
+}
+
+/**
+ * Upsert a recipe batch under its own CRR-trigger suppression boundary.
+ * Convenience wrapper for one-off callers (realtime echoes); the chunked
+ * pull path instead holds one boundary across all chunks and calls
+ * {@link upsertRecipesBatchInner} directly.
+ */
+export async function upsertRecipesBatch(
+  batch: ReadonlyArray<RecipeBatchEntry>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (batch.length === 0) return;
+  if (signal?.aborted) return;
+  await withSuppressedCrrTriggers(PULL_CRR_TABLES, recipeBatchRowCount(batch), () =>
+    upsertRecipesBatchInner(batch, signal),
+  );
 }
 
 interface RecipeTx {

@@ -19,6 +19,9 @@ import {
   upsertCookingEventRow,
   upsertRecipeTagRow,
   upsertRecipesBatch,
+  upsertRecipesBatchInner,
+  recipeBatchRowCount,
+  PULL_CRR_TABLES,
   withSuppressedCrrTriggers,
   filterFresherIncoming,
   bulkInsertOnConflictId,
@@ -28,6 +31,7 @@ import {
   deleteLocalEmbedding,
   getLocalEmbedding,
   type LocalEmbeddingRow,
+  type RecipeBatchEntry,
 } from './repositories.js';
 import {
   listPending,
@@ -89,6 +93,114 @@ function toMs(ts: string | number | null | undefined): number {
   if (!ts) return 0;
   const p = Date.parse(ts);
   return Number.isFinite(p) ? p : 0;
+}
+
+// ---------- composite keyset cursor (recipes topics) ----------
+//
+// The incremental recipes pull keysets on (updated_at, id) rather than a bare
+// `updated_at >= ms`. A bare ms watermark cannot advance past a block of rows
+// that share one updated_at — every row is `>= ms`, so each pull re-selects
+// the whole block forever. That's exactly what the 20260623000100 backfill
+// created: a plain UPDATE fired touch_updated_at and stamped one identical
+// timestamp on every recipe, so a large library re-pulled in full each cycle
+// and the O(table-size) crsql_commit_alter wedged it past the 45s watchdog.
+// The (ts, id) cursor pins the exact last row seen so the next pull starts
+// STRICTLY after it.
+//
+// We store the EXACT server updated_at string (sub-ms precision), not the
+// truncated ms — an `eq` on a truncated ms would never match the real row,
+// leaving the id tiebreaker dead and the tie-trap intact.
+
+interface RecipeCursor {
+  /** Exact server updated_at of the last row pulled. */
+  ts: string;
+  /** Row id at that updated_at; '' = no keyset cursor yet → full pull. */
+  id: string;
+}
+
+async function getRecipeCursor(topic: string): Promise<RecipeCursor> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ high_water_ts: string; high_water_id: string }>(
+    `select high_water_ts, high_water_id from sync_state where topic = ?`,
+    [topic],
+  )) as { high_water_ts: string; high_water_id: string }[];
+  const row = rows[0];
+  if (!row) return { ts: '', id: '' };
+  return { ts: row.high_water_ts || '', id: row.high_water_id || '' };
+}
+
+async function setRecipeCursor(topic: string, cursor: RecipeCursor): Promise<void> {
+  const db = await getLocalDb();
+  // Written unconditionally: only pullAll writes recipe cursors, it runs as a
+  // single coalesced leader, and within a pull the cursor only advances
+  // (keyset order), so there is no concurrent writer to guard against.
+  await db.exec(
+    `insert into sync_state (topic, high_water_mark, high_water_ts, high_water_id)
+     values (?, ?, ?, ?)
+     on conflict(topic) do update set
+       high_water_mark = excluded.high_water_mark,
+       high_water_ts = excluded.high_water_ts,
+       high_water_id = excluded.high_water_id`,
+    [topic, toMs(cursor.ts), cursor.ts, cursor.id],
+  );
+}
+
+/**
+ * Fold rows into a running max (updated_at, id) cursor. Lexicographic compare
+ * on the server's timestamptz output (`…+00:00`) is chronological, so plain
+ * `>` works — provided both operands are server-form. Always seed the running
+ * cursor from `{ ts: '', id: '' }` (or a prior server-form cursor), never from
+ * the legacy ms-derived `…Z` seed, whose zone suffix sorts differently.
+ */
+function maxCursor(
+  rows: ReadonlyArray<{ updated_at: string; id: string }>,
+  start: RecipeCursor,
+): RecipeCursor {
+  let best = start;
+  for (const r of rows) {
+    if (r.updated_at > best.ts || (r.updated_at === best.ts && r.id > best.id)) {
+      best = { ts: r.updated_at, id: r.id };
+    }
+  }
+  return best;
+}
+
+// PostgREST/PG compare timestamps by instant, so normalizing the stored
+// `+00:00` zone to `Z` for a filter value is semantically identical and
+// sidesteps any `+`-encoding ambiguity in the query string. No-op on the
+// already-`Z` legacy seed.
+function tsForFilter(ts: string): string {
+  return ts.replace('+00:00', 'Z');
+}
+
+/** Keyset WHERE for the incremental recipes pull: rows strictly after the cursor. */
+function recipeKeysetOr(cur: RecipeCursor): string {
+  const ts = tsForFilter(cur.ts);
+  return `updated_at.gt.${ts},and(updated_at.eq.${ts},id.gt.${cur.id})`;
+}
+
+/**
+ * Drive a keyset-paginated query ordered by (updated_at, id). Each page starts
+ * strictly after the previous page's last row, so depth is O(PAGE_SIZE) per
+ * page and a block of equal-timestamp rows is walked by id rather than
+ * re-selected. Stops when a short page arrives.
+ */
+async function fetchAllByUpdatedKeyset<T extends { id: string; updated_at: string }>(
+  build: (cur: RecipeCursor) => PromiseLike<PageResult>,
+  start: RecipeCursor,
+): Promise<T[]> {
+  const out: T[] = [];
+  let cur = start;
+  while (true) {
+    const { data, error } = await build(cur);
+    if (error) throw error;
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+    const last = rows[rows.length - 1]!;
+    cur = { ts: last.updated_at, id: last.id };
+  }
+  return out;
 }
 
 // PostgREST silently caps responses at the project's max-rows setting
@@ -489,23 +601,30 @@ export async function pullAll(
 
   checkAbort('recipes');
   const recipeTopic = `recipes:${ownerId}`;
-  const recipeSinceMs = await getWatermark(recipeTopic);
-  const recipesSince = new Date(recipeSinceMs).toISOString();
+  const recipeCursor = await getRecipeCursor(recipeTopic);
   // Children carry denormalized owner_id + household_id (20260623000100), so
-  // no child query ever joins `recipes`. Full pull (watermark 0): fetch by
-  // indexed owner_id. Incremental: filter by the changed recipe ids we just
-  // fetched (children have no updated_at of their own).
-  const fullPull = recipeSinceMs === 0;
+  // no child query ever joins `recipes`. Full pull (no cursor yet): fetch by
+  // indexed owner_id. Incremental: filter children by the changed recipe ids
+  // we just fetched (children have no updated_at of their own).
+  //
+  // A full pull runs whenever there's no keyset cursor — a brand-new device,
+  // OR an existing device upgrading past this change (the high_water_id column
+  // is new, so its cursor is empty). Both re-pull the library once via the
+  // efficient owner_id path, which also re-establishes a clean (ts, id) cursor.
+  // That's the right thing here anyway: the 20260623000100 backfill stamped one
+  // shared updated_at on every existing row, so an incremental `>=` would
+  // re-pull everything regardless.
+  const fullPull = recipeCursor.id === '';
   const recipesPhase = Date.now();
 
   // Recipes carry a denormalized `owner_id` (20260623000100), so we filter
   // on it directly — no `recipe_collections!inner(owner_id)` embed for
   // PostgREST to join + buffer, and the owned read resolves via the
-  // recipes_owner_* indexes. Each `.range()` page is bounded by the
-  // project's max-rows cap (1000), so we loop until exhausted.
-  // Full pull (watermark 0, ~16k rows): keyset by id — PK range scan,
-  // O(PAGE_SIZE) per page, sequential, so deep pages don't re-scan the table.
-  // Incremental: tiny result, offset pagination keeps the updated_at order.
+  // recipes_owner_* indexes.
+  //  - Full pull: keyset by id — PK range scan, O(PAGE_SIZE) per page, so deep
+  //    pages don't re-scan the table.
+  //  - Incremental: keyset by (updated_at, id) so a block of rows sharing one
+  //    updated_at is walked by id, not re-selected forever.
   const recipesFetched: RecipeRow[] = fullPull
     ? await fetchAllByIdKeyset<RecipeRow>((afterId) => {
         let q = client
@@ -517,15 +636,17 @@ export async function pullAll(
         if (afterId) q = q.gt('id', afterId);
         return q;
       })
-    : await fetchAllPages<RecipeRow>((from, to) =>
-        client
-          .from('recipes')
-          .select('*')
-          .eq('owner_id', ownerId)
-          .gte('updated_at', recipesSince)
-          .order('updated_at', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, to),
+    : await fetchAllByUpdatedKeyset<RecipeRow>(
+        (cur) =>
+          client
+            .from('recipes')
+            .select('*')
+            .eq('owner_id', ownerId)
+            .or(recipeKeysetOr(cur))
+            .order('updated_at', { ascending: true })
+            .order('id', { ascending: true })
+            .limit(PAGE_SIZE),
+        recipeCursor,
       );
 
   let ingTotal = 0;
@@ -623,38 +744,43 @@ export async function pullAll(
     // on iPad WASM SQLite that's ~50ms per recipe, so a 100-recipe
     // pull can take ~30s with the UI deceptively "Synced" and all
     // other readers stuck behind the recipe loop's lock churn.
-    const batch = recipesFetched.map((r) => ({
+    const batch: RecipeBatchEntry[] = recipesFetched.map((r) => ({
       recipe: r,
       ingredients: ingByRecipe.get(r.id) ?? [],
       instructions: stepsByRecipe.get(r.id) ?? [],
       refs: refsByRecipe.get(r.id) ?? [],
     }));
-    // Upsert in chunks. Watermark handling differs by pull type:
-    //  - Incremental: `batch` is ordered by (updated_at, id), so after each
-    //    chunk every recipe with a smaller updated_at is present — bumping to
-    //    the chunk's max is a safe resume point (the >= refetch is idempotent).
-    //  - Full pull: `batch` is ordered by *id*, not updated_at, so a chunk's
-    //    max updated_at is NOT a safe watermark (older recipes may still be in
-    //    a later id-chunk). Bump once at the end, to the max across all rows.
-    let maxRecipeTs = 0;
-    for (let i = 0; i < batch.length; i += RECIPE_CHECKPOINT_CHUNK) {
-      if (signal?.aborted) break;
-      const chunk = batch.slice(i, i + RECIPE_CHECKPOINT_CHUNK);
-      await upsertRecipesBatch(chunk, signal);
-      let chunkMaxTs = 0;
-      for (const { recipe, ingredients, instructions } of chunk) {
-        ingTotal += ingredients.length;
-        stepTotal += instructions.length;
-        chunkMaxTs = Math.max(chunkMaxTs, toMs(recipe.updated_at));
+    // Hold ONE CRR-trigger suppression boundary across the whole drain.
+    // crsql_commit_alter is O(table size); suppressing per chunk paid that
+    // full-table cost once per chunk (64 × O(16k) wedged a large library's
+    // pull past the 45s watchdog). One boundary runs it exactly once.
+    await withSuppressedCrrTriggers(PULL_CRR_TABLES, recipeBatchRowCount(batch), async () => {
+      // Cursor handling differs by pull type:
+      //  - Incremental: `batch` is (updated_at, id)-ordered, so each chunk's
+      //    max (ts, id) is a safe resume point — checkpoint after every chunk,
+      //    resuming from the stored (server-form) cursor.
+      //  - Full pull: `batch` is id-ordered, so a chunk's max updated_at is NOT
+      //    a safe cursor (older rows may sit in a later id-chunk). Checkpoint
+      //    once at the end, to the max across all rows.
+      let cursor: RecipeCursor = fullPull ? { ts: '', id: '' } : recipeCursor;
+      for (let i = 0; i < batch.length; i += RECIPE_CHECKPOINT_CHUNK) {
+        if (signal?.aborted) break;
+        const chunk = batch.slice(i, i + RECIPE_CHECKPOINT_CHUNK);
+        await upsertRecipesBatchInner(chunk, signal);
+        for (const { ingredients, instructions } of chunk) {
+          ingTotal += ingredients.length;
+          stepTotal += instructions.length;
+        }
+        if (!fullPull) {
+          cursor = maxCursor(chunk.map((b) => b.recipe), cursor);
+          if (cursor.ts !== '') await setRecipeCursor(recipeTopic, cursor);
+        }
       }
-      maxRecipeTs = Math.max(maxRecipeTs, chunkMaxTs);
-      if (!fullPull && chunkMaxTs > 0) await bumpWatermark(recipeTopic, chunkMaxTs);
-    }
-    // Full pull: only checkpoint once the whole library has landed, so an
-    // interrupted full pull restarts clean rather than skipping older rows.
-    if (fullPull && !signal?.aborted && maxRecipeTs > 0) {
-      await bumpWatermark(recipeTopic, maxRecipeTs);
-    }
+      if (fullPull && !signal?.aborted) {
+        const finalCursor = maxCursor(recipesFetched, { ts: '', id: '' });
+        if (finalCursor.ts !== '') await setRecipeCursor(recipeTopic, finalCursor);
+      }
+    });
   }
   logSync(
     'info',
@@ -730,7 +856,7 @@ export async function pullAll(
   const householdPhase = Date.now();
   const householdId = await getCurrentHouseholdId(client);
   const householdSharedCollections = householdId
-    ? await pullHouseholdSharedContent(client, ownerId, householdId)
+    ? await pullHouseholdSharedContent(client, ownerId, householdId, signal)
     : 0;
   logSync(
     'info',
@@ -783,6 +909,7 @@ async function pullHouseholdSharedContent(
   client: CookbooksClient,
   ownerId: string,
   householdId: string,
+  signal?: AbortSignal,
 ): Promise<number> {
   const collectionTopic = `household_collections:${ownerId}:${householdId}`;
   const recipeTopic = `household_recipes:${ownerId}:${householdId}`;
@@ -815,11 +942,12 @@ async function pullHouseholdSharedContent(
   // Recipes inside co-members' shared libraries — filtered by our
   // household_id (+ owner_id <> me); RLS confirms. Pagination mirrors the
   // owned-content path.
-  const recipeSinceMs = await getWatermark(recipeTopic);
-  const recipesSince = new Date(recipeSinceMs).toISOString();
-  const fullPull = recipeSinceMs === 0;
+  const recipeCursor = await getRecipeCursor(recipeTopic);
+  const fullPull = recipeCursor.id === '';
   // Filter on the denormalized household_id (+ owner_id <> me) — indexed and
-  // join-free, like the owned path's owner_id filter.
+  // join-free, like the owned path's owner_id filter. Same two pull shapes as
+  // the owned path: full keyset-by-id, then incremental keyset-by-(updated_at,
+  // id) so equal-timestamp blocks are walked rather than re-selected.
   const recipes: RecipeRow[] = fullPull
     ? await fetchAllByIdKeyset<RecipeRow>((afterId) => {
         let q = client
@@ -832,16 +960,18 @@ async function pullHouseholdSharedContent(
         if (afterId) q = q.gt('id', afterId);
         return q;
       })
-    : await fetchAllPages<RecipeRow>((from, to) =>
-        client
-          .from('recipes')
-          .select('*')
-          .eq('household_id', householdId)
-          .neq('owner_id', ownerId)
-          .gte('updated_at', recipesSince)
-          .order('updated_at', { ascending: true })
-          .order('id', { ascending: true })
-          .range(from, to),
+    : await fetchAllByUpdatedKeyset<RecipeRow>(
+        (cur) =>
+          client
+            .from('recipes')
+            .select('*')
+            .eq('household_id', householdId)
+            .neq('owner_id', ownerId)
+            .or(recipeKeysetOr(cur))
+            .order('updated_at', { ascending: true })
+            .order('id', { ascending: true })
+            .limit(PAGE_SIZE),
+        recipeCursor,
       );
 
   if (recipes.length > 0) {
@@ -924,21 +1054,31 @@ async function pullHouseholdSharedContent(
       refsByRecipe.set(recipeId, arr);
     }
 
-    let maxRecipeTs = await getWatermark(recipeTopic);
-    // Bulk-upsert in one transaction (was a per-recipe upsertRecipeRow
-    // loop — lock + tx churn per recipe). Mirrors the owned-content path.
-    await upsertRecipesBatch(
-      recipes.map((r) => ({
-        recipe: r,
-        ingredients: ingByRecipe.get(r.id) ?? [],
-        instructions: stepsByRecipe.get(r.id) ?? [],
-        refs: refsByRecipe.get(r.id) ?? [],
-      })),
-    );
-    for (const r of recipes) {
-      maxRecipeTs = Math.max(maxRecipeTs, toMs(r.updated_at));
-    }
-    if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
+    const batch: RecipeBatchEntry[] = recipes.map((r) => ({
+      recipe: r,
+      ingredients: ingByRecipe.get(r.id) ?? [],
+      instructions: stepsByRecipe.get(r.id) ?? [],
+      refs: refsByRecipe.get(r.id) ?? [],
+    }));
+    // One CRR-trigger suppression boundary + checkpointed chunks, mirroring
+    // the owned path so a large shared library doesn't pay a per-chunk
+    // O(table) commit_alter and the cursor steps past equal-timestamp blocks.
+    await withSuppressedCrrTriggers(PULL_CRR_TABLES, recipeBatchRowCount(batch), async () => {
+      let cursor: RecipeCursor = fullPull ? { ts: '', id: '' } : recipeCursor;
+      for (let i = 0; i < batch.length; i += RECIPE_CHECKPOINT_CHUNK) {
+        if (signal?.aborted) break;
+        const chunk = batch.slice(i, i + RECIPE_CHECKPOINT_CHUNK);
+        await upsertRecipesBatchInner(chunk, signal);
+        if (!fullPull) {
+          cursor = maxCursor(chunk.map((b) => b.recipe), cursor);
+          if (cursor.ts !== '') await setRecipeCursor(recipeTopic, cursor);
+        }
+      }
+      if (fullPull && !signal?.aborted) {
+        const finalCursor = maxCursor(recipes, { ts: '', id: '' });
+        if (finalCursor.ts !== '') await setRecipeCursor(recipeTopic, finalCursor);
+      }
+    });
   }
 
   // Co-members' cooking activity + tags. RLS narrows `owner_id <> me` to

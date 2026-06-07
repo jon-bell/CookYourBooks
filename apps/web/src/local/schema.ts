@@ -383,6 +383,14 @@ export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists sync_state (
     topic text primary key not null,
     high_water_mark integer not null default 0,
+    -- Composite keyset cursor for the recipes topics: high_water_ts is the
+    -- exact server updated_at string (sub-ms precision preserved, NOT the
+    -- truncated ms in high_water_mark) and high_water_id pins the row at that
+    -- timestamp. Together they let the incremental pull step past a block of
+    -- rows sharing one updated_at (e.g. a bulk migration backfill) instead of
+    -- re-selecting them forever via updated_at >= ms. Empty = no cursor yet.
+    high_water_ts text not null default '',
+    high_water_id text not null default '',
     last_error text
   )`,
 
@@ -730,4 +738,10 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   // the config came from a household. Both nullable + additive.
   `alter table import_batches add column default_prompt text`,
   `alter table import_batches add column key_owner_id text`,
+  // Composite keyset cursor for the recipes topics (see sync_state above).
+  // Additive for any local DB created before these columns existed — without
+  // the backfill an older DB silently lacks them and the cursor read throws
+  // "no such column" on the first incremental pull.
+  `alter table sync_state add column high_water_ts text not null default ''`,
+  `alter table sync_state add column high_water_id text not null default ''`,
 ];
