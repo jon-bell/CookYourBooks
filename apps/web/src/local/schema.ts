@@ -32,10 +32,12 @@ export const SCHEMA_STATEMENTS: string[] = [
     deleted integer not null default 0
   )`,
 
-  `create index if not exists recipe_collections_household_idx
-    on recipe_collections(shared_with_household_id)
-    where shared_with_household_id is not null`,
-
+  // recipe_collections_household_idx is created in POST_SCHEMA_MIGRATIONS,
+  // AFTER the shared_with_household_id backfill ALTER — deliberately not here.
+  // SCHEMA_STATEMENTS runs before that ALTER, so on an existing DB whose
+  // recipe_collections predates the column, creating this index throws
+  // "no such column: shared_with_household_id" and aborts the whole DB init —
+  // and because init dies before the ALTER, the DB can never self-heal.
   `create table if not exists recipes (
     id text primary key not null default '',
     collection_id text not null default '',
@@ -336,9 +338,9 @@ export const SCHEMA_STATEMENTS: string[] = [
   `create index if not exists cooking_events_owner_date_idx
     on cooking_events(owner_id, event_date)`,
   `create index if not exists cooking_events_recipe_idx on cooking_events(recipe_id)`,
-  `create index if not exists cooking_events_household_idx
-    on cooking_events(shared_with_household_id)
-    where shared_with_household_id is not null`,
+  // cooking_events_household_idx is created in POST_SCHEMA_MIGRATIONS after the
+  // shared_with_household_id backfill ALTER — same ordering hazard as
+  // recipe_collections above (an existing pre-column table would abort init).
 
   // recipe_tags: per-(owner, recipe) labels, distinct from `recipes.starred`.
   // CRR-replicated. The server enforces unique(owner_id, recipe_id, label);
