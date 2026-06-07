@@ -79,6 +79,18 @@ function toMs(ts: string | number | null | undefined): number {
 // end-of-stream signal.
 const PAGE_SIZE = 1000;
 
+// Modest — the prod PG instance is small (512MB / fractional CPU), so we
+// fan out a handful of pages at a time rather than opening a connection
+// per page.
+const PAGE_CONCURRENCY = 4;
+
+// Local upsert + watermark-checkpoint chunk for the recipes pull. The
+// recipe rows come back ordered by (updated_at, id), so upserting them in
+// ordered chunks and bumping the watermark after each chunk means a
+// mid-pull interruption (CYCLE_TIMEOUT, killed tab, slow iPad WASM writes)
+// resumes from the last completed chunk instead of restarting the batch.
+const RECIPE_CHECKPOINT_CHUNK = 250;
+
 interface PageResult {
   data: unknown[] | null;
   error: unknown;
@@ -92,20 +104,39 @@ interface PageResult {
  * Result rows come back untyped — supabase-js's row types use the raw
  * Postgres column types (e.g., `status: string` for check-constrained
  * text columns) while we want narrower TS unions, so callers cast.
+ * Page 0 is fetched alone (incremental pulls stay one request); larger
+ * results fan out the remaining pages in concurrent waves.
  */
 async function fetchAllPages<T>(
   build: (from: number, to: number) => PromiseLike<PageResult>,
 ): Promise<T[]> {
   const out: T[] = [];
-  let from = 0;
-  while (true) {
-    const to = from + PAGE_SIZE - 1;
-    const { data, error } = await build(from, to);
-    if (error) throw error;
-    const rows = (data ?? []) as T[];
-    out.push(...rows);
-    if (rows.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+  // Page 0 alone: incremental / small pulls are a single short page, so the
+  // common case stays exactly one request and never fans out.
+  const first = await build(0, PAGE_SIZE - 1);
+  if (first.error) throw first.error;
+  const firstRows = (first.data ?? []) as T[];
+  out.push(...firstRows);
+  if (firstRows.length < PAGE_SIZE) return out;
+  // Big result: fetch the remaining pages in concurrent waves of disjoint
+  // `.range()` windows. Promise.all preserves order within a wave and waves
+  // are sequential, so `out` stays in the query's sort order.
+  for (let wave = 0; ; wave += 1) {
+    const base = 1 + wave * PAGE_CONCURRENCY;
+    const pages = await Promise.all(
+      Array.from({ length: PAGE_CONCURRENCY }, (_, i) => {
+        const from = (base + i) * PAGE_SIZE;
+        return build(from, from + PAGE_SIZE - 1);
+      }),
+    );
+    let reachedEnd = false;
+    for (const { data, error } of pages) {
+      if (error) throw error;
+      const rows = (data ?? []) as T[];
+      out.push(...rows);
+      if (rows.length < PAGE_SIZE) reachedEnd = true;
+    }
+    if (reachedEnd) break;
   }
   return out;
 }
@@ -408,7 +439,6 @@ export async function pullAll(
     return rest as RecipeRow;
   });
 
-  let maxRecipeTs = await getWatermark(recipeTopic);
   let ingTotal = 0;
   let stepTotal = 0;
 
@@ -423,8 +453,8 @@ export async function pullAll(
       fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
         client
           .from('ingredients')
-          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
-          .eq('recipes.recipe_collections.owner_id', ownerId)
+          .select('*, recipes!inner(updated_at)')
+          .eq('owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
           .order('recipe_id', { ascending: true })
           .order('sort_order', { ascending: true })
@@ -433,8 +463,8 @@ export async function pullAll(
       fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
         client
           .from('instructions')
-          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
-          .eq('recipes.recipe_collections.owner_id', ownerId)
+          .select('*, recipes!inner(updated_at)')
+          .eq('owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
           .order('recipe_id', { ascending: true })
           .order('step_number', { ascending: true })
@@ -444,10 +474,8 @@ export async function pullAll(
         (from, to) =>
           client
             .from('instruction_ingredient_refs')
-            .select(
-              '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
-            )
-            .eq('instructions.recipes.recipe_collections.owner_id', ownerId)
+            .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
+            .eq('owner_id', ownerId)
             .gte('instructions.recipes.updated_at', recipesSince)
             .order('instruction_id', { ascending: true })
             .range(from, to),
@@ -480,13 +508,22 @@ export async function pullAll(
       instructions: stepsByRecipe.get(r.id) ?? [],
       refs: refsByRecipe.get(r.id) ?? [],
     }));
-    await upsertRecipesBatch(batch, signal);
-    for (const { recipe, ingredients, instructions } of batch) {
-      ingTotal += ingredients.length;
-      stepTotal += instructions.length;
-      maxRecipeTs = Math.max(maxRecipeTs, toMs(recipe.updated_at));
+    // Upsert + checkpoint in ordered chunks. `batch` is ordered by
+    // (updated_at, id), so after a chunk lands locally every recipe with a
+    // smaller updated_at is already present; bumping the watermark to the
+    // chunk's max is safe (the >= refetch on resume is idempotent).
+    for (let i = 0; i < batch.length; i += RECIPE_CHECKPOINT_CHUNK) {
+      if (signal?.aborted) break;
+      const chunk = batch.slice(i, i + RECIPE_CHECKPOINT_CHUNK);
+      await upsertRecipesBatch(chunk, signal);
+      let chunkMaxTs = 0;
+      for (const { recipe, ingredients, instructions } of chunk) {
+        ingTotal += ingredients.length;
+        stepTotal += instructions.length;
+        chunkMaxTs = Math.max(chunkMaxTs, toMs(recipe.updated_at));
+      }
+      if (chunkMaxTs > 0) await bumpWatermark(recipeTopic, chunkMaxTs);
     }
-    if (maxRecipeTs > 0) await bumpWatermark(recipeTopic, maxRecipeTs);
   }
   logSync(
     'info',
@@ -658,8 +695,8 @@ async function pullHouseholdSharedContent(
       fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
         client
           .from('ingredients')
-          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
-          .neq('recipes.recipe_collections.owner_id', ownerId)
+          .select('*, recipes!inner(updated_at)')
+          .neq('owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
           .order('recipe_id', { ascending: true })
           .order('sort_order', { ascending: true })
@@ -668,8 +705,8 @@ async function pullHouseholdSharedContent(
       fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
         client
           .from('instructions')
-          .select('*, recipes!inner(updated_at, recipe_collections!inner(owner_id))')
-          .neq('recipes.recipe_collections.owner_id', ownerId)
+          .select('*, recipes!inner(updated_at)')
+          .neq('owner_id', ownerId)
           .gte('recipes.updated_at', recipesSince)
           .order('recipe_id', { ascending: true })
           .order('step_number', { ascending: true })
@@ -679,10 +716,8 @@ async function pullHouseholdSharedContent(
         (from, to) =>
           client
             .from('instruction_ingredient_refs')
-            .select(
-              '*, instructions!inner(recipe_id, recipes!inner(updated_at, recipe_collections!inner(owner_id)))',
-            )
-            .neq('instructions.recipes.recipe_collections.owner_id', ownerId)
+            .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
+            .neq('owner_id', ownerId)
             .gte('instructions.recipes.updated_at', recipesSince)
             .order('instruction_id', { ascending: true })
             .range(from, to),
