@@ -90,6 +90,12 @@ test.describe('Cooking tracker', () => {
     // entry also has a "Delete").
     page.once('dialog', (d) => d.accept());
     await page.getByRole('button', { name: 'Delete', exact: true }).first().click();
+    // The delete handler awaits the local delete, THEN navigates to the
+    // collection. Playwright's click() resolves on dispatch, not when that
+    // async handler finishes — so wait for the redirect before reading the
+    // calendar. Otherwise we race the local delete and the calendar's
+    // LEFT JOIN can still see the recipe, leaving a stale link.
+    await page.waitForURL(/\/collections\/[0-9a-f-]+$/);
 
     // The cooked entry survives on the calendar via its snapshot (title
     // renders, but there's no link back to the now-deleted recipe).

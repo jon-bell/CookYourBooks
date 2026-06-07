@@ -666,6 +666,11 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `create index if not exists cooking_events_owner_date_idx
     on cooking_events(owner_id, event_date)`,
   `create index if not exists cooking_events_recipe_idx on cooking_events(recipe_id)`,
+  // shared_with_household_id is in the create-table above for fresh DBs, but a
+  // local DB that created cooking_events before the column existed won't gain
+  // it from create-table-if-not-exists. Backfill it BEFORE the household index
+  // below references it (no-op where already present).
+  `alter table cooking_events add column shared_with_household_id text`,
   `create index if not exists cooking_events_household_idx
     on cooking_events(shared_with_household_id)
     where shared_with_household_id is not null`,
@@ -678,6 +683,10 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
+  // Same backfill for recipe_tags: it has no index on the column, so an older
+  // DB silently lacks it until the sync push references it — that's the iOS
+  // "no such column: shared_with_household_id" on sync.
+  `alter table recipe_tags add column shared_with_household_id text`,
   `create index if not exists recipe_tags_recipe_idx on recipe_tags(recipe_id)`,
   `create index if not exists recipe_tags_owner_idx on recipe_tags(owner_id)`,
   `create index if not exists recipe_tags_label_idx on recipe_tags(label)`,
