@@ -345,6 +345,7 @@ export type Database = {
           adjustments: Json
           created_at: string
           event_date: string
+          household_id: string | null
           id: string
           meal_slot: string | null
           notes: string | null
@@ -361,6 +362,7 @@ export type Database = {
           adjustments?: Json
           created_at?: string
           event_date: string
+          household_id?: string | null
           id?: string
           meal_slot?: string | null
           notes?: string | null
@@ -377,6 +379,7 @@ export type Database = {
           adjustments?: Json
           created_at?: string
           event_date?: string
+          household_id?: string | null
           id?: string
           meal_slot?: string | null
           notes?: string | null
@@ -1336,6 +1339,7 @@ export type Database = {
       ingredients: {
         Row: {
           description: string | null
+          household_id: string | null
           id: string
           name: string
           notes: string | null
@@ -1355,6 +1359,7 @@ export type Database = {
         }
         Insert: {
           description?: string | null
+          household_id?: string | null
           id?: string
           name: string
           notes?: string | null
@@ -1374,6 +1379,7 @@ export type Database = {
         }
         Update: {
           description?: string | null
+          household_id?: string | null
           id?: string
           name?: string
           notes?: string | null
@@ -1411,6 +1417,7 @@ export type Database = {
           consumed_quantity_type: string | null
           consumed_quantity_unit: string | null
           consumed_quantity_whole: number | null
+          household_id: string | null
           ingredient_id: string
           instruction_id: string
           owner_id: string | null
@@ -1424,6 +1431,7 @@ export type Database = {
           consumed_quantity_type?: string | null
           consumed_quantity_unit?: string | null
           consumed_quantity_whole?: number | null
+          household_id?: string | null
           ingredient_id: string
           instruction_id: string
           owner_id?: string | null
@@ -1437,6 +1445,7 @@ export type Database = {
           consumed_quantity_type?: string | null
           consumed_quantity_unit?: string | null
           consumed_quantity_whole?: number | null
+          household_id?: string | null
           ingredient_id?: string
           instruction_id?: string
           owner_id?: string | null
@@ -1460,6 +1469,7 @@ export type Database = {
       }
       instructions: {
         Row: {
+          household_id: string | null
           id: string
           notes: string | null
           owner_id: string | null
@@ -1472,6 +1482,7 @@ export type Database = {
           text: string
         }
         Insert: {
+          household_id?: string | null
           id?: string
           notes?: string | null
           owner_id?: string | null
@@ -1484,6 +1495,7 @@ export type Database = {
           text: string
         }
         Update: {
+          household_id?: string | null
           id?: string
           notes?: string | null
           owner_id?: string | null
@@ -1755,6 +1767,7 @@ export type Database = {
           date_accessed: string | null
           description: string | null
           forked_from: string | null
+          household_id: string | null
           id: string
           is_public: boolean
           isbn: string | null
@@ -1780,6 +1793,7 @@ export type Database = {
           date_accessed?: string | null
           description?: string | null
           forked_from?: string | null
+          household_id?: string | null
           id?: string
           is_public?: boolean
           isbn?: string | null
@@ -1805,6 +1819,7 @@ export type Database = {
           date_accessed?: string | null
           description?: string | null
           forked_from?: string | null
+          household_id?: string | null
           id?: string
           is_public?: boolean
           isbn?: string | null
@@ -1864,6 +1879,7 @@ export type Database = {
       recipe_tags: {
         Row: {
           created_at: string
+          household_id: string | null
           id: string
           label: string
           owner_id: string
@@ -1872,6 +1888,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          household_id?: string | null
           id?: string
           label: string
           owner_id: string
@@ -1880,6 +1897,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          household_id?: string | null
           id?: string
           label?: string
           owner_id?: string
@@ -1910,8 +1928,10 @@ export type Database = {
           created_at: string
           description: string | null
           equipment: Json | null
+          household_id: string | null
           id: string
           notes: string | null
+          owner_id: string | null
           page_numbers: Json | null
           parent_recipe_id: string | null
           servings_amount: number | null
@@ -1931,8 +1951,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           equipment?: Json | null
+          household_id?: string | null
           id?: string
           notes?: string | null
+          owner_id?: string | null
           page_numbers?: Json | null
           parent_recipe_id?: string | null
           servings_amount?: number | null
@@ -1952,8 +1974,10 @@ export type Database = {
           created_at?: string
           description?: string | null
           equipment?: Json | null
+          household_id?: string | null
           id?: string
           notes?: string | null
+          owner_id?: string | null
           page_numbers?: Json | null
           parent_recipe_id?: string | null
           servings_amount?: number | null
@@ -2485,6 +2509,7 @@ export type Database = {
       create_household: { Args: { p_name: string }; Returns: string }
       current_household_id: { Args: { p_user_id: string }; Returns: string }
       current_tos_version: { Args: never; Returns: number }
+      custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       delete_household: { Args: { p_household_id: string }; Returns: undefined }
       delete_my_account: { Args: never; Returns: undefined }
       fork_collection: {
@@ -2734,6 +2759,7 @@ export type Database = {
           base_url: string
         }[]
       }
+      owner_shared_household: { Args: { p_owner: string }; Returns: string }
       preview_household_invite: {
         Args: { p_token: string }
         Returns: {
@@ -2753,6 +2779,10 @@ export type Database = {
           p_target_id: string
           p_target_type: string
         }
+        Returns: undefined
+      }
+      refresh_household_denorm: {
+        Args: { p_owner: string }
         Returns: undefined
       }
       remove_household_member: {
@@ -2902,10 +2932,6 @@ export type Database = {
       user_rewrite_prefs_set: {
         Args: { p_model: string; p_prompt: string; p_provider: string }
         Returns: undefined
-      }
-      viewer_can_read_owner_library: {
-        Args: { p_owner: string }
-        Returns: boolean
       }
       worker_has_pending_work: { Args: never; Returns: boolean }
     }

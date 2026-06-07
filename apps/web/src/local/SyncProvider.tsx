@@ -8,6 +8,7 @@ import {
   pullAll,
   pullNutritionEssentials,
   pushOutbox,
+  resetHouseholdWatermarks,
   subscribeRealtime,
   type RealtimeHandle,
 } from './sync.js';
@@ -126,7 +127,7 @@ const WATCHDOG_INTERVAL_MS = 5_000;
 const HOUSEHOLD_POLL_MS = 30_000;
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, householdId } = useAuth();
   const qc = useQueryClient();
   const [status, setStatus] = useState<SyncStatus>('initializing');
   const [localReady, setLocalReady] = useState(false);
@@ -179,8 +180,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setStatus(next);
   }
 
-  const householdIdRef = useRef<string | null>(null);
-
   async function cycle(ownerId: string) {
     if (inFlight.current) {
       pullPending.current = true;
@@ -212,7 +211,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         );
         logSync('info', 'cycle: pushOutbox returned', pushRes);
         logSync('info', 'cycle: invoking pullAll');
-        const pullRes = await withTimeout(
+        await withTimeout(
           pullAll(supabase, ownerId, ac.signal, {
             // Invalidate React Query incrementally so the library card
             // grid hydrates the moment recipes land, instead of waiting
@@ -225,7 +224,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           'pull',
           () => ac.abort(),
         );
-        householdIdRef.current = pullRes.householdId;
         logSync('info', 'cycle: pullAll returned');
         // Fire-and-forget: reference data doesn't gate the UI, and
         // failures shouldn't show up as a sync error to the user.
@@ -334,21 +332,29 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       setHydrated(true);
       return;
     }
+    const ownerId = user.id;
     let handle: RealtimeHandle | undefined;
     let cancelled = false;
     setHydrated(false);
     (async () => {
-      await cycle(user.id);
+      await cycle(ownerId);
       if (cancelled) return;
       setHydrated(true);
       handle = subscribeRealtime(
         supabase,
-        user.id,
+        ownerId,
         {
           onLocalUpdate: scheduleInvalidate,
-          onNeedsPull: () => schedulePull(user.id),
+          onNeedsPull: () => schedulePull(ownerId),
+          // A co-member's membership / sharing change: the freshly-shared
+          // back-catalog predates our watermark, so reset it and re-pull.
+          onHouseholdChanged: () => {
+            void resetHouseholdWatermarks(ownerId).then(() => schedulePull(ownerId));
+          },
         },
-        householdIdRef.current,
+        // From the JWT claim, so the channel re-subscribes (effect dep) with
+        // the right household bindings after a join/leave.
+        householdId,
       );
     })();
     return () => {
@@ -356,17 +362,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       void handle?.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, tabRole]);
+  }, [user?.id, tabRole, householdId]);
 
   // Poll for co-members' new content while in a household: re-pull on
   // tab focus and on a slow interval. This is what makes a recipe a
   // co-member adds *after* sharing show up without a manual refresh —
   // there's no per-row realtime event we can subscribe to for it.
   useEffect(() => {
-    if (!user || tabRole !== 'leader') return;
+    if (!user || tabRole !== 'leader' || !householdId) return;
     const ownerId = user.id;
     function repullHousehold() {
-      if (!householdIdRef.current) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       void cycle(ownerId);
     }
@@ -379,7 +384,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       clearInterval(poll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, tabRole]);
+  }, [user?.id, tabRole, householdId]);
 
   useEffect(
     () => () => {

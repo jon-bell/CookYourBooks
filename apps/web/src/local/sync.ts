@@ -32,6 +32,7 @@ import {
 } from './outbox.js';
 import { logSync } from './syncLog.js';
 import { reportError } from '../sentry.js';
+import { claimsFromSession } from '../auth/claims.js';
 
 type CookbooksClient = SupabaseClient<Database>;
 
@@ -62,6 +63,20 @@ export async function bumpWatermark(topic: string, value: number): Promise<void>
        high_water_mark = max(sync_state.high_water_mark, excluded.high_water_mark)`,
     [topic, value],
   );
+}
+
+/**
+ * Drop every per-household watermark for the user so the next pull is a full
+ * household re-pull. Used when membership or a co-member's library sharing
+ * changes: a freshly-shared back-catalog carries old `updated_at` values that
+ * the incremental watermark would skip, so the only way to surface it is to
+ * start the household topics over from 0. Owned-content watermarks are left
+ * untouched. (`_` in the prefix is a LIKE wildcard but the literal topics all
+ * start with `household_`, so the match is exact enough.)
+ */
+export async function resetHouseholdWatermarks(ownerId: string): Promise<void> {
+  const db = await getLocalDb();
+  await db.exec(`delete from sync_state where topic like ?`, [`household_%:${ownerId}:%`]);
 }
 
 function toMs(ts: string | number | null | undefined): number {
@@ -169,6 +184,31 @@ async function fetchAllByIdKeyset<T extends { id: string }>(
   return out;
 }
 
+// Max ids per `.in(...)` filter — keeps the request URL well under
+// PostgREST's ceiling (mirrors packages/db's IN_CHUNK_SIZE). Each chunk is
+// paged independently; a given parent id lands entirely within one chunk, so
+// per-parent ordering is preserved even though chunks aren't globally ordered.
+const IN_CHUNK_SIZE = 200;
+
+/**
+ * Fetch all rows matching an `.in(column, ids)` filter, chunking the id list
+ * and paging each chunk. Used for incremental child pulls: we already know
+ * exactly which recipe / instruction ids changed (from the parent fetch), so
+ * we filter children by id instead of re-joining `recipes` for its
+ * `updated_at` — no embed for PostgREST to buffer, no embedded column to strip.
+ */
+async function fetchAllChunkedIn<T>(
+  ids: readonly string[],
+  build: (chunk: string[], from: number, to: number) => PromiseLike<PageResult>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + IN_CHUNK_SIZE);
+    out.push(...(await fetchAllPages<T>((from, to) => build(chunk, from, to))));
+  }
+  return out;
+}
+
 // ---------- pull ----------
 
 export interface PullResult {
@@ -191,25 +231,15 @@ export interface PullResult {
 }
 
 /**
- * Look up the user's currently-active household. Households live on the
- * server only — they don't replicate through cr-sqlite — so sync code
- * has to ask the server each time. Cheap: one row at most.
+ * The user's currently-active household, read from the JWT `household_id`
+ * claim stamped by the custom_access_token_hook. The claim is re-minted on
+ * every household transition (household/api.ts refreshes the session after
+ * create/accept/leave/delete), so this tracks membership with no query —
+ * replacing the old per-pull household_members round-trip.
  */
-async function getCurrentHouseholdId(
-  client: CookbooksClient,
-  ownerId: string,
-): Promise<string | null> {
-  const { data, error } = await client
-    .from('household_members')
-    .select('household_id')
-    .eq('user_id', ownerId)
-    .is('left_at', null)
-    .maybeSingle();
-  if (error) {
-    logSync('error', 'household lookup failed', { error: error.message });
-    return null;
-  }
-  return data?.household_id ?? null;
+async function getCurrentHouseholdId(client: CookbooksClient): Promise<string | null> {
+  const { data } = await client.auth.getSession();
+  return claimsFromSession(data.session).householdId;
 }
 
 interface ConversionRuleRow {
@@ -440,79 +470,61 @@ export async function pullAll(
   const recipeTopic = `recipes:${ownerId}`;
   const recipeSinceMs = await getWatermark(recipeTopic);
   const recipesSince = new Date(recipeSinceMs).toISOString();
-  // On a full pull (fresh / reset / corrupted local DB → watermark 0) the
-  // `recipes.updated_at >= since` filter matches every recipe, so the
-  // children's `recipes!inner` join is pure overhead — and on prod it drags
-  // the 16k-row `recipes` table + its RLS into each child query, which is
-  // what 57014s under contention. Full pull: fetch children by their own
-  // indexed `owner_id` and skip the recipes join entirely. Incremental
-  // pulls keep the join (tiny result, cheap) since children have no
-  // `updated_at` of their own to filter on.
+  // Children carry denormalized owner_id + household_id (20260623000100), so
+  // no child query ever joins `recipes`. Full pull (watermark 0): fetch by
+  // indexed owner_id. Incremental: filter by the changed recipe ids we just
+  // fetched (children have no updated_at of their own).
   const fullPull = recipeSinceMs === 0;
   const recipesPhase = Date.now();
 
-  // Recipes (+ their ingredients / instructions / refs) are scoped via
-  // PostgREST embedded-resource inner joins. The old approach assembled
-  // a `.in('collection_id', […])` over every collection the user knew
-  // about and then a `.in('recipe_id', […])` over every recipe that
-  // had changed — for libraries with thousands of items that ran past
-  // PostgREST's URL/parameter ceiling. Filtering through the join
-  // keeps the URL tiny no matter how many rows the user owns.
-  //
-  // Each `.range()` page is bounded by the project's max-rows cap
-  // (1000), so we loop until exhausted — without this, libraries past
-  // 1000 recipes never sync the rows beyond the cap and newly-saved
-  // recipes silently fail to appear on other devices.
+  // Recipes carry a denormalized `owner_id` (20260623000100), so we filter
+  // on it directly — no `recipe_collections!inner(owner_id)` embed for
+  // PostgREST to join + buffer, and the owned read resolves via the
+  // recipes_owner_* indexes. Each `.range()` page is bounded by the
+  // project's max-rows cap (1000), so we loop until exhausted.
   // Full pull (watermark 0, ~16k rows): keyset by id — PK range scan,
-  // O(PAGE_SIZE) per page, sequential, so deep pages don't re-scan the table
-  // and we don't flood the box with concurrent deep-OFFSET scans (the 57014).
-  // Incremental: tiny result, offset pagination is fine and keeps the
-  // updated_at watermark ordering.
-  const recipeRowsRaw = fullPull
-    ? await fetchAllByIdKeyset<RecipeRow & { recipe_collections?: unknown }>((afterId) => {
+  // O(PAGE_SIZE) per page, sequential, so deep pages don't re-scan the table.
+  // Incremental: tiny result, offset pagination keeps the updated_at order.
+  const recipesFetched: RecipeRow[] = fullPull
+    ? await fetchAllByIdKeyset<RecipeRow>((afterId) => {
         let q = client
           .from('recipes')
-          .select('*, recipe_collections!inner(owner_id)')
-          .eq('recipe_collections.owner_id', ownerId)
+          .select('*')
+          .eq('owner_id', ownerId)
           .order('id', { ascending: true })
           .limit(PAGE_SIZE);
         if (afterId) q = q.gt('id', afterId);
         return q;
       })
-    : await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>((from, to) =>
+    : await fetchAllPages<RecipeRow>((from, to) =>
         client
           .from('recipes')
-          .select('*, recipe_collections!inner(owner_id)')
-          .eq('recipe_collections.owner_id', ownerId)
+          .select('*')
+          .eq('owner_id', ownerId)
           .gte('updated_at', recipesSince)
           .order('updated_at', { ascending: true })
           .order('id', { ascending: true })
           .range(from, to),
       );
-  const recipesFetched: RecipeRow[] = recipeRowsRaw.map((row) => {
-    const { recipe_collections: _rc, ...rest } = row;
-    return rest as RecipeRow;
-  });
 
   let ingTotal = 0;
   let stepTotal = 0;
 
   if (recipesFetched.length > 0) {
-    // Children: filter by the parent recipe's `updated_at` so we only
-    // re-pull children for recipes that actually changed this round.
-    // Save flow rewrites all children on every recipe save, so the
-    // parent's updated_at moving is a sufficient signal. Each child
-    // table is paginated independently — the join filter keeps the URL
-    // small no matter how many parents matched.
-    // Full pull: keyset by id (PK range scan, O(PAGE_SIZE) per page) and no
-    // recipes join — children are grouped by recipe_id locally and sort
-    // order is a stored column, so id ordering is fine. Incremental: offset
-    // pagination + the recipes!inner(updated_at) watermark join (tiny result).
-    // iir has no `id` (composite PK), so it stays on offset; it's bounded by
-    // the instructions join and small.
-    const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
+    // Children carry denormalized owner_id + household_id, so no recipes
+    // join is needed.
+    //  - Full pull: fetch by indexed owner_id (keyset by id), grouped by
+    //    recipe_id locally; sort order is a stored column.
+    //  - Incremental: we already hold the exact set of changed recipe ids,
+    //    so filter children by `.in('recipe_id', changedIds)` (chunked) — no
+    //    `recipes!inner(updated_at)` embed for PostgREST to buffer/strip.
+    // refs have no recipe_id (composite PK), so we group them via the
+    // instruction->recipe map built from the steps just fetched, and
+    // (incremental) fetch them by `.in('instruction_id', changedStepIds)`.
+    const changedIds = recipesFetched.map((r) => r.id);
+    const [ings, steps] = await Promise.all([
       fullPull
-        ? fetchAllByIdKeyset<IngredientRow & { recipes?: unknown }>((afterId) => {
+        ? fetchAllByIdKeyset<IngredientRow>((afterId) => {
             let q = client
               .from('ingredients')
               .select('*')
@@ -522,18 +534,17 @@ export async function pullAll(
             if (afterId) q = q.gt('id', afterId);
             return q;
           })
-        : fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) =>
+        : fetchAllChunkedIn<IngredientRow>(changedIds, (chunk, from, to) =>
             client
               .from('ingredients')
-              .select('*, recipes!inner(updated_at)')
-              .eq('owner_id', ownerId)
-              .gte('recipes.updated_at', recipesSince)
+              .select('*')
+              .in('recipe_id', chunk)
               .order('recipe_id', { ascending: true })
               .order('sort_order', { ascending: true })
               .range(from, to),
           ),
       fullPull
-        ? fetchAllByIdKeyset<InstructionRow & { recipes?: unknown }>((afterId) => {
+        ? fetchAllByIdKeyset<InstructionRow>((afterId) => {
             let q = client
               .from('instructions')
               .select('*')
@@ -543,43 +554,46 @@ export async function pullAll(
             if (afterId) q = q.gt('id', afterId);
             return q;
           })
-        : fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) =>
+        : fetchAllChunkedIn<InstructionRow>(changedIds, (chunk, from, to) =>
             client
               .from('instructions')
-              .select('*, recipes!inner(updated_at)')
-              .eq('owner_id', ownerId)
-              .gte('recipes.updated_at', recipesSince)
+              .select('*')
+              .in('recipe_id', chunk)
               .order('recipe_id', { ascending: true })
               .order('step_number', { ascending: true })
               .range(from, to),
           ),
-      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>((from, to) => {
-        const q = client.from('instruction_ingredient_refs');
-        return (
-          fullPull
-            ? q.select('*, instructions!inner(recipe_id)').eq('owner_id', ownerId)
-            : q
-                .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
-                .eq('owner_id', ownerId)
-                .gte('instructions.recipes.updated_at', recipesSince)
-        )
-          .order('instruction_id', { ascending: true })
-          .range(from, to);
-      }),
     ]);
 
-    const ings = stripEmbedded(ingsRaw, 'recipes');
-    const steps = stripEmbedded(stepsRaw, 'recipes');
+    const refs = fullPull
+      ? await fetchAllPages<InstructionRefRow>((from, to) =>
+          client
+            .from('instruction_ingredient_refs')
+            .select('*')
+            .eq('owner_id', ownerId)
+            .order('instruction_id', { ascending: true })
+            .range(from, to),
+        )
+      : await fetchAllChunkedIn<InstructionRefRow>(
+          steps.map((s) => s.id),
+          (chunk, from, to) =>
+            client
+              .from('instruction_ingredient_refs')
+              .select('*')
+              .in('instruction_id', chunk)
+              .order('instruction_id', { ascending: true })
+              .range(from, to),
+        );
+
     const ingByRecipe = groupBy(ings, (i) => i.recipe_id);
     const stepsByRecipe = groupBy(steps, (s) => s.recipe_id);
-
+    const recipeByStep = new Map(steps.map((s) => [s.id, s.recipe_id] as [string, string]));
     const refsByRecipe = new Map<string, InstructionRefRow[]>();
-    for (const row of refsRaw) {
-      const recipeId = row.instructions?.recipe_id ?? '';
-      const { instructions: _i, ...refOnly } = row;
+    for (const ref of refs) {
+      const recipeId = recipeByStep.get(ref.instruction_id);
       if (!recipeId) continue;
       const arr = refsByRecipe.get(recipeId) ?? [];
-      arr.push(refOnly as InstructionRefRow);
+      arr.push(ref);
       refsByRecipe.set(recipeId, arr);
     }
 
@@ -685,7 +699,7 @@ export async function pullAll(
   // with me". When the user isn't in a household this is a no-op.
   checkAbort('household');
   const householdPhase = Date.now();
-  const householdId = await getCurrentHouseholdId(client, ownerId);
+  const householdId = await getCurrentHouseholdId(client);
   const householdSharedCollections = householdId
     ? await pullHouseholdSharedContent(client, ownerId, householdId)
     : 0;
@@ -720,12 +734,14 @@ export async function pullAll(
  *
  * Sharing is library-wide and membership-driven now: every collection
  * (plus its recipes / ingredients / instructions / refs) owned by a
- * co-member who shares their library is visible to us via RLS. We don't
- * filter on a per-collection flag — we just fetch everything owned by
- * *someone else* (`owner_id <> me`) and let RLS return only the rows we
- * may read. New recipes a co-member adds later are picked up
- * incrementally via the `updated_at` watermark, which is the fix for
- * "shared a cookbook then added a recipe and it didn't propagate".
+ * co-member who shares their library carries our `household_id` (the
+ * server denorm maintained by refresh_household_denorm), so we fetch by
+ * `household_id = <our household> and owner_id <> me` — an indexed,
+ * precise filter instead of a broad `owner_id <> me` scan leaning on RLS.
+ * New recipes a co-member adds while sharing get our household_id stamped
+ * on write, so the `updated_at` watermark picks them up; a fresh
+ * share/join is caught by the household-watermark reset on a
+ * household_members change (SyncProvider).
  *
  * Watermarked on a per-household topic so switching households forces a
  * fresh pull. Each co-member collection is tagged locally with
@@ -746,6 +762,7 @@ async function pullHouseholdSharedContent(
     client
       .from('recipe_collections')
       .select('*')
+      .eq('household_id', householdId)
       .neq('owner_id', ownerId)
       .gte('updated_at', collectionsSince)
       .order('updated_at', { ascending: true })
@@ -765,99 +782,115 @@ async function pullHouseholdSharedContent(
   }
   if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
 
-  // Recipes inside co-members' collections. The inner-join filter on the
-  // collection's owner scopes us to other people's recipes; RLS narrows
-  // that to library-sharing co-members. Pagination identical to the
+  // Recipes inside co-members' shared libraries — filtered by our
+  // household_id (+ owner_id <> me); RLS confirms. Pagination mirrors the
   // owned-content path.
   const recipeSinceMs = await getWatermark(recipeTopic);
   const recipesSince = new Date(recipeSinceMs).toISOString();
-  // Same full-pull optimization as the owned path: skip the children's
-  // recipes join on the first (watermark-0) household pull.
   const fullPull = recipeSinceMs === 0;
-  const recipeRowsRaw = fullPull
-    ? await fetchAllByIdKeyset<RecipeRow & { recipe_collections?: unknown }>((afterId) => {
+  // Filter on the denormalized household_id (+ owner_id <> me) — indexed and
+  // join-free, like the owned path's owner_id filter.
+  const recipes: RecipeRow[] = fullPull
+    ? await fetchAllByIdKeyset<RecipeRow>((afterId) => {
         let q = client
           .from('recipes')
-          .select('*, recipe_collections!inner(owner_id)')
-          .neq('recipe_collections.owner_id', ownerId)
+          .select('*')
+          .eq('household_id', householdId)
+          .neq('owner_id', ownerId)
           .order('id', { ascending: true })
           .limit(PAGE_SIZE);
         if (afterId) q = q.gt('id', afterId);
         return q;
       })
-    : await fetchAllPages<RecipeRow & { recipe_collections?: unknown }>((from, to) =>
+    : await fetchAllPages<RecipeRow>((from, to) =>
         client
           .from('recipes')
-          .select('*, recipe_collections!inner(owner_id)')
-          .neq('recipe_collections.owner_id', ownerId)
+          .select('*')
+          .eq('household_id', householdId)
+          .neq('owner_id', ownerId)
           .gte('updated_at', recipesSince)
           .order('updated_at', { ascending: true })
           .order('id', { ascending: true })
           .range(from, to),
       );
-  const recipes: RecipeRow[] = recipeRowsRaw.map((row) => {
-    const { recipe_collections: _rc, ...rest } = row;
-    return rest as RecipeRow;
-  });
 
   if (recipes.length > 0) {
-    const [ingsRaw, stepsRaw, refsRaw] = await Promise.all([
-      fetchAllPages<IngredientRow & { recipes?: unknown }>((from, to) => {
-        const q = client.from('ingredients');
-        return (
-          fullPull
-            ? q.select('*').neq('owner_id', ownerId)
-            : q
-                .select('*, recipes!inner(updated_at)')
-                .neq('owner_id', ownerId)
-                .gte('recipes.updated_at', recipesSince)
-        )
-          .order('recipe_id', { ascending: true })
-          .order('sort_order', { ascending: true })
-          .range(from, to);
-      }),
-      fetchAllPages<InstructionRow & { recipes?: unknown }>((from, to) => {
-        const q = client.from('instructions');
-        return (
-          fullPull
-            ? q.select('*').neq('owner_id', ownerId)
-            : q
-                .select('*, recipes!inner(updated_at)')
-                .neq('owner_id', ownerId)
-                .gte('recipes.updated_at', recipesSince)
-        )
-          .order('recipe_id', { ascending: true })
-          .order('step_number', { ascending: true })
-          .range(from, to);
-      }),
-      fetchAllPages<InstructionRefRow & { instructions?: { recipe_id?: string } }>(
-        (from, to) => {
-          const q = client.from('instruction_ingredient_refs');
-          return (
-            fullPull
-              ? q.select('*, instructions!inner(recipe_id)').neq('owner_id', ownerId)
-              : q
-                  .select('*, instructions!inner(recipe_id, recipes!inner(updated_at))')
-                  .neq('owner_id', ownerId)
-                  .gte('instructions.recipes.updated_at', recipesSince)
+    // Same join-free child pulls as the owned path: full by household_id,
+    // incremental by the changed recipe / instruction ids.
+    const changedIds = recipes.map((r) => r.id);
+    const [ings, steps] = await Promise.all([
+      fullPull
+        ? fetchAllPages<IngredientRow>((from, to) =>
+            client
+              .from('ingredients')
+              .select('*')
+              .eq('household_id', householdId)
+              .neq('owner_id', ownerId)
+              .order('recipe_id', { ascending: true })
+              .order('sort_order', { ascending: true })
+              .range(from, to),
           )
-            .order('instruction_id', { ascending: true })
-            .range(from, to);
-        },
-      ),
+        : fetchAllChunkedIn<IngredientRow>(changedIds, (chunk, from, to) =>
+            client
+              .from('ingredients')
+              .select('*')
+              .in('recipe_id', chunk)
+              .order('recipe_id', { ascending: true })
+              .order('sort_order', { ascending: true })
+              .range(from, to),
+          ),
+      fullPull
+        ? fetchAllPages<InstructionRow>((from, to) =>
+            client
+              .from('instructions')
+              .select('*')
+              .eq('household_id', householdId)
+              .neq('owner_id', ownerId)
+              .order('recipe_id', { ascending: true })
+              .order('step_number', { ascending: true })
+              .range(from, to),
+          )
+        : fetchAllChunkedIn<InstructionRow>(changedIds, (chunk, from, to) =>
+            client
+              .from('instructions')
+              .select('*')
+              .in('recipe_id', chunk)
+              .order('recipe_id', { ascending: true })
+              .order('step_number', { ascending: true })
+              .range(from, to),
+          ),
     ]);
 
-    const ings = stripEmbedded(ingsRaw, 'recipes');
-    const steps = stripEmbedded(stepsRaw, 'recipes');
+    const refs = fullPull
+      ? await fetchAllPages<InstructionRefRow>((from, to) =>
+          client
+            .from('instruction_ingredient_refs')
+            .select('*')
+            .eq('household_id', householdId)
+            .neq('owner_id', ownerId)
+            .order('instruction_id', { ascending: true })
+            .range(from, to),
+        )
+      : await fetchAllChunkedIn<InstructionRefRow>(
+          steps.map((s) => s.id),
+          (chunk, from, to) =>
+            client
+              .from('instruction_ingredient_refs')
+              .select('*')
+              .in('instruction_id', chunk)
+              .order('instruction_id', { ascending: true })
+              .range(from, to),
+        );
+
     const ingByRecipe = groupBy(ings, (i) => i.recipe_id);
     const stepsByRecipe = groupBy(steps, (s) => s.recipe_id);
+    const recipeByStep = new Map(steps.map((s) => [s.id, s.recipe_id] as [string, string]));
     const refsByRecipe = new Map<string, InstructionRefRow[]>();
-    for (const row of refsRaw) {
-      const recipeId = row.instructions?.recipe_id ?? '';
-      const { instructions: _i, ...refOnly } = row;
+    for (const ref of refs) {
+      const recipeId = recipeByStep.get(ref.instruction_id);
       if (!recipeId) continue;
       const arr = refsByRecipe.get(recipeId) ?? [];
-      arr.push(refOnly as InstructionRefRow);
+      arr.push(ref);
       refsByRecipe.set(recipeId, arr);
     }
 
@@ -1525,10 +1558,10 @@ async function pullRecipeTags(
   return rows.length;
 }
 
-// Co-members' cooking events / tags — pulled with `owner_id <> me` (RLS
-// narrows to library-sharing co-members) and tagged locally with
-// shared_with_household_id so the repository surfaces them. Watermarked
-// per-household so switching households forces a fresh pull.
+// Co-members' cooking events / tags — filtered by household_id = our
+// household (+ owner_id <> me), tagged locally with shared_with_household_id
+// so the repository surfaces them. Watermarked per-household so switching
+// households forces a fresh pull.
 async function pullHouseholdCookingEvents(
   client: CookbooksClient,
   ownerId: string,
@@ -1540,6 +1573,7 @@ async function pullHouseholdCookingEvents(
     client
       .from('cooking_events')
       .select('*')
+      .eq('household_id', householdId)
       .neq('owner_id', ownerId)
       .gte('updated_at', since)
       .order('updated_at', { ascending: true })
@@ -1578,6 +1612,7 @@ async function pullHouseholdRecipeTags(
     client
       .from('recipe_tags')
       .select('*')
+      .eq('household_id', householdId)
       .neq('owner_id', ownerId)
       .gte('updated_at', since)
       .order('updated_at', { ascending: true })
@@ -2050,17 +2085,6 @@ async function upsertImportTocEntryRow(row: ImportTocEntryRow): Promise<void> {
   );
 }
 
-function stripEmbedded<T extends Record<string, unknown>>(
-  rows: T[],
-  field: string,
-): T[] {
-  return rows.map((row) => {
-    const copy: Record<string, unknown> = { ...row };
-    delete copy[field];
-    return copy as T;
-  });
-}
-
 function groupBy<T, K>(items: T[], key: (t: T) => K): Map<K, T[]> {
   const out = new Map<K, T[]>();
   for (const item of items) {
@@ -2083,6 +2107,13 @@ export interface RealtimeCallbacks {
   onLocalUpdate: () => void;
   /** Child row changed without local upsert — schedule a pull. */
   onNeedsPull: () => void;
+  /**
+   * Household membership / co-member sharing changed — reset the household
+   * watermark and re-pull in full (a fresh share's back-catalog has old
+   * updated_at the incremental watermark would skip). Falls back to
+   * onNeedsPull when not provided.
+   */
+  onHouseholdChanged?: () => void;
 }
 
 export function subscribeRealtime(
@@ -2102,42 +2133,47 @@ export function subscribeRealtime(
         onLocalUpdate();
       },
     )
+    // INSERT/UPDATE of our OWN recipes -> debounced bulk pull (the pull
+    // fetches exactly the changed recipes + their children). Filtered by the
+    // denormalized owner_id so a *public* recipe edited by anyone else no
+    // longer RLS-broadcasts to — and wakes a pull on — every connected
+    // client. DELETE is a separate, UNfiltered binding: under default replica
+    // identity a DELETE payload carries only the PK, so an owner_id filter
+    // would drop it and the local purge (which never arrives via a watermark
+    // pull) would be missed.
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'recipes' },
+      { event: 'INSERT', schema: 'public', table: 'recipes', filter: `owner_id=eq.${ownerId}` },
+      () => onNeedsPull(),
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'recipes', filter: `owner_id=eq.${ownerId}` },
+      () => onNeedsPull(),
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'recipes' },
       async (payload) => {
-        // DELETEs are hard server-side and never come back in a watermark
-        // pull, so purge locally right away. INSERT/UPDATE route to the
-        // debounced bulk pull instead of a per-event fetch+rewrite: a bulk
-        // import/edit emits one event per recipe, and handling each with
-        // two network fetches + a child delete/reinsert on the single
-        // cr-sqlite connection was a thundering herd that starved the
-        // outbox push. The pull fetches exactly the changed recipes — and
-        // their refs, which the old per-event path silently dropped.
-        if ((payload as { eventType?: string }).eventType === 'DELETE') {
-          const id = ((payload as RealtimePayload).old as { id?: string }).id;
-          if (id) await purgeRecipe(id);
-          onLocalUpdate();
-          return;
-        }
-        onNeedsPull();
+        const id = ((payload as RealtimePayload).old as { id?: string }).id;
+        if (id) await purgeRecipe(id);
+        onLocalUpdate();
       },
+    )
+    // Children carry owner_id now, so scope these to our own rows. A
+    // co-member's / public child edit reaches us via the household path or
+    // the recipe event, not a platform-wide broadcast. (Own-child DELETEs
+    // aren't needed here — a child delete rides the parent recipe's save,
+    // which fires the UPDATE above.)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'ingredients', filter: `owner_id=eq.${ownerId}` },
+      () => onNeedsPull(),
     )
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'ingredients' },
-      async () => {
-        // Ingredients don't carry owner info; piggy-back on the recipe's
-        // next refresh instead of doing a broad refetch per event.
-        onNeedsPull();
-      },
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'instructions' },
-      async () => {
-        onNeedsPull();
-      },
+      { event: '*', schema: 'public', table: 'instructions', filter: `owner_id=eq.${ownerId}` },
+      () => onNeedsPull(),
     )
     .on(
       'postgres_changes',
@@ -2233,6 +2269,18 @@ export function subscribeRealtime(
         onNeedsPull();
       },
     );
+    // Co-members' recipe INSERT/UPDATE: their shared recipes carry our
+    // household_id, so this delivers their edits in ~realtime (the
+    // owner-filtered binding above is scoped to us) without the
+    // public-content fan-out an unfiltered binding would cause. The
+    // incremental household pull — also household_id-scoped — fetches them.
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'recipes', filter: `household_id=eq.${householdId}` },
+      () => {
+        onNeedsPull();
+      },
+    );
     // Membership churn (someone joined or left) doesn't change recipe
     // data immediately but it changes which collections we can see, so
     // schedule a pull on any household_members change for our household.
@@ -2245,7 +2293,10 @@ export function subscribeRealtime(
         filter: `household_id=eq.${householdId}`,
       },
       () => {
-        onNeedsPull();
+        // Membership / sharing change: reset the household watermark and
+        // re-pull in full so a fresh share's back-catalog (old updated_at)
+        // surfaces, not just rows newer than the watermark.
+        (callbacks.onHouseholdChanged ?? onNeedsPull)();
       },
     );
     // Co-members' cooking activity + tags. Like recipe_collections above,
