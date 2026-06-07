@@ -210,20 +210,72 @@ platform :ios do
     # useful — every future crash matching these UUIDs gets
     # symbolicated automatically.
     upload_dsyms_to_sentry
+    # Pilot in two passes:
+    #   1. Upload the IPA. One-shot — re-running pilot with the same
+    #      build number trips altool "bundle version already used", so
+    #      we deliberately do NOT retry this step.
+    #   2. Distribute to the external group + set the changelog. This
+    #      pass polls ASC for processing status, and the poll loop is
+    #      where we keep hitting `SSL_read: unexpected eof while reading`
+    #      — a mid-stream connection cut on Apple's side that OpenSSL 3
+    #      surfaces as an error (1.x silently tolerated it). Separating
+    #      the passes lets us retry just the flaky one without
+    #      re-uploading. `distribute_only: true` skips upload and only
+    #      attaches the already-uploaded build to the configured groups.
     pilot(
       api_key: asc_api_key,
       ipa: "build/CookYourBooks.ipa",
       skip_waiting_for_build_processing: true,
-      # Attach every build to the external "Friends & Family" group so
-      # once Apple approves the first build in a version, subsequent
-      # builds reach external testers automatically without another
-      # ASC click. First-build-in-version still needs Beta App Review;
-      # the group attachment is what queues it up.
-      distribute_external: true,
-      notify_external_testers: true,
-      groups: ["Friends & Family"],
-      changelog: ENV["BETA_CHANGELOG"] || "Internal build"
+      skip_submission: true,
     )
+
+    # Give ASC a chance to ingest the upload before distribute_only's
+    # `Build.find` runs — without this, pass 2 routinely raises "Could
+    # not find build" because the binary is still queued behind Apple's
+    # ingestion pipeline.
+    UI.message("Sleeping 60s before pilot distribute pass to let ASC ingest the upload")
+    sleep 60
+
+    build_number_for_distribute = lane_context[SharedValues::BUILD_NUMBER].to_s
+    distribute_attempts = 0
+    begin
+      distribute_attempts += 1
+      pilot(
+        api_key: asc_api_key,
+        distribute_only: true,
+        # distribute_only skips IPA upload, so pilot can't infer the
+        # bundle id / platform from the file. Pass both explicitly,
+        # otherwise pilot drops into an interactive prompt and crashes
+        # in CI with "Could not retrieve response as fastlane runs in
+        # non-interactive mode".
+        app_identifier: "app.cookyourbooks",
+        app_platform: "ios",
+        app_version: get_version_number(xcodeproj: "App/App.xcodeproj", target: "App"),
+        build_number: build_number_for_distribute,
+        # Attach every build to the external "Friends & Family" group so
+        # once Apple approves the first build in a version, subsequent
+        # builds reach external testers automatically without another
+        # ASC click. First-build-in-version still needs Beta App Review;
+        # the group attachment is what queues it up.
+        distribute_external: true,
+        notify_external_testers: true,
+        groups: ["Friends & Family"],
+        changelog: ENV["BETA_CHANGELOG"] || "Internal build",
+      )
+    rescue => e
+      msg = e.message.to_s
+      transient = msg.include?("SSL_read") ||
+                  msg.include?("unexpected eof") ||
+                  msg.include?("ECONNRESET") ||
+                  msg.include?("execution expired") ||
+                  msg.include?("Could not find build")
+      if transient && distribute_attempts < 4
+        UI.important("pilot distribute attempt #{distribute_attempts} hit transient ASC failure (#{msg.lines.first&.strip}); retrying in 60s")
+        sleep 60
+        retry
+      end
+      raise
+    end
   end
 
   desc "Re-upload dSYMs to Sentry without rebuilding. Pass `path:/Library/...App.xcarchive/dSYMs` to target a specific archive; otherwise grabs the most recent gym output or the newest Xcode archive on disk."
