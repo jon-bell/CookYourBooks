@@ -7,6 +7,70 @@ export type LocalDb = DB;
 
 let initPromise: Promise<LocalDb> | undefined;
 
+// The raw cr-sqlite handle (before the lock wrapper), captured as soon as
+// it's opened so the emergency reset can force-close it even when init
+// later throws. A leaked-open handle keeps the `idb-batch-atomic`
+// IndexedDB open, which makes `deleteDatabase` fire `onblocked` and hang —
+// that's the "delete blocked — close other tabs" wedge (there are no other
+// tabs on Capacitor; the blocker is this page's own connection).
+let rawHandle: DB | null = null;
+
+// localStorage flag: an emergency reset that couldn't delete the IndexedDB
+// in-page (still blocked despite closing our handle) sets this and reloads.
+// On the next boot we delete BEFORE opening the DB — nothing holds it open
+// at that point, so the delete can't be blocked. This guarantees recovery.
+const PENDING_RESET_KEY = 'cookyourbooks.db.pendingReset';
+
+// The IndexedDB database backing the cr-sqlite VFS (see
+// @vlcn.io/crsqlite-wasm: `new IDBBatchAtomicVFS("idb-batch-atomic", …)`).
+const VFS_IDB_NAME = 'idb-batch-atomic';
+
+// Delete the VFS IndexedDB, resolving on success/error/blocked alike and on
+// a hard timeout so a stuck request can never hang the caller (the old
+// `onblocked`-only-logs path is exactly what wedged the reset button).
+function deleteVfsIdb(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    try {
+      const req = indexedDB.deleteDatabase(VFS_IDB_NAME);
+      req.onsuccess = done;
+      req.onerror = done;
+      req.onblocked = () => {
+        logSync('warn', 'deleteVfsIdb: blocked — armed for pre-init delete on next boot');
+        done();
+      };
+    } catch {
+      done();
+    }
+    setTimeout(done, 3_000);
+  });
+}
+
+// If a prior emergency reset armed a pending delete, run it now — before
+// anything opens the VFS — so it completes cleanly without being blocked.
+async function drainPendingReset(): Promise<void> {
+  let pending = false;
+  try {
+    pending = localStorage.getItem(PENDING_RESET_KEY) === '1';
+  } catch {
+    // no localStorage (private mode / SSR) — nothing to drain
+  }
+  if (!pending) return;
+  logSync('warn', 'db init: draining pending emergency reset (deleting VFS idb before open)');
+  await deleteVfsIdb();
+  try {
+    localStorage.removeItem(PENDING_RESET_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 /** Serializes WASM SQLite access — concurrent exec from sync + import deadlocks. */
 let dbLockTail: Promise<void> = Promise.resolve();
 
@@ -162,32 +226,56 @@ export function getLocalDb(): Promise<LocalDb> {
 // values, got M").
 const CRR_TRIGGER_HEAL_VERSION = 3;
 
+// Only the tables whose CRR shape actually changed across the heal versions
+// above. Every heal-versioned change has been on cooking_events, so that's
+// all we cycle. Healing *every* CRR table forced cr-sqlite's
+// O(table-size) commit_alter compaction over the 16k-row `recipes` table,
+// which could fail with "failed compacting tables post alteration" and
+// wedge db init (CYB-CAPACITOR-8). recipes/ingredients/instructions/refs
+// columns are added through the begin/commit_alter-bracketed
+// applyPostSchemaMigration path, so their triggers are already current.
+const CRR_TRIGGER_HEAL_TABLES = ['cooking_events'];
+
 async function initialize(): Promise<LocalDb> {
+  await drainPendingReset();
   setInitStep('init wasm');
   const sqlite = await initWasm(() => wasmUrl);
   setInitStep('opening cookyourbooks.db');
   const db = await sqlite.open('cookyourbooks.db');
+  rawHandle = db;
 
-  setInitStep('applying schema');
-  for (const stmt of SCHEMA_STATEMENTS) {
-    await db.exec(stmt);
+  try {
+    setInitStep('applying schema');
+    for (const stmt of SCHEMA_STATEMENTS) {
+      await db.exec(stmt);
+    }
+
+    setInitStep('post-schema migrations');
+    for (const stmt of POST_SCHEMA_MIGRATIONS) {
+      await applyPostSchemaMigration(db, stmt);
+    }
+
+    setInitStep('promoting tables to CRR');
+    for (const table of CRR_TABLES) {
+      await db.exec(`select crsql_as_crr('${table}')`);
+    }
+
+    setInitStep('CRR trigger heal');
+    await maybeHealCrrTriggers(db);
+
+    setInitStep('done (wrapping in lock)');
+    return lockDb(db);
+  } catch (err) {
+    // Don't leak the open handle: a wedged init would otherwise hold the
+    // VFS IndexedDB open and block the emergency reset's delete forever.
+    try {
+      await db.close();
+    } catch {
+      // already broken — best effort
+    }
+    rawHandle = null;
+    throw err;
   }
-
-  setInitStep('post-schema migrations');
-  for (const stmt of POST_SCHEMA_MIGRATIONS) {
-    await applyPostSchemaMigration(db, stmt);
-  }
-
-  setInitStep('promoting tables to CRR');
-  for (const table of CRR_TABLES) {
-    await db.exec(`select crsql_as_crr('${table}')`);
-  }
-
-  setInitStep('CRR trigger heal');
-  await maybeHealCrrTriggers(db);
-
-  setInitStep('done (wrapping in lock)');
-  return lockDb(db);
 }
 
 async function maybeHealCrrTriggers(db: LocalDb): Promise<void> {
@@ -200,7 +288,7 @@ async function maybeHealCrrTriggers(db: LocalDb): Promise<void> {
   const stored = Number(rows[0]?.[0] ?? 0);
   if (stored >= CRR_TRIGGER_HEAL_VERSION) return;
 
-  for (const table of CRR_TABLES) {
+  for (const table of CRR_TRIGGER_HEAL_TABLES) {
     try {
       await db.exec(`select crsql_begin_alter('${table}')`);
     } catch {
@@ -275,7 +363,19 @@ export async function resetLocalDb(): Promise<void> {
  */
 export async function emergencyResetLocalDb(): Promise<void> {
   logSync('warn', 'emergencyResetLocalDb: deleting idb-batch-atomic');
+  // Arm the pre-init delete first. Even if the in-page delete below stays
+  // blocked (a connection we can't reach is still open), the next boot
+  // deletes the VFS idb before anything opens it — so recovery is
+  // guaranteed across the reload regardless of what's holding it now.
   try {
+    localStorage.setItem(PENDING_RESET_KEY, '1');
+  } catch {
+    // ignore
+  }
+  try {
+    // Force-close every handle we know about so the delete isn't blocked:
+    // the lock-wrapped db from a resolved init, and the raw handle captured
+    // during an init that may have thrown mid-way.
     if (initPromise) {
       try {
         const db = await Promise.race([
@@ -288,15 +388,16 @@ export async function emergencyResetLocalDb(): Promise<void> {
       }
       initPromise = undefined;
     }
-    await new Promise<void>((resolve, reject) => {
-      const req = indexedDB.deleteDatabase('idb-batch-atomic');
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error ?? new Error('deleteDatabase failed'));
-      req.onblocked = () => {
-        logSync('warn', 'emergencyResetLocalDb: delete blocked — close other tabs');
-      };
-    });
-    logSync('info', 'emergencyResetLocalDb: deleted; reloading');
+    if (rawHandle) {
+      try {
+        await rawHandle.close();
+      } catch {
+        // already broken — best effort
+      }
+      rawHandle = null;
+    }
+    await deleteVfsIdb();
+    logSync('info', 'emergencyResetLocalDb: deleted (or armed for next boot); reloading');
   } finally {
     location.reload();
   }
