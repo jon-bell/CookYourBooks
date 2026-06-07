@@ -120,6 +120,13 @@ jobs:
       MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MAC_LOGIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history needed: `fastlane bump_build` derives the
+          # CURRENT_PROJECT_VERSION from `git rev-list --count HEAD`.
+          # A shallow clone returns 1, which is less than every build
+          # already on TestFlight, so pilot fails with "bundle version
+          # must be higher than the previously uploaded version".
+          fetch-depth: 0
 
       - name: Pre-job cleanup (DerivedData, fastlane build dir, sim caches)
         # The runner Mac is single-tenant, so DerivedData + fastlane build
