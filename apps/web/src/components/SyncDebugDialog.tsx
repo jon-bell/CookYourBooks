@@ -246,9 +246,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
         onClick={(e) => e.stopPropagation()}
         className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-lg ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-700"
       >
-        <header className="flex items-center justify-between border-b border-stone-200 px-5 py-3 dark:border-stone-700">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 px-5 py-3 dark:border-stone-700">
           <h2 className="text-base font-semibold">Sync diagnostics</h2>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => void syncNow()}
@@ -314,7 +314,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
           </div>
         </header>
 
-        <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-5 md:grid-cols-2">
+        <div className="grid min-w-0 flex-1 grid-cols-1 gap-4 overflow-y-auto overflow-x-hidden p-5 md:grid-cols-2">
           <Section title="Status">
             <KV k="state" v={status} />
             <KV k="tab role" v={tabRole} />
@@ -479,6 +479,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
             {snap.watermarks.length === 0 ? (
               <p className="text-sm text-stone-500">None yet.</p>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-left text-xs font-mono">
                 <thead className="text-stone-500">
                   <tr>
@@ -490,7 +491,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                 <tbody>
                   {snap.watermarks.map((w) => (
                     <tr key={w.topic} className="border-t border-stone-100 dark:border-stone-800">
-                      <td className="py-1 pr-2">{w.topic}</td>
+                      <td className="py-1 pr-2 break-all">{w.topic}</td>
                       <td className="py-1 pr-2">{w.high_water_mark}</td>
                       <td className="py-1 text-stone-500">
                         {w.high_water_mark
@@ -501,6 +502,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </Section>
 
@@ -508,6 +510,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
             {snap.outbox.length === 0 ? (
               <p className="text-sm text-stone-500">Empty.</p>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-left text-xs font-mono">
                 <thead className="text-stone-500">
                   <tr>
@@ -522,7 +525,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                 <tbody>
                   {snap.outbox.slice(0, 50).map((e) => (
                     <tr key={e.id} className="border-t border-stone-100 dark:border-stone-800">
-                      <td className="py-1 pr-2">{e.id}</td>
+                      <td className="py-1 pr-2 break-all">{e.id}</td>
                       <td className="py-1 pr-2">{e.kind}</td>
                       <td className="py-1 pr-2 max-w-[20ch] truncate" title={e.entity_id}>
                         {e.entity_id}
@@ -541,6 +544,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </Section>
 
@@ -548,7 +552,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
             {logEntries.length === 0 ? (
               <p className="text-sm text-stone-500">No events yet.</p>
             ) : (
-              <div className="max-h-72 overflow-y-auto rounded border border-stone-200 bg-stone-50 p-2 font-mono text-xs dark:border-stone-700 dark:bg-stone-950">
+              <div className="max-h-72 overflow-auto rounded border border-stone-200 bg-stone-50 p-2 font-mono text-xs dark:border-stone-700 dark:bg-stone-950">
                 {logEntries.slice(-200).map((e) => (
                   <div
                     key={e.id}
@@ -589,7 +593,7 @@ function Section({
 }) {
   return (
     <section
-      className={`rounded border border-stone-200 p-3 dark:border-stone-700 ${className ?? ''}`}
+      className={`min-w-0 rounded border border-stone-200 p-3 dark:border-stone-700 ${className ?? ''}`}
     >
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
         {title}

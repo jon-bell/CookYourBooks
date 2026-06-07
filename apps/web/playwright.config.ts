@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { defineConfig, devices } from '@playwright/test';
+import { IPHONE_17_USE } from './e2e/support/viewport.js';
 
 // Pick a chromium binary:
 //   1. `PLAYWRIGHT_CHROMIUM_PATH` env (set by CI or devs with their own copy).
@@ -52,6 +53,19 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      // The mobile spec drives its own iPhone-17 viewport; keep it out of
+      // the desktop run so its layout assertions don't double-execute at
+      // the wrong width.
+      testIgnore: /mobile\..*spec\.ts/,
+    },
+    {
+      // iPhone-17-sized layer (402×874). Under workers:1 the projects run
+      // sequentially, so this appends the mobile spec(s) rather than
+      // re-running the whole suite at a second viewport. The viewport
+      // itself comes from the one shared constant in support/viewport.ts.
+      name: 'mobile',
+      testMatch: /mobile\..*spec\.ts/,
+      use: { ...devices['Desktop Chrome'], ...IPHONE_17_USE },
     },
   ],
   webServer: {
