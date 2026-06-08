@@ -44,9 +44,19 @@ export interface SearchResponse {
  *  into `nutrition_facts_cache` before returning. We mirror the same
  *  hits into the local SQLite cache so subsequent reads short-circuit
  *  the round-trip even before sync runs. */
-export async function searchNutrition(q: string, limit = 10): Promise<NutritionFact[]> {
+export async function searchNutrition(
+  q: string,
+  limit = 10,
+  opts: { includeBranded?: boolean } = {},
+): Promise<NutritionFact[]> {
   if (!q.trim()) return [];
-  const { hits } = await callNutrition<SearchResponse>('search', { q, limit });
+  const { hits } = await callNutrition<SearchResponse>('search', {
+    q,
+    limit,
+    // Auto-match omits this (generic foods only); the manual override
+    // dialog sets it so the user can pick a specific brand.
+    include_branded: opts.includeBranded === true,
+  });
   // Best-effort local mirror; never throw out a search result if the
   // local DB isn't ready (e.g. very first session before SyncProvider
   // has opened the file).

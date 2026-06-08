@@ -1,0 +1,87 @@
+# Curated platform-default nutrition mappings, reviewed from
+# scripts/seed-nutrition-mappings.ts proposals against the production
+# corpus (2026-06-08). Columns: key, corpus_count, source, source_id,
+# data_type, description. Only confidently-correct generic staples are
+# included; ambiguous / compound / no-good-generic ingredients (garam
+# masala, chipotle in adobo, cardamom pods, bone-in chicken breasts, …)
+# are intentionally left out so the live v2 matcher handles them.
+# Regenerate proposals: deno run … scripts/seed-nutrition-mappings.ts
+# Emit migration body: … scripts/seed-nutrition-mappings.ts --emit-sql THIS_FILE
+salt and pepper	92	USDA_FDC	746775	Foundation	Salt, table, iodized
+salt	89	USDA_FDC	746775	Foundation	Salt, table, iodized
+kosher salt	67	USDA_FDC	746775	Foundation	Salt, table, iodized
+fine sea salt	13	USDA_FDC	746775	Foundation	Salt, table, iodized
+sugar	51	USDA_FDC	746784	Foundation	Sugars, granulated
+granulated sugar	18	USDA_FDC	746784	Foundation	Sugars, granulated
+packed brown sugar	14	USDA_FDC	2710260	Survey (FNDDS)	Sugar, brown
+dark brown sugar	6	USDA_FDC	2710260	Survey (FNDDS)	Sugar, brown
+honey	17	USDA_FDC	169640	SR Legacy	Honey
+extra-virgin olive oil	57	USDA_FDC	171413	SR Legacy	Oil, olive, salad or cooking
+olive oil	35	USDA_FDC	171413	SR Legacy	Oil, olive, salad or cooking
+toasted sesame oil	8	USDA_FDC	171016	SR Legacy	Oil, sesame, salad or cooking
+roasted sesame oil	7	USDA_FDC	171016	SR Legacy	Oil, sesame, salad or cooking
+neutral oil	7	USDA_FDC	171027	SR Legacy	Oil, safflower, salad or cooking, high oleic
+peanut, rice bran, or other neutral oil	22	USDA_FDC	171027	SR Legacy	Oil, safflower, salad or cooking, high oleic
+garlic cloves, minced	38	USDA_FDC	1104647	Foundation	Garlic, raw
+garlic cloves	37	USDA_FDC	1104647	Foundation	Garlic, raw
+minced garlic	10	USDA_FDC	1104647	Foundation	Garlic, raw
+garlic	10	USDA_FDC	1104647	Foundation	Garlic, raw
+garlic, chopped	6	USDA_FDC	1104647	Foundation	Garlic, raw
+onion	24	USDA_FDC	170000	SR Legacy	Onions, raw
+onions	8	USDA_FDC	170000	SR Legacy	Onions, raw
+onion, chopped fine	10	USDA_FDC	170000	SR Legacy	Onions, raw
+onions, chopped fine	6	USDA_FDC	170000	SR Legacy	Onions, raw
+unsalted butter	33	USDA_FDC	173430	SR Legacy	Butter, without salt
+butter	20	USDA_FDC	173410	SR Legacy	Butter, salted
+whole milk	12	USDA_FDC	746782	Foundation	Milk, whole, 3.25% milkfat, with added vitamin D
+heavy cream	12	USDA_FDC	170859	SR Legacy	Cream, fluid, heavy whipping
+all-purpose flour	20	USDA_FDC	789890	Foundation	Flour, wheat, all-purpose, enriched, bleached
+cornstarch	13	USDA_FDC	169698	SR Legacy	Cornstarch
+instant tapioca	15	USDA_FDC	169717	SR Legacy	Tapioca, pearl, dry
+baking soda	20	USDA_FDC	175040	SR Legacy	Leavening agents, baking soda
+chicken broth	32	USDA_FDC	172884	SR Legacy	Soup, stock, chicken, home-prepared
+soy sauce	16	USDA_FDC	174277	SR Legacy	Soy sauce made from soy and wheat (shoyu)
+light soy sauce or shoyu	13	USDA_FDC	174277	SR Legacy	Soy sauce made from soy and wheat (shoyu)
+light soy sauce	6	USDA_FDC	174277	SR Legacy	Soy sauce made from soy and wheat (shoyu)
+dark soy sauce	10	USDA_FDC	174277	SR Legacy	Soy sauce made from soy and wheat (shoyu)
+fish sauce	15	USDA_FDC	174531	SR Legacy	Sauce, fish, ready-to-serve
+oyster sauce	9	USDA_FDC	174529	SR Legacy	Sauce, oyster, ready-to-serve
+dijon mustard	15	USDA_FDC	2710085	Survey (FNDDS)	Mustard
+ketchup	8	USDA_FDC	2709733	Survey (FNDDS)	Ketchup
+cider vinegar	10	USDA_FDC	173469	SR Legacy	Vinegar, cider
+red wine vinegar	9	USDA_FDC	172240	SR Legacy	Vinegar, red wine
+white balsamic vinegar	7	USDA_FDC	172241	SR Legacy	Vinegar, balsamic
+sherry vinegar	8	USDA_FDC	2709351	Survey (FNDDS)	Vinegar
+rice vinegar	6	USDA_FDC	2709351	Survey (FNDDS)	Vinegar
+red pepper flakes	23	USDA_FDC	170932	SR Legacy	Spices, pepper, red or cayenne
+cayenne pepper	13	USDA_FDC	170932	SR Legacy	Spices, pepper, red or cayenne
+chili powder	13	USDA_FDC	171319	SR Legacy	Spices, chili powder
+ground cumin	21	USDA_FDC	170923	SR Legacy	Spices, cumin seed
+cumin seeds	8	USDA_FDC	170923	SR Legacy	Spices, cumin seed
+ground cinnamon	13	USDA_FDC	171320	SR Legacy	Spices, cinnamon, ground
+paprika	10	USDA_FDC	171329	SR Legacy	Spices, paprika
+black pepper	9	USDA_FDC	170931	SR Legacy	Spices, pepper, black
+pepper	11	USDA_FDC	170931	SR Legacy	Spices, pepper, black
+freshly ground black pepper	6	USDA_FDC	170931	SR Legacy	Spices, pepper, black
+bay leaves	28	USDA_FDC	170917	SR Legacy	Spices, bay leaf
+bay leaf	9	USDA_FDC	170917	SR Legacy	Spices, bay leaf
+dried oregano	9	USDA_FDC	171328	SR Legacy	Spices, oregano, dried
+coriander seeds	8	USDA_FDC	170922	SR Legacy	Spices, coriander seed
+ground coriander	6	USDA_FDC	170922	SR Legacy	Spices, coriander seed
+fennel seeds	11	USDA_FDC	171323	SR Legacy	Spices, fennel seed
+vanilla extract	15	USDA_FDC	173471	SR Legacy	Vanilla extract
+minced fresh parsley	15	USDA_FDC	170416	SR Legacy	Parsley, fresh
+minced fresh cilantro	14	USDA_FDC	2709782	Survey (FNDDS)	Cilantro, raw
+grated fresh ginger	13	USDA_FDC	169231	SR Legacy	Ginger root, raw
+minced fresh ginger	8	USDA_FDC	169231	SR Legacy	Ginger root, raw
+minced fresh thyme	10	USDA_FDC	173470	SR Legacy	Thyme, fresh
+celery	6	USDA_FDC	169988	SR Legacy	Celery, raw
+tomato paste	29	USDA_FDC	170459	SR Legacy	Tomato products, canned, paste, without salt added
+lime juice	14	USDA_FDC	168156	SR Legacy	Lime juice, raw
+lemon juice	12	USDA_FDC	167747	SR Legacy	Lemon juice, raw
+orange juice	6	USDA_FDC	169098	SR Legacy	Orange juice, raw
+raisins	6	USDA_FDC	2709212	Survey (FNDDS)	Raisins
+large eggs	10	USDA_FDC	171287	SR Legacy	Egg, whole, raw, fresh
+eggs	7	USDA_FDC	171287	SR Legacy	Egg, whole, raw, fresh
+water	55	USDA_FDC	173647	SR Legacy	Beverages, water, tap, drinking
+filtered water	7	USDA_FDC	173647	SR Legacy	Beverages, water, tap, drinking
