@@ -182,6 +182,7 @@ export function rowsToRecipe(
     source_image_text?: string | null;
     source_url?: string | null;
     starred?: boolean | number | null;
+    cover_image_path?: string | null;
   };
   return createRecipe({
     id: row.id,
@@ -210,6 +211,7 @@ export function rowsToRecipe(
     // Local SQLite stores starred as 0/1; Postgres returns a real
     // boolean. Either flavor is truthy when set.
     starred: toBool(rowX.starred),
+    coverImagePath: rowX.cover_image_path ?? undefined,
   });
 }
 
@@ -245,6 +247,7 @@ export function recipeToInsert(
     source_image_text: recipe.sourceImageText ?? null,
     source_url: recipe.sourceUrl ?? null,
     starred: recipe.starred === true,
+    cover_image_path: recipe.coverImagePath ?? null,
   };
   return { ...base, ...extras } as RecipeInsert;
 }

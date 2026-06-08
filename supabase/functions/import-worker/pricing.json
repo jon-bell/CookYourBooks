@@ -25,6 +25,12 @@
       "output_usd_per_mtok": 12.00
     },
     {
+      "provider": "gemini",
+      "model": "gemini-3.1-flash-image",
+      "input_usd_per_mtok": 0.30,
+      "output_usd_per_mtok": 30.00
+    },
+    {
       "provider": "openai-compatible",
       "model": "gpt-5.4",
       "input_usd_per_mtok": 2.50,

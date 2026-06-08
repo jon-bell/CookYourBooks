@@ -18,6 +18,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { Recipe } from '@cookyourbooks/domain';
+import { CoverImage } from './CoverImage.js';
 
 /** How the cookbook list is ordered. `manual` is the user's drag order
  *  (persisted via sort_order); `name`/`page` are read-only views. */
@@ -232,6 +233,13 @@ function RecipeRowBody({
         }`}
       >
         <span className="flex items-center gap-2 min-w-0">
+          {!isPlaceholder && recipe.coverImagePath && (
+            <CoverImage
+              path={recipe.coverImagePath}
+              alt=""
+              className="h-8 w-8 shrink-0 rounded border border-stone-200 dark:border-stone-700"
+            />
+          )}
           <span className={`line-clamp-2 min-w-0 ${isPlaceholder ? '' : 'font-medium'}`}>{recipe.title}</span>
           {pages && (
             <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">· {pages}</span>

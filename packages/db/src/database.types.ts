@@ -2091,6 +2091,7 @@ export type Database = {
         Row: {
           book_title: string | null
           collection_id: string
+          cover_image_path: string | null
           created_at: string
           description: string | null
           equipment: Json | null
@@ -2114,6 +2115,7 @@ export type Database = {
         Insert: {
           book_title?: string | null
           collection_id: string
+          cover_image_path?: string | null
           created_at?: string
           description?: string | null
           equipment?: Json | null
@@ -2137,6 +2139,7 @@ export type Database = {
         Update: {
           book_title?: string | null
           collection_id?: string
+          cover_image_path?: string | null
           created_at?: string
           description?: string | null
           equipment?: Json | null
@@ -2441,6 +2444,72 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      recipe_cover_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          created_at: string
+          id: string
+          last_error: string | null
+          owner_id: string
+          recipe_id: string
+          requested_by: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id: string
+          recipe_id: string
+          requested_by: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id?: string
+          recipe_id?: string
+          requested_by?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      user_cover_prefs: {
+        Row: {
+          model: string
+          owner_id: string
+          prompt: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          model?: string
+          owner_id: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          model?: string
+          owner_id?: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       user_ocr_prefs: {
         Row: {
@@ -3188,6 +3257,15 @@ export type Database = {
       show_trgm: { Args: { "": string }; Returns: string[] }
       transfer_household_ownership: {
         Args: { p_new_owner_id: string }
+        Returns: undefined
+      }
+      cover_jobs_enqueue: {
+        Args: { p_scope: string; p_target_id?: string }
+        Returns: number
+      }
+      cover_kick: { Args: never; Returns: undefined }
+      user_cover_prefs_set: {
+        Args: { p_model: string; p_prompt: string }
         Returns: undefined
       }
       user_ocr_prefs_set: {
