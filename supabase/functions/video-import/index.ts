@@ -12,10 +12,13 @@
 //                Recipe JSON-LD if present (free, exact), else fall back to
 //                Gemini over the page text. See jsonld.ts.
 //
-// The user's own Gemini key is read from Vault via the `ocr_resolve_key`
-// RPC (same mechanism the OCR import-worker uses) so it never reaches the
-// browser bundle. Same auth posture as nutrition / import-worker: an
-// authenticated JWT or a service-role token.
+// The user's own Gemini key (or a borrowed household key) is read from Vault
+// via the `ocr_resolve_effective_key` RPC (same mechanism the OCR
+// import-worker uses) so it never reaches the browser bundle. Same auth
+// posture as nutrition / import-worker: an authenticated JWT or a
+// service-role token. Each real Gemini call's token usage is metered into the
+// LLM Cost Center via misc_llm_usage_record (best-effort; the free JSON-LD
+// path and mock mode are not metered).
 //
 // Errors carry a machine-readable `code` so the UI can react:
 //   NO_GEMINI_KEY · UNSUPPORTED_URL · NEEDS_CAPTION · EXTRACTION_FAILED
@@ -225,14 +228,22 @@ interface GeminiResponse {
     content?: { parts?: Array<{ text?: string }> };
     finishReason?: string;
   }>;
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
   error?: { code?: number; message?: string };
+}
+
+interface GeminiCallResult {
+  text: string;
+  promptTokens: number;
+  completionTokens: number;
+  latencyMs: number;
 }
 
 async function callGemini(
   apiKey: string,
   parts: GeminiPart[],
   opts: { lowMediaResolution?: boolean } = {},
-): Promise<string> {
+): Promise<GeminiCallResult> {
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VIDEO_MODEL)}` +
     `:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -248,6 +259,7 @@ async function callGemini(
   // Stay under the hosted Edge Function ceiling; Gemini reads a short reel
   // in well under this.
   const timer = setTimeout(() => ctrl.abort(), 220_000);
+  const started = Date.now();
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -259,6 +271,7 @@ async function callGemini(
   } finally {
     clearTimeout(timer);
   }
+  const latencyMs = Date.now() - started;
 
   const rawText = await resp.text();
   if (!resp.ok) {
@@ -283,7 +296,12 @@ async function callGemini(
       `Gemini returned no text${cand?.finishReason ? ` (${cand.finishReason})` : ''}.`,
     );
   }
-  return text;
+  return {
+    text,
+    promptTokens: parsed.usageMetadata?.promptTokenCount ?? 0,
+    completionTokens: parsed.usageMetadata?.candidatesTokenCount ?? 0,
+    latencyMs,
+  };
 }
 
 // ---------- oEmbed caption fetch ----------
@@ -348,17 +366,72 @@ async function mockText(url: string): Promise<string> {
 
 // ---------- key resolution ----------
 
-async function resolveGeminiKey(ownerId: string): Promise<string> {
-  const { data, error } = await sb.rpc('ocr_resolve_key', {
+// ocr_resolve_effective_key (not ocr_resolve_key) so a household member who
+// borrows the shared key is honored AND the LLM Cost Center can attribute the
+// spend to whoever's key actually paid (key_owner_id).
+async function resolveGeminiKey(
+  ownerId: string,
+): Promise<{ apiKey: string; keyOwnerId: string | null }> {
+  const { data, error } = await sb.rpc('ocr_resolve_effective_key', {
     p_owner_id: ownerId,
     p_provider: 'gemini',
   });
   if (error) throw new HttpError('EXTRACTION_FAILED', `key lookup: ${error.message}`);
-  const row = Array.isArray(data) ? (data[0] as { api_key?: string } | undefined) : undefined;
+  const row = Array.isArray(data)
+    ? (data[0] as { api_key?: string; key_owner_id?: string } | undefined)
+    : undefined;
   if (!row?.api_key) {
     throw new HttpError('NO_GEMINI_KEY', 'No Gemini API key configured for this user.');
   }
-  return row.api_key;
+  return { apiKey: row.api_key, keyOwnerId: row.key_owner_id ?? null };
+}
+
+// ---------- cost metering ----------
+
+// Best-effort record into the LLM Cost Center ledger. A ledger failure must
+// NEVER fail the user's import — swallow everything. Only the real-Gemini
+// paths call this; the free JSON-LD path and mock mode never reach it.
+async function recordVideoUsage(
+  ownerId: string,
+  keyOwnerId: string | null,
+  sourceUrl: string,
+  g: GeminiCallResult,
+): Promise<void> {
+  try {
+    const { error } = await sb.rpc('misc_llm_usage_record', {
+      p_event: {
+        owner_id: ownerId,
+        key_owner_id: keyOwnerId,
+        feature: 'video',
+        provider: 'gemini',
+        model: VIDEO_MODEL,
+        prompt_tokens: g.promptTokens,
+        completion_tokens: g.completionTokens,
+        latency_ms: g.latencyMs,
+        error_kind: 'OK',
+        produced_ref: sourceUrl,
+        produced_kind: 'VIDEO_URL',
+      },
+    });
+    if (error) console.error('misc_llm_usage_record failed', error.message);
+  } catch (err) {
+    console.error('misc_llm_usage_record threw', (err as Error).message);
+  }
+}
+
+// callGemini + best-effort metering in one step, so every real Gemini call
+// site records uniformly.
+async function callGeminiMetered(
+  apiKey: string,
+  keyOwnerId: string | null,
+  ownerId: string,
+  sourceUrl: string,
+  parts: GeminiPart[],
+  opts: { lowMediaResolution?: boolean } = {},
+): Promise<string> {
+  const g = await callGemini(apiKey, parts, opts);
+  await recordVideoUsage(ownerId, keyOwnerId, sourceUrl, g);
+  return g.text;
 }
 
 // ---------- HTTP handler ----------
@@ -480,15 +553,18 @@ async function handle(req: Request): Promise<Response> {
       // tests) should run with VIDEO_IMPORT_MOCK_MODE instead.
       throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
     } else {
-      const apiKey = await resolveGeminiKey(caller);
+      const { apiKey, keyOwnerId } = await resolveGeminiKey(caller);
       llmText =
         platform === 'youtube'
-          ? await callGemini(
+          ? await callGeminiMetered(
               apiKey,
+              keyOwnerId,
+              caller,
+              url,
               [{ text: VIDEO_EXTRACT_PROMPT }, { file_data: { file_uri: url } }],
               { lowMediaResolution: true },
             )
-          : await callGemini(apiKey, [
+          : await callGeminiMetered(apiKey, keyOwnerId, caller, url, [
               { text: `${VIDEO_EXTRACT_PROMPT}\n\nVIDEO CAPTION:\n${captionText}` },
             ]);
     }
@@ -548,9 +624,9 @@ async function extractWebsite(
   if (caller === 'service_role') {
     throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
   }
-  const apiKey = await resolveGeminiKey(caller);
+  const { apiKey, keyOwnerId } = await resolveGeminiKey(caller);
   const text = htmlToText(html);
-  const llmText = await callGemini(apiKey, [
+  const llmText = await callGeminiMetered(apiKey, keyOwnerId, caller, url, [
     { text: `${WEBSITE_EXTRACT_PROMPT}\n\nPAGE TEXT:\n${text}` },
   ]);
   return { llmText, platformTitle };

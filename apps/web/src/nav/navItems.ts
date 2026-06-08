@@ -20,6 +20,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
 /** Account destinations: the desktop UserMenu and the mobile sheet. */
 export const ACCOUNT_NAV: readonly NavItem[] = [
   { label: 'Household', to: '/household' },
+  { label: 'LLM costs', to: '/cost' },
   { label: 'Settings', to: '/settings' },
 ];
 
