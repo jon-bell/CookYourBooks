@@ -22,7 +22,9 @@ export function IngredientMatchOverrideDialog({
   const [error, setError] = useState<string | null>(null);
   const search = useQuery<NutritionFact[]>({
     queryKey: ['nutrition-search', query],
-    queryFn: () => searchNutrition(query, 10),
+    // Manual override: surface branded foods too, so the user can pick a
+    // specific product the generic-only auto-match deliberately hides.
+    queryFn: () => searchNutrition(query, 10, { includeBranded: true }),
     enabled: query.trim().length > 0,
   });
 
