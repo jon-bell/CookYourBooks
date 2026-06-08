@@ -12,10 +12,13 @@
 //                Recipe JSON-LD if present (free, exact), else fall back to
 //                Gemini over the page text. See jsonld.ts.
 //
-// The user's own Gemini key is read from Vault via the `ocr_resolve_key`
-// RPC (same mechanism the OCR import-worker uses) so it never reaches the
-// browser bundle. Same auth posture as nutrition / import-worker: an
-// authenticated JWT or a service-role token.
+// The user's own Gemini key (or a borrowed household key) is read from Vault
+// via the `ocr_resolve_effective_key` RPC (same mechanism the OCR
+// import-worker uses) so it never reaches the browser bundle. Same auth
+// posture as nutrition / import-worker: an authenticated JWT or a
+// service-role token. Each real Gemini call's token usage is metered into the
+// LLM Cost Center via misc_llm_usage_record (best-effort; the free JSON-LD
+// path and mock mode are not metered).
 //
 // Errors carry a machine-readable `code` so the UI can react:
 //   NO_GEMINI_KEY · UNSUPPORTED_URL · NEEDS_CAPTION · EXTRACTION_FAILED
@@ -25,6 +28,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
 import { parseLlmJson, type ParsedRecipeDraft } from './parser.ts';
 import { extractJsonLdRecipes, extractSiteName, schemaRecipeToContract } from './jsonld.ts';
+import { canonicalYouTubeUrl } from './youtube.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -225,14 +229,22 @@ interface GeminiResponse {
     content?: { parts?: Array<{ text?: string }> };
     finishReason?: string;
   }>;
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
   error?: { code?: number; message?: string };
+}
+
+interface GeminiCallResult {
+  text: string;
+  promptTokens: number;
+  completionTokens: number;
+  latencyMs: number;
 }
 
 async function callGemini(
   apiKey: string,
   parts: GeminiPart[],
   opts: { lowMediaResolution?: boolean } = {},
-): Promise<string> {
+): Promise<GeminiCallResult> {
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VIDEO_MODEL)}` +
     `:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -248,6 +260,7 @@ async function callGemini(
   // Stay under the hosted Edge Function ceiling; Gemini reads a short reel
   // in well under this.
   const timer = setTimeout(() => ctrl.abort(), 220_000);
+  const started = Date.now();
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -259,6 +272,7 @@ async function callGemini(
   } finally {
     clearTimeout(timer);
   }
+  const latencyMs = Date.now() - started;
 
   const rawText = await resp.text();
   if (!resp.ok) {
@@ -283,7 +297,12 @@ async function callGemini(
       `Gemini returned no text${cand?.finishReason ? ` (${cand.finishReason})` : ''}.`,
     );
   }
-  return text;
+  return {
+    text,
+    promptTokens: parsed.usageMetadata?.promptTokenCount ?? 0,
+    completionTokens: parsed.usageMetadata?.candidatesTokenCount ?? 0,
+    latencyMs,
+  };
 }
 
 // ---------- oEmbed caption fetch ----------
@@ -319,7 +338,12 @@ async function fetchInstagramCaption(url: string): Promise<string | undefined> {
 
 // ---------- mock mode ----------
 
-async function mockText(url: string): Promise<string> {
+interface FixtureRow {
+  response_json: unknown;
+  error_kind: string | null;
+}
+
+async function probeFixture(url: string): Promise<FixtureRow | null> {
   // Probe (exact url) then ('*') wildcard, provider 'gemini' then ''.
   const probes = [
     { path: url, provider: 'gemini' },
@@ -335,30 +359,99 @@ async function mockText(url: string): Promise<string> {
       .eq('provider', probe.provider)
       .eq('model', '')
       .maybeSingle();
-    if (data) {
-      const row = data as { response_json: unknown; error_kind: string | null };
-      if (row.error_kind && row.error_kind !== 'OK') {
-        throw new HttpError('EXTRACTION_FAILED', `VIDEO_IMPORT_MOCK_MODE: forced ${row.error_kind}`);
-      }
-      return JSON.stringify(row.response_json ?? {});
-    }
+    if (data) return data as FixtureRow;
   }
-  throw new HttpError('EXTRACTION_FAILED', `VIDEO_IMPORT_MOCK_MODE: no fixture for ${url}`);
+  return null;
+}
+
+async function mockText(url: string): Promise<string> {
+  const row = await probeFixture(url);
+  if (!row) throw new HttpError('EXTRACTION_FAILED', `VIDEO_IMPORT_MOCK_MODE: no fixture for ${url}`);
+  if (row.error_kind && row.error_kind !== 'OK') {
+    throw new HttpError('EXTRACTION_FAILED', `VIDEO_IMPORT_MOCK_MODE: forced ${row.error_kind}`);
+  }
+  return JSON.stringify(row.response_json ?? {});
+}
+
+/** Mock-mode stand-in for "the site couldn't be fetched (403 / paywall)": a
+ * fixture whose response_json carries `__needs_caption` makes the website path
+ * prompt for a paste. (Signalled in the JSON body, not error_kind, because the
+ * ocr_test_fixtures.error_kind CHECK has a fixed allow-list.) On the retry a
+ * caption is supplied, so this gate is skipped and the fixture's recipe is
+ * returned — mirroring the real Gemini-over-pasted-text path. */
+async function mockNeedsCaption(url: string): Promise<boolean> {
+  const rj = (await probeFixture(url))?.response_json as { __needs_caption?: boolean } | undefined;
+  return rj?.__needs_caption === true;
 }
 
 // ---------- key resolution ----------
 
-async function resolveGeminiKey(ownerId: string): Promise<string> {
-  const { data, error } = await sb.rpc('ocr_resolve_key', {
+// ocr_resolve_effective_key (not ocr_resolve_key) so a household member who
+// borrows the shared key is honored AND the LLM Cost Center can attribute the
+// spend to whoever's key actually paid (key_owner_id).
+async function resolveGeminiKey(
+  ownerId: string,
+): Promise<{ apiKey: string; keyOwnerId: string | null }> {
+  const { data, error } = await sb.rpc('ocr_resolve_effective_key', {
     p_owner_id: ownerId,
     p_provider: 'gemini',
   });
   if (error) throw new HttpError('EXTRACTION_FAILED', `key lookup: ${error.message}`);
-  const row = Array.isArray(data) ? (data[0] as { api_key?: string } | undefined) : undefined;
+  const row = Array.isArray(data)
+    ? (data[0] as { api_key?: string; key_owner_id?: string } | undefined)
+    : undefined;
   if (!row?.api_key) {
     throw new HttpError('NO_GEMINI_KEY', 'No Gemini API key configured for this user.');
   }
-  return row.api_key;
+  return { apiKey: row.api_key, keyOwnerId: row.key_owner_id ?? null };
+}
+
+// ---------- cost metering ----------
+
+// Best-effort record into the LLM Cost Center ledger. A ledger failure must
+// NEVER fail the user's import — swallow everything. Only the real-Gemini
+// paths call this; the free JSON-LD path and mock mode never reach it.
+async function recordVideoUsage(
+  ownerId: string,
+  keyOwnerId: string | null,
+  sourceUrl: string,
+  g: GeminiCallResult,
+): Promise<void> {
+  try {
+    const { error } = await sb.rpc('misc_llm_usage_record', {
+      p_event: {
+        owner_id: ownerId,
+        key_owner_id: keyOwnerId,
+        feature: 'video',
+        provider: 'gemini',
+        model: VIDEO_MODEL,
+        prompt_tokens: g.promptTokens,
+        completion_tokens: g.completionTokens,
+        latency_ms: g.latencyMs,
+        error_kind: 'OK',
+        produced_ref: sourceUrl,
+        produced_kind: 'VIDEO_URL',
+      },
+    });
+    if (error) console.error('misc_llm_usage_record failed', error.message);
+  } catch (err) {
+    console.error('misc_llm_usage_record threw', (err as Error).message);
+  }
+}
+
+// callGemini + best-effort metering in one step, so every real Gemini call
+// site records uniformly.
+async function callGeminiMetered(
+  apiKey: string,
+  keyOwnerId: string | null,
+  ownerId: string,
+  sourceUrl: string,
+  parts: GeminiPart[],
+  opts: { lowMediaResolution?: boolean } = {},
+): Promise<string> {
+  const g = await callGemini(apiKey, parts, opts);
+  await recordVideoUsage(ownerId, keyOwnerId, sourceUrl, g);
+  return g.text;
 }
 
 // ---------- HTTP handler ----------
@@ -383,6 +476,21 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/** 422 telling the client to show the "paste the recipe text" box. Used when a
+ * post has no readable caption (TikTok/Instagram) and when a website can't be
+ * fetched/extracted (paywall, 403 — e.g. Serious Eats, NYT Cooking). */
+function needsCaptionResponse(platform: Platform, sourceUrl: string): Response {
+  return json(
+    {
+      error: 'Could not read this automatically. Paste the recipe text to continue.',
+      code: 'NEEDS_CAPTION',
+      platform,
+      sourceUrl,
+    },
+    422,
+  );
+}
+
 async function requireAuth(req: Request): Promise<string | null> {
   const auth = req.headers.get('Authorization') ?? '';
   const token = auth.replace(/^Bearer\s+/i, '');
@@ -403,6 +511,19 @@ Deno.serve(async (req) => {
       return await handle(req);
     } catch (err) {
       if (err instanceof HttpError) {
+        // NO_GEMINI_KEY / NEEDS_CAPTION are normal user states (no key yet,
+        // private post) — don't alert. EXTRACTION_FAILED / UNSUPPORTED_URL are
+        // real failures we were previously blind to: a paywalled NYT Cooking
+        // link returns no JSON-LD and Gemini sees only the paywall, so the
+        // share "did nothing" with zero Sentry signal. Capture a warning,
+        // tagged with the host/platform set on the scope in `handle`, so these
+        // group per-site and surface in cyb-deno.
+        if (SENTRY_DSN && (err.code === 'EXTRACTION_FAILED' || err.code === 'UNSUPPORTED_URL')) {
+          Sentry.captureMessage(`video-import ${err.code}: ${err.message}`, {
+            level: 'warning',
+            tags: { code: err.code },
+          });
+        }
         return json({ error: err.message, code: err.code }, err.code === 'NO_GEMINI_KEY' ? 400 : 422);
       }
       if (SENTRY_DSN) Sentry.captureException(err);
@@ -431,26 +552,42 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: 'Paste a valid http(s) recipe link.', code: 'UNSUPPORTED_URL' }, 400);
   }
 
+  // Tag the scope so any warning/exception captured below (in the Deno.serve
+  // catch) carries which platform + host failed — the diagnostic we need to
+  // tell "NYT Cooking is paywalled" apart from a generic extraction miss.
+  if (SENTRY_DSN) {
+    const host = (() => {
+      try {
+        return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+      } catch {
+        return 'invalid';
+      }
+    })();
+    Sentry.setTag('platform', platform);
+    Sentry.setTag('host', host);
+    Sentry.addBreadcrumb({
+      category: 'video-import',
+      level: 'info',
+      message: 'classified',
+      data: { platform, host },
+    });
+  }
+
   // Resolve the LLM text and the per-collection title. Each platform fills
   // these in its own way; the shared tail below parses + returns them.
   let llmText: string;
   let platformTitle: string;
 
   if (platform === 'website') {
-    ({ llmText, platformTitle } = await extractWebsite(url, caller));
+    const w = await extractWebsite(url, caller, caption);
+    // Couldn't fetch/extract the page (paywall, 403) and the user hasn't
+    // pasted the recipe yet → prompt for a paste instead of dead-ending.
+    if (w.kind === 'needs_caption') return needsCaptionResponse('website', url);
+    ({ llmText, platformTitle } = w);
   } else {
     platformTitle = SOCIAL_TITLE[platform];
 
-    const needsCaption = () =>
-      json(
-        {
-          error: 'Could not read the caption. Paste the recipe caption to continue.',
-          code: 'NEEDS_CAPTION',
-          platform,
-          sourceUrl: url,
-        },
-        422,
-      );
+    const needsCaption = () => needsCaptionResponse(platform, url);
 
     // For the text-based platforms (TikTok / Instagram) resolve the caption
     // up front — this is also where the NEEDS_CAPTION decision lives, and it
@@ -480,15 +617,23 @@ async function handle(req: Request): Promise<Response> {
       // tests) should run with VIDEO_IMPORT_MOCK_MODE instead.
       throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
     } else {
-      const apiKey = await resolveGeminiKey(caller);
+      const { apiKey, keyOwnerId } = await resolveGeminiKey(caller);
       llmText =
         platform === 'youtube'
-          ? await callGemini(
+          ? await callGeminiMetered(
               apiKey,
-              [{ text: VIDEO_EXTRACT_PROMPT }, { file_data: { file_uri: url } }],
+              keyOwnerId,
+              caller,
+              url,
+              // Hand Gemini the canonical watch URL — share-sheet links carry
+              // tracking params (`&si=…`) Gemini's video understanding chokes on.
+              [
+                { text: VIDEO_EXTRACT_PROMPT },
+                { file_data: { file_uri: canonicalYouTubeUrl(url) } },
+              ],
               { lowMediaResolution: true },
             )
-          : await callGemini(apiKey, [
+          : await callGeminiMetered(apiKey, keyOwnerId, caller, url, [
               { text: `${VIDEO_EXTRACT_PROMPT}\n\nVIDEO CAPTION:\n${captionText}` },
             ]);
     }
@@ -508,6 +653,11 @@ async function handle(req: Request): Promise<Response> {
     (d) => d.title || d.ingredients.length > 0 || d.instructions.length > 0,
   );
   if (!meaningful) {
+    // A website we *could* fetch but found no recipe in (JS-rendered page,
+    // wrong link) — if the user hasn't pasted text yet, offer the paste box
+    // rather than dead-ending. Once they've pasted and we still find nothing,
+    // it's a genuine miss.
+    if (platform === 'website' && !caption) return needsCaptionResponse('website', url);
     const where = platform === 'website' ? 'on that page' : 'in that video';
     return json(
       { error: `No recipe found ${where}.`, code: 'EXTRACTION_FAILED', platform, sourceUrl: url },
@@ -518,40 +668,91 @@ async function handle(req: Request): Promise<Response> {
   return json({ platform, platformTitle, sourceUrl: url, drafts });
 }
 
+// 'needs_caption' = couldn't fetch/extract the page; the caller turns this
+// into a NEEDS_CAPTION response so the user can paste the recipe text.
+type WebsiteExtraction =
+  | { kind: 'text'; llmText: string; platformTitle: string }
+  | { kind: 'needs_caption' };
+
 /**
- * Generic recipe-website extraction. Tries schema.org/Recipe JSON-LD first
- * (free, exact, no LLM); falls back to feeding the page's text to Gemini.
- * Returns the LLM-contract text the shared tail parses, plus a per-domain
- * collection title.
+ * Generic recipe-website extraction. When the user has pasted the recipe text
+ * (`caption`, the paywall fallback) we run the LLM straight over that and skip
+ * the fetch. Otherwise: fetch the page, try schema.org/Recipe JSON-LD first
+ * (free, exact, no LLM), else feed the page text to Gemini. A fetch failure
+ * (403 like Serious Eats, paywall redirect, network) returns 'needs_caption'
+ * rather than throwing — many recipe sites block bare server fetches, and the
+ * user can paste the recipe instead of hitting a dead end.
  */
 async function extractWebsite(
   url: string,
   caller: string,
-): Promise<{ llmText: string; platformTitle: string }> {
+  caption: string,
+): Promise<WebsiteExtraction> {
   if (MOCK_MODE) {
-    // Tests register a fixture keyed by URL (recipe JSON), same as social.
-    return { llmText: await mockText(url), platformTitle: extractSiteName('', url) };
+    // A fixture tagged NEEDS_CAPTION simulates a paywalled / 403 site.
+    if (!caption && (await mockNeedsCaption(url))) return { kind: 'needs_caption' };
+    return { kind: 'text', llmText: await mockText(url), platformTitle: extractSiteName('', url) };
   }
   if (!isSafePublicHttpUrl(url)) {
     throw new HttpError('UNSUPPORTED_URL', 'That host is not reachable.');
   }
 
-  const html = await fetchPageHtml(url);
+  // Paywall fallback: the user pasted the recipe text. Run the LLM over it and
+  // skip the fetch that failed the first time. Title is host-derived (no HTML).
+  if (caption) {
+    if (caller === 'service_role') {
+      throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
+    }
+    const { apiKey, keyOwnerId } = await resolveGeminiKey(caller);
+    const llmText = await callGeminiMetered(apiKey, keyOwnerId, caller, url, [
+      { text: `${WEBSITE_EXTRACT_PROMPT}\n\nPAGE TEXT:\n${caption}` },
+    ]);
+    return { kind: 'text', llmText, platformTitle: extractSiteName('', url) };
+  }
+
+  let html: string;
+  try {
+    html = await fetchPageHtml(url);
+  } catch (err) {
+    // Couldn't get the page (403 / paywall redirect / network). Don't dead-end
+    // — let the user paste the recipe text instead.
+    if (SENTRY_DSN) {
+      Sentry.addBreadcrumb({
+        category: 'video-import',
+        level: 'info',
+        message: 'fetch failed → needs caption',
+        data: { error: (err as Error).message },
+      });
+    }
+    return { kind: 'needs_caption' };
+  }
   const platformTitle = extractSiteName(html, url);
 
   const recipes = extractJsonLdRecipes(html);
+  if (SENTRY_DSN) {
+    Sentry.addBreadcrumb({
+      category: 'video-import',
+      level: 'info',
+      message: recipes.length > 0 ? 'jsonld recipes found' : 'no jsonld, LLM fallback',
+      data: { jsonldRecipes: recipes.length, htmlBytes: html.length },
+    });
+  }
   if (recipes.length > 0) {
-    return { llmText: JSON.stringify({ recipes: recipes.map(schemaRecipeToContract) }), platformTitle };
+    return {
+      kind: 'text',
+      llmText: JSON.stringify({ recipes: recipes.map(schemaRecipeToContract) }),
+      platformTitle,
+    };
   }
 
   // No structured recipe on the page — fall back to the LLM over page text.
   if (caller === 'service_role') {
     throw new HttpError('NO_GEMINI_KEY', 'Service-role caller has no user Gemini key.');
   }
-  const apiKey = await resolveGeminiKey(caller);
+  const { apiKey, keyOwnerId } = await resolveGeminiKey(caller);
   const text = htmlToText(html);
-  const llmText = await callGemini(apiKey, [
+  const llmText = await callGeminiMetered(apiKey, keyOwnerId, caller, url, [
     { text: `${WEBSITE_EXTRACT_PROMPT}\n\nPAGE TEXT:\n${text}` },
   ]);
-  return { llmText, platformTitle };
+  return { kind: 'text', llmText, platformTitle };
 }

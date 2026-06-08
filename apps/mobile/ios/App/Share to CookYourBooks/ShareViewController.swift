@@ -30,22 +30,30 @@ class ShareViewController: UIViewController {
         for (i, item) in shareItems.enumerated() {
             NSLog("[CYB-Share]   item[\(i)] title=\(item.title ?? "nil") type=\(item.type ?? "nil") url=\(item.url ?? "nil")")
         }
-        let queryItems = shareItems.map {
+        // Percent-encode each value ourselves with the encodeURIComponent
+        // "unreserved" set (escapes : / ? & = etc.), then assign via
+        // `percentEncodedQueryItems` so URLComponents does NOT re-encode.
+        // The old code pre-encoded with .urlHostAllowed AND used
+        // `queryItems`, which re-escaped the `%` we wrote (%3A -> %253A)
+        // -> double-encoded deep link the web couldn't parse (Sentry
+        // CYB-CAPACITOR-D). Pre-encoding is still required because
+        // `queryItems` won't escape `&`/`=` inside a value and would
+        // otherwise split a shared URL's own query into stray params.
+        let allowed = CharacterSet(charactersIn:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")
+        func enc(_ s: String?) -> String {
+            (s ?? "").addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        }
+        let queryItems = shareItems.flatMap { item -> [URLQueryItem] in
             [
-                URLQueryItem(
-                    name: "title",
-                    value: $0.title?.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? ""),
+                URLQueryItem(name: "title", value: enc(item.title)),
                 URLQueryItem(name: "description", value: ""),
-                URLQueryItem(
-                    name: "type",
-                    value: $0.type?.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? ""),
-                URLQueryItem(
-                    name: "url",
-                    value: $0.url?.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed) ?? ""),
+                URLQueryItem(name: "type", value: enc(item.type)),
+                URLQueryItem(name: "url", value: enc(item.url)),
             ]
-        }.flatMap({ $0 })
+        }
         var urlComps = URLComponents(string: "cookyourbooks://")!
-        urlComps.queryItems = queryItems
+        urlComps.percentEncodedQueryItems = queryItems
         guard let finalUrl = urlComps.url else {
             NSLog("[CYB-Share] sendData: failed to build final URL")
             return

@@ -171,6 +171,7 @@ export type Database = {
           drafts: Json | null
           error_kind: string | null
           error_message: string | null
+          household_id: string | null
           id: string
           latency_ms: number | null
           model: string
@@ -196,6 +197,7 @@ export type Database = {
           drafts?: Json | null
           error_kind?: string | null
           error_message?: string | null
+          household_id?: string | null
           id?: string
           latency_ms?: number | null
           model: string
@@ -221,6 +223,7 @@ export type Database = {
           drafts?: Json | null
           error_kind?: string | null
           error_message?: string | null
+          household_id?: string | null
           id?: string
           latency_ms?: number | null
           model?: string
@@ -955,8 +958,10 @@ export type Database = {
           error_kind: string | null
           error_message: string | null
           finished_at: string | null
+          household_id: string | null
           id: string
           item_id: string
+          key_owner_id: string | null
           latency_ms: number
           model: string
           owner_id: string
@@ -972,8 +977,10 @@ export type Database = {
           error_kind?: string | null
           error_message?: string | null
           finished_at?: string | null
+          household_id?: string | null
           id?: string
           item_id: string
+          key_owner_id?: string | null
           latency_ms?: number
           model?: string
           owner_id: string
@@ -989,8 +996,10 @@ export type Database = {
           error_kind?: string | null
           error_message?: string | null
           finished_at?: string | null
+          household_id?: string | null
           id?: string
           item_id?: string
+          key_owner_id?: string | null
           latency_ms?: number
           model?: string
           owner_id?: string
@@ -1520,6 +1529,68 @@ export type Database = {
           },
         ]
       }
+      misc_llm_usage: {
+        Row: {
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          error_kind: string | null
+          feature: string
+          household_id: string | null
+          id: string
+          key_owner_id: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          produced_kind: string | null
+          produced_ref: string | null
+          prompt_tokens: number
+          provider: string
+        }
+        Insert: {
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          error_kind?: string | null
+          feature: string
+          household_id?: string | null
+          id?: string
+          key_owner_id?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id: string
+          produced_kind?: string | null
+          produced_ref?: string | null
+          prompt_tokens?: number
+          provider?: string
+        }
+        Update: {
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          error_kind?: string | null
+          feature?: string
+          household_id?: string | null
+          id?: string
+          key_owner_id?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id?: string
+          produced_kind?: string | null
+          produced_ref?: string | null
+          prompt_tokens?: number
+          provider?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "misc_llm_usage_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       model_pricing: {
         Row: {
           fetched_at: string
@@ -1946,6 +2017,101 @@ export type Database = {
           },
         ]
       }
+      recipe_embedding_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          created_at: string
+          id: string
+          last_error: string | null
+          owner_id: string
+          recipe_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id: string
+          recipe_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id?: string
+          recipe_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_embedding_jobs_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_embedding_jobs_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_embeddings: {
+        Row: {
+          embedded_at: string
+          embedding: string
+          household_id: string | null
+          model: string
+          owner_id: string | null
+          recipe_id: string
+          text_hash: string
+          updated_at: string
+        }
+        Insert: {
+          embedded_at?: string
+          embedding: string
+          household_id?: string | null
+          model: string
+          owner_id?: string | null
+          recipe_id: string
+          text_hash: string
+          updated_at?: string
+        }
+        Update: {
+          embedded_at?: string
+          embedding?: string
+          household_id?: string | null
+          model?: string
+          owner_id?: string | null
+          recipe_id?: string
+          text_hash?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_embeddings_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: true
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recipe_tags: {
         Row: {
           created_at: string
@@ -1995,6 +2161,7 @@ export type Database = {
         Row: {
           book_title: string | null
           collection_id: string
+          cover_image_path: string | null
           created_at: string
           description: string | null
           equipment: Json | null
@@ -2018,6 +2185,7 @@ export type Database = {
         Insert: {
           book_title?: string | null
           collection_id: string
+          cover_image_path?: string | null
           created_at?: string
           description?: string | null
           equipment?: Json | null
@@ -2041,6 +2209,7 @@ export type Database = {
         Update: {
           book_title?: string | null
           collection_id?: string
+          cover_image_path?: string | null
           created_at?: string
           description?: string | null
           equipment?: Json | null
@@ -2154,6 +2323,7 @@ export type Database = {
           completion_tokens: number
           cost_usd_micros: number
           created_at: string
+          household_id: string | null
           id: string
           last_error: string | null
           latency_ms: number
@@ -2174,6 +2344,7 @@ export type Database = {
           completion_tokens?: number
           cost_usd_micros?: number
           created_at?: string
+          household_id?: string | null
           id?: string
           last_error?: string | null
           latency_ms?: number
@@ -2194,6 +2365,7 @@ export type Database = {
           completion_tokens?: number
           cost_usd_micros?: number
           created_at?: string
+          household_id?: string | null
           id?: string
           last_error?: string | null
           latency_ms?: number
@@ -2343,7 +2515,49 @@ export type Database = {
           },
         ]
       }
-      user_ocr_prefs: {
+      recipe_cover_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          created_at: string
+          id: string
+          last_error: string | null
+          owner_id: string
+          recipe_id: string
+          requested_by: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id: string
+          recipe_id: string
+          requested_by: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id?: string
+          recipe_id?: string
+          requested_by?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      user_cover_prefs: {
         Row: {
           model: string
           owner_id: string
@@ -2367,100 +2581,29 @@ export type Database = {
         }
         Relationships: []
       }
-      recipe_embeddings: {
+      user_ocr_prefs: {
         Row: {
-          recipe_id: string
-          embedding: string
-          text_hash: string
           model: string
-          owner_id: string | null
-          household_id: string | null
-          embedded_at: string
+          owner_id: string
+          prompt: string
+          provider: string
           updated_at: string
         }
         Insert: {
-          recipe_id: string
-          embedding: string
-          text_hash: string
-          model: string
-          owner_id?: string | null
-          household_id?: string | null
-          embedded_at?: string
-          updated_at?: string
-        }
-        Update: {
-          recipe_id?: string
-          embedding?: string
-          text_hash?: string
           model?: string
-          owner_id?: string | null
-          household_id?: string | null
-          embedded_at?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "recipe_embeddings_recipe_id_fkey"
-            columns: ["recipe_id"]
-            isOneToOne: true
-            referencedRelation: "recipes"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      recipe_embedding_jobs: {
-        Row: {
-          id: string
           owner_id: string
-          recipe_id: string
-          status: string
-          claim_token: string | null
-          claim_expires_at: string
-          attempts: number
-          last_error: string | null
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          owner_id: string
-          recipe_id: string
-          status?: string
-          claim_token?: string | null
-          claim_expires_at?: string
-          attempts?: number
-          last_error?: string | null
-          created_at?: string
+          prompt?: string
+          provider?: string
           updated_at?: string
         }
         Update: {
-          id?: string
+          model?: string
           owner_id?: string
-          recipe_id?: string
-          status?: string
-          claim_token?: string | null
-          claim_expires_at?: string
-          attempts?: number
-          last_error?: string | null
-          created_at?: string
+          prompt?: string
+          provider?: string
           updated_at?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "recipe_embedding_jobs_owner_id_fkey"
-            columns: ["owner_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "recipe_embedding_jobs_recipe_id_fkey"
-            columns: ["recipe_id"]
-            isOneToOne: false
-            referencedRelation: "recipes"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       user_rewrite_prefs: {
         Row: {
@@ -2512,6 +2655,28 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      llm_usage_report: {
+        Row: {
+          completion_tokens: number | null
+          cost_usd_micros: number | null
+          created_at: string | null
+          error_kind: string | null
+          feature: string | null
+          household_id: string | null
+          id: string | null
+          key_fingerprint: string | null
+          key_owner_id: string | null
+          latency_ms: number | null
+          model: string | null
+          owner_id: string | null
+          produced_kind: string | null
+          produced_ref: string | null
+          prompt_tokens: number | null
+          provider: string | null
+          succeeded: boolean | null
+        }
+        Relationships: []
       }
       public_collections: {
         Row: {
@@ -2568,6 +2733,7 @@ export type Database = {
           drafts: Json | null
           error_kind: string | null
           error_message: string | null
+          household_id: string | null
           id: string
           latency_ms: number | null
           model: string
@@ -2617,16 +2783,6 @@ export type Database = {
         Args: { p_id?: string; p_scope: string }
         Returns: string[]
       }
-      embed_upsert_client: {
-        Args: {
-          p_recipe_id: string
-          p_text_hash: string
-          p_embedding: number[]
-          p_model: string
-        }
-        Returns: boolean
-      }
-      embed_kick: { Args: Record<string, never>; Returns: undefined }
       cli_add_shopping: {
         Args: {
           name: string
@@ -2687,6 +2843,64 @@ export type Database = {
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
       delete_household: { Args: { p_household_id: string }; Returns: undefined }
       delete_my_account: { Args: never; Returns: undefined }
+      embed_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          created_at: string
+          id: string
+          last_error: string | null
+          owner_id: string
+          recipe_id: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "recipe_embedding_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      embed_complete: {
+        Args: {
+          p_claim_token: string
+          p_embedding: number[]
+          p_job_id: string
+          p_model: string
+          p_text_hash: string
+        }
+        Returns: boolean
+      }
+      embed_fail: {
+        Args: {
+          p_claim_token: string
+          p_error: string
+          p_job_id: string
+          p_next_state: string
+        }
+        Returns: boolean
+      }
+      embed_kick: { Args: never; Returns: undefined }
+      embed_upsert_client: {
+        Args: {
+          p_embedding: number[]
+          p_model: string
+          p_recipe_id: string
+          p_text_hash: string
+        }
+        Returns: boolean
+      }
+      enqueue_recipe_embed_job: {
+        Args: { p_recipe_id: string }
+        Returns: undefined
+      }
       fork_collection: {
         Args: { source_collection_id: string }
         Returns: string
@@ -2898,6 +3112,20 @@ export type Database = {
         Returns: boolean
       }
       leave_household: { Args: never; Returns: undefined }
+      llm_usage_summary: {
+        Args: { p_from?: string; p_group_by?: string; p_to?: string }
+        Returns: {
+          avg_latency_ms: number
+          bucket: string
+          completion_tokens: number
+          cost_usd_micros: number
+          failures: number
+          member_id: string
+          prompt_tokens: number
+          queries: number
+        }[]
+      }
+      misc_llm_usage_record: { Args: { p_event: Json }; Returns: string }
       moderation_ban_user: {
         Args: { reason: string; target_user_id: string }
         Returns: undefined
@@ -3012,6 +3240,7 @@ export type Database = {
           completion_tokens: number
           cost_usd_micros: number
           created_at: string
+          household_id: string | null
           id: string
           last_error: string | null
           latency_ms: number
@@ -3114,6 +3343,15 @@ export type Database = {
       show_trgm: { Args: { "": string }; Returns: string[] }
       transfer_household_ownership: {
         Args: { p_new_owner_id: string }
+        Returns: undefined
+      }
+      cover_jobs_enqueue: {
+        Args: { p_scope: string; p_target_id?: string }
+        Returns: number
+      }
+      cover_kick: { Args: never; Returns: undefined }
+      user_cover_prefs_set: {
+        Args: { p_model: string; p_prompt: string }
         Returns: undefined
       }
       user_ocr_prefs_set: {

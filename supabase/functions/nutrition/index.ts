@@ -21,6 +21,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
 import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
+import { extractIngredientTerms, ingredientSearchQuery } from './_ingredientTerms.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -101,31 +102,31 @@ interface MasterRow {
   portions: { unit: string; grams: number }[];
 }
 
-// Strip recipe-ese that confuses the FTS matcher without changing the
-// nutritional identity. Removes parentheticals ("(chopped)"), trailing
-// prep notes after a comma (", diced", ", to taste"), and surrounding
-// punctuation. Nutrition-relevant modifiers (raw vs cooked, whole-wheat
-// vs all-purpose, low-fat vs full-fat) pass through unchanged.
-function normalizeForSearch(q: string): string {
-  return q
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/,.*$/, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/^[\s"'.-]+|[\s"'.-]+$/g, '')
-    .trim();
-}
+// Term extraction (parenthetical / prep / alternative-list / size-word
+// stripping, keeping nutrition-relevant modifiers) lives in the shared
+// `_ingredientTerms.ts`, a byte-for-byte port of the domain helper so
+// the edge function, the browser local search, and the recipe-nutrition
+// hook all normalize identically.
 
-async function masterSearch(q: string, limit: number): Promise<CachedFact[]> {
-  const normalized = normalizeForSearch(q);
+async function masterSearch(
+  q: string,
+  limit: number,
+  genericOnly: boolean,
+): Promise<CachedFact[]> {
+  const normalized = ingredientSearchQuery(q);
   if (!normalized) return [];
   const { data, error } = await sb.rpc('search_nutrition_foods', {
     p_query: normalized,
     p_limit: limit,
+    p_generic_only: genericOnly,
   });
   if (error) throw new Error(`master search: ${error.message}`);
   if (!Array.isArray(data)) return [];
-  return (data as MasterRow[]).map((r) => ({
+  return (data as MasterRow[]).map(masterRowToFact);
+}
+
+function masterRowToFact(r: MasterRow): CachedFact {
+  return {
     source: r.source as CachedFact['source'],
     source_id: r.source_id,
     description: r.description,
@@ -141,7 +142,68 @@ async function masterSearch(q: string, limit: number): Promise<CachedFact[]> {
     fiber_g: r.fiber_g,
     sodium_mg: r.sodium_mg,
     portions: Array.isArray(r.portions) ? r.portions : [],
-  }));
+  };
+}
+
+// ---------- Semantic fallback (gte-small over generic foods) ----------
+//
+// When lexical search whiffs (e.g. "neutral oil" — no row literally says
+// "neutral"), embed the query with the same gte-small model used for
+// recipe search and cosine-match against the pre-embedded generic foods
+// (nutrition_food_embeddings, 20260608000500). Runs through the Edge
+// Runtime's native Supabase.ai session — transformers.js has no working
+// ONNX backend here. Keep the model id in lockstep with
+// packages/domain/src/services/embeddingModel.ts (EMBEDDING_STORED_MODEL)
+// and supabase/functions/import-worker/embed.ts.
+const GTE_SESSION_MODEL = 'gte-small';
+const EMBEDDING_DIM = 384;
+
+type AiSession = {
+  run(
+    input: string,
+    opts?: { mean_pool?: boolean; normalize?: boolean },
+  ): Promise<number[] | Float32Array>;
+};
+declare const Supabase: { ai: { Session: new (model: string) => AiSession } };
+
+let sessionSingleton: AiSession | undefined;
+function getSession(): AiSession {
+  if (!sessionSingleton) {
+    sessionSingleton = new Supabase.ai.Session(GTE_SESSION_MODEL);
+  }
+  return sessionSingleton;
+}
+
+/** Lexical result is "weak" if there's nothing, or the top hit doesn't
+ *  even mention the query's head food noun (so it's probably a token
+ *  coincidence, not a real match). */
+function lexicalIsWeak(q: string, facts: CachedFact[]): boolean {
+  if (facts.length === 0) return true;
+  const core = extractIngredientTerms(q).core[0];
+  if (!core) return false;
+  const top = (facts[0]?.description ?? '').toLowerCase();
+  // Stem-tolerant-ish: match the core noun as a prefix so "tomatoes"
+  // covers "tomato". Cheap and good enough as a fallback trigger.
+  const stem = core.length > 4 ? core.slice(0, core.length - 1) : core;
+  return !top.includes(stem);
+}
+
+async function semanticSearch(q: string, limit: number): Promise<CachedFact[]> {
+  const text = ingredientSearchQuery(q) || q;
+  if (!text) return [];
+  const session = getSession();
+  const res = await session.run(text, { mean_pool: true, normalize: true });
+  const vec = res instanceof Float32Array ? Array.from(res) : (res as number[]);
+  if (vec.length !== EMBEDDING_DIM) {
+    throw new Error(`semantic search: expected ${EMBEDDING_DIM}-dim vector, got ${vec.length}`);
+  }
+  const { data, error } = await sb.rpc('search_nutrition_foods_semantic', {
+    p_embedding: vec,
+    p_limit: limit,
+  });
+  if (error) throw new Error(`semantic search: ${error.message}`);
+  if (!Array.isArray(data)) return [];
+  return (data as MasterRow[]).map(masterRowToFact);
 }
 
 // ---------- Open Food Facts ----------
@@ -338,16 +400,38 @@ async function handle(req: Request): Promise<Response> {
   if (path === '/search' || path === '/' || path === '') {
     const q = typeof body.q === 'string' ? body.q.trim() : '';
     const limit = typeof body.limit === 'number' ? body.limit : 10;
+    // Auto-match (the recipe nutrition panel) wants clean generic foods
+    // only; the manual override dialog passes include_branded so the
+    // user can still pick a specific brand.
+    const includeBranded = body.include_branded === true;
     if (!q) return json({ hits: [] });
 
     const facts: CachedFact[] = [];
     try {
-      const hits = await masterSearch(q, limit);
-      console.log(`master search "${q}" → ${hits.length} hits`);
+      const hits = await masterSearch(q, limit, !includeBranded);
+      console.log(`master search "${q}" (generic_only=${!includeBranded}) → ${hits.length} hits`);
       facts.push(...hits);
     } catch (e) {
       console.error('master search failed', e);
       Sentry.captureException(e, { tags: { stage: 'master_search' }, extra: { q } });
+    }
+    // Lexical came up empty or weak (didn't cover the head food noun) —
+    // try semantic match over the generic foods before falling back to
+    // Open Food Facts. Only for the auto-match path; the override dialog
+    // is a direct user query where lexical + branded is what they want.
+    if (!includeBranded && lexicalIsWeak(q, facts)) {
+      try {
+        const sem = await semanticSearch(q, limit);
+        if (sem.length > 0) {
+          console.log(`semantic search "${q}" → ${sem.length} hits`);
+          // Prepend so the semantic best-guess becomes the auto-match,
+          // but keep any lexical hits behind it as alternatives.
+          facts.unshift(...sem);
+        }
+      } catch (e) {
+        console.error('semantic search failed', e);
+        Sentry.captureException(e, { tags: { stage: 'semantic_search' }, extra: { q } });
+      }
     }
     if (facts.length === 0) {
       try {

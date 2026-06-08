@@ -43,6 +43,8 @@ import {
 } from '../settings/rewriteSettings.js';
 import { useImportItemsForRecipe } from '../import/queries.js';
 import { RecipeScanDialog } from '../components/RecipeScanDialog.js';
+import { CoverImage } from '../components/CoverImage.js';
+import { RecipeCoverImageEditor } from '../components/RecipeCoverImageEditor.js';
 import { RecipeNutritionPanel } from '../nutrition/RecipeNutritionPanel.js';
 import { CookingPanel } from '../cooking/CookingPanel.js';
 import { CookingHistoryPanel } from '../cooking/CookingHistoryPanel.js';
@@ -161,6 +163,11 @@ export function RecipePage() {
     await saveRecipe.mutateAsync({ ...recipe, starred: !(recipe.starred === true) });
   }
 
+  async function setCover(path: string | undefined) {
+    if (!recipe) return;
+    await saveRecipe.mutateAsync({ ...recipe, coverImagePath: path });
+  }
+
   return (
     <div className="space-y-6">
       {showScan && (
@@ -170,6 +177,13 @@ export function RecipePage() {
         <Link to={`/collections/${collection.id}`} className="text-sm text-stone-600 dark:text-stone-400 hover:underline">
           ← {collection.title}
         </Link>
+        {recipe.coverImagePath && (
+          <CoverImage
+            path={recipe.coverImagePath}
+            alt={`${recipe.title} cover`}
+            className="mt-3 h-48 w-full max-w-md rounded-lg border border-stone-200 dark:border-stone-700"
+          />
+        )}
         <h1 className="mt-1 text-3xl font-semibold">{recipe.title}</h1>
         {collection.sourceType === 'PUBLISHED_BOOK' && collection.author && (
           <p className="mt-1 text-base text-stone-600 dark:text-stone-400">
@@ -267,6 +281,10 @@ export function RecipePage() {
         )}
 
         <TagEditor recipeId={recipe.id} />
+
+        <div className="mt-4">
+          <RecipeCoverImageEditor recipe={recipe} onChange={setCover} />
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">

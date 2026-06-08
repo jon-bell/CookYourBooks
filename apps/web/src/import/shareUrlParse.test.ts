@@ -51,6 +51,30 @@ describe('urlFromIntent', () => {
     });
   });
 
+  it('recovers a double-encoded link from title (legacy build, CYB-CAPACITOR-D)', () => {
+    // The exact malformed deep link from the Sentry report: a YouTube
+    // link shared as text, double-encoded into `title` (url empty). Older
+    // ShareViewController builds pre-encoded with .urlHostAllowed AND let
+    // URLComponents re-encode, so `%3A` became `%253A`.
+    const raw =
+      'cookyourbooks://?title=https%253A%252F%252Fyoutube.com%252Fwatch%253Fv%3DOxeyj8gWxmE%26si%3DwPbodmA8G2eWkWtZ&description=&type=text%252Fplain&url=';
+    expect(urlFromIntent({ url: raw })).toEqual({
+      url: 'https://youtube.com/watch?v=Oxeyj8gWxmE&si=wPbodmA8G2eWkWtZ',
+      platform: 'youtube',
+    });
+  });
+
+  it('recovers a double-encoded link from the url param (public.url share)', () => {
+    // NYT Cooking shares as public.url → both title and url were
+    // double-encoded; the generic recipe site must still resolve.
+    const raw =
+      'cookyourbooks://?title=https%253A%252F%252Fcooking.nytimes.com%252Frecipes%252F1234&description=&type=text%252Fplain&url=https%253A%252F%252Fcooking.nytimes.com%252Frecipes%252F1234';
+    expect(urlFromIntent({ url: raw })).toEqual({
+      url: 'https://cooking.nytimes.com/recipes/1234',
+      platform: null,
+    });
+  });
+
   it('returns no url when nothing parseable is present', () => {
     expect(urlFromIntent({ url: deepLink({ title: 'just some text, no link' }) })).toEqual({
       url: null,

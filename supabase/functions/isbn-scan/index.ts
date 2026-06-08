@@ -6,9 +6,11 @@
 // Reads the ISBN off a photographed book cover or barcode using Gemini
 // vision. We use an LLM rather than the browser BarcodeDetector API because
 // that API isn't available in the iOS Capacitor WebView, and a cover photo
-// (no clean barcode) still resolves. The user's own Gemini key is read from
-// Vault via the `ocr_resolve_key` RPC — same mechanism as video-import and
-// the OCR import-worker — so it never reaches the browser bundle.
+// (no clean barcode) still resolves. The user's own Gemini key (or a borrowed
+// household key) is read from Vault via the `ocr_resolve_effective_key` RPC —
+// same mechanism as video-import and the OCR import-worker — so it never
+// reaches the browser bundle. Each scan's token usage is metered into the LLM
+// Cost Center via misc_llm_usage_record (best-effort).
 //
 // Errors carry a machine-readable `code`: NO_GEMINI_KEY · NO_ISBN_FOUND ·
 // SCAN_FAILED.
@@ -66,15 +68,28 @@ interface GeminiResponse {
     content?: { parts?: Array<{ text?: string }> };
     finishReason?: string;
   }>;
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
   error?: { code?: number; message?: string };
 }
 
-async function callGemini(apiKey: string, imageBase64: string, mimeType: string): Promise<string> {
+interface GeminiCallResult {
+  text: string;
+  promptTokens: number;
+  completionTokens: number;
+  latencyMs: number;
+}
+
+async function callGemini(
+  apiKey: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<GeminiCallResult> {
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ISBN_MODEL)}` +
     `:generateContent?key=${encodeURIComponent(apiKey)}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60_000);
+  const started = Date.now();
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -97,6 +112,7 @@ async function callGemini(apiKey: string, imageBase64: string, mimeType: string)
   } finally {
     clearTimeout(timer);
   }
+  const latencyMs = Date.now() - started;
 
   const rawText = await resp.text();
   if (!resp.ok) {
@@ -115,22 +131,76 @@ async function callGemini(apiKey: string, imageBase64: string, mimeType: string)
     (p) => typeof p.text === 'string' && p.text.length > 0,
   )?.text;
   if (!text) throw new HttpError('SCAN_FAILED', 'Gemini returned no text.');
-  return text;
+  return {
+    text,
+    promptTokens: parsed.usageMetadata?.promptTokenCount ?? 0,
+    completionTokens: parsed.usageMetadata?.candidatesTokenCount ?? 0,
+    latencyMs,
+  };
 }
 
 // ---------- key resolution ----------
 
-async function resolveGeminiKey(ownerId: string): Promise<string> {
-  const { data, error } = await sb.rpc('ocr_resolve_key', {
+// ocr_resolve_effective_key (not ocr_resolve_key) so a household member who
+// borrows the shared key is honored AND the LLM Cost Center can attribute the
+// spend to whoever's key actually paid (key_owner_id).
+async function resolveGeminiKey(
+  ownerId: string,
+): Promise<{ apiKey: string; keyOwnerId: string | null }> {
+  const { data, error } = await sb.rpc('ocr_resolve_effective_key', {
     p_owner_id: ownerId,
     p_provider: 'gemini',
   });
   if (error) throw new HttpError('SCAN_FAILED', `key lookup: ${error.message}`);
-  const row = Array.isArray(data) ? (data[0] as { api_key?: string } | undefined) : undefined;
+  const row = Array.isArray(data)
+    ? (data[0] as { api_key?: string; key_owner_id?: string } | undefined)
+    : undefined;
   if (!row?.api_key) {
     throw new HttpError('NO_GEMINI_KEY', 'No Gemini API key configured for this user.');
   }
-  return row.api_key;
+  return { apiKey: row.api_key, keyOwnerId: row.key_owner_id ?? null };
+}
+
+// ---------- cost metering ----------
+
+// Best-effort record into the LLM Cost Center ledger. A ledger failure must
+// NEVER fail the user's scan — swallow everything.
+async function recordMiscUsage(
+  client: SupabaseClient,
+  e: {
+    ownerId: string;
+    keyOwnerId: string | null;
+    feature: 'isbn' | 'video';
+    provider: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    latencyMs: number;
+    errorKind: string;
+    producedRef?: string;
+    producedKind: string;
+  },
+): Promise<void> {
+  try {
+    const { error } = await client.rpc('misc_llm_usage_record', {
+      p_event: {
+        owner_id: e.ownerId,
+        key_owner_id: e.keyOwnerId,
+        feature: e.feature,
+        provider: e.provider,
+        model: e.model,
+        prompt_tokens: e.promptTokens,
+        completion_tokens: e.completionTokens,
+        latency_ms: e.latencyMs,
+        error_kind: e.errorKind,
+        produced_ref: e.producedRef ?? null,
+        produced_kind: e.producedKind,
+      },
+    });
+    if (error) console.error('misc_llm_usage_record failed', error.message);
+  } catch (err) {
+    console.error('misc_llm_usage_record threw', (err as Error).message);
+  }
 }
 
 // ---------- HTTP handler ----------
@@ -201,18 +271,34 @@ async function handle(req: Request): Promise<Response> {
   const mimeType = typeof body.mimeType === 'string' && body.mimeType ? body.mimeType : 'image/jpeg';
   if (!imageBase64) return json({ error: 'missing image', code: 'SCAN_FAILED' }, 400);
 
-  const apiKey = await resolveGeminiKey(caller);
-  const text = await callGemini(apiKey, imageBase64, mimeType);
+  const { apiKey, keyOwnerId } = await resolveGeminiKey(caller);
+  const result = await callGemini(apiKey, imageBase64, mimeType);
 
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = JSON.parse(result.text);
   } catch {
     throw new HttpError('SCAN_FAILED', 'Scanner returned malformed JSON.');
   }
   const candidate =
     raw && typeof raw === 'object' ? (raw as Record<string, unknown>).isbn : undefined;
   const isbn = typeof candidate === 'string' ? normalizeIsbn(candidate) : null;
+
+  // Meter the Gemini call (whether or not an ISBN was read — it cost the same).
+  await recordMiscUsage(sb, {
+    ownerId: caller,
+    keyOwnerId,
+    feature: 'isbn',
+    provider: 'gemini',
+    model: ISBN_MODEL,
+    promptTokens: result.promptTokens,
+    completionTokens: result.completionTokens,
+    latencyMs: result.latencyMs,
+    errorKind: 'OK',
+    producedRef: isbn ?? undefined,
+    producedKind: 'ISBN',
+  });
+
   if (!isbn) return json({ error: 'No ISBN found in the image.', code: 'NO_ISBN_FOUND' }, 422);
 
   return json({ isbn });

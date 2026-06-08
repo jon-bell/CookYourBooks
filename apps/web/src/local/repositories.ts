@@ -370,6 +370,7 @@ export async function upsertRecipeRow(
       source_image_text?: string | null;
       source_url?: string | null;
       starred?: boolean | number | null;
+      cover_image_path?: string | null;
     };
     // Array-ish columns live as TEXT (JSON) in SQLite; the Postgres
     // mirror uses jsonb. Accept either shape on input.
@@ -382,8 +383,8 @@ export async function upsertRecipeRow(
          (id, collection_id, title, servings_amount, servings_description,
           servings_amount_max, sort_order, notes, parent_recipe_id,
           description, time_estimate, equipment, book_title, page_numbers,
-          source_image_text, source_url, starred, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+          source_image_text, source_url, starred, cover_image_path, updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
        on conflict(id) do update set
          collection_id=excluded.collection_id,
          title=excluded.title,
@@ -401,6 +402,7 @@ export async function upsertRecipeRow(
          source_image_text=excluded.source_image_text,
          source_url=excluded.source_url,
          starred=excluded.starred,
+         cover_image_path=excluded.cover_image_path,
          updated_at=excluded.updated_at,
          deleted=0`,
       [
@@ -421,6 +423,7 @@ export async function upsertRecipeRow(
         recipeRowX.source_image_text ?? null,
         recipeRowX.source_url ?? null,
         starredInt,
+        recipeRowX.cover_image_path ?? null,
         incomingTs,
       ],
     );
@@ -734,7 +737,7 @@ interface RecipeTx {
 
 // Multi-row INSERT chunk size — only here to stay under SQLite's
 // SQLITE_MAX_VARIABLE_NUMBER (32766 in modern builds). With the widest
-// table (recipes, 19 cols), 1500 rows × 19 cols = 28500 params, safely
+// table (recipes, 20 cols), 1500 rows × 20 cols = 30000 params, safely
 // under the cap. For libraries up to ~1500 recipes this is one INSERT
 // statement per table.
 const MAX_ROWS_PER_INSERT = 1500;
@@ -852,6 +855,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
     'source_image_text',
     'source_url',
     'starred',
+    'cover_image_path',
     'updated_at',
     'deleted',
   ];
@@ -876,6 +880,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         source_image_text?: string | null;
         source_url?: string | null;
         starred?: boolean | number | null;
+        cover_image_path?: string | null;
       };
       const starredRaw: unknown = rx.starred;
       params.push(
@@ -896,6 +901,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         rx.source_image_text ?? null,
         rx.source_url ?? null,
         starredRaw === true || starredRaw === 1 ? 1 : 0,
+        rx.cover_image_path ?? null,
         tsToMs(r.updated_at),
         0,
       );
