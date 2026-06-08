@@ -34,6 +34,8 @@ export type CookingEventRow = Tables['cooking_events']['Row'];
 export type CookingEventInsert = Tables['cooking_events']['Insert'];
 export type RecipeTagRow = Tables['recipe_tags']['Row'];
 export type RecipeTagInsert = Tables['recipe_tags']['Insert'];
+export type CollectionNoteRow = Tables['collection_notes']['Row'];
+export type CollectionNoteInsert = Tables['collection_notes']['Insert'];
 
 // ---- Collection ----
 

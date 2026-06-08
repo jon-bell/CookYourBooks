@@ -153,8 +153,10 @@ export function ImportNewPage() {
 
   async function onTakePhotos() {
     try {
+      // This page batches files through its own review/PDF flow and doesn't
+      // use capture-time markers; take just the files.
       const captured = await scanPages();
-      if (captured.length > 0) addFiles(captured);
+      if (captured.length > 0) addFiles(captured.map((p) => p.file));
     } catch (e) {
       setError((e as Error).message);
     }

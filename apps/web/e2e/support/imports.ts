@@ -45,8 +45,10 @@ export interface TocEntryInput {
 
 export interface SeedFixtureArgs {
   storagePath: string;
-  kind: 'recipe' | 'toc' | 'recitation' | 'auth-fail';
+  kind: 'recipe' | 'toc' | 'notes' | 'recitation' | 'auth-fail' | 'needs-caption';
   draft?: FakeRecipeDraft;
+  /** For kind 'notes' — the prose the mock LLM "returns" ({ title, body }). */
+  note?: { title?: string; body: string };
   /**
    * For multi-recipe responses (e.g. a cookbook spread). When set the
    * response payload uses the `{ recipes: [...] }` wrapper shape so the
@@ -226,18 +228,30 @@ export async function seedRemixFixture(args: SeedRemixFixtureArgs): Promise<void
 }
 
 function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
-  if (args.kind === 'recipe' || args.kind === 'recitation' || args.kind === 'auth-fail') {
+  if (
+    args.kind === 'recipe' ||
+    args.kind === 'recitation' ||
+    args.kind === 'auth-fail' ||
+    args.kind === 'needs-caption'
+  ) {
+    // 'needs-caption' simulates a paywalled / 403 website: the video-import
+    // mock gates on this flag (no caption → paste box), then on the caption
+    // retry the same fixture supplies the recipe. error_kind stays OK because
+    // the ocr_test_fixtures CHECK constraint has a fixed allow-list.
+    const needsCaption = args.kind === 'needs-caption' ? { __needs_caption: true } : {};
     if (args.drafts && args.drafts.length > 1) {
       // Multi-recipe responses go through the `{ recipes: [...] }`
       // wrapper so the worker's parser returns multiple drafts.
       return {
         recipes: args.drafts.map(serializeDraft),
+        ...needsCaption,
         __mock_usage: { prompt_tokens: 100, completion_tokens: 200 },
       };
     }
     const d = args.drafts?.[0] ?? args.draft ?? defaultDraft();
     return {
       ...serializeDraft(d),
+      ...needsCaption,
       __mock_usage: { prompt_tokens: 100, completion_tokens: 200 },
     };
   }
@@ -248,6 +262,13 @@ function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
         page_number: e.pageNumber ?? null,
       })),
       __mock_usage: { prompt_tokens: 50, completion_tokens: 80 },
+    };
+  }
+  if (args.kind === 'notes') {
+    return {
+      title: args.note?.title ?? 'Note',
+      body: args.note?.body ?? '',
+      __mock_usage: { prompt_tokens: 40, completion_tokens: 120 },
     };
   }
   return {};
@@ -358,6 +379,27 @@ export async function waitForItemIsToc(
   throw new Error(
     `item ${itemId} is_toc never became ${expected} (last saw ${String(last)})`,
   );
+}
+
+export async function waitForItemKind(
+  itemId: string,
+  expected: 'RECIPE' | 'TOC' | 'NOTES',
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last: string | undefined;
+  while (Date.now() < deadline) {
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/import_items?id=eq.${itemId}&select=kind`, {
+      headers: adminHeaders(),
+    });
+    if (resp.ok) {
+      const rows = (await resp.json()) as { kind: string }[];
+      last = rows[0]?.kind;
+      if (last === expected) return;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`item ${itemId} kind never became ${expected} (last saw ${String(last)})`);
 }
 
 export async function listBatchItems(batchId: string): Promise<ImportItemRow[]> {
@@ -478,22 +520,42 @@ export async function uploadTestImages(page: Page, fileNames: string[]): Promise
  * /import/scan. The bytes are real PNG fixtures so the upload pipeline's
  * `prepareImage` decode succeeds.
  */
-export async function installScanShim(page: Page, fileNames: string[]): Promise<void> {
-  const files = fileNames.map((name) => ({
-    name,
-    type: name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
-    base64: readFileSync(resolve(FIXTURES_DIR, name)).toString('base64'),
-  }));
-  await page.addInitScript((items: { name: string; type: string; base64: string }[]) => {
-    function b64ToFile(it: { name: string; type: string; base64: string }): File {
-      const bin = atob(it.base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-      return new File([bytes], it.name, { type: it.type });
-    }
-    (window as unknown as { __cybScanShim?: () => Promise<File[]> }).__cybScanShim = async () =>
-      items.map(b64ToFile);
-  }, files);
+type ShimPage = string | { name: string; kind?: 'RECIPE' | 'TOC' | 'NOTES'; joinsPrevious?: boolean };
+
+export async function installScanShim(page: Page, pages: ShimPage[]): Promise<void> {
+  const items = pages.map((p) => {
+    const name = typeof p === 'string' ? p : p.name;
+    return {
+      name,
+      type: name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
+      base64: readFileSync(resolve(FIXTURES_DIR, name)).toString('base64'),
+      // null => bare File (RECIPE, no continuation); object => ScannedPage marker.
+      marker:
+        typeof p === 'string'
+          ? null
+          : { kind: p.kind ?? 'RECIPE', joinsPrevious: p.joinsPrevious ?? false },
+    };
+  });
+  await page.addInitScript(
+    (
+      items: {
+        name: string;
+        type: string;
+        base64: string;
+        marker: { kind: string; joinsPrevious: boolean } | null;
+      }[],
+    ) => {
+      function b64ToFile(it: { name: string; type: string; base64: string }): File {
+        const bin = atob(it.base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+        return new File([bytes], it.name, { type: it.type });
+      }
+      (window as unknown as { __cybScanShim?: () => Promise<unknown[]> }).__cybScanShim = async () =>
+        items.map((it) => (it.marker ? { file: b64ToFile(it), marker: it.marker } : b64ToFile(it)));
+    },
+    items,
+  );
 }
 
 export async function triggerWorker(batchId?: string | null): Promise<{

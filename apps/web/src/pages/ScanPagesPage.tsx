@@ -10,6 +10,7 @@ import { resolveImportFallback } from '../settings/FallbackModelSection.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 import { scanPages } from '../import/scanPages.js';
+import type { ScannedPage } from '../import/pageMarker.js';
 
 type Phase = 'config' | 'scanning' | 'uploading';
 
@@ -52,22 +53,22 @@ export function ScanPagesPage() {
     if (!user) return;
     setError(undefined);
     setPhase('scanning');
-    let files: File[] = [];
+    let pages: ScannedPage[] = [];
     try {
-      files = await scanPages({ maxShots: 200 });
+      pages = await scanPages({ maxShots: 200 });
     } catch (e) {
       setError((e as Error).message);
       setPhase('config');
       return;
     }
-    if (files.length === 0) {
+    if (pages.length === 0) {
       setPhase('config');
       return;
     }
-    await upload(files);
+    await upload(pages);
   }
 
-  async function upload(files: File[]) {
+  async function upload(pages: ScannedPage[]) {
     if (!user) return;
     setPhase('uploading');
     setError(undefined);
@@ -93,7 +94,8 @@ export function ScanPagesPage() {
           fallbackModel,
           keyOwnerId: cfg?.source === 'household' ? cfg.keyOwnerId : null,
           sourceKind: 'IMAGES',
-          files,
+          files: pages.map((p) => p.file),
+          markers: pages.map((p) => p.marker),
         },
         setProgress,
       );

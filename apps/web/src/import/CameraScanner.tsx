@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { plannerHapticTick } from './plannerCapture.js';
-import { SAFE_TOP, SAFE_BOTTOM, TAP_TARGET } from '../components/mobileSafeArea.js';
+import { SAFE_TOP, SAFE_BOTTOM, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
+import { type PageMarker, type PageKind, type ScannedPage, DEFAULT_MARKER } from './pageMarker.js';
 
 const DEFAULT_MAX_SHOTS = 200;
 const DEFAULT_JPEG_QUALITY = 0.85;
 const SHUTTER_DEBOUNCE_MS = 350;
 
 export interface CameraScannerProps {
-  onDone: (files: File[]) => void;
+  onDone: (pages: ScannedPage[]) => void;
   onCancel: () => void;
   /** Called when the live camera can't be used (permission denied / no
    *  camera) and the user opts to fall back to the system camera. */
@@ -16,8 +17,23 @@ export interface CameraScannerProps {
   jpegQuality?: number;
 }
 
-type Shot = { id: string; file: File; url: string };
+type Shot = { id: string; file: File; url: string; marker: PageMarker };
 type Status = 'starting' | 'live' | 'denied' | 'no-camera' | 'error';
+
+const KIND_OPTIONS: ReadonlyArray<{ kind: PageKind; label: string; aria: string }> = [
+  { kind: 'RECIPE', label: 'Recipe', aria: 'Recipe page' },
+  { kind: 'TOC', label: 'Contents', aria: 'Table of contents page' },
+  { kind: 'NOTES', label: 'Notes', aria: 'Intro / notes page' },
+];
+
+/** Screen-reader label for a thumbnail — the corner badges are visual-only. */
+function ariaForShot(index: number, m: PageMarker): string {
+  const parts = [`Page ${index + 1}`];
+  if (m.joinsPrevious && index > 0) parts.push('joins previous page');
+  if (m.kind === 'TOC') parts.push('table of contents');
+  else if (m.kind === 'NOTES') parts.push('intro and notes');
+  return `${parts.join(', ')}. Tap for options.`;
+}
 
 function classifyError(err: unknown): Status {
   const name = (err as { name?: string })?.name ?? '';
@@ -58,6 +74,9 @@ export function CameraScanner({
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [sheetForId, setSheetForId] = useState<string>();
+  // Chain mode: while on, each new shot continues the previous shot's recipe
+  // (the pages are folded together at upload). One tap per multi-page recipe.
+  const [chainNext, setChainNext] = useState(false);
 
   // Revoke object URLs on unmount.
   const urlsRef = useRef<string[]>([]);
@@ -174,12 +193,20 @@ export function CameraScanner({
       const file = await captureFrame();
       if (!file) return;
       const url = URL.createObjectURL(file);
-      setShots((prev) => [...prev, { id: crypto.randomUUID(), file, url }]);
+      setShots((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          file,
+          url,
+          marker: { ...DEFAULT_MARKER, joinsPrevious: chainNext && prev.length > 0 },
+        },
+      ]);
       void plannerHapticTick();
     } finally {
       setBusy(false);
     }
-  }, [busy, shots.length, maxShots, captureFrame]);
+  }, [busy, shots.length, maxShots, captureFrame, chainNext]);
 
   const remove = useCallback((id: string) => {
     setShots((prev) => {
@@ -188,6 +215,12 @@ export function CameraScanner({
       return prev.filter((s) => s.id !== id);
     });
     setSheetForId(undefined);
+  }, []);
+
+  const setMarker = useCallback((id: string, patch: Partial<PageMarker>) => {
+    setShots((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, marker: { ...s.marker, ...patch } } : s)),
+    );
   }, []);
 
   async function toggleTorch() {
@@ -208,7 +241,7 @@ export function CameraScanner({
       onCancel();
       return;
     }
-    onDone(shots.map((s) => s.file));
+    onDone(shots.map((s) => ({ file: s.file, marker: s.marker })));
   }
 
   const isLive = status === 'live';
@@ -219,17 +252,26 @@ export function CameraScanner({
       aria-modal="true"
       aria-label="Camera scanner"
       data-testid="camera-scanner"
-      className="fixed inset-0 z-50 flex flex-col bg-stone-950 text-white"
+      // `h-[100dvh] w-screen` (not `inset-0`/`h-screen`) pins the surface to the
+      // *visible* viewport: `inset-0`/`100vh` resolve to the large mobile
+      // viewport, pushing the shutter + strip under the browser chrome / home
+      // indicator. dvh tracks the dynamic viewport and shrinks with the chrome.
+      className="fixed left-0 top-0 z-50 flex h-[100dvh] w-screen flex-col bg-stone-950 text-white"
     >
       <canvas ref={canvasRef} className="hidden" aria-hidden />
 
-      <header className={`flex items-center justify-between gap-2 px-4 py-3 text-sm ${SAFE_TOP}`}>
+      <header
+        className={`flex items-center justify-between gap-2 py-3 text-sm ${SAFE_TOP} ${SAFE_X}`}
+      >
         <button
           type="button"
           onClick={onCancel}
-          className={`rounded-md px-3 py-1.5 text-stone-200 hover:bg-stone-800 ${TAP_TARGET}`}
+          aria-label="Close scanner"
+          className={`inline-flex items-center justify-center rounded-full text-stone-200 hover:bg-stone-800 ${TAP_TARGET}`}
         >
-          Cancel
+          <span aria-hidden className="text-xl leading-none">
+            ✕
+          </span>
         </button>
         <div className="text-stone-300" aria-live="polite">
           {shots.length} / {maxShots}
@@ -284,7 +326,7 @@ export function CameraScanner({
             onClick={toggleTorch}
             aria-pressed={torchOn}
             aria-label="Toggle flashlight"
-            className={`absolute right-4 top-4 inline-flex items-center justify-center rounded-full bg-stone-900/60 ${TAP_TARGET}`}
+            className={`absolute right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] inline-flex items-center justify-center rounded-full bg-stone-900/60 ${TAP_TARGET}`}
           >
             <span aria-hidden className="text-lg">
               {torchOn ? '🔦' : '💡'}
@@ -293,68 +335,168 @@ export function CameraScanner({
         )}
       </div>
 
-      <div className="flex items-center justify-center px-4 py-3">
+      {chainNext && (
+        <p className="px-4 pt-2 text-center text-xs text-sky-300" aria-live="polite">
+          ⛓ Chain on — new photos join the same recipe
+        </p>
+      )}
+      <div className={`grid grid-cols-3 items-center py-3 ${SAFE_X}`}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={chainNext}
+          aria-label="Chain mode: each new photo continues the previous recipe"
+          onClick={() => setChainNext((v) => !v)}
+          className={`inline-flex justify-self-start items-center justify-center rounded-full ${TAP_TARGET} ${
+            chainNext ? 'bg-sky-600 text-white' : 'bg-stone-800 text-stone-300'
+          }`}
+        >
+          <span aria-hidden className="text-lg">
+            ⛓
+          </span>
+        </button>
         <button
           type="button"
           onClick={onShutter}
           disabled={!isLive || busy}
           aria-label="Capture page"
-          className="h-20 w-20 rounded-full border-4 border-white bg-white/90 shadow-lg disabled:opacity-40"
+          className="h-20 w-20 justify-self-center rounded-full border-4 border-white bg-white/90 shadow-lg disabled:opacity-40"
         />
+        <span aria-hidden />
       </div>
 
-      <div className={`border-t border-stone-800 bg-stone-900 px-3 py-3 ${SAFE_BOTTOM}`}>
+      <div className={`border-t border-stone-800 bg-stone-900 py-3 ${SAFE_BOTTOM} ${SAFE_X}`}>
         {shots.length === 0 ? (
           <p className="text-center text-xs text-stone-500">Captured pages appear here.</p>
         ) : (
           <ol className="flex gap-2 overflow-x-auto pb-1">
-            {shots.map((s, i) => (
-              <li key={s.id} className="shrink-0">
-                <button
-                  type="button"
-                  aria-label={`Page ${i + 1}. Tap for options.`}
-                  onClick={() => setSheetForId(s.id)}
-                  className="relative block h-20 w-16 overflow-hidden rounded ring-2 ring-stone-700"
-                >
-                  <img src={s.url} alt="" className="h-full w-full object-cover" draggable={false} />
-                  <span className="absolute bottom-0 left-0 right-0 bg-stone-950/70 px-1 py-0.5 text-center text-[10px] text-stone-100">
-                    {i + 1}
-                  </span>
-                </button>
-              </li>
-            ))}
+            {shots.map((s, i) => {
+              const m = s.marker;
+              const isCont = m.joinsPrevious && i > 0;
+              return (
+                <li key={s.id} className="shrink-0">
+                  <button
+                    type="button"
+                    aria-label={ariaForShot(i, m)}
+                    onClick={() => setSheetForId(s.id)}
+                    className={`relative block h-20 w-16 overflow-hidden rounded ring-2 ${
+                      isCont ? 'ring-sky-500' : 'ring-stone-700'
+                    }`}
+                  >
+                    <img
+                      src={s.url}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      draggable={false}
+                    />
+                    {isCont && (
+                      <span
+                        className="absolute left-0 top-0 bg-sky-600/90 px-1 text-[10px] leading-tight"
+                        aria-hidden
+                      >
+                        ⛓
+                      </span>
+                    )}
+                    {m.kind === 'TOC' && (
+                      <span
+                        className="absolute right-0 top-0 bg-stone-950/80 px-1 text-[10px] leading-tight"
+                        aria-hidden
+                      >
+                        ToC
+                      </span>
+                    )}
+                    {m.kind === 'NOTES' && (
+                      <span
+                        className="absolute right-0 top-0 bg-stone-950/80 px-1 text-[10px] leading-tight"
+                        aria-hidden
+                      >
+                        ✎
+                      </span>
+                    )}
+                    <span className="absolute bottom-0 left-0 right-0 bg-stone-950/70 px-1 py-0.5 text-center text-[10px] text-stone-100">
+                      {i + 1}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
           </ol>
         )}
       </div>
 
-      {sheetForId && (
-        <div
-          className="fixed inset-0 z-50 flex items-end bg-stone-950/60"
-          onClick={() => setSheetForId(undefined)}
-        >
-          <div
-            role="dialog"
-            aria-label="Page options"
-            onClick={(e) => e.stopPropagation()}
-            className={`w-full space-y-2 rounded-t-2xl bg-stone-900 p-4 ${SAFE_BOTTOM}`}
-          >
-            <button
-              type="button"
-              onClick={() => remove(sheetForId)}
-              className={`block w-full rounded-md bg-red-600 px-4 py-3 font-medium text-white ${TAP_TARGET}`}
-            >
-              Delete page
-            </button>
-            <button
-              type="button"
+      {sheetForId &&
+        (() => {
+          const idx = shots.findIndex((s) => s.id === sheetForId);
+          const shot = shots[idx];
+          if (!shot) return null;
+          const m = shot.marker;
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-end bg-stone-950/60"
               onClick={() => setSheetForId(undefined)}
-              className={`block w-full rounded-md bg-stone-700 px-4 py-3 ${TAP_TARGET}`}
             >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+              <div
+                role="dialog"
+                aria-label={`Page ${idx + 1} options`}
+                onClick={(e) => e.stopPropagation()}
+                className={`w-full space-y-3 rounded-t-2xl bg-stone-900 p-4 ${SAFE_BOTTOM} ${SAFE_X}`}
+              >
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-wide text-stone-400">Page type</p>
+                  <div role="radiogroup" aria-label="Page type" className="grid grid-cols-3 gap-2">
+                    {KIND_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.kind}
+                        type="button"
+                        role="radio"
+                        aria-checked={m.kind === opt.kind}
+                        aria-label={opt.aria}
+                        onClick={() => setMarker(shot.id, { kind: opt.kind })}
+                        className={`rounded-md px-2 py-3 text-sm ${TAP_TARGET} ${
+                          m.kind === opt.kind
+                            ? 'bg-amber-500 font-medium text-stone-950'
+                            : 'bg-stone-800 text-stone-200'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {idx > 0 && (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={m.joinsPrevious}
+                    onClick={() => setMarker(shot.id, { joinsPrevious: !m.joinsPrevious })}
+                    className={`flex w-full items-center justify-between rounded-md px-4 py-3 ${TAP_TARGET} ${
+                      m.joinsPrevious ? 'bg-sky-600 text-white' : 'bg-stone-800 text-stone-200'
+                    }`}
+                  >
+                    <span>⛓ Joins previous page</span>
+                    <span aria-hidden>{m.joinsPrevious ? 'On' : 'Off'}</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => remove(shot.id)}
+                  className={`block w-full rounded-md bg-red-600 px-4 py-3 font-medium text-white ${TAP_TARGET}`}
+                >
+                  Delete page
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSheetForId(undefined)}
+                  className={`block w-full rounded-md bg-stone-700 px-4 py-3 ${TAP_TARGET}`}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }

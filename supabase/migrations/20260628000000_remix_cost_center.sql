@@ -28,8 +28,11 @@ create trigger remix_jobs_set_household
 
 -- ============================================================
 -- 3. extend refresh_household_denorm to re-stamp remix_jobs on a sharing
---    transition. Full re-emit of 20260625000000's body + one line (CREATE OR
---    REPLACE replaces the whole function). Does NOT bump any updated_at.
+--    transition. CREATE OR REPLACE replaces the WHOLE function, so this is
+--    the authoritative final version: it must re-emit every table any prior
+--    migration stamped. That means the base tables + collection_notes (added
+--    by 20260625000100, which dropped the cost-table lines) + the four cost
+--    tables (20260625000000) + remix_jobs. Does NOT bump any updated_at.
 -- ============================================================
 create or replace function public.refresh_household_denorm(p_owner uuid)
 returns void language plpgsql security definer set search_path = public as $$
@@ -45,6 +48,7 @@ begin
   update public.instruction_ingredient_refs  set household_id = v_hh where owner_id = p_owner and household_id is distinct from v_hh;
   update public.cooking_events               set household_id = v_hh where owner_id = p_owner and household_id is distinct from v_hh;
   update public.recipe_tags                  set household_id = v_hh where owner_id = p_owner and household_id is distinct from v_hh;
+  update public.collection_notes             set household_id = v_hh where owner_id = p_owner and household_id is distinct from v_hh;
   -- LLM Cost Center cost tables:
   update public.import_item_attempts         set household_id = v_hh where owner_id = p_owner and household_id is distinct from v_hh;
   update public.bakeoff_variants             set household_id = v_hh where owner_id = p_owner and household_id is distinct from v_hh;

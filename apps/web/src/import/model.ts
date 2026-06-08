@@ -1,4 +1,5 @@
 import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
+import type { PageKind } from './pageMarker.js';
 
 export type ImportItemStatus =
   | 'AWAITING_GROUPING'
@@ -56,6 +57,10 @@ export interface ImportItem {
    *  overwrites this recipe in place. */
   assignedRecipeId: string | null;
   isToc: boolean;
+  /** Capture-time classification: RECIPE (default), TOC, or NOTES (prose page
+   *  OCR'd into a collection note). Source of truth for the worker's prompt
+   *  selection; `isToc` mirrors `kind === 'TOC'` for one release. */
+  kind: PageKind;
   status: ImportItemStatus;
   claimExpiresAt: number;
   attempts: number;

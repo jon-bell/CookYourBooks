@@ -58,6 +58,24 @@ export async function setImportItemToc(
   if (error) throw error;
 }
 
+/**
+ * Re-tag an item's page kind (RECIPE / TOC / NOTES) and re-arm it for a fresh
+ * OCR pass, server-side. Like {@link setImportItemToc} this can't go through
+ * the client push (the scrub blocks the PENDING status flip); the RPC also
+ * clears stale drafts / ToC lines / any note already filed from the page so a
+ * re-OCR with the new prompt doesn't duplicate. Caller kicks the worker after.
+ */
+export async function setImportItemKind(
+  itemId: string,
+  kind: 'RECIPE' | 'TOC' | 'NOTES',
+): Promise<void> {
+  const { error } = await supabase.rpc('import_set_item_kind', {
+    p_item_id: itemId,
+    p_kind: kind,
+  });
+  if (error) throw error;
+}
+
 // ---------- bakeoff ----------
 
 export interface BakeoffVariantInput {

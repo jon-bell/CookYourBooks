@@ -112,12 +112,13 @@ export const AUTO_ACCEPT_MIN_INSTRUCTIONS = 2;
 export function isAutoAcceptable(
   item: Pick<
     ImportItem,
-    'status' | 'isToc' | 'parsedDrafts' | 'assignedCollectionId'
+    'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'
   >,
   batchTargetCollectionId: string | null,
 ): boolean {
   if (item.status !== 'OCR_DONE') return false;
-  if (item.isToc) return false;
+  // Only plain recipe pages auto-promote: TOC and NOTES have their own paths.
+  if (item.kind !== 'RECIPE') return false;
   if (item.parsedDrafts.length !== 1) return false;
   if (!(item.assignedCollectionId ?? batchTargetCollectionId)) return false;
   const draft = item.parsedDrafts[0]!;

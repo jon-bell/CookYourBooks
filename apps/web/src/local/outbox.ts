@@ -27,7 +27,11 @@ export type OutboxKind =
   | 'cooking_event_save'
   | 'cooking_event_delete'
   | 'recipe_tag_save'
-  | 'recipe_tag_delete';
+  | 'recipe_tag_delete'
+  // Collection "general notes" (OCR'd intro pages or hand-written). Plain
+  // PostgREST upsert/delete on collection_notes — no RPC.
+  | 'collection_note_save'
+  | 'collection_note_delete';
 
 export interface OutboxEntry {
   id: number;

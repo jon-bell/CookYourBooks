@@ -148,7 +148,7 @@ export function ImportGroupingPage() {
         .filter((g) => tocPrimaryIds.has(g[0]!.id))
         .map((g) => g[0]!.id);
       for (const id of tocIds) {
-        await updateItem.mutateAsync({ id, patch: { isToc: true } });
+        await updateItem.mutateAsync({ id, patch: { kind: 'TOC' } });
       }
       if (tocIds.length > 0) await syncNow();
       await finalizeGrouping(batchId, payload);

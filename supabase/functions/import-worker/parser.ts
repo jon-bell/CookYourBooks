@@ -509,6 +509,29 @@ export function parseTocJson(text: string): TocEntry[] {
   return out;
 }
 
+export interface ParsedNote {
+  title: string;
+  body: string;
+}
+
+/** Parse a NOTES-page OCR result ({ title, body }). Mirrors parseTocJson's
+ *  tolerance: strip fences, accept `text` as a `body` alias, throw if there's
+ *  no usable body so the worker retries / parks like any other parse miss. */
+export function parseNotesJson(text: string): ParsedNote {
+  const cleaned = stripFences(text).trim();
+  const raw = tolerantJsonParse(cleaned);
+  if (raw === PARSE_FAILED || !raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Could not parse Notes JSON. Got: ${text.slice(0, 200)}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const body = asTrimmedString(obj.body) ?? asTrimmedString(obj.text);
+  if (!body) {
+    throw new Error('Notes JSON missing body.');
+  }
+  const title = asTrimmedString(obj.title) ?? 'Note';
+  return { title, body };
+}
+
 // ---------- helpers ----------
 
 function arrayOrEmpty(raw: unknown): unknown[] {

@@ -2,6 +2,7 @@ import type { Recipe } from './model/recipe.js';
 import type { RecipeCollection } from './model/collection.js';
 import type { CookingEvent, RecipeSnapshot } from './model/cookingEvent.js';
 import type { Tag } from './model/tag.js';
+import type { CollectionNote } from './model/collectionNote.js';
 
 export interface RecipeRepository {
   list(): Promise<Recipe[]>;
@@ -39,4 +40,11 @@ export interface RecipeTagRepository {
   /** Idempotent add keyed on the natural (recipe, label) pair. */
   addTag(recipeId: string, label: string): Promise<void>;
   removeTag(recipeId: string, label: string): Promise<void>;
+}
+
+export interface CollectionNoteRepository {
+  /** Notes filed under one collection (own + household-shared), in sort order. */
+  listForCollection(collectionId: string): Promise<CollectionNote[]>;
+  save(note: CollectionNote): Promise<void>;
+  delete(id: string): Promise<void>;
 }

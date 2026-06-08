@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { createRecipe, type ParsedRecipeDraft } from '@cookyourbooks/domain';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
+import { reportError } from '../sentry.js';
 import { collectionRepo, recipeRepo } from '../data/repos.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import {
@@ -108,6 +109,24 @@ export function ImportLinkPage() {
           setPhase('idle');
           return;
         }
+        // A genuine failure (EXTRACTION_FAILED / UNSUPPORTED_URL / UNKNOWN) —
+        // these get swallowed into inline UI state, so without this they're
+        // invisible. Report so a share that "does nothing" (e.g. paywalled
+        // NYT Cooking) surfaces in Sentry, tagged with the host + code.
+        let host: string | undefined;
+        try {
+          host = new URL(trimmed).hostname;
+        } catch {
+          host = undefined;
+        }
+        reportError(e, {
+          operation: 'video_import',
+          tags: {
+            code: e instanceof VideoImportError ? e.code : 'UNKNOWN',
+            host,
+            platform: e instanceof VideoImportError ? e.platform : undefined,
+          },
+        });
         setError((e as Error).message);
         setPhase('idle');
       }
@@ -158,7 +177,8 @@ export function ImportLinkPage() {
         {needsCaption && (
           <div className="flex flex-col gap-1">
             <label htmlFor="video-caption" className="text-xs text-stone-600 dark:text-stone-400">
-              We couldn't read this post automatically. Paste the recipe caption:
+              We couldn't read this automatically (some sites block us or sit behind
+              a paywall). Paste the recipe text — ingredients and steps:
             </label>
             <textarea
               id="video-caption"
