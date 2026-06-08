@@ -9,13 +9,40 @@ export interface ParsedIntent {
   platform: VideoPlatform | null;
 }
 
+/** Yield the candidate as-is, then progressively percent-decoded forms.
+ *  The as-is form is tried first, so a URL that *legitimately* contains
+ *  percent-escapes (e.g. `…/a%20b`) matches immediately and is never
+ *  over-decoded. Only when nothing matched do we decode again — to
+ *  recover URLs that arrived single- or double-encoded. (Older iOS
+ *  share-extension builds double-encoded the deep-link query, landing a
+ *  value like `https%3A%2F%2F…` after one decode — Sentry
+ *  CYB-CAPACITOR-D.) Bounded to a few rounds; stops when a round changes
+ *  nothing or there are no `%xx` escapes left. */
+function* decodeVariants(s: string): Generator<string> {
+  let cur = s;
+  yield cur;
+  for (let i = 0; i < 3 && /%[0-9a-f]{2}/i.test(cur); i += 1) {
+    let next: string;
+    try {
+      next = decodeURIComponent(cur);
+    } catch {
+      return;
+    }
+    if (next === cur) return;
+    cur = next;
+    yield cur;
+  }
+}
+
 /** Resolve a candidate string to a usable URL — preferring a supported video
  *  platform, falling back to any http(s) link (a generic recipe site). */
 export function classify(candidate: string): ParsedIntent | null {
-  const video = firstVideoUrl(candidate);
-  if (video) return { url: video, platform: detectVideoPlatform(video) };
-  const http = firstHttpUrl(candidate);
-  if (http) return { url: http, platform: null };
+  for (const variant of decodeVariants(candidate)) {
+    const video = firstVideoUrl(variant);
+    if (video) return { url: video, platform: detectVideoPlatform(video) };
+    const http = firstHttpUrl(variant);
+    if (http) return { url: http, platform: null };
+  }
   return null;
 }
 
