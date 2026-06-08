@@ -19,6 +19,7 @@ import { LandingPage } from './pages/LandingPage.js';
 import { SettingsPage } from './pages/SettingsPage.js';
 import { HouseholdPage } from './pages/HouseholdPage.js';
 import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
+import { CostCenterPage } from './pages/CostCenterPage.js';
 import { LegalPage } from './pages/LegalPage.js';
 import { ImportListPage } from './pages/ImportListPage.js';
 import { ImportNewPage } from './pages/ImportNewPage.js';
@@ -302,6 +303,14 @@ export function App() {
           <Route
             path="/household/join"
             element={<HouseholdJoinPage />}
+          />
+          <Route
+            path="/cost"
+            element={
+              <RequireAuth>
+                <CostCenterPage />
+              </RequireAuth>
+            }
           />
           <Route path="/legal/:doc" element={<LegalPage />} />
           <Route path="/legal" element={<LegalPage />} />
