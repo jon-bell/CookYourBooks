@@ -83,7 +83,18 @@ def with_asc_retry(label, max_attempts: 4, swallow_already_uploaded: false)
                 msg.include?("ECONNRESET") ||
                 msg.include?("execution expired") ||
                 msg.include?("Failed to upload package") ||
-                msg.include?("Could not find build")
+                msg.include?("Could not find build") ||
+                # altool's own NSURLSession-level failures hitting ASC.
+                # Seen run 27152694118: altool list-apps timed out, which
+                # surfaces as a chain ending in "Cannot determine the Apple
+                # ID from Bundle ID" + ExitFailure(31) + "Could not
+                # download/upload from App Store Connect" / "Error
+                # uploading ipa file". All transient — Apple's CDN had a
+                # bad moment, the bundle ID and ASC config are fine.
+                msg.include?("The request timed out") ||
+                msg.include?("Could not download/upload from App Store Connect") ||
+                msg.include?("Error uploading ipa file") ||
+                msg.include?("Cannot determine the Apple ID")
     if transient && attempts < max_attempts
       UI.important("#{label}: attempt #{attempts} hit transient ASC failure (#{msg.lines.first&.strip}); retrying in 60s")
       sleep 60
