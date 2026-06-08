@@ -135,7 +135,8 @@ export function CoverSettingsSection() {
 
       <div className="border-t border-stone-200 pt-4 dark:border-stone-700">
         <p className="mb-2 text-sm text-stone-600 dark:text-stone-400">
-          Generate covers for every recipe in your library that doesn't have one queued:
+          Generate covers for every imported recipe in your library that doesn't have one
+          queued (not-yet-imported placeholders are skipped):
         </p>
         <GenerateCoversButton scope="library" label="Generate covers for my whole library" />
       </div>

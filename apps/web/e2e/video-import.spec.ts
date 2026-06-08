@@ -198,6 +198,38 @@ test.describe('video link import', () => {
     expect(recipe.source_url).toBe(url);
   });
 
+  test('a paywalled / 403 site falls back to a pasted recipe', async ({
+    authedPage: page,
+    user,
+  }) => {
+    // Sites like Serious Eats 403 a bare server fetch and NYT Cooking sits
+    // behind a paywall — the function returns NEEDS_CAPTION so the user can
+    // paste. A `needs-caption` fixture simulates that: no caption → paste box;
+    // caption supplied → the same fixture supplies the recipe.
+    const url = 'https://www.seriouseats.com/paywalled-pesto-recipe';
+    await seedOcrFixture({
+      storagePath: url,
+      provider: 'gemini',
+      kind: 'needs-caption',
+      draft: recipeDraft('Paywalled Pesto', 'basil'),
+      upsert: true,
+    });
+
+    await extractViaUi(page, url);
+
+    const captionBox = page.getByTestId('video-caption-input');
+    await expect(captionBox).toBeVisible({ timeout: 20_000 });
+    await captionBox.fill('Pesto: 2 cups basil, blend with oil.');
+    await page.getByRole('button', { name: 'Extract recipe' }).click();
+
+    await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
+    await waitForSynced(page);
+
+    const site = await waitForWebCollectionTitled(user.id, 'seriouseats.com');
+    const recipe = await waitForRecipe('Paywalled Pesto');
+    expect(recipe.collection_id).toBe(site.id);
+  });
+
   test('rejects a non-http URL without saving anything', async ({
     authedPage: page,
     user,
