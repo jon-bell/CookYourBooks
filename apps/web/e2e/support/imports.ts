@@ -45,7 +45,7 @@ export interface TocEntryInput {
 
 export interface SeedFixtureArgs {
   storagePath: string;
-  kind: 'recipe' | 'toc' | 'recitation' | 'auth-fail';
+  kind: 'recipe' | 'toc' | 'recitation' | 'auth-fail' | 'needs-caption';
   draft?: FakeRecipeDraft;
   /**
    * For multi-recipe responses (e.g. a cookbook spread). When set the
@@ -172,7 +172,12 @@ export async function seedRewriteFixture(args: SeedRewriteFixtureArgs): Promise<
 }
 
 function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
-  if (args.kind === 'recipe' || args.kind === 'recitation' || args.kind === 'auth-fail') {
+  if (
+    args.kind === 'recipe' ||
+    args.kind === 'recitation' ||
+    args.kind === 'auth-fail' ||
+    args.kind === 'needs-caption'
+  ) {
     if (args.drafts && args.drafts.length > 1) {
       // Multi-recipe responses go through the `{ recipes: [...] }`
       // wrapper so the worker's parser returns multiple drafts.
@@ -205,6 +210,8 @@ function mapErrorKind(kind: SeedFixtureArgs['kind']): string | null {
       return 'RECITATION';
     case 'auth-fail':
       return 'AUTH';
+    case 'needs-caption':
+      return 'NEEDS_CAPTION';
     default:
       return 'OK';
   }
