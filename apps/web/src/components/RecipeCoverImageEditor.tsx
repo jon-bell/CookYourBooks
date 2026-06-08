@@ -34,7 +34,7 @@ export function RecipeCoverImageEditor({
     setError(null);
     setStatus(null);
     try {
-      const path = await uploadRecipeCover(user.id, recipe.id, file);
+      const path = await uploadRecipeCover(user.id, recipe.id, file, recipe.coverImagePath);
       await onChange(path);
     } catch (e) {
       setError((e as Error).message);

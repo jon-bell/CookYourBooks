@@ -34,7 +34,8 @@ import {
   hashEmbedText,
   type EmbedRecipeInput,
 } from './embed.ts';
-import { buildCoverPrompt, extForMime, generateCover } from './cover.ts';
+import { buildCoverPrompt, generateCover } from './cover.ts';
+import { COVER_CACHE_CONTROL, coverObjectKey, reencodeCover } from './coverEncode.ts';
 
 // Self-hosted Sentry for the import worker. Both Deno edge functions
 // report to the same `cyb-deno` project via the shared `SENTRY_DSN`
@@ -2335,7 +2336,7 @@ async function processCoverJob(
   // recipe means it was deleted out from under us — dead-letter the job.
   const { data: recipeRow, error: rErr } = await supabase
     .from('recipes')
-    .select('id, title')
+    .select('id, title, cover_image_path')
     .eq('id', job.recipe_id)
     .maybeSingle();
   if (rErr) {
@@ -2346,7 +2347,7 @@ async function processCoverJob(
     await coverFail(job, workerId, 'recipe missing', 'FAILED');
     return 'FAILED';
   }
-  const recipe = recipeRow as { id: string; title: string };
+  const recipe = recipeRow as { id: string; title: string; cover_image_path: string | null };
 
   const { data: ingRows } = await supabase
     .from('ingredients')
@@ -2389,17 +2390,19 @@ async function processCoverJob(
     return 'FAILED';
   }
 
+  // Downscale + re-encode before storing (Gemini PNGs are 1-2 MB raw).
+  const enc = await reencodeCover(gen.bytes, gen.mimeType);
   // Upload into the recipe OWNER's covers path (service role bypasses the
   // owner-scoped write policy; the owner prefix keeps later client edits
-  // valid). Stable path => regenerate overwrites in place.
-  const ext = extForMime(gen.mimeType);
-  const path = `${job.owner_id}/recipes/${job.recipe_id}.${ext}`;
+  // valid). Content-addressed key => a fresh URL each regenerate, immutable
+  // cache safe; we delete the prior object below so it doesn't orphan.
+  const path = await coverObjectKey(`${job.owner_id}/recipes`, job.recipe_id, enc.bytes, enc.ext);
   const { error: upErr } = await supabase.storage
     .from('covers')
-    .upload(path, new Blob([gen.bytes as unknown as BlobPart], { type: gen.mimeType }), {
+    .upload(path, new Blob([enc.bytes as unknown as BlobPart], { type: enc.contentType }), {
       upsert: true,
-      contentType: gen.mimeType,
-      cacheControl: '3600',
+      contentType: enc.contentType,
+      cacheControl: COVER_CACHE_CONTROL,
     });
   if (upErr) {
     await recordCoverUsage({
@@ -2425,6 +2428,12 @@ async function processCoverJob(
   });
   if (completeErr || ok === false) {
     log.error('cover_complete rpc', { code: completeErr?.code, message: completeErr?.message });
+  }
+
+  // Drop the prior cover object (content-addressed key changed) so a
+  // regenerate doesn't leave orphaned bytes in the bucket.
+  if (recipe.cover_image_path && recipe.cover_image_path !== path) {
+    await supabase.storage.from('covers').remove([recipe.cover_image_path]);
   }
 
   // Meter the successful generation (the work cost the same whether or not the

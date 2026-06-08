@@ -19,7 +19,7 @@ jobs:
     # Linux workloads land on the `ripley-cloud-linux-x64` ARC scale set.
     # See `.github/RUNNERS.md` for the label → runner mapping.
     runs-on: ripley-cloud-linux-x64
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       # Forces Playwright's reporter into html + list; tests already check
@@ -186,16 +186,18 @@ jobs:
           probe "storage"       "$api_url/storage/v1/bucket"                            200
 
       - name: Run Playwright E2E
-        # Hard 12-minute wrapper so a total hang still produces logs and
-        # artifacts inside the 30-minute job budget. `timeout --foreground`
+        # Hard 20-minute wrapper so a total hang still produces logs and
+        # artifacts inside the 45-minute job budget. `timeout --foreground`
         # sends SIGTERM first and lets Playwright flush its HTML report
-        # before exit.
+        # before exit. The serial suite runs ~13 min locally; this leaves
+        # headroom on slower runners until the planned test-hygiene pass
+        # (shard/parallelize) brings it back down.
         run: |
-          timeout --foreground --signal=TERM --kill-after=30s 720 \
+          timeout --foreground --signal=TERM --kill-after=30s 1200 \
             pnpm --filter @cookyourbooks/web exec playwright test --reporter=line
         # Surface a timeout separately from test failure so the failure
         # triage step picks the right path below.
-        timeout-minutes: 15
+        timeout-minutes: 23
 
       - name: Upload Playwright HTML report on failure
         if: failure()

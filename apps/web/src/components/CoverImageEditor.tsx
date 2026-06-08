@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { RecipeCollection } from '@cookyourbooks/domain';
 import { supabase } from '../supabase.js';
 import { useAuth } from '../auth/AuthProvider.js';
+import { uploadCollectionCover } from '../books/cover.js';
 import { CoverImage } from './CoverImage.js';
 
 export function CoverImageEditor({
@@ -21,12 +22,12 @@ export function CoverImageEditor({
     setUploading(true);
     setError(null);
     try {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
-      const path = `${user.id}/collections/${collection.id}.${ext}`;
-      const { error: uploadError } = await supabase.storage
-        .from('covers')
-        .upload(path, file, { upsert: true, cacheControl: '3600' });
-      if (uploadError) throw uploadError;
+      const path = await uploadCollectionCover(
+        user.id,
+        collection.id,
+        file,
+        collection.coverImagePath,
+      );
       await onChange(path);
     } catch (e) {
       setError((e as Error).message);

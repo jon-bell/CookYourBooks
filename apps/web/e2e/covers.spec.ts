@@ -2,10 +2,11 @@ import { test, expect } from './support/fixtures.js';
 import { SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
 import { adminGet } from './support/admin.js';
 
-// 1×1 transparent PNG, the smallest valid image the browser will render.
-// hex → buffer.
+// A valid 16×16 RGBA PNG. Must be a real, decodable image (not a 1×1 stub):
+// the cover upload now decodes + re-encodes client-side, so an undecodable
+// fixture would exercise the passthrough path instead of the resize path.
 const PNG_BYTES = Buffer.from(
-  '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d494441547801636060000000000005000157be1dd20000000049454e44ae426082',
+  '89504e470d0a1a0a0000000d49484452000000100000001008060000001ff3ff61000001ec49444154789c15d2d11440210004d1871042082184104208212c420821841042082164b06ffabee7ccd77cdf27874f8e9f9c3e397f72f9e4fac9ed9385777ce0135ff8c60f7ef1ef0b7208720c720a720e7209720d720bb2f08e0f7ce20bdff8c16f7881288728c728a728e7289728d728b7280beff8c027bef08d1ffcc617487248724c724a724e7249724d724bb2f08e0f7ce20bdff8c16f7a812c872cc72ca72ce72c972cd72cb72c0beff8c027bef08d1ffce617287228722c722a722e7229722d722bb2f08e0f7ce20bdff8c16f79812a872ac72aa72ae72a972ad72ab72a0beff8c027bef08d1ffcd617687268726c726a726e7269726d726bb2f08e0f7ce20bdff8c16f7b01f181f8407c203e101f880fc407e203bce3039ff8c2377ef0ab17e87cd0f9a0f341e783ce079d0f3a1f743ec03b3ef0892f7ce307bffd05061f0c3e187c30f860f0c1e083c107830ff08e0f7ce20bdff8c1ef7881c907930f261f4c3e987c30f960f2c1e403bce3039ff8c2377ef03b5f60f1c1e283c5078b0f161f2c3e587cb0f800eff8c027bef08d1ffcae17d87cb0f960f3c1e683cd079b0f361f6c3ec03b3ef0892f7ce307bffb050e1f1c3e387c70f8e0f0c1e183c307870ff08e0f7ce20bdff8c1ef7981cb07970f2e1f5c3eb87c70f9e0f2c1e503bce3039ff8c2377ef08bff4e4b6f1fc115b8be0000000049454e44ae426082',
   'hex',
 );
 
@@ -36,6 +37,14 @@ test.describe('Cover images', () => {
       'src',
       new RegExp(`${SUPABASE_URL.replace(/[/.]/g, '\\$&')}/storage/v1/object/public/covers/`),
     );
+
+    // The cover is re-encoded (WebP/JPEG, never the raw PNG we uploaded) and
+    // stamped with the immutable long-cache header at a content-addressed key.
+    const src = await img.getAttribute('src');
+    expect(src).toMatch(/-[0-9a-f]{8}\.(webp|jpg)(\?|$)/);
+    const head = await page.request.get(src!);
+    expect(head.headers()['content-type']).toMatch(/image\/(webp|jpeg)/);
+    expect(head.headers()['cache-control']).toContain('immutable');
 
     await page.getByRole('button', { name: 'Remove' }).click();
     await expect(page.getByRole('button', { name: 'Add cover' })).toBeVisible();
