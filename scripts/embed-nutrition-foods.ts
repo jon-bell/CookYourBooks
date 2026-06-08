@@ -1,5 +1,9 @@
-// deno run --allow-env --allow-read --allow-net --allow-sys \
-//   --node-modules-dir=auto scripts/embed-nutrition-foods.ts
+// deno run --allow-env --allow-read --allow-net --allow-sys --allow-ffi \
+//   --allow-write --node-modules-dir=auto scripts/embed-nutrition-foods.ts
+//
+// (--allow-ffi: @huggingface/transformers loads the native
+//  onnxruntime-node binding for inference in Deno. --allow-write: it
+//  caches the downloaded gte-small weights under node_modules.)
 //
 // One-time / occasional backfill of gte-small embeddings for the GENERIC
 // USDA food tiers (Foundation, SR Legacy, Survey), powering the semantic
