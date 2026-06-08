@@ -7,6 +7,8 @@ import {
   sortRecipes,
   type RecipeSortMode,
 } from './SortableRecipeList.js';
+import { CoverImage } from './CoverImage.js';
+import { ShareCardButton } from '../share/ShareCardButton.js';
 
 /** True if the recipe's title or any ingredient name contains `q`
  *  (the caller passes `q` already trimmed + lowercased). */
@@ -16,14 +18,16 @@ function recipeMatches(recipe: Recipe, q: string): boolean {
 }
 
 /**
- * The browse surface for one collection: a filter box + a List/Index view
- * toggle + the existing sort control, over the collection's already-hydrated
- * recipes. Filtering is instant and client-side (no DB round-trip) — the
- * parent passes the fully-hydrated list.
+ * The browse surface for one collection: a filter box + a List/Index/Gallery
+ * view toggle + the existing sort control, over the collection's
+ * already-hydrated recipes. Filtering is instant and client-side (no DB
+ * round-trip) — the parent passes the fully-hydrated list.
  *
  * - List view = the rich, drag-reorderable {@link SortableRecipeList}.
  * - Index view = a dense, scannable multi-column title+page list, for
  *   cookbooks with hundreds of recipes.
+ * - Gallery view = an image-forward grid of 3:2 cover cards (covers first),
+ *   for browsing by photo — mobile/social-friendly.
  *
  * Manual drag-reorder only makes sense for the whole, unfiltered list in
  * List view, so an active filter transparently falls back to name order
@@ -42,7 +46,7 @@ export function CollectionRecipeBrowser({
   onToggleStar?: (recipeId: string) => Promise<void> | void;
 }) {
   const [filterQuery, setFilterQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'list' | 'index'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'index' | 'gallery'>('list');
   const [sortMode, setSortMode] = useState<RecipeSortMode>('manual');
 
   // Defer the query so typing stays snappy on big cookbooks; the input is
@@ -79,12 +83,12 @@ export function CollectionRecipeBrowser({
           aria-label="View"
           className="inline-flex overflow-hidden rounded-md border border-stone-300 dark:border-stone-600"
         >
-          {(['list', 'index'] as const).map((mode) => (
+          {(['list', 'index', 'gallery'] as const).map((mode) => (
             <button
               key={mode}
               type="button"
               aria-pressed={viewMode === mode}
-              aria-label={mode === 'list' ? 'List view' : 'Index view'}
+              aria-label={`${mode === 'list' ? 'List' : mode === 'index' ? 'Index' : 'Gallery'} view`}
               onClick={() => setViewMode(mode)}
               className={`px-2.5 py-1.5 text-sm capitalize ${
                 viewMode === mode
@@ -122,6 +126,8 @@ export function CollectionRecipeBrowser({
         <p className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-4 py-6 text-center text-sm text-stone-500 dark:text-stone-400">
           No recipes match “{filterQuery.trim()}”.
         </p>
+      ) : viewMode === 'gallery' ? (
+        <RecipeGallery collectionId={collectionId} recipes={sortRecipes(filtered, sortMode)} />
       ) : viewMode === 'index' ? (
         <RecipeIndex collectionId={collectionId} recipes={sortRecipes(filtered, sortMode)} />
       ) : (
@@ -164,6 +170,60 @@ function RecipeIndex({
                 <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">{pages}</span>
               ) : null}
             </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * Image-forward "social" view: a responsive grid of 3:2 cover cards, each with
+ * the recipe title underneath. Recipes that have a cover lead (a stable
+ * covers-first partition over the already-sorted list), so the wall spotlights
+ * real imagery; cover-less recipes fall back to CoverImage's gradient
+ * placeholder. Read-only — it never touches SortableRecipeList, so drag-reorder
+ * can't fire here. Card chrome mirrors the Library collection cards.
+ */
+function RecipeGallery({
+  collectionId,
+  recipes,
+}: {
+  collectionId: string;
+  recipes: readonly Recipe[];
+}) {
+  // Covers first, preserving the caller's chosen sort within each group.
+  const ordered = useMemo(
+    () => [
+      ...recipes.filter((r) => r.coverImagePath),
+      ...recipes.filter((r) => !r.coverImagePath),
+    ],
+    [recipes],
+  );
+  return (
+    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {ordered.map((r) => {
+        const pages = formatPages(r.pageNumbers);
+        return (
+          <li
+            key={r.id}
+            className="relative overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900"
+          >
+            <Link to={`/collections/${collectionId}/recipes/${r.id}`} className="block">
+              <CoverImage path={r.coverImagePath} alt={r.title} className="aspect-[3/2] w-full" />
+              <div className="p-3">
+                <div className="line-clamp-2 font-medium">{r.title}</div>
+                {pages ? (
+                  <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{pages}</div>
+                ) : null}
+              </div>
+            </Link>
+            <ShareCardButton
+              collectionId={collectionId}
+              recipeId={r.id}
+              title={r.title}
+              coverImagePath={r.coverImagePath}
+            />
           </li>
         );
       })}
