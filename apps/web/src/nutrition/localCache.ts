@@ -1,4 +1,5 @@
 import type { NutritionFact, NutritionSource } from '@cookyourbooks/domain';
+import { extractIngredientTerms } from '@cookyourbooks/domain';
 import { getLocalDb } from '../local/db.js';
 
 // Lazy local mirror of the server's nutrition_facts_cache. Populated
@@ -160,57 +161,51 @@ function essentialsToFact(r: EssentialsLocalRow): NutritionFact {
   };
 }
 
-// Strip recipe-ese before searching: matches the edge function's
-// normalizeForSearch so a query like "flour (sifted), measured" lands
-// the same row whether served locally or remotely.
-function normalize(q: string): string {
-  return q
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/,.*$/, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/^[\s"'.-]+|[\s"'.-]+$/g, '')
-    .trim();
-}
-
 /**
  * LIKE-based search against the locally-mirrored Foundation + SR Legacy
  * subset. Sub-millisecond for the ~8k rows we mirror — no network. Used
  * as the first-try in `useRecipeNutrition` so the common path never
  * waits on the edge function.
  *
- * For Branded items (or anything not in the snapshot) the caller falls
- * back to the remote `searchNutrition()` path.
+ * Mirrors the server's `search_nutrition_foods` (v2): retrieval is an OR
+ * of the cleaned query terms (any term can match — no more strict AND
+ * that returned nothing for "garlic cloves, minced"), then ranked by
+ * tier, calorie presence, coverage (how many query terms the row
+ * matches), and a description-length specificity proxy. The local mirror
+ * is already generic-only, so there's no Branded to gate.
+ *
+ * Term extraction is the shared `extractIngredientTerms`, so a query
+ * resolves to the same row whether served locally or remotely. For items
+ * not in the snapshot the caller falls back to the remote
+ * `searchNutrition()` path (which adds Branded + the semantic fallback).
  */
 export async function searchLocalEssentials(
   q: string,
   limit = 10,
 ): Promise<NutritionFact[]> {
-  const normalized = normalize(q);
-  if (!normalized) return [];
+  const { terms } = extractIngredientTerms(q);
+  if (terms.length === 0) return [];
   const db = await getLocalDb();
-  // Require every word from the query to appear somewhere in the blob.
-  // Short and effective for ingredient-style queries ("cottage cheese",
-  // "all-purpose flour"). Word order doesn't matter.
-  const words = normalized.split(' ').filter(Boolean);
-  if (words.length === 0) return [];
-  const wheres = words.map(() => 'search_blob like ?').join(' and ');
-  const params = words.map((w) => `%${w}%`);
+  // Retrieval: OR of the terms (at least one must appear). Coverage —
+  // how many of the terms a row matches — is summed inline (SQLite
+  // booleans are 0/1) and used as the primary textual ranker, so a row
+  // matching every term beats one matching a single token.
+  const likeParams = terms.map((t) => `%${t}%`);
+  const orWhere = terms.map(() => 'search_blob like ?').join(' or ');
+  const coverageExpr = terms.map(() => '(search_blob like ?)').join(' + ');
   const rows = (await db.execO<EssentialsLocalRow>(
-    // Foundation outranks SR Legacy. Within each tier, prefer entries
-    // that actually have calories (USDA stores energy as a separate
-    // nutrient and plenty of rows arrive without it — useless for
-    // anyone counting calories). Then shorter descriptions (less
-    // specific = better generic match) and alphabetical for stability.
     `select * from nutrition_foods_essentials
-       where ${wheres}
+       where ${orWhere}
        order by
          case data_type when 'Foundation' then 0 when 'SR Legacy' then 1 else 9 end asc,
          case when calories_kcal is null then 1 else 0 end asc,
+         (${coverageExpr}) desc,
          length(description) asc,
          description asc
        limit ?`,
-    [...params, limit],
+    // Params: OR predicates, then the coverage predicates (same LIKEs
+    // again), then the limit.
+    [...likeParams, ...likeParams, limit],
   )) as EssentialsLocalRow[];
   return rows.map(essentialsToFact);
 }
