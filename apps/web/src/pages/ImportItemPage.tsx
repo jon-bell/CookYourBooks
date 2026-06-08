@@ -30,10 +30,11 @@ import {
   useImportTocEntries,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr, resetImportItem, setImportItemToc } from '../import/api.js';
+import { kickOcr, resetImportItem, setImportItemKind, setImportItemToc } from '../import/api.js';
 import { buildRecipeFromDraft } from '../import/promoteDraft.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { TocReviewPanel } from '../import/TocReviewPanel.js';
+import { NotesReviewPanel } from '../import/NotesReviewPanel.js';
 import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
 import type { CollectionPickerOption } from '../local/repositories.js';
 import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
@@ -417,6 +418,35 @@ export function ImportItemPage() {
     }
   }
 
+  // Marking a page as notes re-OCRs it with the notes prompt and auto-files the
+  // prose as a collection note (server-side, same re-arm path as ToC). `kind`
+  // is one value, so this and the ToC toggle are mutually exclusive.
+  async function toggleNotes() {
+    if (!item || !batch || togglingToc) return;
+    setActionError(undefined);
+    setTogglingToc(true);
+    const next = item.kind !== 'NOTES';
+    try {
+      await setImportItemKind(item.id, next ? 'NOTES' : 'RECIPE');
+      await syncNow();
+      try {
+        await kickOcr(batch.id);
+      } catch {
+        // pg_cron / the next user kick will pick up the slack.
+      }
+      showToast(
+        setToast,
+        next
+          ? 'Marked as a notes page — re-reading the page…'
+          : 'Unmarked — re-reading the page as a recipe…',
+      );
+    } catch (e) {
+      setActionError(`Couldn't re-OCR this page: ${(e as Error).message}`);
+    } finally {
+      setTogglingToc(false);
+    }
+  }
+
   function patchDraft(patch: Partial<ParsedRecipeDraft>) {
     const base = draftPatches[activeDraft] ?? drafts[activeDraft];
     if (!base) return;
@@ -719,6 +749,22 @@ export function ImportItemPage() {
             </p>
           </div>
 
+          <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm">
+            <label className={`flex items-center gap-2 ${togglingToc ? 'cursor-progress opacity-70' : ''}`}>
+              <input
+                type="checkbox"
+                checked={item.kind === 'NOTES'}
+                disabled={togglingToc}
+                onChange={() => void toggleNotes()}
+              />
+              <span>This is an intro / notes page</span>
+            </label>
+            <p className="mt-1 pl-6 text-xs text-stone-500 dark:text-stone-400">
+              Prose pages (forewords, chapter intros) are OCR'd as text and filed under the
+              cookbook's Notes instead of as a recipe.
+            </p>
+          </div>
+
           {/* Target cookbook — both the recipe-save path and the ToC
               placeholder-creation path need somewhere to put their
               output, so the picker lives outside the isToc gate. */}
@@ -728,11 +774,11 @@ export function ImportItemPage() {
               value={assignedCollectionId}
               onChange={setAssignedCollectionId}
               loading={pickerLoading}
-              matchedExistingTitle={item.isToc ? undefined : matchedExisting?.title}
+              matchedExistingTitle={item.kind === 'RECIPE' ? matchedExisting?.title : undefined}
             />
           </Field>
 
-          {item.isToc ? (
+          {item.kind === 'TOC' ? (
             <>
               <TocReviewPanel
                 entries={itemTocEntries}
@@ -746,6 +792,11 @@ export function ImportItemPage() {
                 </div>
               )}
             </>
+          ) : item.kind === 'NOTES' ? (
+            <NotesReviewPanel
+              itemId={item.id}
+              defaultCollectionId={assignedCollectionId || targetCollectionId || null}
+            />
           ) : (
             <>
               <Field label="Page number">

@@ -1,5 +1,6 @@
 import type { Recipe, RecipeCollection } from '@cookyourbooks/domain';
 import {
+  LocalCollectionNoteRepository,
   LocalCookingEventRepository,
   LocalRecipeCollectionRepository,
   LocalRecipeRepository,
@@ -21,6 +22,10 @@ export function cookingEventRepo(ownerId: string) {
 
 export function recipeTagRepo(ownerId: string) {
   return new LocalRecipeTagRepository(ownerId);
+}
+
+export function collectionNoteRepo(ownerId: string) {
+  return new LocalCollectionNoteRepository(ownerId);
 }
 
 // View history is local-only and not owner-scoped (single device store).

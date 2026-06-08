@@ -5,6 +5,7 @@ import { enqueue } from '../local/outbox.js';
 import { getLocalDb } from '../local/db.js';
 import type { OcrProvider, SourceKind, BatchKind } from './model.js';
 import type { BakeoffVariantInput } from './api.js';
+import { type PageMarker, DEFAULT_MARKER, planPageGroups } from './pageMarker.js';
 
 export interface UploadBatchInput {
   ownerId: string;
@@ -22,6 +23,12 @@ export interface UploadBatchInput {
   keyOwnerId?: string | null;
   sourceKind: SourceKind;
   files: File[];
+  /** Optional per-file capture markers, index-aligned with `files`. Absent =>
+   *  every file is a RECIPE page with no continuation. A `joinsPrevious` marker
+   *  folds that page into the previous leader's `extra_storage_paths` so the
+   *  multi-page recipe OCRs in one call. Ignored for PDF inputs (one file →
+   *  many pages). */
+  markers?: PageMarker[];
   batchKind?: BatchKind;
   /** Required when batchKind is BAKEOFF. Seeded server-side after upload. */
   bakeoffVariants?: readonly BakeoffVariantInput[];
@@ -42,6 +49,17 @@ export interface UploadBatchResult {
   batchId: string;
   itemIds: string[];
   batchKind: BatchKind;
+}
+
+/** A page that becomes its own import_items row. Continuation pages don't get
+ *  their own row — their storage path is folded into the leader's
+ *  `extraStoragePaths`, matching the worker's multi-image OCR contract. */
+interface LeaderItem {
+  id: string;
+  pageIndex: number;
+  page: PreparedPage;
+  marker: PageMarker;
+  extraStoragePaths: string[];
 }
 
 async function uploadBlob(path: string, blob: Blob): Promise<void> {
@@ -79,9 +97,12 @@ export async function uploadBatch(
 ): Promise<UploadBatchResult> {
   // Step 1: Prepare all pages (decode images / render PDFs).
   onProgress?.({ phase: 'preparing', done: 0, total: input.files.length });
-  const prepared: PreparedPage[] = [];
+  const markers = input.markers;
+  const preparedWithMarker: { page: PreparedPage; marker: PageMarker }[] = [];
   let prepDone = 0;
-  for (const file of input.files) {
+  for (let fi = 0; fi < input.files.length; fi += 1) {
+    const file = input.files[fi]!;
+    const marker = markers?.[fi] ?? DEFAULT_MARKER;
     if (
       input.sourceKind === 'PDF' ||
       file.type === 'application/pdf' ||
@@ -95,9 +116,10 @@ export async function uploadBatch(
           message: `Splitting PDF page ${d} of ${t}`,
         });
       });
-      prepared.push(...pages);
+      // PDF pages can't carry capture-time markers; default each to RECIPE.
+      for (const p of pages) preparedWithMarker.push({ page: p, marker: DEFAULT_MARKER });
     } else {
-      prepared.push(await prepareImage(file));
+      preparedWithMarker.push({ page: await prepareImage(file), marker });
     }
     prepDone += 1;
     onProgress?.({ phase: 'preparing', done: prepDone, total: input.files.length });
@@ -105,23 +127,40 @@ export async function uploadBatch(
 
   // Step 2: Allocate IDs locally so we can write storage at predictable paths.
   const batchId = crypto.randomUUID();
-  const items = prepared.map((p, i) => ({
+
+  // One id per prepared page — every page uploads a blob, leader or merged-in.
+  const pages = preparedWithMarker.map((pm) => ({
     id: crypto.randomUUID(),
-    pageIndex: i,
-    sourcePdfPage: p.sourcePdfPage ?? null,
-    page: p,
+    page: pm.page,
+    marker: pm.marker,
   }));
+
+  // Group continuations (pure, unit-tested): a `joinsPrevious` page folds into
+  // the previous leader's extra_storage_paths instead of becoming its own
+  // import_item, so a multi-page recipe OCRs together. page_index / total_items
+  // count leaders only.
+  const pageById = new Map<string, (typeof pages)[number]>(pages.map((p) => [p.id, p]));
+  const leaders: LeaderItem[] = planPageGroups(pages).map((g) => {
+    const leaderPage = pageById.get(g.leaderId)!;
+    return {
+      id: g.leaderId,
+      pageIndex: g.pageIndex,
+      page: leaderPage.page,
+      marker: leaderPage.marker,
+      extraStoragePaths: g.extraIds.map((id) => `${input.ownerId}/${batchId}/pages/${id}.jpg`),
+    };
+  });
 
   // Step 3: Upload each page + thumb. Sequential upload keeps memory
   // pressure low for huge batches (100+ pages) and gives a steady
   // progress signal.
-  const total = items.length;
-  for (let i = 0; i < items.length; i += 1) {
-    const item = items[i]!;
-    const fullPath = `${input.ownerId}/${batchId}/pages/${item.id}.jpg`;
-    const thumbPath = `${input.ownerId}/${batchId}/thumbs/${item.id}.jpg`;
-    await uploadBlob(fullPath, item.page.fullJpeg);
-    await uploadBlob(thumbPath, item.page.thumbJpeg);
+  const total = pages.length;
+  for (let i = 0; i < pages.length; i += 1) {
+    const p = pages[i]!;
+    const fullPath = `${input.ownerId}/${batchId}/pages/${p.id}.jpg`;
+    const thumbPath = `${input.ownerId}/${batchId}/thumbs/${p.id}.jpg`;
+    await uploadBlob(fullPath, p.page.fullJpeg);
+    await uploadBlob(thumbPath, p.page.thumbJpeg);
     onProgress?.({ phase: 'uploading', done: i + 1, total });
   }
 
@@ -151,7 +190,7 @@ export async function uploadBatch(
       input.keyOwnerId ?? null,
       'ASK',
       'OPEN',
-      items.length,
+      leaders.length,
       0,
       now,
     ],
@@ -164,33 +203,34 @@ export async function uploadBatch(
     : isBakeoff
       ? 'BAKEOFF_PENDING'
       : 'PENDING';
-  for (const it of items) {
-    const storagePath = `${input.ownerId}/${batchId}/pages/${it.id}.jpg`;
-    const thumbPath = `${input.ownerId}/${batchId}/thumbs/${it.id}.jpg`;
+  for (const leader of leaders) {
+    const storagePath = `${input.ownerId}/${batchId}/pages/${leader.id}.jpg`;
+    const thumbPath = `${input.ownerId}/${batchId}/thumbs/${leader.id}.jpg`;
     await db.exec(
       `insert into import_items
          (id, batch_id, owner_id, page_index, storage_path, thumb_path,
           source_pdf_path, source_pdf_page,
           assigned_collection_id, assigned_page_number, assigned_recipe_id,
-          is_toc, status,
+          is_toc, kind, status,
           claim_expires_at, attempts, last_error, parsed_drafts_json,
           model_used, prompt_tokens, completion_tokens, cost_usd_micros,
           created_recipe_ids, needs_fallback, extra_storage_paths,
           updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
       [
-        it.id,
+        leader.id,
         batchId,
         input.ownerId,
-        it.pageIndex,
+        leader.pageIndex,
         storagePath,
         thumbPath,
         null,
-        it.sourcePdfPage,
+        leader.page.sourcePdfPage ?? null,
         input.targetCollectionId,
         null,
         null,
-        0,
+        leader.marker.kind === 'TOC' ? 1 : 0,
+        leader.marker.kind,
         initialStatus,
         0,
         0,
@@ -202,11 +242,11 @@ export async function uploadBatch(
         0,
         '[]',
         0,
-        '[]',
+        JSON.stringify(leader.extraStoragePaths),
         now,
       ],
     );
-    await enqueue({ kind: 'import_item_insert', entity_id: it.id });
+    await enqueue({ kind: 'import_item_insert', entity_id: leader.id });
   }
 
   // Step 5: Nudge the worker — bakeoff batches need variant seeding first;
@@ -219,5 +259,5 @@ export async function uploadBatch(
     }
   }
   onProgress?.({ phase: 'done', done: total, total });
-  return { batchId, itemIds: items.map((it) => it.id), batchKind: input.batchKind ?? 'STANDARD' };
+  return { batchId, itemIds: leaders.map((l) => l.id), batchKind: input.batchKind ?? 'STANDARD' };
 }

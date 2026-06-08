@@ -27,13 +27,13 @@ function makeDraft(over: Partial<ParsedRecipeDraft> = {}): ParsedRecipeDraft {
 
 type AcceptItem = Pick<
   ImportItem,
-  'status' | 'isToc' | 'parsedDrafts' | 'assignedCollectionId'
+  'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'
 >;
 
 function makeItem(over: Partial<AcceptItem> = {}): AcceptItem {
   return {
     status: 'OCR_DONE',
-    isToc: false,
+    kind: 'RECIPE',
     parsedDrafts: [makeDraft()],
     assignedCollectionId: null,
     ...over,
@@ -61,7 +61,11 @@ describe('isAutoAcceptable (Conservative bar)', () => {
   });
 
   it('rejects table-of-contents pages', () => {
-    expect(isAutoAcceptable(makeItem({ isToc: true }), target)).toBe(false);
+    expect(isAutoAcceptable(makeItem({ kind: 'TOC' }), target)).toBe(false);
+  });
+
+  it('rejects notes pages (they auto-file as collection notes, not recipes)', () => {
+    expect(isAutoAcceptable(makeItem({ kind: 'NOTES' }), target)).toBe(false);
   });
 
   it('rejects pages with more than one recipe', () => {

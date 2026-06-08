@@ -80,7 +80,8 @@ type Filter =
   | 'DONE'
   | 'NEEDS_REVIEW'
   | 'FAILED'
-  | 'TOC';
+  | 'TOC'
+  | 'NOTES';
 
 function matchesFilter(item: ImportItem, filter: Filter): boolean {
   switch (filter) {
@@ -97,7 +98,9 @@ function matchesFilter(item: ImportItem, filter: Filter): boolean {
     case 'FAILED':
       return item.status === 'OCR_FAILED';
     case 'TOC':
-      return item.isToc;
+      return item.kind === 'TOC';
+    case 'NOTES':
+      return item.kind === 'NOTES';
   }
 }
 
@@ -840,6 +843,7 @@ export function ImportBatchPage() {
             ['DONE', 'Done'],
             ['FAILED', 'Failed'],
             ['TOC', 'ToC'],
+            ['NOTES', 'Notes'],
           ] as Array<[Filter, string]>
         ).map(([key, label]) => {
           const count = items.filter(
@@ -1058,9 +1062,14 @@ export function ImportBatchPage() {
                       (untitled recipe)
                     </div>
                   ) : null}
-                  {item.isToc && (
+                  {item.kind === 'TOC' && (
                     <div className="text-[10px] uppercase tracking-wide text-stone-500 dark:text-stone-400">
                       Table of Contents
+                    </div>
+                  )}
+                  {item.kind === 'NOTES' && (
+                    <div className="text-[10px] uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                      Notes
                     </div>
                   )}
                 </div>
