@@ -173,21 +173,30 @@ function tsForFilter(ts: string): string {
   return ts.replace('+00:00', 'Z');
 }
 
-/** Keyset WHERE for the incremental recipes pull: rows strictly after the cursor. */
-function recipeKeysetOr(cur: RecipeCursor): string {
+/** Keyset WHERE ordered by (updated_at, <idCol>): rows strictly after the
+ *  cursor. The tiebreaker column is `id` for recipes, `recipe_id` for the
+ *  recipe_embeddings pulls. */
+function updatedKeysetOr(cur: RecipeCursor, idCol: string): string {
   const ts = tsForFilter(cur.ts);
-  return `updated_at.gt.${ts},and(updated_at.eq.${ts},id.gt.${cur.id})`;
+  return `updated_at.gt.${ts},and(updated_at.eq.${ts},${idCol}.gt.${cur.id})`;
+}
+
+/** Keyset WHERE for the incremental recipes pull (tiebreaker `id`). */
+function recipeKeysetOr(cur: RecipeCursor): string {
+  return updatedKeysetOr(cur, 'id');
 }
 
 /**
- * Drive a keyset-paginated query ordered by (updated_at, id). Each page starts
- * strictly after the previous page's last row, so depth is O(PAGE_SIZE) per
- * page and a block of equal-timestamp rows is walked by id rather than
- * re-selected. Stops when a short page arrives.
+ * Drive a keyset-paginated query ordered by (updated_at, <id>). Each page
+ * starts strictly after the previous page's last row, so depth is O(PAGE_SIZE)
+ * per page and a block of equal-timestamp rows is walked by the tiebreaker
+ * rather than re-selected. Stops when a short page arrives. `idOf` extracts the
+ * tiebreaker value from a row (defaults to `id`; embeddings pass `recipe_id`).
  */
-async function fetchAllByUpdatedKeyset<T extends { id: string; updated_at: string }>(
+async function fetchAllByUpdatedKeyset<T extends { updated_at: string }>(
   build: (cur: RecipeCursor) => PromiseLike<PageResult>,
   start: RecipeCursor,
+  idOf: (row: T) => string = (row) => (row as unknown as { id: string }).id,
 ): Promise<T[]> {
   const out: T[] = [];
   let cur = start;
@@ -198,7 +207,7 @@ async function fetchAllByUpdatedKeyset<T extends { id: string; updated_at: strin
     out.push(...rows);
     if (rows.length < PAGE_SIZE) break;
     const last = rows[rows.length - 1]!;
-    cur = { ts: last.updated_at, id: last.id };
+    cur = { ts: last.updated_at, id: idOf(last) };
   }
   return out;
 }
@@ -1687,24 +1696,34 @@ async function pullRecipeEmbeddings(
   ownerId: string,
 ): Promise<number> {
   const topic = `recipe_embeddings:${ownerId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
-  // recipe_embeddings now carries a denormalized owner_id (20260624000000),
-  // so filter on it directly — no recipe→collection join (mirrors the owned
-  // recipes pull's owner_id filter).
-  const rows = await fetchAllPages<RecipeEmbeddingRow>((from, to) =>
-    client
-      .from('recipe_embeddings')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', since)
-      .order('updated_at', { ascending: true })
-      .order('recipe_id', { ascending: true })
-      .range(from, to),
+  // Keyset by (updated_at, recipe_id), not OFFSET. recipe_embeddings carries a
+  // denormalized owner_id (20260624000000) so we filter on it directly, but the
+  // OFFSET pull seq-scanned + sorted the owner's whole vector set per page (no
+  // supporting index) and blew the 8s statement timeout on a full re-pull's
+  // deep pages — 57014 (CYB-CAPACITOR-A), which also stalled the whole pull
+  // into the 45s sync timeout. Backed by recipe_embeddings_owner_pull_idx
+  // (20260626000400) so each page is an O(PAGE_SIZE) index range scan.
+  // Existing topics carry only the legacy ms watermark (empty keyset cursor),
+  // so they full-pull once here and re-establish a clean (ts, recipe_id) cursor.
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<RecipeEmbeddingRow>(
+    (cur) => {
+      let q = client.from('recipe_embeddings').select('*').eq('owner_id', ownerId);
+      if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'recipe_id'));
+      return q
+        .order('updated_at', { ascending: true })
+        .order('recipe_id', { ascending: true })
+        .limit(PAGE_SIZE);
+    },
+    start,
+    (r) => r.recipe_id,
   );
   await applyPulledEmbeddings(rows);
-  let max = await getWatermark(topic);
-  for (const r of rows) max = Math.max(max, toMs(r.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
+  const next = maxCursor(
+    rows.map((r) => ({ updated_at: r.updated_at, id: r.recipe_id })),
+    start,
+  );
+  if (next.ts) await setRecipeCursor(topic, next);
   return rows.length;
 }
 
@@ -1723,22 +1742,33 @@ async function pullHouseholdEmbeddings(
   householdId: string,
 ): Promise<number> {
   const topic = `household_embeddings:${ownerId}:${householdId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
-  const rows = await fetchAllPages<RecipeEmbeddingRow>((from, to) =>
-    client
-      .from('recipe_embeddings')
-      .select('*')
-      .eq('household_id', householdId)
-      .neq('owner_id', ownerId)
-      .gte('updated_at', since)
-      .order('updated_at', { ascending: true })
-      .order('recipe_id', { ascending: true })
-      .range(from, to),
+  // Keyset like the owner pull — backed by recipe_embeddings_household_pull_idx
+  // (20260626000400). resetHouseholdWatermarks deletes this whole sync_state
+  // row, so a household change still forces a clean full re-pull from an empty
+  // keyset cursor.
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<RecipeEmbeddingRow>(
+    (cur) => {
+      let q = client
+        .from('recipe_embeddings')
+        .select('*')
+        .eq('household_id', householdId)
+        .neq('owner_id', ownerId);
+      if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'recipe_id'));
+      return q
+        .order('updated_at', { ascending: true })
+        .order('recipe_id', { ascending: true })
+        .limit(PAGE_SIZE);
+    },
+    start,
+    (r) => r.recipe_id,
   );
   await applyPulledEmbeddings(rows);
-  let max = await getWatermark(topic);
-  for (const r of rows) max = Math.max(max, toMs(r.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
+  const next = maxCursor(
+    rows.map((r) => ({ updated_at: r.updated_at, id: r.recipe_id })),
+    start,
+  );
+  if (next.ts) await setRecipeCursor(topic, next);
   return rows.length;
 }
 
