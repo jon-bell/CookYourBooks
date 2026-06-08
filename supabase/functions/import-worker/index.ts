@@ -1887,7 +1887,7 @@ interface CoverJob {
 const MAX_COVER_RETRIES = 2;
 const DEFAULT_COVER_MODEL = 'gemini-3.1-flash-image';
 const DEFAULT_COVER_PROMPT =
-  'A thumbnail to put on a recipe card for this recipe, RECIPE NAME. Ingredients <INGREDIENTS>. Instructions <INSTRUCTIONS>';
+  'A thumbnail to put on a recipe card for this recipe, RECIPE NAME. Ingredients <INGREDIENTS>. Instructions <INSTRUCTIONS>. Photographic food image only — do not render any text, words, letters, numbers, labels, captions, or watermarks anywhere on the image.';
 
 async function runCoverLoop(
   workerId: string,

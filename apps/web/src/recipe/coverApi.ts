@@ -94,7 +94,7 @@ export interface UserCoverPrefs {
 
 export const DEFAULT_COVER_MODEL = 'gemini-3.1-flash-image';
 export const DEFAULT_COVER_PROMPT =
-  'A thumbnail to put on a recipe card for this recipe, RECIPE NAME. Ingredients <INGREDIENTS>. Instructions <INSTRUCTIONS>';
+  'A thumbnail to put on a recipe card for this recipe, RECIPE NAME. Ingredients <INGREDIENTS>. Instructions <INSTRUCTIONS>. Photographic food image only — do not render any text, words, letters, numbers, labels, captions, or watermarks anywhere on the image.';
 
 export async function getUserCoverPrefs(): Promise<UserCoverPrefs | null> {
   const { data, error } = await supabase
