@@ -17,8 +17,15 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
 import { costFromMap, loadPricing, seedFromBundled, type RateMap } from './pricing.ts';
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
-import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
-import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
+import {
+  parseLlmJson,
+  parseTocJson,
+  parseNotesJson,
+  type ParsedRecipeDraft,
+  type TocEntry,
+  type ParsedNote,
+} from './parser.ts';
+import { NOTES_PROMPT, RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
 import {
   buildRecipeEmbedText,
   embedBatch,
@@ -67,10 +74,25 @@ interface ImportItem {
    *  action. Sent to the LLM together with the primary in one call. */
   extra_storage_paths: string[] | null;
   is_toc: boolean;
+  kind: string;
   status: string;
   claim_token: string | null;
   attempts: number;
   needs_fallback: boolean;
+}
+
+function itemKind(item: ImportItem): 'RECIPE' | 'TOC' | 'NOTES' {
+  if (item.kind === 'NOTES') return 'NOTES';
+  // is_toc is the legacy mirror; honor it if a row predates the kind backfill.
+  if (item.kind === 'TOC' || item.is_toc) return 'TOC';
+  return 'RECIPE';
+}
+
+function promptFor(item: ImportItem, batch: ImportBatch): string {
+  const k = itemKind(item);
+  if (k === 'TOC') return TOC_PROMPT;
+  if (k === 'NOTES') return NOTES_PROMPT;
+  return batch.default_prompt || RECIPE_PROMPT;
 }
 
 interface ImportBatch {
@@ -584,7 +606,7 @@ async function processItem(
     model,
     apiKey: key?.apiKey ?? '',
     baseUrl: key?.baseUrl ?? undefined,
-    prompt: item.is_toc ? TOC_PROMPT : (batch.default_prompt || RECIPE_PROMPT),
+    prompt: promptFor(item, batch),
     images: images.map((i) => ({ base64: bytesToBase64(i.bytes), mimeType: i.mime })),
     log,
   });
@@ -705,7 +727,7 @@ async function handleRecitation(
     model: fbModel,
     apiKey: fbKey?.apiKey ?? '',
     baseUrl: fbKey?.baseUrl ?? undefined,
-    prompt: item.is_toc ? TOC_PROMPT : (batch.default_prompt || RECIPE_PROMPT),
+    prompt: promptFor(item, batch),
     images: images.map((i) => ({ base64: bytesToBase64(i.bytes), mimeType: i.mime })),
     log,
   });
@@ -755,15 +777,23 @@ async function parseAndComplete(
   const rawPath = result.rawResponsePath ?? (await uploadRaw(item, result.rawResponse, log));
   const text = result.text ?? '';
 
+  const kind = itemKind(item);
   let drafts: ParsedRecipeDraft[] = [];
   let tocEntries: TocEntry[] = [];
+  let note: ParsedNote | null = null;
   try {
-    if (item.is_toc) {
+    if (kind === 'TOC') {
       tocEntries = parseTocJson(text);
+    } else if (kind === 'NOTES') {
+      note = parseNotesJson(text);
     } else {
       drafts = parseLlmJson(text);
     }
-    log.info('parse ok', { drafts: drafts.length, toc_entries: tocEntries.length });
+    log.info('parse ok', {
+      drafts: drafts.length,
+      toc_entries: tocEntries.length,
+      note: note ? 1 : 0,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const nextState: 'PENDING' | 'OCR_FAILED' =
@@ -791,7 +821,27 @@ async function parseAndComplete(
     latency_ms: result.latencyMs,
   };
 
-  if (item.is_toc) {
+  if (kind === 'NOTES' && note) {
+    // Auto-file the note: import_complete_notes upserts collection_notes keyed
+    // on this page, then logs the attempt + flips status via import_complete.
+    const { data: notesOk, error: notesErr } = await supabase.rpc('import_complete_notes', {
+      p_item_id: item.id,
+      p_claim_token: claimToken,
+      p_attempt: attemptPayload,
+      p_title: note.title,
+      p_body: note.body,
+      p_source_text: text,
+    });
+    if (notesErr) {
+      log.error('import_complete_notes error', { code: notesErr.code, message: notesErr.message });
+      return 'OCR_FAILED';
+    }
+    if (!notesOk) log.warn('import_complete_notes returned false (lease lost)');
+    else log.info('import_complete_notes ok', { cost_usd_micros: cost });
+    return 'OCR_DONE';
+  }
+
+  if (kind === 'TOC') {
     const rows = tocEntries.map((e) => ({
       batch_id: item.batch_id,
       item_id: item.id,

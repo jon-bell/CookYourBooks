@@ -8,6 +8,7 @@ export * from './model/recipe.js';
 export * from './model/collection.js';
 export * from './model/cookingEvent.js';
 export * from './model/tag.js';
+export * from './model/collectionNote.js';
 
 // Conversion
 export * from './conversion/rules.js';

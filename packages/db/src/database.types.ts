@@ -1110,6 +1110,7 @@ export type Database = {
           extra_storage_paths: string[]
           id: string
           is_toc: boolean
+          kind: string
           last_error: string | null
           model_used: string | null
           needs_fallback: boolean
@@ -1140,6 +1141,7 @@ export type Database = {
           extra_storage_paths?: string[]
           id?: string
           is_toc?: boolean
+          kind?: string
           last_error?: string | null
           model_used?: string | null
           needs_fallback?: boolean
@@ -1170,6 +1172,7 @@ export type Database = {
           extra_storage_paths?: string[]
           id?: string
           is_toc?: boolean
+          kind?: string
           last_error?: string | null
           model_used?: string | null
           needs_fallback?: boolean
@@ -1872,6 +1875,73 @@ export type Database = {
             columns: ["shared_with_household_id"]
             isOneToOne: false
             referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      collection_notes: {
+        Row: {
+          body: string
+          collection_id: string | null
+          created_at: string
+          household_id: string | null
+          id: string
+          import_item_id: string | null
+          owner_id: string
+          page_numbers: number[]
+          sort_order: number
+          source_image_text: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          body?: string
+          collection_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          import_item_id?: string | null
+          owner_id: string
+          page_numbers?: number[]
+          sort_order?: number
+          source_image_text?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          body?: string
+          collection_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          import_item_id?: string | null
+          owner_id?: string
+          page_numbers?: number[]
+          sort_order?: number
+          source_image_text?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "collection_notes_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_collections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_notes_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_notes_import_item_id_fkey"
+            columns: ["import_item_id"]
+            isOneToOne: false
+            referencedRelation: "import_items"
             referencedColumns: ["id"]
           },
         ]
@@ -2692,6 +2762,7 @@ export type Database = {
           extra_storage_paths: string[]
           id: string
           is_toc: boolean
+          kind: string
           last_error: string | null
           model_used: string | null
           needs_fallback: boolean
@@ -2723,6 +2794,17 @@ export type Database = {
         }
         Returns: boolean
       }
+      import_complete_notes: {
+        Args: {
+          p_attempt: Json
+          p_body: string
+          p_claim_token: string
+          p_item_id: string
+          p_source_text: string
+          p_title: string
+        }
+        Returns: boolean
+      }
       import_expire_stale_claims: { Args: never; Returns: number }
       import_fail: {
         Args: {
@@ -2748,6 +2830,10 @@ export type Database = {
       }
       import_set_batch_fallback: {
         Args: { p_batch_id: string; p_model: string; p_provider: string }
+        Returns: undefined
+      }
+      import_set_item_kind: {
+        Args: { p_item_id: string; p_kind: string }
         Returns: undefined
       }
       import_set_item_toc: {

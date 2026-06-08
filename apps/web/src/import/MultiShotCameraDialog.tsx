@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SAFE_TOP, SAFE_BOTTOM, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
 
 export type MultiShotCameraDialogProps = {
   maxShots: number;
@@ -131,15 +132,21 @@ export function MultiShotCameraDialog({
       aria-modal="true"
       aria-label="Multi-shot camera"
       data-testid="multi-shot-camera-dialog"
-      className="fixed inset-0 z-50 flex flex-col bg-stone-950 text-white"
+      // dvh + full width pins to the visible viewport; see CameraScanner.
+      className="fixed left-0 top-0 z-50 flex h-[100dvh] w-screen flex-col bg-stone-950 text-white"
     >
-      <header className="flex items-center justify-between px-4 py-3 text-sm pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <header
+        className={`flex items-center justify-between py-3 text-sm ${SAFE_TOP} ${SAFE_X}`}
+      >
         <button
           type="button"
           onClick={cancel}
-          className="rounded-md px-3 py-1.5 text-stone-200 hover:bg-stone-800 dark:hover:bg-stone-200"
+          aria-label="Close scanner"
+          className={`inline-flex items-center justify-center rounded-full text-stone-200 hover:bg-stone-800 dark:hover:bg-stone-200 ${TAP_TARGET}`}
         >
-          Cancel
+          <span aria-hidden className="text-xl leading-none">
+            ✕
+          </span>
         </button>
         <div className="text-stone-300">
           {shots.length} / {maxShots}
@@ -178,7 +185,9 @@ export function MultiShotCameraDialog({
         </button>
       </div>
 
-      <div className="border-t border-stone-800 bg-stone-900 dark:bg-stone-100 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div
+        className={`border-t border-stone-800 bg-stone-900 dark:bg-stone-100 py-3 ${SAFE_BOTTOM} ${SAFE_X}`}
+      >
         {shots.length === 0 ? (
           <p className="text-center text-xs text-stone-500 dark:text-stone-400">No photos yet.</p>
         ) : (

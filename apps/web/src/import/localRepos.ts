@@ -8,6 +8,7 @@ import type {
   ImportItemStatus,
   ImportTocEntry,
 } from './model.js';
+import type { PageKind } from './pageMarker.js';
 
 interface ImportBatchSqlRow {
   id: string;
@@ -41,6 +42,7 @@ interface ImportItemSqlRow {
   assigned_page_number: number | null;
   assigned_recipe_id: string | null;
   is_toc: number;
+  kind: string;
   status: string;
   claim_expires_at: number;
   attempts: number;
@@ -164,6 +166,9 @@ function rowToItem(row: ImportItemSqlRow): ImportItem {
     assignedPageNumber: row.assigned_page_number,
     assignedRecipeId: row.assigned_recipe_id,
     isToc: row.is_toc === 1,
+    // is_toc wins so an existing ToC row (kind defaulted to 'RECIPE' before the
+    // server backfill lands) still reads as TOC; otherwise trust `kind`.
+    kind: row.is_toc === 1 ? 'TOC' : ((row.kind as PageKind) || 'RECIPE'),
     status: row.status as ImportItemStatus,
     claimExpiresAt: row.claim_expires_at,
     attempts: row.attempts,
@@ -358,7 +363,7 @@ export class LocalImportItemRepository {
         | 'assignedCollectionId'
         | 'assignedPageNumber'
         | 'assignedRecipeId'
-        | 'isToc'
+        | 'kind'
         | 'status'
         | 'createdRecipeIds'
         | 'parsedDrafts'
@@ -373,14 +378,15 @@ export class LocalImportItemRepository {
     await db.exec(
       `update import_items set
          assigned_collection_id = ?, assigned_page_number = ?, assigned_recipe_id = ?,
-         is_toc = ?, status = ?, parsed_drafts_json = ?, created_recipe_ids = ?,
+         is_toc = ?, kind = ?, status = ?, parsed_drafts_json = ?, created_recipe_ids = ?,
          updated_at = ?
        where id = ? and owner_id = ?`,
       [
         next.assignedCollectionId,
         next.assignedPageNumber,
         next.assignedRecipeId,
-        next.isToc ? 1 : 0,
+        next.kind === 'TOC' ? 1 : 0,
+        next.kind,
         next.status,
         next.parsedDrafts.length > 0 ? JSON.stringify(next.parsedDrafts) : null,
         JSON.stringify(next.createdRecipeIds),
@@ -401,12 +407,12 @@ export class LocalImportItemRepository {
         (id, batch_id, owner_id, page_index, storage_path, thumb_path,
          source_pdf_path, source_pdf_page,
          assigned_collection_id, assigned_page_number, assigned_recipe_id,
-         is_toc, status,
+         is_toc, kind, status,
          claim_expires_at, attempts, last_error, parsed_drafts_json,
          model_used, prompt_tokens, completion_tokens, cost_usd_micros,
          created_recipe_ids, needs_fallback, extra_storage_paths,
          updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
       [
         item.id,
         item.batchId,
@@ -419,7 +425,8 @@ export class LocalImportItemRepository {
         item.assignedCollectionId,
         item.assignedPageNumber,
         item.assignedRecipeId,
-        item.isToc ? 1 : 0,
+        item.kind === 'TOC' ? 1 : 0,
+        item.kind,
         item.status,
         item.claimExpiresAt ?? 0,
         item.attempts,
@@ -524,11 +531,11 @@ export async function insertLocalPlannerItem(item: ImportItem): Promise<void> {
        (id, batch_id, owner_id, page_index, storage_path, thumb_path,
         source_pdf_path, source_pdf_page,
         assigned_collection_id, assigned_page_number, assigned_recipe_id,
-        is_toc, status, claim_expires_at, attempts, last_error,
+        is_toc, kind, status, claim_expires_at, attempts, last_error,
         parsed_drafts_json, model_used, prompt_tokens, completion_tokens,
         cost_usd_micros, created_recipe_ids, needs_fallback,
         extra_storage_paths, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
     [
       item.id,
       item.batchId,
@@ -541,7 +548,8 @@ export async function insertLocalPlannerItem(item: ImportItem): Promise<void> {
       item.assignedCollectionId,
       item.assignedPageNumber,
       item.assignedRecipeId,
-      item.isToc ? 1 : 0,
+      item.kind === 'TOC' ? 1 : 0,
+      item.kind,
       item.status,
       item.claimExpiresAt ?? 0,
       item.attempts,

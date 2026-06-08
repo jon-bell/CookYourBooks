@@ -172,6 +172,7 @@ export async function addPlannedShot(
     assignedPageNumber: target.pageNumber,
     assignedRecipeId: target.recipeId,
     isToc: false,
+    kind: 'RECIPE',
     status: 'AWAITING_GROUPING',
     claimExpiresAt: 0,
     attempts: 0,

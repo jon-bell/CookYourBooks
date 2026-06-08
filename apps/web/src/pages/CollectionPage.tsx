@@ -17,6 +17,7 @@ import { collectionShareUrl } from '../share/shareUrl.js';
 import { ShareToGlobalButton } from '../components/ShareToGlobalButton.js';
 import { MakePublicDialog } from '../components/MakePublicDialog.js';
 import { CollectionShareSection } from '../household/CollectionShareSection.js';
+import { CollectionNotesSection } from '../components/CollectionNotesSection.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { findOpenPlannerSession } from '../import/localRepos.js';
 export function CollectionPage() {
@@ -209,6 +210,8 @@ export function CollectionPage() {
           <span className="text-indigo-700 dark:text-indigo-300">→</span>
         </Link>
       )}
+
+      <CollectionNotesSection collectionId={c.id} />
 
       {c.recipes.length === 0 ? (
         <p className="text-stone-600 dark:text-stone-400">No recipes yet.</p>

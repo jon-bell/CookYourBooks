@@ -62,6 +62,19 @@ Rules:
 - Skip page-furniture lines (running heads, copyright, "Continued on..." pointers).
 - No markdown, no commentary, JSON only.`;
 
+export const NOTES_PROMPT = `This image is a prose page from a cookbook — a foreword, chapter introduction, technique essay, headnote, or other narrative text. It is NOT a recipe. Extract the prose as clean reading text and return JSON ONLY in this exact shape:
+
+{
+  "title": "A short heading for this note",
+  "body": "The full prose as clean Markdown."
+}
+
+Rules:
+- title: use the page's own heading if one is visible; otherwise write a brief 3-6 word descriptive title. Always a non-empty string.
+- body: transcribe the narrative text as clean Markdown. Preserve paragraph breaks. Drop running heads, page numbers, and other page furniture. Do not summarize, translate, or invent — transcribe what is visibly present.
+- Do NOT parse ingredient lists or numbered steps even if a few appear; this page was chosen because it is narrative.
+- No markdown code fences, no commentary, JSON only.`;
+
 // Default prompt for the instruction-rewrite worker. Used when the
 // user hasn't set a custom prompt in user_rewrite_prefs. Mirrors the
 // frontend default in apps/web/src/settings/rewriteSettings.ts so a

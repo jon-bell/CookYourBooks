@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLlmJson } from './llm.js';
+import { parseLlmJson, parseNotesJson } from './llm.js';
 import { isMeasured } from '@cookyourbooks/domain';
 
 // These tests pin the JSON-response contract. The parser is deliberately
@@ -259,5 +259,41 @@ describe('parseLlmJson', () => {
     const text = '```json\n{"recipes":[{"title":"Fenced","ingredients":[],"instructions":[]}]}\n```';
     const d = parseLlmJson(text)[0]!;
     expect(d.title).toBe('Fenced');
+  });
+});
+
+describe('parseNotesJson', () => {
+  it('parses a {title, body} object', () => {
+    const note = parseNotesJson('{"title":"Foreword","body":"Cooking is joy.\\n\\nEnjoy."}');
+    expect(note.title).toBe('Foreword');
+    expect(note.body).toContain('Cooking is joy.');
+  });
+
+  it('strips ```json fences', () => {
+    const note = parseNotesJson('```json\n{"title":"T","body":"B"}\n```');
+    expect(note.title).toBe('T');
+    expect(note.body).toBe('B');
+  });
+
+  it('accepts `text` as a `body` alias', () => {
+    const note = parseNotesJson('{"title":"T","text":"from text field"}');
+    expect(note.body).toBe('from text field');
+  });
+
+  it('defaults a missing title to "Note"', () => {
+    const note = parseNotesJson('{"body":"untitled prose"}');
+    expect(note.title).toBe('Note');
+  });
+
+  it('throws when the body is missing', () => {
+    expect(() => parseNotesJson('{"title":"only a title"}')).toThrow();
+  });
+
+  it('throws on malformed JSON', () => {
+    expect(() => parseNotesJson('not json at all')).toThrow();
+  });
+
+  it('throws when the payload is an array, not an object', () => {
+    expect(() => parseNotesJson('[{"body":"x"}]')).toThrow();
   });
 });

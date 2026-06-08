@@ -1,4 +1,6 @@
 import type {
+  CollectionNote,
+  CollectionNoteRepository,
   CookingEvent,
   CookingEventRepository,
   Recipe,
@@ -283,6 +285,57 @@ export async function upsertRecipeTagRow(row: RecipeTagUpsertInput): Promise<voi
        deleted=0
      where excluded.updated_at >= recipe_tags.updated_at`,
     [row.id, row.owner_id, row.recipe_id, row.label, ts],
+  );
+}
+
+export interface CollectionNoteUpsertInput {
+  id: string;
+  collection_id: string | null;
+  owner_id: string;
+  import_item_id: string | null;
+  title: string;
+  body: string;
+  source_image_text: string | null;
+  page_numbers: number[] | null;
+  sort_order: number;
+  updated_at: string | number;
+}
+
+/** Upsert an owner's own collection_note (realtime path). Co-member notes come
+ *  through the household pull, which sets shared_with_household_id — here it's
+ *  always NULL (this is one of my own rows). */
+export async function upsertCollectionNoteRow(row: CollectionNoteUpsertInput): Promise<void> {
+  const db = await getLocalDb();
+  const ts = tsToMs(row.updated_at);
+  await db.exec(
+    `insert into collection_notes
+       (id, collection_id, owner_id, import_item_id, title, body, source_image_text,
+        page_numbers, sort_order, shared_with_household_id, updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,NULL,?,0)
+     on conflict(id) do update set
+       collection_id=excluded.collection_id,
+       owner_id=excluded.owner_id,
+       import_item_id=excluded.import_item_id,
+       title=excluded.title,
+       body=excluded.body,
+       source_image_text=excluded.source_image_text,
+       page_numbers=excluded.page_numbers,
+       sort_order=excluded.sort_order,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= collection_notes.updated_at`,
+    [
+      row.id,
+      row.collection_id,
+      row.owner_id,
+      row.import_item_id,
+      row.title,
+      row.body,
+      row.source_image_text,
+      JSON.stringify(row.page_numbers ?? []),
+      row.sort_order,
+      ts,
+    ],
   );
 }
 
@@ -1766,6 +1819,131 @@ export class LocalRecipeTagRepository implements RecipeTagRepository {
       await db.exec(`delete from recipe_tags where id = ?`, [r.id]);
       await enqueue({ kind: 'recipe_tag_delete', entity_id: r.id });
     }
+  }
+}
+
+/** Raw local collection_notes row shape. */
+interface CollectionNoteLocalRow {
+  id: string;
+  collection_id: string | null;
+  owner_id: string;
+  import_item_id: string | null;
+  title: string;
+  body: string;
+  source_image_text: string | null;
+  page_numbers: string;
+  sort_order: number;
+  shared_with_household_id: string | null;
+  updated_at: number;
+  deleted: number;
+}
+
+/** A CollectionNote plus local ownership attribution so the UI can show a
+ *  "shared by household" badge and gate editing to the note's owner. */
+export interface CollectionNoteRecord extends CollectionNote {
+  ownerId: string;
+  sharedWithHouseholdId: string | null;
+}
+
+function rowToCollectionNoteRecord(row: CollectionNoteLocalRow): CollectionNoteRecord {
+  let pageNumbers: number[] | undefined;
+  try {
+    const parsed = JSON.parse(row.page_numbers || '[]');
+    if (Array.isArray(parsed)) {
+      const nums = parsed.filter((x): x is number => typeof x === 'number');
+      if (nums.length > 0) pageNumbers = nums;
+    }
+  } catch {
+    // leave undefined
+  }
+  return {
+    id: row.id,
+    collectionId: row.collection_id,
+    title: row.title,
+    body: row.body,
+    pageNumbers,
+    sourceImageText: row.source_image_text ?? undefined,
+    sortOrder: row.sort_order,
+    ownerId: row.owner_id,
+    sharedWithHouseholdId: row.shared_with_household_id,
+  };
+}
+
+export class LocalCollectionNoteRepository implements CollectionNoteRepository {
+  constructor(private readonly ownerId: string) {}
+
+  /** Notes filed under one collection — own + household-shared (the household
+   *  pull marks co-member rows with shared_with_household_id). */
+  async listForCollection(collectionId: string): Promise<CollectionNoteRecord[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CollectionNoteLocalRow>(
+      `select * from collection_notes
+        where collection_id = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+        order by sort_order asc, updated_at asc`,
+      [collectionId, this.ownerId],
+    )) as CollectionNoteLocalRow[];
+    return rows.map(rowToCollectionNoteRecord);
+  }
+
+  /** The note filed from a given import page, if any (for the review surface). */
+  async getByImportItemId(importItemId: string): Promise<CollectionNoteRecord | undefined> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CollectionNoteLocalRow>(
+      `select * from collection_notes
+        where import_item_id = ? and deleted = 0
+          and (owner_id = ? or shared_with_household_id is not null)
+        limit 1`,
+      [importItemId, this.ownerId],
+    )) as CollectionNoteLocalRow[];
+    return rows[0] ? rowToCollectionNoteRecord(rows[0]) : undefined;
+  }
+
+  async save(note: CollectionNote): Promise<void> {
+    const db = await getLocalDb();
+    // Preserve worker-owned fields (import_item_id / source_image_text /
+    // page_numbers) on an edit — the push omits them and they self-heal from
+    // the server, but keeping them locally avoids a transient blank window.
+    const prevRows = (await db.execO<{
+      import_item_id: string | null;
+      source_image_text: string | null;
+      page_numbers: string;
+    }>(
+      `select import_item_id, source_image_text, page_numbers from collection_notes where id = ?`,
+      [note.id],
+    )) as { import_item_id: string | null; source_image_text: string | null; page_numbers: string }[];
+    const prev = prevRows[0];
+    let pageNumbers: number[] = note.pageNumbers ? [...note.pageNumbers] : [];
+    if (!note.pageNumbers && prev) {
+      try {
+        const parsed = JSON.parse(prev.page_numbers || '[]');
+        if (Array.isArray(parsed)) pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
+      } catch {
+        // keep []
+      }
+    }
+    await upsertCollectionNoteRow({
+      id: note.id,
+      collection_id: note.collectionId,
+      owner_id: this.ownerId,
+      import_item_id: prev?.import_item_id ?? null,
+      title: note.title,
+      body: note.body,
+      source_image_text: note.sourceImageText ?? prev?.source_image_text ?? null,
+      page_numbers: pageNumbers,
+      sort_order: note.sortOrder,
+      updated_at: now(),
+    });
+    await enqueue({ kind: 'collection_note_save', entity_id: note.id });
+  }
+
+  async delete(id: string): Promise<void> {
+    const db = await getLocalDb();
+    await db.exec(
+      `update collection_notes set deleted = 1, updated_at = ? where id = ? and owner_id = ?`,
+      [now(), id, this.ownerId],
+    );
+    await enqueue({ kind: 'collection_note_delete', entity_id: id });
   }
 }
 

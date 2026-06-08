@@ -1,5 +1,6 @@
 import type {
   CollectionRow,
+  CollectionNoteRow,
   CookingEventRow,
   IngredientRow,
   InstructionRefRow,
@@ -18,6 +19,7 @@ import {
   upsertCollectionsBatch,
   upsertCookingEventRow,
   upsertRecipeTagRow,
+  upsertCollectionNoteRow,
   upsertRecipesBatch,
   upsertRecipesBatchInner,
   recipeBatchRowCount,
@@ -342,6 +344,7 @@ export interface PullResult {
   recipeEmbeddings: number;
   cookingEvents: number;
   recipeTags: number;
+  collectionNotes: number;
   /** Collections + their children pulled because they're shared into the user's household. */
   householdSharedCollections: number;
   /** The user's active household id at pull time (null if none). */
@@ -415,6 +418,7 @@ interface ImportItemRow {
   assigned_page_number: number | null;
   assigned_recipe_id: string | null;
   is_toc: boolean;
+  kind: string;
   status:
     | 'AWAITING_GROUPING'
     | 'BAKEOFF_PENDING'
@@ -512,7 +516,9 @@ interface RewriteJobRow {
 // existing users do a clean first pull of the new tables. (The merge also
 // brought the recipe_embeddings topic; it's new, so it full-pulls from
 // watermark 0 on its own — included in the reset below as belt-and-suspenders.)
-const SYNC_RESET_VERSION = 5;
+// v6 (2026-06-25): added collection_notes — reset so existing users do a clean
+// first pull of the new table.
+const SYNC_RESET_VERSION = 6;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
   const versionTopic = `sync_reset_version:${ownerId}`;
@@ -520,7 +526,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -533,6 +539,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `recipe_embeddings:${ownerId}`,
       `cooking_events:${ownerId}`,
       `recipe_tags:${ownerId}`,
+      `collection_notes:${ownerId}`,
     ],
   );
   await bumpWatermark(versionTopic, SYNC_RESET_VERSION);
@@ -553,7 +560,8 @@ export interface PullCallbacks {
       | 'rewrite_jobs'
       | 'recipe_embeddings'
       | 'cooking_events'
-      | 'recipe_tags',
+      | 'recipe_tags'
+      | 'collection_notes',
   ) => void;
 }
 
@@ -801,6 +809,7 @@ export async function pullAll(
   const embedPhase = Date.now();
   const cookingPhase = Date.now();
   const tagsPhase = Date.now();
+  const notesPhase = Date.now();
   const [
     importCounts,
     conversionRulesPulled,
@@ -808,6 +817,7 @@ export async function pullAll(
     recipeEmbeddingsPulled,
     cookingEventsPulled,
     recipeTagsPulled,
+    collectionNotesPulled,
   ] = await Promise.all([
     pullImports(client, ownerId).then((c) => {
       logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, { ...c });
@@ -845,6 +855,11 @@ export async function pullAll(
       callbacks?.onPhaseComplete?.('recipe_tags');
       return n;
     }),
+    pullCollectionNotes(client, ownerId).then((n) => {
+      logSync('info', `pull collection_notes: ${n} rows in ${Date.now() - notesPhase}ms`);
+      callbacks?.onPhaseComplete?.('collection_notes');
+      return n;
+    }),
   ]);
 
   // Household-shared content from other members. Done as a separate
@@ -880,6 +895,7 @@ export async function pullAll(
     recipeEmbeddings: recipeEmbeddingsPulled,
     cookingEvents: cookingEventsPulled,
     recipeTags: recipeTagsPulled,
+    collectionNotes: collectionNotesPulled,
     householdSharedCollections,
     householdId,
   };
@@ -1087,6 +1103,7 @@ async function pullHouseholdSharedContent(
   // the caller only logs the collection count.
   await pullHouseholdCookingEvents(client, ownerId, householdId);
   await pullHouseholdRecipeTags(client, ownerId, householdId);
+  await pullHouseholdCollectionNotes(client, ownerId, householdId);
   // Co-members' recipe vectors, so household-shared recipes are semantically
   // searchable (not just literal-fallback). Tagged into the local mirror by
   // recipe_id; the collection's shared_with_household_id marker is what
@@ -1305,6 +1322,21 @@ const RECIPE_TAG_COLS = [
   'deleted',
 ] as const;
 
+const COLLECTION_NOTE_COLS = [
+  'id',
+  'collection_id',
+  'owner_id',
+  'import_item_id',
+  'title',
+  'body',
+  'source_image_text',
+  'page_numbers',
+  'sort_order',
+  'shared_with_household_id',
+  'updated_at',
+  'deleted',
+] as const;
+
 const IMPORT_BATCH_COLS = [
   'id',
   'owner_id',
@@ -1339,6 +1371,7 @@ const IMPORT_ITEM_COLS = [
   'assigned_page_number',
   'assigned_recipe_id',
   'is_toc',
+  'kind',
   'status',
   'claim_expires_at',
   'attempts',
@@ -1480,6 +1513,26 @@ function recipeTagToParams(
   ];
 }
 
+function collectionNoteToParams(
+  row: CollectionNoteRow,
+  householdId: string | null,
+): readonly unknown[] {
+  return [
+    row.id,
+    row.collection_id,
+    row.owner_id,
+    row.import_item_id,
+    row.title,
+    row.body,
+    row.source_image_text,
+    JSON.stringify(row.page_numbers ?? []),
+    row.sort_order,
+    householdId,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
 function importBatchToParams(row: ImportBatchRow): readonly unknown[] {
   return [
     row.id,
@@ -1523,6 +1576,7 @@ function importItemToParams(row: ImportItemRow): readonly unknown[] {
     row.assigned_page_number,
     row.assigned_recipe_id ?? null,
     row.is_toc ? 1 : 0,
+    row.kind ?? 'RECIPE',
     row.status,
     toMs(row.claim_expires_at),
     row.attempts,
@@ -1917,6 +1971,82 @@ async function pullHouseholdRecipeTags(
   return rows.length;
 }
 
+async function pullCollectionNotes(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `collection_notes:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<CollectionNoteRow>((from, to) =>
+    client
+      .from('collection_notes')
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'collection_notes',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['collection_notes'], fresh.length, () =>
+        bulkInsertOnConflictId('collection_notes', COLLECTION_NOTE_COLS, fresh, (r) =>
+          collectionNoteToParams(r, null),
+        ),
+      );
+    }
+  }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+async function pullHouseholdCollectionNotes(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<number> {
+  const topic = `household_collection_notes:${ownerId}:${householdId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<CollectionNoteRow>((from, to) =>
+    client
+      .from('collection_notes')
+      .select('*')
+      .eq('household_id', householdId)
+      .neq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'collection_notes',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['collection_notes'], fresh.length, () =>
+        bulkInsertOnConflictId('collection_notes', COLLECTION_NOTE_COLS, fresh, (r) =>
+          collectionNoteToParams(r, householdId),
+        ),
+      );
+    }
+  }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
 // ---------- pull: bulk OCR imports ----------
 
 interface ImportPullCounts {
@@ -2135,11 +2265,11 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
        (id, batch_id, owner_id, page_index, storage_path, thumb_path,
         source_pdf_path, source_pdf_page,
         assigned_collection_id, assigned_page_number, assigned_recipe_id,
-        is_toc, status, claim_expires_at, attempts, last_error,
+        is_toc, kind, status, claim_expires_at, attempts, last_error,
         parsed_drafts_json, model_used, prompt_tokens, completion_tokens,
         cost_usd_micros, created_recipe_ids, selected_variant_id,
         needs_fallback, extra_storage_paths, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        batch_id=excluded.batch_id,
        owner_id=excluded.owner_id,
@@ -2152,6 +2282,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
        assigned_page_number=excluded.assigned_page_number,
        assigned_recipe_id=excluded.assigned_recipe_id,
        is_toc=excluded.is_toc,
+       kind=excluded.kind,
        status=excluded.status,
        claim_expires_at=excluded.claim_expires_at,
        attempts=excluded.attempts,
@@ -2181,6 +2312,7 @@ async function upsertImportItemRow(row: ImportItemRow): Promise<void> {
       row.assigned_page_number,
       row.assigned_recipe_id ?? null,
       row.is_toc ? 1 : 0,
+      row.kind ?? 'RECIPE',
       row.status,
       toMs(row.claim_expires_at),
       row.attempts,
@@ -2528,6 +2660,14 @@ export function subscribeRealtime(
         await handleRecipeTagEvent(payload);
         onLocalUpdate();
       },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'collection_notes', filter: `owner_id=eq.${ownerId}` },
+      async (payload) => {
+        await handleCollectionNoteEvent(payload);
+        onLocalUpdate();
+      },
     );
 
   // Household library sharing is membership-driven, so there's no
@@ -2597,6 +2737,13 @@ export function subscribeRealtime(
     channel.on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'recipe_tags', filter: `owner_id=neq.${ownerId}` },
+      () => {
+        onNeedsPull();
+      },
+    );
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'collection_notes', filter: `owner_id=neq.${ownerId}` },
       () => {
         onNeedsPull();
       },
@@ -2740,6 +2887,18 @@ async function handleRecipeTagEvent(payload: RealtimePayload): Promise<void> {
     return;
   }
   await upsertRecipeTagRow(payload.new as unknown as RecipeTagRow);
+}
+
+async function handleCollectionNoteEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { id?: string }).id;
+    if (id) {
+      const db = await getLocalDb();
+      await db.exec(`delete from collection_notes where id = ?`, [id]);
+    }
+    return;
+  }
+  await upsertCollectionNoteRow(payload.new as unknown as CollectionNoteRow);
 }
 
 // ---------- push ----------
@@ -2904,6 +3063,7 @@ async function pushImportItemsBulk(
       assigned_page_number: (local.assigned_page_number as number | null) ?? null,
       assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
       is_toc: local.is_toc === 1 || local.is_toc === true,
+      kind: (local.kind as string) ?? 'RECIPE',
       status: local.status as ItemInsert['status'],
     }));
     const { error } = await client
@@ -2969,6 +3129,13 @@ async function pushOne(
       return pushRecipeTag(client, ownerId, entry.entity_id);
     case 'recipe_tag_delete': {
       const { error } = await client.from('recipe_tags').delete().eq('id', entry.entity_id);
+      if (error) throw error;
+      return;
+    }
+    case 'collection_note_save':
+      return pushCollectionNote(client, ownerId, entry.entity_id);
+    case 'collection_note_delete': {
+      const { error } = await client.from('collection_notes').delete().eq('id', entry.entity_id);
       if (error) throw error;
       return;
     }
@@ -3070,6 +3237,34 @@ async function pushRecipeTag(
   if (error) throw error;
 }
 
+async function pushCollectionNote(
+  client: CookbooksClient,
+  ownerId: string,
+  id: string,
+): Promise<void> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<Record<string, unknown>>(
+    `select * from collection_notes where id = ?`,
+    [id],
+  )) as Record<string, unknown>[];
+  const local = rows[0];
+  if (!local) return;
+  type NoteInsert = Database['public']['Tables']['collection_notes']['Insert'];
+  // Only user-editable fields flow through the outbox; import_item_id,
+  // source_image_text and page_numbers are worker-owned and preserved by the
+  // server's conflict-update. household_id is re-stamped by the owner trigger.
+  const payload: NoteInsert = {
+    id: local.id as string,
+    owner_id: ownerId,
+    collection_id: (local.collection_id as string | null) ?? null,
+    title: (local.title as string) ?? '',
+    body: (local.body as string) ?? '',
+    sort_order: (local.sort_order as number) ?? 0,
+  };
+  const { error } = await client.from('collection_notes').upsert(payload, { onConflict: 'id' });
+  if (error) throw error;
+}
+
 // ---------- push: bulk OCR imports ----------
 //
 // Most columns on these tables are server-owned (the Edge Function
@@ -3142,6 +3337,7 @@ async function pushImportItemInsert(
     assigned_page_number: (local.assigned_page_number as number | null) ?? null,
     assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
     is_toc: local.is_toc === 1 || local.is_toc === true,
+    kind: (local.kind as string) ?? 'RECIPE',
     status: local.status as ItemInsert['status'],
   };
   const { error } = await client
@@ -3277,6 +3473,7 @@ async function pushImportItem(client: CookbooksClient, id: string): Promise<void
     assigned_page_number: (local.assigned_page_number as number | null) ?? null,
     assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
     is_toc: local.is_toc === 1 || local.is_toc === true,
+    kind: (local.kind as string) ?? 'RECIPE',
     created_recipe_ids: createdIds,
     parsed_drafts_json: parsedDrafts as ItemUpdate['parsed_drafts_json'],
   };

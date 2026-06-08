@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -162,6 +162,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     assigned_page_number integer,
     assigned_recipe_id text,
     is_toc integer not null default 0,
+    kind text not null default 'RECIPE',
     status text not null default 'PENDING',
     claim_expires_at integer not null default 0,
     attempts integer not null default 0,
@@ -364,6 +365,28 @@ export const SCHEMA_STATEMENTS: string[] = [
   `create index if not exists recipe_tags_owner_idx on recipe_tags(owner_id)`,
   `create index if not exists recipe_tags_label_idx on recipe_tags(label)`,
 
+  // collection_notes: prose "general notes" attached to a collection (OCR'd
+  // intro pages or hand-written). CRR-replicated + household-shared like
+  // recipe_tags. collection_id is nullable (a note from an unassigned scan
+  // batch is filed later); page_numbers is a JSON array; shared_with_household_id
+  // is the local-only co-member marker set by the household pull.
+  `create table if not exists collection_notes (
+    id text primary key not null default '',
+    collection_id text,
+    owner_id text not null default '',
+    import_item_id text,
+    title text not null default '',
+    body text not null default '',
+    source_image_text text,
+    page_numbers text not null default '[]',
+    sort_order integer not null default 0,
+    shared_with_household_id text,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists collection_notes_collection_idx on collection_notes(collection_id, sort_order)`,
+  `create index if not exists collection_notes_owner_idx on collection_notes(owner_id)`,
+
   // recipe_views: LOCAL-ONLY personal browsing history. NOT CRR, never
   // synced, never shared — "your own record" stays on this device, and
   // routing the app's highest-frequency write through sync would be a
@@ -421,6 +444,7 @@ export const CRR_TABLES = [
   'rewrite_jobs',
   'cooking_events',
   'recipe_tags',
+  'collection_notes',
 ];
 
 // Idempotent post-schema migrations. Appended to over time as columns
@@ -744,4 +768,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   // "no such column" on the first incremental pull.
   `alter table sync_state add column high_water_ts text not null default ''`,
   `alter table sync_state add column high_water_id text not null default ''`,
+  // Capture-time page kind (2026-06-08): RECIPE | TOC | NOTES. Server keeps
+  // is_toc as a derived mirror for one release; locally `kind` is the source of
+  // truth the worker reads. Additive, NOT NULL with a default per cr-sqlite.
+  `alter table import_items add column kind text not null default 'RECIPE'`,
 ];

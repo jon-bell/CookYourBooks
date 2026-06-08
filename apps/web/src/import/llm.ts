@@ -367,6 +367,39 @@ function toNumberArray(raw: unknown): number[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+export interface ParsedNote {
+  title: string;
+  body: string;
+}
+
+/** Parse a NOTES-page OCR result ({ title, body }). Browser mirror of the
+ *  worker's parseNotesJson (supabase/functions/import-worker/parser.ts) — keep
+ *  the two in sync. Tolerant: accepts `text` as a `body` alias, defaults a
+ *  missing title, throws only when there's no usable body. */
+export function parseNotesJson(text: string): ParsedNote {
+  const cleaned = stripFences(text).trim();
+  let raw: unknown;
+  try {
+    raw = JSON.parse(cleaned);
+  } catch (err) {
+    throw new Error(
+      `Could not parse Notes JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
+    );
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Notes JSON must be an object. Got: ${text.slice(0, 200)}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const pick = (v: unknown): string | undefined => {
+    if (typeof v !== 'string') return undefined;
+    const t = v.trim();
+    return t.length > 0 ? t : undefined;
+  };
+  const body = pick(obj.body) ?? pick(obj.text);
+  if (!body) throw new Error('Notes JSON missing body.');
+  return { title: pick(obj.title) ?? 'Note', body };
+}
+
 function stripFences(text: string): string {
   return text
     .replace(/^\s*```(?:json)?\s*/i, '')
