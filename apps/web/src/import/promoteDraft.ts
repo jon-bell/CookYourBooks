@@ -26,6 +26,12 @@ export interface PromoteContext {
   overwriteTitle?: string;
   /** Explicit page numbers (e.g. user-typed); falls back to the draft's. */
   pageNumbers?: number[];
+  /**
+   * Lineage link for derived recipes (e.g. Recipe Remix). Sets the new
+   * recipe's parentRecipeId so the UI can render "based on …" / list
+   * adaptations. Undefined for plain imports.
+   */
+  parentRecipeId?: string;
 }
 
 /**
@@ -46,6 +52,7 @@ export function buildRecipeFromDraft(
     servings: draft.servings,
     ingredients,
     instructions,
+    parentRecipeId: ctx.parentRecipeId,
     description: draft.description,
     timeEstimate: draft.timeEstimate,
     equipment: draft.equipment,

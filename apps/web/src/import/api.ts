@@ -555,3 +555,78 @@ export async function kickRewrite(recipeId?: string): Promise<void> {
     throw error;
   }
 }
+
+// ---------- recipe remix ----------
+
+export interface UserRemixPrefs {
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+  updated_at: string;
+}
+
+export async function getUserRemixPrefs(): Promise<UserRemixPrefs | null> {
+  const { data, error } = await supabase
+    .from('user_remix_prefs')
+    .select('provider, model, prompt, updated_at')
+    .maybeSingle();
+  if (error) throw error;
+  return (data as UserRemixPrefs | null) ?? null;
+}
+
+export async function setUserRemixPrefs(prefs: {
+  provider: OcrProvider;
+  model: string;
+  prompt: string;
+}): Promise<void> {
+  const { error } = await supabase.rpc('user_remix_prefs_set', {
+    p_provider: prefs.provider,
+    p_model: prefs.model,
+    p_prompt: prefs.prompt,
+  });
+  if (error) throw error;
+}
+
+export async function startRemix(input: {
+  recipeId: string;
+  provider: OcrProvider;
+  model: string;
+  /** System-prompt override; '' falls back to the worker's REMIX_PROMPT. */
+  prompt: string;
+  /** The user's freeform remix request for this turn. */
+  instruction: string;
+  /** The working recipe to transform (source on turn 1, prior draft on chat). */
+  inputRecipeJson: unknown;
+}): Promise<string> {
+  const { data, error } = await supabase.rpc('remix_start', {
+    p_recipe_id: input.recipeId,
+    p_provider: input.provider,
+    p_model: input.model,
+    p_prompt: input.prompt,
+    p_instruction: input.instruction,
+    // PostgREST's typed Json parameter accepts an object fine at runtime, but
+    // the generated type alias is too narrow (see startBakeoff p_variants).
+    p_input_recipe_json: input.inputRecipeJson as unknown as never,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function cancelRemix(jobId: string): Promise<void> {
+  const { error } = await supabase.rpc('remix_cancel', { p_job_id: jobId });
+  if (error) throw error;
+}
+
+export async function kickRemix(recipeId?: string): Promise<void> {
+  const { error } = await supabase.rpc('remix_kick', {
+    p_recipe_id: recipeId ?? undefined,
+  });
+  if (error) {
+    // Same error class as kickOcr/kickRewrite — the underlying vault secret
+    // is shared, so the configuration-missing case looks identical.
+    if (error.message?.startsWith('OCR_WORKER_NOT_CONFIGURED')) {
+      throw new OcrWorkerNotConfiguredError(error.message);
+    }
+    throw error;
+  }
+}

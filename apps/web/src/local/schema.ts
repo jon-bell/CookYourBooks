@@ -420,6 +420,7 @@ export const CRR_TABLES = [
   'import_toc_entries',
   'conversion_rules',
   'rewrite_jobs',
+  'remix_jobs',
   'cooking_events',
   'recipe_tags',
 ];
@@ -601,6 +602,32 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   )`,
   `create index if not exists rewrite_jobs_recipe_idx on rewrite_jobs(recipe_id)`,
   `create index if not exists rewrite_jobs_owner_idx on rewrite_jobs(owner_id, status)`,
+  // remix_jobs mirrors rewrite_jobs but for recipe-remix jobs. We mirror
+  // result_json (the produced draft, which the client promotes into a new
+  // recipe) but NOT input_recipe_json (the client supplies it and never
+  // reads it back). CRR-replicated so the queue state syncs across devices.
+  `create table if not exists remix_jobs (
+    id text primary key not null default '',
+    owner_id text not null default '',
+    recipe_id text not null default '',
+    status text not null default 'PENDING',
+    provider text not null default 'gemini',
+    model text not null default '',
+    prompt text not null default '',
+    instruction text not null default '',
+    claim_expires_at integer not null default 0,
+    attempts integer not null default 0,
+    last_error text,
+    result_json text,
+    prompt_tokens integer not null default 0,
+    completion_tokens integer not null default 0,
+    cost_usd_micros integer not null default 0,
+    latency_ms integer not null default 0,
+    updated_at integer not null default 0,
+    deleted integer not null default 0
+  )`,
+  `create index if not exists remix_jobs_recipe_idx on remix_jobs(recipe_id)`,
+  `create index if not exists remix_jobs_owner_idx on remix_jobs(owner_id, status)`,
   // ---------- Recipe embeddings cache (2026-06-05) ----------
   // Mirrors public.recipe_embeddings. Stored as a BLOB of packed
   // little-endian float32s (Float32Array.buffer). Local-only mirror —

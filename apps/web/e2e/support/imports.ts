@@ -171,6 +171,60 @@ export async function seedRewriteFixture(args: SeedRewriteFixtureArgs): Promise<
   }
 }
 
+export interface RemixFixtureRecipe {
+  title?: string;
+  yield?: { type: string; value: number; unit: string };
+  timeEstimate?: string;
+  equipment?: string[];
+  description?: string;
+  ingredients?: unknown[];
+  instructions?: unknown[];
+}
+
+export interface SeedRemixFixtureArgs {
+  /** Recipe id the fixture is keyed against; `'*'` matches any recipe. */
+  recipeId: string;
+  /** `''` matches any provider for this recipe. */
+  provider?: 'gemini' | 'openai-compatible' | '';
+  /** `''` matches any model for this provider. */
+  model?: string;
+  /** The recipe(s) the mock LLM "returns" — the OCR import schema. */
+  recipes?: RemixFixtureRecipe[];
+  /** Raw response_json override (e.g. non-recipe junk to force an empty draft). */
+  responseJson?: unknown;
+  /** Force a worker error path instead of OK. */
+  errorKind?: 'RECITATION' | 'AUTH' | 'NETWORK' | 'PARSE' | 'TIMEOUT' | 'OTHER';
+  latencyMs?: number;
+  upsert?: boolean;
+}
+
+export async function seedRemixFixture(args: SeedRemixFixtureArgs): Promise<void> {
+  const responseJson = args.errorKind
+    ? {}
+    : args.responseJson ?? { recipes: args.recipes ?? [] };
+  const row = {
+    recipe_id: args.recipeId,
+    provider: args.provider ?? '',
+    model: args.model ?? '',
+    response_json: responseJson,
+    error_kind: args.errorKind ?? 'OK',
+    latency_ms: args.latencyMs ?? 0,
+  };
+  const headers = adminHeaders({
+    Prefer: args.upsert ? 'resolution=merge-duplicates,return=minimal' : 'return=minimal',
+  });
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/remix_test_fixtures`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(row),
+  });
+  if (!resp.ok) {
+    throw new Error(
+      `seedRemixFixture for ${args.recipeId} failed: ${resp.status} ${await resp.text()}`,
+    );
+  }
+}
+
 function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
   if (args.kind === 'recipe' || args.kind === 'recitation' || args.kind === 'auth-fail') {
     if (args.drafts && args.drafts.length > 1) {

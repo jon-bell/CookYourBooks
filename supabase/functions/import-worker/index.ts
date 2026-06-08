@@ -18,7 +18,7 @@ import * as Sentry from 'https://esm.sh/@sentry/deno@9.46.0';
 import { costFromMap, loadPricing, seedFromBundled, type RateMap } from './pricing.ts';
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import { parseLlmJson, parseTocJson, type ParsedRecipeDraft, type TocEntry } from './parser.ts';
-import { RECIPE_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
+import { RECIPE_PROMPT, REMIX_PROMPT, REWRITE_PROMPT, TOC_PROMPT } from './prompts.ts';
 import {
   buildRecipeEmbedText,
   embedBatch,
@@ -114,6 +114,20 @@ interface RecipeInstructionRow {
   temperature_value: number | null;
   temperature_unit: string | null;
   sub_instructions: unknown;
+}
+
+interface RemixJob {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  provider: Provider;
+  model: string;
+  prompt: string;
+  instruction: string;
+  // Client-supplied working recipe to transform (source recipe on turn 1,
+  // prior draft on chat follow-ups). jsonb → already an object here.
+  input_recipe_json: unknown;
+  attempts: number;
 }
 
 interface ImportVariantResult {
@@ -299,6 +313,9 @@ Deno.serve(async (req) => {
     // claim once per invocation, the next user kick or cron tick picks
     // up the slack if anything is still queued.
     const rewriteSummary = await runRewriteLoop(workerId, wLog);
+    // Drain pending recipe-remix jobs. Same one-claim-per-invocation
+    // discipline; the remix_kick + cron tick pick up any tail.
+    const remixSummary = await runRemixLoop(workerId, wLog);
     const importVariantSummary = await runImportVariantLoop(workerId, wLog);
     // Drain pending recipe embedding jobs. Same shape as rewrite — a
     // single claim per invocation; the cron tick + save-side kicks
@@ -313,6 +330,8 @@ Deno.serve(async (req) => {
       bakeoff_failed: bakeoffSummary.failed,
       rewrite_processed: rewriteSummary.processed,
       rewrite_failed: rewriteSummary.failed,
+      remix_processed: remixSummary.processed,
+      remix_failed: remixSummary.failed,
       import_variant_processed: importVariantSummary.processed,
       import_variant_failed: importVariantSummary.failed,
       embed_processed: embedSummary.processed,
@@ -1456,6 +1475,282 @@ async function runOrMockRewrite(p: {
       promptTokens: 0,
       completionTokens: 0,
       errorMessage: `REWRITE_MOCK_MODE: forced ${row.error_kind}`,
+      latencyMs,
+    };
+  }
+  const responseText = JSON.stringify(row.response_json ?? {});
+  return {
+    errorKind: 'OK',
+    rawResponse: responseText,
+    text: responseText,
+    promptTokens: 0,
+    completionTokens: 0,
+    latencyMs,
+  };
+}
+
+// ---------- recipe remix pipeline ----------
+//
+// Mirrors the rewrite loop, but transforms a whole recipe per a freeform
+// user request and emits a recipe draft (the OCR import shape). The client
+// supplies the working recipe (input_recipe_json) — turn 1 sends the source
+// recipe, chat follow-ups send the prior draft — so there's no server-side
+// recipe load. remix_complete only stores the draft + cost; the client
+// promotes it into a brand-new recipe.
+
+async function runRemixLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  const jobs = await claimRemixBatch(workerId, log);
+  if (jobs.length === 0) return { processed, failed };
+  log.info('claimed remix jobs', { count: jobs.length });
+
+  for (let i = 0; i < jobs.length; i += PARALLEL) {
+    const chunk = jobs.slice(i, i + PARALLEL);
+    const results = await Promise.all(
+      chunk.map((j) => processRemixJob(j, workerId, log.child({ item: shortId(j.id) }))),
+    );
+    for (const r of results) {
+      if (r === 'DONE') processed++;
+      else failed++;
+    }
+  }
+  return { processed, failed };
+}
+
+async function claimRemixBatch(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<RemixJob[]> {
+  const { data, error } = await supabase.rpc('remix_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+  });
+  if (error) {
+    log.error('remix_claim_next failed', { code: error.code, message: error.message });
+    return [];
+  }
+  return (data ?? []) as RemixJob[];
+}
+
+function buildRemixUserPrompt(
+  systemPrompt: string,
+  instruction: string,
+  recipeJson: unknown,
+): string {
+  return `${systemPrompt}\n\nUser request: ${instruction}\n\nRecipe to transform:\n${JSON.stringify(recipeJson, null, 2)}`;
+}
+
+async function processRemixJob(
+  job: RemixJob,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  const claimToken = workerId;
+  const started = Date.now();
+  log.info('remix start', {
+    provider: job.provider,
+    model: job.model,
+    attempts: job.attempts,
+    recipe: shortId(job.recipe_id),
+  });
+
+  // The client supplies the working recipe to transform. Nothing to
+  // transform → terminal fail (no point retrying).
+  const inputRecipe = job.input_recipe_json;
+  if (!inputRecipe || typeof inputRecipe !== 'object') {
+    await failRemix(job, claimToken, 'OTHER', 'No recipe supplied to remix.', Date.now() - started, 'FAILED', log);
+    return 'FAILED';
+  }
+
+  let key: UserKey | null = null;
+  try {
+    key = await loadUserKey(job.owner_id, job.provider, log);
+  } catch (err) {
+    log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!key && !MOCK_MODE) {
+    await failRemix(
+      job,
+      claimToken,
+      'AUTH',
+      `No API key configured for ${job.provider}. Add it in Settings.`,
+      Date.now() - started,
+      'FAILED',
+      log,
+    );
+    return 'FAILED';
+  }
+
+  const prompt = buildRemixUserPrompt(job.prompt || REMIX_PROMPT, job.instruction, inputRecipe);
+  const result = await runOrMockRemix({
+    recipeId: job.recipe_id,
+    provider: job.provider,
+    model: job.model,
+    apiKey: key?.apiKey ?? '',
+    baseUrl: key?.baseUrl ?? undefined,
+    prompt,
+    log,
+  });
+
+  log.info('remix llm end', {
+    error_kind: result.errorKind,
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    latency_ms: result.latencyMs,
+  });
+
+  if (result.errorKind === 'RATE_LIMIT' || result.errorKind === 'NETWORK' || result.errorKind === 'TIMEOUT') {
+    const nextState = job.attempts < MAX_TRANSIENT_RETRIES ? 'PENDING' : 'FAILED';
+    await failRemix(job, claimToken, result.errorKind, result.errorMessage ?? result.errorKind, result.latencyMs, nextState, log);
+    return 'FAILED';
+  }
+  if (result.errorKind !== 'OK') {
+    await failRemix(job, claimToken, result.errorKind, result.errorMessage ?? result.errorKind, result.latencyMs, 'FAILED', log);
+    return 'FAILED';
+  }
+
+  // Parse the transformed recipe with the shared OCR parser.
+  let drafts: ParsedRecipeDraft[];
+  try {
+    drafts = parseLlmJson(result.text ?? '');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const nextState = job.attempts < MAX_PARSE_RETRIES ? 'PENDING' : 'FAILED';
+    log.warn('remix parse error', { message: msg, next_state: nextState });
+    await failRemix(job, claimToken, 'PARSE', msg, result.latencyMs, nextState, log);
+    return 'FAILED';
+  }
+
+  const draft = drafts[0];
+  const usable =
+    !!draft &&
+    (!!draft.title?.trim() || draft.ingredients.length > 0 || draft.instructions.length > 0);
+  if (!usable) {
+    await failRemix(job, claimToken, 'PARSE', 'LLM produced no usable recipe.', result.latencyMs, 'FAILED', log);
+    return 'FAILED';
+  }
+
+  const cost = costUsdMicros(job.provider, job.model, result.promptTokens, result.completionTokens);
+  const attemptPayload = {
+    provider: job.provider,
+    model: job.model,
+    error_kind: 'OK',
+    prompt_tokens: result.promptTokens,
+    completion_tokens: result.completionTokens,
+    cost_usd_micros: cost,
+    latency_ms: result.latencyMs,
+  };
+  const { data: ok, error } = await supabase.rpc('remix_complete', {
+    p_job_id: job.id,
+    p_claim_token: claimToken,
+    p_attempt: attemptPayload,
+    p_result: draft,
+  });
+  if (error) {
+    log.error('remix_complete error', { code: error.code, message: error.message });
+    return 'FAILED';
+  }
+  if (!ok) log.warn('remix_complete returned false (lease lost)');
+  return 'DONE';
+}
+
+async function failRemix(
+  job: RemixJob,
+  claimToken: string,
+  errorKind: ErrorKind,
+  errorMessage: string,
+  latencyMs: number,
+  nextState: 'PENDING' | 'FAILED',
+  log: ReturnType<typeof makeLog>,
+): Promise<void> {
+  const { error } = await supabase.rpc('remix_fail', {
+    p_job_id: job.id,
+    p_claim_token: claimToken,
+    p_attempt: {
+      provider: job.provider,
+      model: job.model,
+      error_kind: errorKind,
+      error_message: errorMessage,
+      latency_ms: latencyMs,
+    },
+    p_next_state: nextState,
+  });
+  if (error) {
+    log.error('remix_fail rpc error', { code: error.code, message: error.message });
+  }
+}
+
+// runOrMockRemix — same fixture-lookup discipline as runOrMockRewrite, keyed
+// by recipe id, but probes remix_test_fixtures.
+async function runOrMockRemix(p: {
+  recipeId: string;
+  provider: Provider;
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+  prompt: string;
+  log?: ReturnType<typeof makeLog>;
+}): Promise<OcrCallLike> {
+  if (!MOCK_MODE) {
+    return await runOcr({
+      provider: p.provider,
+      model: p.model,
+      apiKey: p.apiKey,
+      baseUrl: p.baseUrl,
+      prompt: p.prompt,
+      images: [],
+      log: p.log
+        ? (m: string, extra?: Record<string, unknown>) => p.log!.info(m, extra)
+        : undefined,
+    });
+  }
+  const probes: Array<{ recipe_id: string; provider: string; model: string }> = [
+    { recipe_id: p.recipeId, provider: p.provider, model: p.model },
+    { recipe_id: p.recipeId, provider: p.provider, model: '' },
+    { recipe_id: '*', provider: p.provider, model: p.model },
+    { recipe_id: '*', provider: p.provider, model: '' },
+  ];
+  let row: { response_json: unknown; error_kind: ErrorKind | null; latency_ms: number | null } | null = null;
+  for (const probe of probes) {
+    const { data, error } = await supabase
+      .from('remix_test_fixtures')
+      .select('response_json, error_kind, latency_ms')
+      .eq('recipe_id', probe.recipe_id)
+      .eq('provider', probe.provider)
+      .eq('model', probe.model)
+      .maybeSingle();
+    if (error) {
+      logLine('error', 'remix_test_fixtures lookup', {}, { code: error.code, message: error.message, ...probe });
+      continue;
+    }
+    if (data) {
+      row = data as { response_json: unknown; error_kind: ErrorKind | null; latency_ms: number | null };
+      break;
+    }
+  }
+  if (!row) {
+    return {
+      errorKind: 'OTHER',
+      rawResponse: 'no fixture',
+      promptTokens: 0,
+      completionTokens: 0,
+      errorMessage: `REMIX_MOCK_MODE: no fixture for recipe ${p.recipeId} (provider=${p.provider}, model=${p.model})`,
+      latencyMs: 0,
+    };
+  }
+  const latencyMs = row.latency_ms ?? 0;
+  if (row.error_kind && row.error_kind !== 'OK') {
+    return {
+      errorKind: row.error_kind,
+      rawResponse: JSON.stringify(row.response_json ?? {}),
+      promptTokens: 0,
+      completionTokens: 0,
+      errorMessage: `REMIX_MOCK_MODE: forced ${row.error_kind}`,
       latencyMs,
     };
   }

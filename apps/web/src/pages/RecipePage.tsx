@@ -30,6 +30,7 @@ import { shareRecipe } from '../share/share.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { recipeShareUrl } from '../share/shareUrl.js';
 import { useRewriteJob } from '../recipe/useRewriteJob.js';
+import { RemixDialog } from '../recipe/RemixDialog.js';
 import {
   cancelRewrite,
   getUserRewritePrefs,
@@ -73,6 +74,7 @@ export function RecipePage() {
   const [targetUnit, setTargetUnit] = useState<string>('');
   const [rewriteError, setRewriteError] = useState<string | undefined>();
   const [showScan, setShowScan] = useState(false);
+  const [showRemix, setShowRemix] = useState(false);
   const { job: rewriteJob, refresh: refreshRewriteJob } = useRewriteJob(recipeId);
   const { data: importItems = [] } = useImportItemsForRecipe(recipeId);
 
@@ -172,6 +174,17 @@ export function RecipePage() {
     <div className="space-y-6">
       {showScan && (
         <RecipeScanDialog items={importItems} onClose={() => setShowScan(false)} />
+      )}
+      {showRemix && (
+        <RemixDialog
+          recipe={recipe}
+          collectionId={collection.id}
+          onClose={() => setShowRemix(false)}
+          onSaved={(newRecipeId, destCollectionId) => {
+            setShowRemix(false);
+            navigate(`/collections/${destCollectionId}/recipes/${newRecipeId}`);
+          }}
+        />
       )}
       <div>
         <Link to={`/collections/${collection.id}`} className="text-sm text-stone-600 dark:text-stone-400 hover:underline">
@@ -352,6 +365,13 @@ export function RecipePage() {
             className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
           >
             Adapt
+          </button>
+          <button
+            onClick={() => setShowRemix(true)}
+            className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
+            data-testid="remix-open"
+          >
+            Remix
           </button>
           <button
             type="button"
