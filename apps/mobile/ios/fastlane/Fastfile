@@ -46,6 +46,53 @@ def asc_api_key
   key
 end
 
+# Wrap an ASC-touching block in retry-on-transient logic. Apple's
+# App Store Connect API truncates mid-response often enough that any
+# Spaceship call can blow up with `SSL_read: unexpected eof while
+# reading` (OpenSSL 3 surfaces what 1.x silently tolerated). We've
+# seen it bite pilot's pre-upload app fetch (~11s), pilot's post-
+# upload poll loop (~5min in), and the standalone
+# `latest_testflight_build_number` call.
+#
+# - `label` is what gets logged on each retry, makes the bug-hunt
+#   tractable when a run does fail.
+# - `max_attempts` defaults to 4 — three retries on top of the first
+#   try, each separated by 60s, which is roughly the timescale on which
+#   ASC stabilizes after one of these flakes.
+# - `swallow_already_uploaded:` is for pilot pass-1 only. altool
+#   returns "bundle version must be higher" when a previous attempt
+#   actually got the binary all the way to ASC before flaking; we
+#   treat that as success rather than failing the lane.
+#
+# Anything not matching the transient set re-raises immediately — we
+# don't want auth errors or config bugs hiding under retries.
+def with_asc_retry(label, max_attempts: 4, swallow_already_uploaded: false)
+  attempts = 0
+  begin
+    attempts += 1
+    yield
+  rescue => e
+    msg = e.message.to_s
+    if swallow_already_uploaded &&
+       (msg.include?("bundle version must be higher") || msg.include?("already been used"))
+      UI.important("#{label}: binary already present on ASC (#{msg.lines.first&.strip}) — treating as success")
+      return
+    end
+    transient = msg.include?("SSL_read") ||
+                msg.include?("unexpected eof") ||
+                msg.include?("ECONNRESET") ||
+                msg.include?("execution expired") ||
+                msg.include?("Failed to upload package") ||
+                msg.include?("Could not find build")
+    if transient && attempts < max_attempts
+      UI.important("#{label}: attempt #{attempts} hit transient ASC failure (#{msg.lines.first&.strip}); retrying in 60s")
+      sleep 60
+      retry
+    end
+    raise
+  end
+end
+
 # Login keychain password for the cyb-mac runner. Stashed by
 # scripts/runner/install-launch-agents.sh under the keychain entry
 # `cyb-mac-runner-keychain-unlock`. When present, we pass it to match so
@@ -125,12 +172,14 @@ platform :ios do
 
   desc "Pull signing material from the certs repo without creating anything new. Safe to run on any machine / CI."
   lane :certs do
-    match(
-      type: "appstore",
-      readonly: true,
-      api_key: asc_api_key_or_nil,
-      keychain_password: runner_keychain_password,
-    )
+    with_asc_retry("match (certs lane)") do
+      match(
+        type: "appstore",
+        readonly: true,
+        api_key: asc_api_key_or_nil,
+        keychain_password: runner_keychain_password,
+      )
+    end
   end
 
   desc "Bump CURRENT_PROJECT_VERSION to the commit count on HEAD. Monotonic on a linear-history repo, no network round-trip — avoids the ASC SSL flakes that latest_testflight_build_number used to throw on every other run. Must be a strictly greater number than the highest already on TestFlight; that holds as long as commits-on-main only goes up, which is the project's normal cadence (merges count as commits)."
@@ -210,49 +259,23 @@ platform :ios do
     # useful — every future crash matching these UUIDs gets
     # symbolicated automatically.
     upload_dsyms_to_sentry
-    # Pilot in two passes, both retried independently:
-    #   1. Upload the IPA. `skip_submission` + `skip_waiting_for_build_processing`
-    #      so it returns as soon as the binary is uploaded.
-    #   2. distribute_only — attach the already-uploaded build to the
-    #      external group + set the changelog + supersede any in-review
-    #      build from a previous push.
-    #
-    # Apple's ASC API truncates mid-response often enough (`SSL_read:
-    # unexpected eof while reading` from OpenSSL 3) that almost any
-    # Spaceship call can flake, including pilot's pre-upload app fetch
-    # before altool even runs. Wrap both passes in a retry loop with
-    # the same transient-error set. Pass-1 also treats "bundle version
-    # already used" as success — that happens when an earlier attempt
-    # got partway through the upload before flaking and re-running
-    # would otherwise fail at altool.
-    upload_attempts = 0
-    begin
-      upload_attempts += 1
+    # Pilot in two passes, each wrapped in with_asc_retry:
+    #   1. Upload the IPA. Spaceship's pre-upload app fetch can flake
+    #      with SSL EOF before altool runs; the helper retries the call,
+    #      and if a previous attempt actually got the binary all the way
+    #      to ASC before flaking it treats the next attempt's
+    #      "already uploaded" altool response as success.
+    #   2. distribute_only — attach the build to the external group,
+    #      set the changelog, and supersede any in-review build from a
+    #      previous push. Pilot's post-upload poll loop is the worst
+    #      offender for the SSL flake, so retry covers that too.
+    with_asc_retry("pilot upload", swallow_already_uploaded: true) do
       pilot(
         api_key: asc_api_key,
         ipa: "build/CookYourBooks.ipa",
         skip_waiting_for_build_processing: true,
         skip_submission: true,
       )
-    rescue => e
-      msg = e.message.to_s
-      already_uploaded = msg.include?("bundle version must be higher") ||
-                         msg.include?("already been used")
-      if already_uploaded
-        UI.important("pilot upload attempt #{upload_attempts} reports binary already present on ASC — treating as success")
-      else
-        transient = msg.include?("SSL_read") ||
-                    msg.include?("unexpected eof") ||
-                    msg.include?("ECONNRESET") ||
-                    msg.include?("execution expired") ||
-                    msg.include?("Failed to upload package")
-        if transient && upload_attempts < 4
-          UI.important("pilot upload attempt #{upload_attempts} hit transient ASC failure (#{msg.lines.first&.strip}); retrying in 60s")
-          sleep 60
-          retry
-        end
-        raise
-      end
     end
 
     # Give ASC a chance to ingest the upload before distribute_only's
@@ -263,9 +286,7 @@ platform :ios do
     sleep 60
 
     build_number_for_distribute = lane_context[SharedValues::BUILD_NUMBER].to_s
-    distribute_attempts = 0
-    begin
-      distribute_attempts += 1
+    with_asc_retry("pilot distribute") do
       pilot(
         api_key: asc_api_key,
         distribute_only: true,
@@ -296,19 +317,6 @@ platform :ios do
         # where the newest build always supersedes.
         reject_build_waiting_for_review: true,
       )
-    rescue => e
-      msg = e.message.to_s
-      transient = msg.include?("SSL_read") ||
-                  msg.include?("unexpected eof") ||
-                  msg.include?("ECONNRESET") ||
-                  msg.include?("execution expired") ||
-                  msg.include?("Could not find build")
-      if transient && distribute_attempts < 4
-        UI.important("pilot distribute attempt #{distribute_attempts} hit transient ASC failure (#{msg.lines.first&.strip}); retrying in 60s")
-        sleep 60
-        retry
-      end
-      raise
     end
   end
 
