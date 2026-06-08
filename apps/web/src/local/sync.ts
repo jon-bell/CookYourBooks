@@ -350,6 +350,7 @@ export interface PullResult {
   importTocEntries: number;
   conversionRules: number;
   rewriteJobs: number;
+  remixJobs: number;
   recipeEmbeddings: number;
   cookingEvents: number;
   recipeTags: number;
@@ -516,6 +517,28 @@ interface RewriteJobRow {
   updated_at: string;
 }
 
+interface RemixJobRow {
+  id: string;
+  owner_id: string;
+  recipe_id: string;
+  status: 'PENDING' | 'CLAIMED' | 'DONE' | 'FAILED';
+  provider: 'gemini' | 'openai-compatible';
+  model: string;
+  prompt: string;
+  instruction: string;
+  claim_expires_at: string;
+  attempts: number;
+  last_error: string | null;
+  // The produced ParsedRecipeDraft; the client promotes it into a new recipe.
+  result_json: unknown;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd_micros: number;
+  latency_ms: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // Bumped whenever a sync bug invalidates existing watermarks. On the
 // first pull after the user upgrades, every per-topic watermark is
 // reset to 0 so missed rows get a chance to flow in. Increment when
@@ -527,7 +550,9 @@ interface RewriteJobRow {
 // watermark 0 on its own — included in the reset below as belt-and-suspenders.)
 // v6 (2026-06-25): added collection_notes — reset so existing users do a clean
 // first pull of the new table.
-const SYNC_RESET_VERSION = 6;
+// v7 (2026-06-27): added the remix_jobs topic (merged alongside v6) — bump so
+// users who already reached v6 (collection_notes) also reset remix_jobs.
+const SYNC_RESET_VERSION = 7;
 
 async function maybeResetWatermarks(ownerId: string): Promise<void> {
   const versionTopic = `sync_reset_version:${ownerId}`;
@@ -535,7 +560,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
   if (current >= SYNC_RESET_VERSION) return;
   const db = await getLocalDb();
   await db.exec(
-    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `delete from sync_state where topic in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       `collections:${ownerId}`,
       `recipes:${ownerId}`,
@@ -545,6 +570,7 @@ async function maybeResetWatermarks(ownerId: string): Promise<void> {
       `import_toc_entries:${ownerId}`,
       `conversion_rules:${ownerId}`,
       `rewrite_jobs:${ownerId}`,
+      `remix_jobs:${ownerId}`,
       `recipe_embeddings:${ownerId}`,
       `cooking_events:${ownerId}`,
       `recipe_tags:${ownerId}`,
@@ -567,6 +593,7 @@ export interface PullCallbacks {
       | 'imports'
       | 'conversion_rules'
       | 'rewrite_jobs'
+      | 'remix_jobs'
       | 'recipe_embeddings'
       | 'cooking_events'
       | 'recipe_tags'
@@ -815,6 +842,7 @@ export async function pullAll(
   const importPhase = Date.now();
   const convPhase = Date.now();
   const rewritePhase = Date.now();
+  const remixPhase = Date.now();
   const embedPhase = Date.now();
   const cookingPhase = Date.now();
   const tagsPhase = Date.now();
@@ -823,6 +851,7 @@ export async function pullAll(
     importCounts,
     conversionRulesPulled,
     rewriteJobsPulled,
+    remixJobsPulled,
     recipeEmbeddingsPulled,
     cookingEventsPulled,
     recipeTagsPulled,
@@ -847,6 +876,14 @@ export async function pullAll(
         `pull rewrite_jobs: ${n} rows in ${Date.now() - rewritePhase}ms`,
       );
       callbacks?.onPhaseComplete?.('rewrite_jobs');
+      return n;
+    }),
+    pullRemixJobs(client, ownerId).then((n) => {
+      logSync(
+        'info',
+        `pull remix_jobs: ${n} rows in ${Date.now() - remixPhase}ms`,
+      );
+      callbacks?.onPhaseComplete?.('remix_jobs');
       return n;
     }),
     pullRecipeEmbeddings(client, ownerId).then((n) => {
@@ -901,6 +938,7 @@ export async function pullAll(
     importTocEntries: importCounts.tocEntries,
     conversionRules: conversionRulesPulled,
     rewriteJobs: rewriteJobsPulled,
+    remixJobs: remixJobsPulled,
     recipeEmbeddings: recipeEmbeddingsPulled,
     cookingEvents: cookingEventsPulled,
     recipeTags: recipeTagsPulled,
@@ -1303,6 +1341,27 @@ const REWRITE_JOB_COLS = [
   'deleted',
 ] as const;
 
+const REMIX_JOB_COLS = [
+  'id',
+  'owner_id',
+  'recipe_id',
+  'status',
+  'provider',
+  'model',
+  'prompt',
+  'instruction',
+  'claim_expires_at',
+  'attempts',
+  'last_error',
+  'result_json',
+  'prompt_tokens',
+  'completion_tokens',
+  'cost_usd_micros',
+  'latency_ms',
+  'updated_at',
+  'deleted',
+] as const;
+
 const COOKING_EVENT_COLS = [
   'id',
   'owner_id',
@@ -1459,6 +1518,35 @@ function rewriteJobToParams(row: RewriteJobRow): readonly unknown[] {
     row.provider,
     row.model,
     row.prompt,
+    toMs(row.claim_expires_at),
+    row.attempts,
+    row.last_error,
+    resultText,
+    row.prompt_tokens,
+    row.completion_tokens,
+    row.cost_usd_micros,
+    row.latency_ms,
+    toMs(row.updated_at),
+    0,
+  ];
+}
+
+function remixJobToParams(row: RemixJobRow): readonly unknown[] {
+  const resultText =
+    row.result_json === null || row.result_json === undefined
+      ? null
+      : JSON.stringify(row.result_json);
+  return [
+    row.id,
+    row.owner_id,
+    row.recipe_id,
+    row.status,
+    row.provider,
+    row.model,
+    // Coalesce: realtime UPDATE payloads omit unchanged TOASTed columns (the
+    // large `prompt`), and these aren't read locally. See upsertRemixJobRow.
+    row.prompt ?? '',
+    row.instruction ?? '',
     toMs(row.claim_expires_at),
     row.attempts,
     row.last_error,
@@ -1710,6 +1798,48 @@ async function pullRewriteJobs(
           REWRITE_JOB_COLS,
           fresh,
           rewriteJobToParams,
+        ),
+      );
+    }
+  }
+  let max = await getWatermark(topic);
+  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
+  if (max > 0) await bumpWatermark(topic, max);
+  return rows.length;
+}
+
+async function pullRemixJobs(
+  client: CookbooksClient,
+  ownerId: string,
+): Promise<number> {
+  const topic = `remix_jobs:${ownerId}`;
+  const since = new Date(await getWatermark(topic)).toISOString();
+  const rows = await fetchAllPages<RemixJobRow>((from, to) =>
+    client
+      .from('remix_jobs')
+      // input_recipe_json / household_id come back too but aren't mirrored
+      // locally — REMIX_JOB_COLS + remixJobToParams pick only what we store.
+      .select('*')
+      .eq('owner_id', ownerId)
+      .gte('updated_at', since)
+      .order('updated_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (rows.length > 0) {
+    const fresh = await filterFresherIncoming(
+      'remix_jobs',
+      rows,
+      (r) => r.id,
+      (r) => toMs(r.updated_at),
+    );
+    if (fresh.length > 0) {
+      await withSuppressedCrrTriggers(['remix_jobs'], fresh.length, () =>
+        bulkInsertOnConflictId(
+          'remix_jobs',
+          REMIX_JOB_COLS,
+          fresh,
+          remixJobToParams,
         ),
       );
     }
@@ -2494,6 +2624,66 @@ async function upsertRewriteJobRow(row: RewriteJobRow): Promise<void> {
   );
 }
 
+async function upsertRemixJobRow(row: RemixJobRow): Promise<void> {
+  const db = await getLocalDb();
+  const ts = toMs(row.updated_at);
+  const resultText = row.result_json === null || row.result_json === undefined
+    ? null
+    : JSON.stringify(row.result_json);
+  await db.exec(
+    `insert into remix_jobs
+       (id, owner_id, recipe_id, status, provider, model, prompt, instruction,
+        claim_expires_at, attempts, last_error, result_json,
+        prompt_tokens, completion_tokens, cost_usd_micros, latency_ms,
+        updated_at, deleted)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     on conflict(id) do update set
+       owner_id=excluded.owner_id,
+       recipe_id=excluded.recipe_id,
+       status=excluded.status,
+       provider=excluded.provider,
+       model=excluded.model,
+       prompt=excluded.prompt,
+       instruction=excluded.instruction,
+       claim_expires_at=excluded.claim_expires_at,
+       attempts=excluded.attempts,
+       last_error=excluded.last_error,
+       result_json=excluded.result_json,
+       prompt_tokens=excluded.prompt_tokens,
+       completion_tokens=excluded.completion_tokens,
+       cost_usd_micros=excluded.cost_usd_micros,
+       latency_ms=excluded.latency_ms,
+       updated_at=excluded.updated_at,
+       deleted=0
+     where excluded.updated_at >= remix_jobs.updated_at`,
+    [
+      row.id,
+      row.owner_id,
+      row.recipe_id,
+      row.status,
+      row.provider,
+      row.model,
+      // `prompt` holds the (large) remix system prompt, so Postgres TOASTs
+      // it. Realtime UPDATE payloads omit unchanged TOASTed columns, so
+      // `prompt`/`instruction` can be absent on CLAIMED/DONE events — coalesce
+      // so the local NOT NULL columns don't reject the upsert. We never read
+      // these locally; result_json (always present on the DONE update because
+      // it changed) is what the dialog promotes.
+      row.prompt ?? '',
+      row.instruction ?? '',
+      toMs(row.claim_expires_at),
+      row.attempts,
+      row.last_error,
+      resultText,
+      row.prompt_tokens,
+      row.completion_tokens,
+      row.cost_usd_micros,
+      row.latency_ms,
+      ts,
+    ],
+  );
+}
+
 async function upsertImportTocEntryRow(row: ImportTocEntryRow): Promise<void> {
   const db = await getLocalDb();
   const ts = toMs(row.updated_at);
@@ -2664,6 +2854,17 @@ export function subscribeRealtime(
         // user sees the new steps without waiting for the next pull.
         const evt = payload.new as { status?: string } | undefined;
         if (evt?.status === 'DONE') onNeedsPull();
+        onLocalUpdate();
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'remix_jobs', filter: `owner_id=eq.${ownerId}` },
+      async (payload) => {
+        // Unlike rewrite, remix writes nothing to the recipe tables — the
+        // client promotes the draft itself — so a local update (which
+        // advances the useRemixJob poll) is enough; no onNeedsPull().
+        await handleRemixJobEvent(payload);
         onLocalUpdate();
       },
     )
@@ -2875,6 +3076,18 @@ async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
     return;
   }
   await upsertRewriteJobRow(payload.new as unknown as RewriteJobRow);
+}
+
+async function handleRemixJobEvent(payload: RealtimePayload): Promise<void> {
+  if (payload.eventType === 'DELETE') {
+    const id = (payload.old as { id?: string }).id;
+    if (id) {
+      const db = await getLocalDb();
+      await db.exec(`delete from remix_jobs where id = ?`, [id]);
+    }
+    return;
+  }
+  await upsertRemixJobRow(payload.new as unknown as RemixJobRow);
 }
 
 async function handleRecipeEmbeddingEvent(payload: RealtimePayload): Promise<void> {

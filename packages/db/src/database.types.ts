@@ -286,6 +286,87 @@ export type Database = {
           },
         ]
       }
+      collection_notes: {
+        Row: {
+          body: string
+          collection_id: string | null
+          created_at: string
+          household_id: string | null
+          id: string
+          import_item_id: string | null
+          owner_id: string
+          page_numbers: number[]
+          sort_order: number
+          source_image_text: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          body?: string
+          collection_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          import_item_id?: string | null
+          owner_id: string
+          page_numbers?: number[]
+          sort_order?: number
+          source_image_text?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          body?: string
+          collection_id?: string | null
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          import_item_id?: string | null
+          owner_id?: string
+          page_numbers?: number[]
+          sort_order?: number
+          source_image_text?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "collection_notes_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
+          },
+          {
+            foreignKeyName: "collection_notes_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "public_collections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_notes_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_collections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_notes_import_item_id_fkey"
+            columns: ["import_item_id"]
+            isOneToOne: false
+            referencedRelation: "import_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_notes_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversion_rules: {
         Row: {
           created_at: string
@@ -1710,6 +1791,38 @@ export type Database = {
         }
         Relationships: []
       }
+      nutrition_food_embeddings: {
+        Row: {
+          embedding: string
+          model: string
+          source: string
+          source_id: string
+          updated_at: string
+        }
+        Insert: {
+          embedding: string
+          model: string
+          source: string
+          source_id: string
+          updated_at?: string
+        }
+        Update: {
+          embedding?: string
+          model?: string
+          source?: string
+          source_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nutrition_food_embeddings_source_source_id_fkey"
+            columns: ["source", "source_id"]
+            isOneToOne: true
+            referencedRelation: "nutrition_foods_master"
+            referencedColumns: ["source", "source_id"]
+          },
+        ]
+      }
       nutrition_foods_master: {
         Row: {
           brand: string | null
@@ -1717,6 +1830,7 @@ export type Database = {
           calories_kcal: number | null
           carbs_g: number | null
           data_type: string
+          desc_lexemes: unknown
           description: string
           fat_g: number | null
           fiber_g: number | null
@@ -1736,6 +1850,7 @@ export type Database = {
           calories_kcal?: number | null
           carbs_g?: number | null
           data_type: string
+          desc_lexemes?: unknown
           description: string
           fat_g?: number | null
           fiber_g?: number | null
@@ -1755,6 +1870,7 @@ export type Database = {
           calories_kcal?: number | null
           carbs_g?: number | null
           data_type?: string
+          desc_lexemes?: unknown
           description?: string
           fat_g?: number | null
           fiber_g?: number | null
@@ -1950,69 +2066,66 @@ export type Database = {
           },
         ]
       }
-      collection_notes: {
+      recipe_cover_jobs: {
         Row: {
-          body: string
-          collection_id: string | null
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
           created_at: string
-          household_id: string | null
           id: string
-          import_item_id: string | null
+          last_error: string | null
           owner_id: string
-          page_numbers: number[]
-          sort_order: number
-          source_image_text: string | null
-          title: string
+          recipe_id: string
+          requested_by: string
+          status: string
           updated_at: string
         }
         Insert: {
-          body?: string
-          collection_id?: string | null
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
           created_at?: string
-          household_id?: string | null
           id?: string
-          import_item_id?: string | null
+          last_error?: string | null
           owner_id: string
-          page_numbers?: number[]
-          sort_order?: number
-          source_image_text?: string | null
-          title?: string
+          recipe_id: string
+          requested_by: string
+          status?: string
           updated_at?: string
         }
         Update: {
-          body?: string
-          collection_id?: string | null
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
           created_at?: string
-          household_id?: string | null
           id?: string
-          import_item_id?: string | null
+          last_error?: string | null
           owner_id?: string
-          page_numbers?: number[]
-          sort_order?: number
-          source_image_text?: string | null
-          title?: string
+          recipe_id?: string
+          requested_by?: string
+          status?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "collection_notes_collection_id_fkey"
-            columns: ["collection_id"]
-            isOneToOne: false
-            referencedRelation: "recipe_collections"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "collection_notes_owner_id_fkey"
+            foreignKeyName: "recipe_cover_jobs_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "collection_notes_import_item_id_fkey"
-            columns: ["import_item_id"]
+            foreignKeyName: "recipe_cover_jobs_recipe_id_fkey"
+            columns: ["recipe_id"]
             isOneToOne: false
-            referencedRelation: "import_items"
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_cover_jobs_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -2261,6 +2374,123 @@ export type Database = {
           },
         ]
       }
+      remix_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          household_id: string | null
+          id: string
+          input_recipe_json: Json | null
+          instruction: string
+          last_error: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number
+          provider: string
+          recipe_id: string
+          result_json: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          input_recipe_json?: Json | null
+          instruction?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          completion_tokens?: number
+          cost_usd_micros?: number
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          input_recipe_json?: Json | null
+          instruction?: string
+          last_error?: string | null
+          latency_ms?: number
+          model?: string
+          owner_id?: string
+          prompt?: string
+          prompt_tokens?: number
+          provider?: string
+          recipe_id?: string
+          result_json?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "remix_jobs_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "remix_jobs_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      remix_test_fixtures: {
+        Row: {
+          created_at: string
+          error_kind: string | null
+          latency_ms: number
+          model: string
+          provider: string
+          recipe_id: string
+          response_json: Json
+        }
+        Insert: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Update: {
+          created_at?: string
+          error_kind?: string | null
+          latency_ms?: number
+          model?: string
+          provider?: string
+          recipe_id?: string
+          response_json?: Json
+        }
+        Relationships: []
+      }
       reports: {
         Row: {
           created_at: string
@@ -2477,6 +2707,30 @@ export type Database = {
           },
         ]
       }
+      user_cover_prefs: {
+        Row: {
+          model: string
+          owner_id: string
+          prompt: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          model?: string
+          owner_id: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          model?: string
+          owner_id?: string
+          prompt?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       user_ocr_keys: {
         Row: {
           base_url: string | null
@@ -2515,49 +2769,7 @@ export type Database = {
           },
         ]
       }
-      recipe_cover_jobs: {
-        Row: {
-          attempts: number
-          claim_expires_at: string
-          claim_token: string | null
-          created_at: string
-          id: string
-          last_error: string | null
-          owner_id: string
-          recipe_id: string
-          requested_by: string
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          owner_id: string
-          recipe_id: string
-          requested_by: string
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          attempts?: number
-          claim_expires_at?: string
-          claim_token?: string | null
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          owner_id?: string
-          recipe_id?: string
-          requested_by?: string
-          status?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      user_cover_prefs: {
+      user_ocr_prefs: {
         Row: {
           model: string
           owner_id: string
@@ -2581,7 +2793,7 @@ export type Database = {
         }
         Relationships: []
       }
-      user_ocr_prefs: {
+      user_remix_prefs: {
         Row: {
           model: string
           owner_id: string
@@ -2837,6 +3049,50 @@ export type Database = {
         Returns: Json
       }
       cli_verify_token: { Args: { raw_token: string }; Returns: string }
+      cover_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          created_at: string
+          id: string
+          last_error: string | null
+          owner_id: string
+          recipe_id: string
+          requested_by: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "recipe_cover_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      cover_complete: {
+        Args: { p_claim_token: string; p_cover_path: string; p_job_id: string }
+        Returns: boolean
+      }
+      cover_fail: {
+        Args: {
+          p_claim_token: string
+          p_error: string
+          p_job_id: string
+          p_next_state: string
+        }
+        Returns: boolean
+      }
+      cover_jobs_enqueue: {
+        Args: { p_scope: string; p_target_id?: string }
+        Returns: number
+      }
+      cover_kick: { Args: never; Returns: undefined }
       create_household: { Args: { p_name: string }; Returns: string }
       current_household_id: { Args: { p_user_id: string }; Returns: string }
       current_tos_version: { Args: never; Returns: number }
@@ -3204,6 +3460,73 @@ export type Database = {
         Args: { p_owner: string }
         Returns: undefined
       }
+      remix_cancel: { Args: { p_job_id: string }; Returns: boolean }
+      remix_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          completion_tokens: number
+          cost_usd_micros: number
+          created_at: string
+          household_id: string | null
+          id: string
+          input_recipe_json: Json | null
+          instruction: string
+          last_error: string | null
+          latency_ms: number
+          model: string
+          owner_id: string
+          prompt: string
+          prompt_tokens: number
+          provider: string
+          recipe_id: string
+          result_json: Json | null
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "remix_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      remix_complete: {
+        Args: {
+          p_attempt: Json
+          p_claim_token: string
+          p_job_id: string
+          p_result: Json
+        }
+        Returns: boolean
+      }
+      remix_fail: {
+        Args: {
+          p_attempt: Json
+          p_claim_token: string
+          p_job_id: string
+          p_next_state: string
+        }
+        Returns: boolean
+      }
+      remix_kick: { Args: { p_recipe_id?: string }; Returns: undefined }
+      remix_start: {
+        Args: {
+          p_input_recipe_json: Json
+          p_instruction: string
+          p_model: string
+          p_prompt: string
+          p_provider: string
+          p_recipe_id: string
+        }
+        Returns: string
+      }
       remove_household_member: {
         Args: { p_user_id: string }
         Returns: undefined
@@ -3291,13 +3614,43 @@ export type Database = {
       }
       save_recipes_graph: { Args: { p_recipes: Json }; Returns: undefined }
       search_nutrition_foods: {
-        Args: { p_limit?: number; p_query: string }
+        Args: { p_generic_only?: boolean; p_limit?: number; p_query: string }
         Returns: {
           brand: string | null
           brand_owner: string | null
           calories_kcal: number | null
           carbs_g: number | null
           data_type: string
+          desc_lexemes: unknown
+          description: string
+          fat_g: number | null
+          fiber_g: number | null
+          portions: Json
+          protein_g: number | null
+          saturated_fat_g: number | null
+          search_tsv: unknown
+          sodium_mg: number | null
+          source: string
+          source_id: string
+          sugar_g: number | null
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "nutrition_foods_master"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      search_nutrition_foods_semantic: {
+        Args: { p_embedding: number[]; p_limit?: number }
+        Returns: {
+          brand: string | null
+          brand_owner: string | null
+          calories_kcal: number | null
+          carbs_g: number | null
+          data_type: string
+          desc_lexemes: unknown
           description: string
           fat_g: number | null
           fiber_g: number | null
@@ -3345,16 +3698,15 @@ export type Database = {
         Args: { p_new_owner_id: string }
         Returns: undefined
       }
-      cover_jobs_enqueue: {
-        Args: { p_scope: string; p_target_id?: string }
-        Returns: number
-      }
-      cover_kick: { Args: never; Returns: undefined }
       user_cover_prefs_set: {
         Args: { p_model: string; p_prompt: string }
         Returns: undefined
       }
       user_ocr_prefs_set: {
+        Args: { p_model: string; p_prompt: string; p_provider: string }
+        Returns: undefined
+      }
+      user_remix_prefs_set: {
         Args: { p_model: string; p_prompt: string; p_provider: string }
         Returns: undefined
       }

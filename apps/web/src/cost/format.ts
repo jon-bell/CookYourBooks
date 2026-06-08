@@ -31,6 +31,7 @@ export const FEATURE_LABEL: Record<string, string> = {
   isbn: 'ISBN scan',
   video: 'Link import',
   cover_image: 'Cover image',
+  remix: 'Recipe Remix',
 };
 
 export function featureLabel(feature: string): string {

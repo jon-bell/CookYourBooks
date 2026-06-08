@@ -123,6 +123,18 @@ describe('buildRecipeFromDraft', () => {
     const bIds = b.ingredients.map((i) => i.id);
     expect(aIds.some((id) => bIds.includes(id))).toBe(false);
   });
+
+  it('sets parentRecipeId for derived recipes (Recipe Remix lineage)', () => {
+    const r = buildRecipeFromDraft(makeDraft(), { parentRecipeId: 'source-recipe-7' });
+    expect(r.parentRecipeId).toBe('source-recipe-7');
+    // Still mints a fresh recipe id distinct from the parent.
+    expect(r.id).not.toBe('source-recipe-7');
+  });
+
+  it('leaves parentRecipeId undefined for plain imports', () => {
+    const r = buildRecipeFromDraft(makeDraft());
+    expect(r.parentRecipeId).toBeUndefined();
+  });
 });
 
 describe('resolveTargetRecipe', () => {
