@@ -56,6 +56,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     source_image_text text,
     source_url text,           -- origin URL for video-imported recipes
     starred integer not null default 0,
+    cover_image_path text,     -- storage path in the public covers bucket
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -442,6 +443,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipes add column source_image_text text`,
   // Per-recipe origin URL for the video-import flow (2026-06-05).
   `alter table recipes add column source_url text`,
+  // Recipe cover image — uploaded or Gemini-generated (2026-06-08).
+  `alter table recipes add column cover_image_path text`,
   `alter table ingredients add column description text`,
   `alter table instructions add column temperature_value real`,
   `alter table instructions add column temperature_unit text`,

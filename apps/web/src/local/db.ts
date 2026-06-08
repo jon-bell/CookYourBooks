@@ -25,6 +25,87 @@ const PENDING_RESET_KEY = 'cookyourbooks.db.pendingReset';
 // @vlcn.io/crsqlite-wasm: `new IDBBatchAtomicVFS("idb-batch-atomic", …)`).
 const VFS_IDB_NAME = 'idb-batch-atomic';
 
+// ---------- automatic recovery from an unusable local DB ----------
+//
+// On iOS/WKWebView the IndexedDB-backed SQLite can wedge two ways, both seen in
+// Sentry (cyb-capacitor / cyb-react):
+//   - hard corruption: "database disk image is malformed" (SQLITE_CORRUPT),
+//     "file is not a database", or the DB failing to even open
+//     (`sqlite3_open_v2` — CYB-CAPACITOR-G), and the "failed compacting tables
+//     post alteration" CRR-heal wedge. Once corrupt, every read/sync throws and
+//     the app is stuck until a manual reset.
+//   - lost IDB transaction: "…without an in-progress transaction"
+//     (CYB-CAPACITOR-F/K, CYB-REACT-J) — iOS tears down the WKWebView's IDB
+//     transaction mid-op (backgrounding / jetsam under a heavy pull). The
+//     on-disk DB is usually fine; the in-memory VFS just needs a fresh open.
+//
+// Recovery is self-healing but rate-limited so a genuinely broken DB can't spin
+// the page in a reload loop: corruption → delete the VFS idb + reload
+// (emergencyResetLocalDb); lost-transaction → reload only (re-open, keep data).
+// The local DB is a pure server cache, so the worst case (a delete) only drops
+// not-yet-pushed outbox writes, which a corrupt DB had already lost.
+const AUTO_RECOVER_AT_KEY = 'cookyourbooks.db.autoRecoverAt';
+const AUTO_RECOVER_COOLDOWN_MS = 60_000;
+
+// Exported for unit testing — classifies an error into the recovery strategy
+// (or null = not a local-DB-unusable error, leave it alone).
+export function recoveryKind(err: unknown): 'corrupt' | 'txn' | null {
+  const msg = String((err as { message?: unknown } | null)?.message ?? err ?? '');
+  if (
+    /database disk image is malformed|SQLITE_CORRUPT|file is not a database|not a database|sqlite3_open|failed compacting tables post alteration/i.test(
+      msg,
+    )
+  ) {
+    return 'corrupt';
+  }
+  if (/without an in-progress transaction|transaction (is inactive|has finished|was aborted)/i.test(msg)) {
+    return 'txn';
+  }
+  return null;
+}
+
+function recentlyAutoRecovered(): boolean {
+  try {
+    return Date.now() - Number(localStorage.getItem(AUTO_RECOVER_AT_KEY) ?? 0) < AUTO_RECOVER_COOLDOWN_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detect an unusable-local-DB error and self-heal once per cooldown. Called
+ * from the exec lock wrapper and from a failed `getLocalDb()` init. Never
+ * throws — the caller still rethrows the original error; if recovery fires,
+ * the reload supersedes it.
+ */
+function maybeAutoRecover(err: unknown): void {
+  const kind = recoveryKind(err);
+  if (!kind) return;
+  if (recentlyAutoRecovered()) {
+    logSync('error', `db ${kind}: still failing after a recent auto-recovery — leaving it to surface`);
+    return;
+  }
+  try {
+    localStorage.setItem(AUTO_RECOVER_AT_KEY, String(Date.now()));
+  } catch {
+    // no localStorage → can't rate-limit; bail rather than risk a reload loop
+    return;
+  }
+  logSync('warn', `db ${kind}: auto-recovering (${kind === 'corrupt' ? 'reset + reload' : 'reload'})`);
+  if (kind === 'corrupt') {
+    // Deletes the VFS idb (or arms a pre-init delete) then reloads.
+    void emergencyResetLocalDb().catch(() => {});
+  } else {
+    // On-disk DB is fine — a fresh page load re-opens the VFS with a live
+    // transaction. Non-destructive. Guarded for non-browser (test) envs.
+    try {
+      location.reload();
+    } catch {
+      // not a browser — nothing to reload
+    }
+  }
+}
+
 // Delete the VFS IndexedDB, resolving on success/error/blocked alike and on
 // a hard timeout so a stuck request can never hang the caller (the old
 // `onblocked`-only-logs path is exactly what wedged the reset button).
@@ -139,6 +220,11 @@ async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
       }
     }, SLOW_LOCK_WARN_MS);
     return await fn();
+  } catch (err) {
+    // A corrupt DB or a torn-down IDB transaction throws here on every op;
+    // self-heal once per cooldown so the app isn't wedged until manual reset.
+    maybeAutoRecover(err);
+    throw err;
   } finally {
     clearTimeout(waitTimer);
     if (runTimer) clearTimeout(runTimer);
@@ -205,6 +291,10 @@ export function getLocalDb(): Promise<LocalDb> {
         initState.error = msg;
         initState.step = `failed (${msg})`;
         logSync('error', `db init: FAILED — ${msg}`);
+        // The DB couldn't even open (e.g. sqlite3_open_v2 on a corrupt VFS,
+        // CYB-CAPACITOR-G) — auto-reset so the next boot opens a fresh DB
+        // instead of failing forever.
+        maybeAutoRecover(err);
         throw err;
       });
   }

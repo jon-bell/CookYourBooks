@@ -6,7 +6,7 @@
 
 import { supabase } from '../supabase.js';
 
-export type LlmFeature = 'ocr' | 'bakeoff' | 'rewrite' | 'isbn' | 'video';
+export type LlmFeature = 'ocr' | 'bakeoff' | 'rewrite' | 'isbn' | 'video' | 'cover_image';
 export type UsageGroupBy = 'model' | 'provider' | 'member' | 'feature' | 'day';
 
 export interface UsageRange {

@@ -30,6 +30,7 @@ export const FEATURE_LABEL: Record<string, string> = {
   rewrite: 'Step rewrite',
   isbn: 'ISBN scan',
   video: 'Link import',
+  cover_image: 'Cover image',
 };
 
 export function featureLabel(feature: string): string {

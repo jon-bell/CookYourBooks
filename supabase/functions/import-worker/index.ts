@@ -27,6 +27,7 @@ import {
   hashEmbedText,
   type EmbedRecipeInput,
 } from './embed.ts';
+import { buildCoverPrompt, extForMime, generateCover } from './cover.ts';
 
 // Self-hosted Sentry for the import worker. Both Deno edge functions
 // report to the same `cyb-deno` project via the shared `SENTRY_DSN`
@@ -276,7 +277,7 @@ Deno.serve(async (req) => {
       });
       return json({ error: 'unauthorized' }, 401);
     }
-    let body: { batch_id?: string | null; embed?: boolean } = {};
+    let body: { batch_id?: string | null; embed?: boolean; cover?: boolean } = {};
     try {
       const text = await req.text();
       if (text.length > 0) body = JSON.parse(text);
@@ -303,6 +304,9 @@ Deno.serve(async (req) => {
     // single claim per invocation; the cron tick + save-side kicks
     // pick up any tail.
     const embedSummary = await runEmbedLoop(workerId, wLog);
+    // Drain pending recipe cover-image jobs. Same one-claim-per-invocation
+    // discipline; the cover_kick + cron tick pick up any tail.
+    const coverSummary = await runCoverLoop(workerId, wLog);
     wLog.info('invocation end', {
       ...summary,
       bakeoff_processed: bakeoffSummary.processed,
@@ -313,6 +317,8 @@ Deno.serve(async (req) => {
       import_variant_failed: importVariantSummary.failed,
       embed_processed: embedSummary.processed,
       embed_failed: embedSummary.failed,
+      cover_processed: coverSummary.processed,
+      cover_failed: coverSummary.failed,
     });
 
     if (summary.remaining > 0) {
@@ -1855,6 +1861,255 @@ async function failEmbedJob(
   nextState: 'PENDING' | 'FAILED',
 ): Promise<void> {
   await supabase.rpc('embed_fail', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_error: message,
+    p_next_state: nextState,
+  });
+}
+
+// ---------- cover-image generation loop ----------
+//
+// Drains recipe_cover_jobs: for each job, resolve the *initiator's* Gemini
+// key, build a prompt from the recipe + the initiator's cover prefs, ask the
+// image model for a cover, upload it into the recipe owner's `covers` path,
+// stamp recipes.cover_image_path (via cover_complete, under service role), and
+// meter the spend into the LLM Cost Center under the initiator.
+
+interface CoverJob {
+  id: string;
+  recipe_id: string;
+  owner_id: string;       // recipe owner (whose covers/ path + recipe row)
+  requested_by: string;   // initiator (whose key pays + cost-center row)
+  attempts: number;
+}
+
+const MAX_COVER_RETRIES = 2;
+const DEFAULT_COVER_MODEL = 'gemini-3.1-flash-image';
+const DEFAULT_COVER_PROMPT =
+  'A thumbnail to put on a recipe card for this recipe, RECIPE NAME. Ingredients <INGREDIENTS>. Instructions <INSTRUCTIONS>. Photographic food image only — do not render any text, words, letters, numbers, labels, captions, or watermarks anywhere on the image.';
+
+async function runCoverLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  const { data, error } = await supabase.rpc('cover_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+  });
+  if (error) {
+    log.error('cover_claim_next failed', { code: error.code, message: error.message });
+    return { processed, failed };
+  }
+  const jobs = (data ?? []) as CoverJob[];
+  if (jobs.length === 0) return { processed, failed };
+  log.info('claimed cover jobs', { count: jobs.length });
+
+  for (const job of jobs) {
+    const outcome = await processCoverJob(job, workerId, log.child({ item: shortId(job.id) }));
+    if (outcome === 'DONE') processed++;
+    else failed++;
+  }
+  return { processed, failed };
+}
+
+async function recordCoverUsage(e: {
+  ownerId: string;
+  keyOwnerId: string | null;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  costUsdMicros: number;
+  latencyMs: number;
+  errorKind: string;
+  recipeId: string;
+}): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('misc_llm_usage_record', {
+      p_event: {
+        owner_id: e.ownerId,
+        key_owner_id: e.keyOwnerId,
+        feature: 'cover_image',
+        provider: 'gemini',
+        model: e.model,
+        prompt_tokens: e.promptTokens,
+        completion_tokens: e.completionTokens,
+        cost_usd_micros: e.costUsdMicros,
+        latency_ms: e.latencyMs,
+        error_kind: e.errorKind,
+        produced_ref: e.recipeId,
+        produced_kind: 'RECIPE_ID',
+      },
+    });
+    if (error) logLine('warn', 'misc_llm_usage_record (cover) failed', {}, { error: error.message });
+  } catch (err) {
+    logLine('warn', 'misc_llm_usage_record (cover) threw', {}, { error: String(err) });
+  }
+}
+
+async function processCoverJob(
+  job: CoverJob,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  log.info('cover start', { recipe: shortId(job.recipe_id), attempts: job.attempts });
+
+  // Resolve the INITIATOR's Gemini key (own, or borrowed household key). The
+  // returned key_owner_id is who the cost is attributed to.
+  const { data: keyData, error: keyErr } = await supabase.rpc('ocr_resolve_effective_key', {
+    p_owner_id: job.requested_by,
+    p_provider: 'gemini',
+  });
+  if (keyErr) {
+    await coverFail(job, workerId, `key lookup: ${keyErr.message}`, retryState(job));
+    return 'FAILED';
+  }
+  const keyRow = Array.isArray(keyData)
+    ? (keyData[0] as { api_key?: string; key_owner_id?: string } | undefined)
+    : undefined;
+  if (!keyRow?.api_key) {
+    // No key -> no point retrying; dead-letter so the board can surface it.
+    await coverFail(job, workerId, 'No Gemini API key configured for the requester.', 'FAILED');
+    return 'FAILED';
+  }
+  const keyOwnerId = keyRow.key_owner_id ?? null;
+
+  // Initiator's model/prompt prefs (defaults when unset).
+  const { data: prefRow } = await supabase
+    .from('user_cover_prefs')
+    .select('model, prompt')
+    .eq('owner_id', job.requested_by)
+    .maybeSingle();
+  const model = (prefRow as { model?: string } | null)?.model || DEFAULT_COVER_MODEL;
+  const template = (prefRow as { prompt?: string } | null)?.prompt || DEFAULT_COVER_PROMPT;
+
+  // Load the recipe + its ingredients/instructions for the prompt. A missing
+  // recipe means it was deleted out from under us — dead-letter the job.
+  const { data: recipeRow, error: rErr } = await supabase
+    .from('recipes')
+    .select('id, title')
+    .eq('id', job.recipe_id)
+    .maybeSingle();
+  if (rErr) {
+    await coverFail(job, workerId, `load recipe: ${rErr.message}`, retryState(job));
+    return 'FAILED';
+  }
+  if (!recipeRow) {
+    await coverFail(job, workerId, 'recipe missing', 'FAILED');
+    return 'FAILED';
+  }
+  const recipe = recipeRow as { id: string; title: string };
+
+  const { data: ingRows } = await supabase
+    .from('ingredients')
+    .select('name, sort_order')
+    .eq('recipe_id', job.recipe_id)
+    .order('sort_order', { ascending: true });
+  const { data: stepRows } = await supabase
+    .from('instructions')
+    .select('text, step_number')
+    .eq('recipe_id', job.recipe_id)
+    .order('step_number', { ascending: true });
+
+  const prompt = buildCoverPrompt(template, {
+    title: recipe.title,
+    ingredients: ((ingRows ?? []) as { name: string }[]).map((i) => i.name),
+    instructions: ((stepRows ?? []) as { text: string }[]).map((s) => s.text),
+  });
+
+  let gen;
+  try {
+    gen = await generateCover({ apiKey: keyRow.api_key, model, prompt });
+  } catch (err) {
+    const e = err as { kind?: string; message?: string };
+    const msg = e.message ?? String(err);
+    // Record the failed call's cost (token usage is unknown on failure -> 0).
+    await recordCoverUsage({
+      ownerId: job.requested_by,
+      keyOwnerId,
+      model,
+      promptTokens: 0,
+      completionTokens: 0,
+      costUsdMicros: 0,
+      latencyMs: 0,
+      errorKind: e.kind ?? 'CALL_FAILED',
+      recipeId: job.recipe_id,
+    });
+    // A missing key / image is terminal; transient call failures retry.
+    const next = e.kind === 'NO_KEY' || e.kind === 'NO_IMAGE' ? 'FAILED' : retryState(job);
+    await coverFail(job, workerId, msg, next);
+    return 'FAILED';
+  }
+
+  // Upload into the recipe OWNER's covers path (service role bypasses the
+  // owner-scoped write policy; the owner prefix keeps later client edits
+  // valid). Stable path => regenerate overwrites in place.
+  const ext = extForMime(gen.mimeType);
+  const path = `${job.owner_id}/recipes/${job.recipe_id}.${ext}`;
+  const { error: upErr } = await supabase.storage
+    .from('covers')
+    .upload(path, new Blob([gen.bytes as unknown as BlobPart], { type: gen.mimeType }), {
+      upsert: true,
+      contentType: gen.mimeType,
+      cacheControl: '3600',
+    });
+  if (upErr) {
+    await recordCoverUsage({
+      ownerId: job.requested_by,
+      keyOwnerId,
+      model,
+      promptTokens: gen.promptTokens,
+      completionTokens: gen.completionTokens,
+      costUsdMicros: costUsdMicros('gemini', model, gen.promptTokens, gen.completionTokens),
+      latencyMs: gen.latencyMs,
+      errorKind: 'UPLOAD_FAILED',
+      recipeId: job.recipe_id,
+    });
+    await coverFail(job, workerId, `upload: ${upErr.message}`, retryState(job));
+    return 'FAILED';
+  }
+
+  // Stamp the path + mark DONE (one RPC; bumps recipes.updated_at so it syncs).
+  const { data: ok, error: completeErr } = await supabase.rpc('cover_complete', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_cover_path: path,
+  });
+  if (completeErr || ok === false) {
+    log.error('cover_complete rpc', { code: completeErr?.code, message: completeErr?.message });
+  }
+
+  // Meter the successful generation (the work cost the same whether or not the
+  // complete RPC raced a reclaim).
+  await recordCoverUsage({
+    ownerId: job.requested_by,
+    keyOwnerId,
+    model,
+    promptTokens: gen.promptTokens,
+    completionTokens: gen.completionTokens,
+    costUsdMicros: costUsdMicros('gemini', model, gen.promptTokens, gen.completionTokens),
+    latencyMs: gen.latencyMs,
+    errorKind: 'OK',
+    recipeId: job.recipe_id,
+  });
+  log.info('cover done', { recipe: shortId(job.recipe_id), path });
+  return 'DONE';
+}
+
+function retryState(job: CoverJob): 'PENDING' | 'FAILED' {
+  return job.attempts < MAX_COVER_RETRIES ? 'PENDING' : 'FAILED';
+}
+
+async function coverFail(
+  job: CoverJob,
+  workerId: string,
+  message: string,
+  nextState: 'PENDING' | 'FAILED',
+): Promise<void> {
+  await supabase.rpc('cover_fail', {
     p_job_id: job.id,
     p_claim_token: workerId,
     p_error: message,

@@ -11,6 +11,7 @@ import {
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
 import { EditBookDetailsDialog } from '../books/EditBookDetailsDialog.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
+import { GenerateCoversButton } from '../components/GenerateCoversButton.js';
 import { CollectionRecipeBrowser } from '../components/CollectionRecipeBrowser.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
@@ -134,6 +135,9 @@ export function CollectionPage() {
           Add recipe
         </Link>
         <ImportFromPhoto collectionId={c.id} />
+        {c.recipes.length > 0 && (
+          <GenerateCoversButton scope="collection" targetId={c.id} label="Generate covers" />
+        )}
         {c.sourceType === 'PUBLISHED_BOOK' && (
           <button
             onClick={() => setEditingDetails(true)}

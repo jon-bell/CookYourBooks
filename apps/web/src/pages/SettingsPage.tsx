@@ -10,6 +10,7 @@ import { OcrKeysSection } from '../settings/OcrKeysSection.js';
 import { FallbackModelSection } from '../settings/FallbackModelSection.js';
 import { ConversionsSection } from '../settings/ConversionsSection.js';
 import { RewriteSettingsSection } from '../settings/RewriteSettingsSection.js';
+import { CoverSettingsSection } from '../settings/CoverSettingsSection.js';
 import { DangerZoneSection } from '../settings/DangerZoneSection.js';
 import { OcrStorageSection } from '../settings/OcrStorageSection.js';
 import { getUserOcrPrefs, setUserOcrPrefs } from '../import/api.js';
@@ -178,6 +179,8 @@ export function SettingsPage() {
       </form>
 
       <RewriteSettingsSection />
+
+      <CoverSettingsSection />
 
       <CliTokensSection />
 
