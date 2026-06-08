@@ -46,36 +46,57 @@ async function encode(
   );
 }
 
+function extForBlob(input: File | Blob): { ext: string; contentType: string } {
+  const type = input.type || '';
+  if (type === 'image/webp') return { ext: 'webp', contentType: type };
+  if (type === 'image/png') return { ext: 'png', contentType: type };
+  if (type === 'image/jpeg') return { ext: 'jpg', contentType: type };
+  if (type === 'image/gif') return { ext: 'gif', contentType: type };
+  const name = (input as File).name;
+  const fromName = typeof name === 'string' ? name.split('.').pop()?.toLowerCase() : undefined;
+  if (fromName && /^[a-z0-9]{1,5}$/.test(fromName)) {
+    return { ext: fromName, contentType: type || 'application/octet-stream' };
+  }
+  return { ext: 'jpg', contentType: type || 'image/jpeg' };
+}
+
 /**
  * Decode, downscale to `COVER_MAX_EDGE`, and re-encode `input` as a small
  * WebP — falling back to JPEG when the runtime's canvas can't produce WebP
  * (it silently yields PNG, which we detect via the result's MIME type).
+ * If the image can't be decoded/encoded at all (exotic format, corrupt
+ * bytes), fall back to the original blob so an upload is never lost —
+ * mirrors the worker's reencodeCover passthrough.
  */
 export async function prepareCoverImage(input: File | Blob): Promise<PreparedCover> {
-  // `imageOrientation: 'from-image'` bakes EXIF rotation into the pixels —
-  // canvas otherwise ignores it and a portrait phone photo lands sideways.
-  const bitmap = await createImageBitmap(input, { imageOrientation: 'from-image' });
   try {
-    const scale = Math.min(1, COVER_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = makeCanvas(width, height);
-    const ctx = canvas.getContext('2d') as
-      | CanvasRenderingContext2D
-      | OffscreenCanvasRenderingContext2D
-      | null;
-    if (!ctx) throw new Error('Could not acquire 2D canvas context');
-    ctx.drawImage(bitmap, 0, 0, width, height);
+    // `imageOrientation: 'from-image'` bakes EXIF rotation into the pixels —
+    // canvas otherwise ignores it and a portrait phone photo lands sideways.
+    const bitmap = await createImageBitmap(input, { imageOrientation: 'from-image' });
+    try {
+      const scale = Math.min(1, COVER_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = makeCanvas(width, height);
+      const ctx = canvas.getContext('2d') as
+        | CanvasRenderingContext2D
+        | OffscreenCanvasRenderingContext2D
+        | null;
+      if (!ctx) throw new Error('Could not acquire 2D canvas context');
+      ctx.drawImage(bitmap, 0, 0, width, height);
 
-    let blob = await encode(canvas, 'image/webp', COVER_QUALITY);
-    if (blob.type !== 'image/webp') {
-      blob = await encode(canvas, 'image/jpeg', COVER_QUALITY);
+      let blob = await encode(canvas, 'image/webp', COVER_QUALITY);
+      if (blob.type !== 'image/webp') {
+        blob = await encode(canvas, 'image/jpeg', COVER_QUALITY);
+      }
+      const contentType = blob.type === 'image/webp' ? 'image/webp' : 'image/jpeg';
+      const ext = contentType === 'image/webp' ? 'webp' : 'jpg';
+      return { blob, ext, contentType };
+    } finally {
+      bitmap.close();
     }
-    const contentType = blob.type === 'image/webp' ? 'image/webp' : 'image/jpeg';
-    const ext = contentType === 'image/webp' ? 'webp' : 'jpg';
-    return { blob, ext, contentType };
-  } finally {
-    bitmap.close();
+  } catch {
+    return { blob: input, ...extForBlob(input) };
   }
 }
 
