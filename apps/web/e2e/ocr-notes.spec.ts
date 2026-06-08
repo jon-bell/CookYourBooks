@@ -49,12 +49,12 @@ test.describe('OCR notes pages', () => {
     authedPage: page,
   }) => {
     await configureOcrKey(page, 'gemini');
-    await createCookbook(page, 'Notes Cookbook');
+    await createCookbook(page, 'Foreword Cookbook');
 
     await page.goto('/import/new');
     await uploadTestImages(page, ['page1.png']);
     await page.getByLabel('Batch name').fill('Notes Batch');
-    await pickTargetCookbook(page, 'Notes Cookbook');
+    await pickTargetCookbook(page, 'Foreword Cookbook');
     await page.getByRole('button', { name: 'Start import' }).click();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+$/);
@@ -84,9 +84,14 @@ test.describe('OCR notes pages', () => {
 
     // The note is auto-filed under the cookbook — it shows in its Notes section.
     await page.getByRole('link', { name: 'Library' }).click();
-    await page.getByRole('link', { name: 'Notes Cookbook' }).click();
+    await page.getByRole('link', { name: 'Foreword Cookbook' }).click();
+    // Reload so SyncProvider re-boots and pulls the worker-filed note (a plain
+    // SPA nav + waitForSynced only waits for an idle indicator, not a new pull).
+    await page.reload();
     await waitForSynced(page);
-    await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page.getByText('About This Book')).toBeVisible({ timeout: 15_000 });
     await expect(
       page.getByText('A love letter to slow cooking, written over ten winters.'),
@@ -144,6 +149,7 @@ test.describe('OCR notes pages', () => {
 
     await page.getByRole('link', { name: 'Library' }).click();
     await page.getByRole('link', { name: 'ReNote Cookbook' }).click();
+    await page.reload();
     await waitForSynced(page);
     // Exactly one note, with the new content; the recipe never landed.
     await expect(page.getByText('Chapter Intro')).toBeVisible({ timeout: 15_000 });

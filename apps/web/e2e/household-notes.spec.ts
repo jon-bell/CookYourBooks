@@ -67,11 +67,15 @@ test.describe('Collection notes household sharing', () => {
         await pageB.goto('/');
         await waitForSynced(pageB);
         await pageB.goto(`/collections/${collectionId}`);
-        await expect(pageB.getByText('House Rules')).toBeVisible({ timeout: 15_000 });
-        await expect(pageB.getByText('Always preheat the oven.')).toBeVisible();
-        await expect(pageB.getByText('Shared by household')).toBeVisible();
-        await expect(pageB.getByRole('button', { name: 'Edit' })).toHaveCount(0);
-        await expect(pageB.getByRole('button', { name: 'Delete' })).toHaveCount(0);
+        // Scope to the notes section so the collection-level "Delete" button
+        // (collection delete) doesn't satisfy the read-only assertions.
+        const notes = pageB.getByRole('region', { name: 'Collection notes' });
+        await expect(notes.getByText('House Rules')).toBeVisible({ timeout: 15_000 });
+        await expect(notes.getByText('Always preheat the oven.')).toBeVisible();
+        await expect(notes.getByText('Shared by household')).toBeVisible();
+        // Read-only for a co-member: the note card exposes no edit/delete controls.
+        await expect(notes.getByRole('button', { name: 'Edit' })).toHaveCount(0);
+        await expect(notes.getByRole('button', { name: 'Delete' })).toHaveCount(0);
       } finally {
         await ctxB.close();
       }
