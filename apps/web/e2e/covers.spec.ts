@@ -37,6 +37,14 @@ test.describe('Cover images', () => {
       new RegExp(`${SUPABASE_URL.replace(/[/.]/g, '\\$&')}/storage/v1/object/public/covers/`),
     );
 
+    // The cover is re-encoded (WebP/JPEG, never the raw PNG we uploaded) and
+    // stamped with the immutable long-cache header at a content-addressed key.
+    const src = await img.getAttribute('src');
+    expect(src).toMatch(/-[0-9a-f]{8}\.(webp|jpg)(\?|$)/);
+    const head = await page.request.get(src!);
+    expect(head.headers()['content-type']).toMatch(/image\/(webp|jpeg)/);
+    expect(head.headers()['cache-control']).toContain('immutable');
+
     await page.getByRole('button', { name: 'Remove' }).click();
     await expect(page.getByRole('button', { name: 'Add cover' })).toBeVisible();
   });

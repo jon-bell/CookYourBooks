@@ -8,6 +8,7 @@
 
 import { supabase } from '../supabase.js';
 import { OcrWorkerNotConfiguredError } from '../import/api.js';
+import { COVER_CACHE_CONTROL, coverObjectKey, prepareCoverImage } from './coverImage.js';
 
 export type CoverScope = 'recipe' | 'collection' | 'library';
 
@@ -64,18 +65,26 @@ export async function getCoverJobProgress(): Promise<CoverJobProgress> {
 
 // ---------- manual upload ----------
 
-/** Upload a user-chosen cover image; returns the storage path to store on the recipe. */
+/**
+ * Downscale + re-encode a user-chosen cover, upload it to a content-addressed
+ * path, and return that path to store on the recipe. Removes `previousPath`
+ * when the new (hashed) key differs so a replaced cover doesn't orphan bytes.
+ */
 export async function uploadRecipeCover(
   userId: string,
   recipeId: string,
   file: File,
+  previousPath?: string,
 ): Promise<string> {
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
-  const path = `${userId}/recipes/${recipeId}.${ext}`;
+  const { blob, ext, contentType } = await prepareCoverImage(file);
+  const path = await coverObjectKey(`${userId}/recipes`, recipeId, await blob.arrayBuffer(), ext);
   const { error } = await supabase.storage
     .from('covers')
-    .upload(path, file, { upsert: true, cacheControl: '3600' });
+    .upload(path, blob, { upsert: true, contentType, cacheControl: COVER_CACHE_CONTROL });
   if (error) throw error;
+  if (previousPath && previousPath !== path) {
+    await supabase.storage.from('covers').remove([previousPath]);
+  }
   return path;
 }
 
