@@ -367,19 +367,21 @@ async function probeFixture(url: string): Promise<FixtureRow | null> {
 async function mockText(url: string): Promise<string> {
   const row = await probeFixture(url);
   if (!row) throw new HttpError('EXTRACTION_FAILED', `VIDEO_IMPORT_MOCK_MODE: no fixture for ${url}`);
-  // NEEDS_CAPTION isn't a hard failure — it just gates the paste box (see
-  // mockNeedsCaption); once a caption is supplied the same fixture supplies
-  // the recipe, mirroring the real Gemini-over-pasted-text path.
-  if (row.error_kind && row.error_kind !== 'OK' && row.error_kind !== 'NEEDS_CAPTION') {
+  if (row.error_kind && row.error_kind !== 'OK') {
     throw new HttpError('EXTRACTION_FAILED', `VIDEO_IMPORT_MOCK_MODE: forced ${row.error_kind}`);
   }
   return JSON.stringify(row.response_json ?? {});
 }
 
-/** Mock-mode stand-in for "the site couldn't be fetched (403 / paywall)" —
- * a fixture tagged NEEDS_CAPTION makes the website path prompt for a paste. */
+/** Mock-mode stand-in for "the site couldn't be fetched (403 / paywall)": a
+ * fixture whose response_json carries `__needs_caption` makes the website path
+ * prompt for a paste. (Signalled in the JSON body, not error_kind, because the
+ * ocr_test_fixtures.error_kind CHECK has a fixed allow-list.) On the retry a
+ * caption is supplied, so this gate is skipped and the fixture's recipe is
+ * returned — mirroring the real Gemini-over-pasted-text path. */
 async function mockNeedsCaption(url: string): Promise<boolean> {
-  return (await probeFixture(url))?.error_kind === 'NEEDS_CAPTION';
+  const rj = (await probeFixture(url))?.response_json as { __needs_caption?: boolean } | undefined;
+  return rj?.__needs_caption === true;
 }
 
 // ---------- key resolution ----------

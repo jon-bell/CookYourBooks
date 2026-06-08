@@ -178,17 +178,24 @@ function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
     args.kind === 'auth-fail' ||
     args.kind === 'needs-caption'
   ) {
+    // 'needs-caption' simulates a paywalled / 403 website: the video-import
+    // mock gates on this flag (no caption → paste box), then on the caption
+    // retry the same fixture supplies the recipe. error_kind stays OK because
+    // the ocr_test_fixtures CHECK constraint has a fixed allow-list.
+    const needsCaption = args.kind === 'needs-caption' ? { __needs_caption: true } : {};
     if (args.drafts && args.drafts.length > 1) {
       // Multi-recipe responses go through the `{ recipes: [...] }`
       // wrapper so the worker's parser returns multiple drafts.
       return {
         recipes: args.drafts.map(serializeDraft),
+        ...needsCaption,
         __mock_usage: { prompt_tokens: 100, completion_tokens: 200 },
       };
     }
     const d = args.drafts?.[0] ?? args.draft ?? defaultDraft();
     return {
       ...serializeDraft(d),
+      ...needsCaption,
       __mock_usage: { prompt_tokens: 100, completion_tokens: 200 },
     };
   }
@@ -210,8 +217,6 @@ function mapErrorKind(kind: SeedFixtureArgs['kind']): string | null {
       return 'RECITATION';
     case 'auth-fail':
       return 'AUTH';
-    case 'needs-caption':
-      return 'NEEDS_CAPTION';
     default:
       return 'OK';
   }
