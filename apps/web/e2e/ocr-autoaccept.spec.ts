@@ -66,7 +66,7 @@ async function setupBatch(
   lowTitle: string,
 ): Promise<string> {
   await configureOcrKey(page, 'gemini');
-  await page.goto('/');
+  await page.goto('/library');
   await waitForSynced(page);
   await page.getByRole('link', { name: 'New collection' }).click();
   await page.getByLabel('Title').fill(cookbook);
@@ -140,7 +140,7 @@ test.describe('OCR auto-accept', () => {
     authedPage: page,
   }) => {
     await configureOcrKey(page, 'gemini');
-    await page.goto('/');
+    await page.goto('/library');
     await waitForSynced(page);
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Manual Bakery');

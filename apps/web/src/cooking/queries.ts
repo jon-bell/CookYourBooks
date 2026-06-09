@@ -60,6 +60,19 @@ export function useScheduledRecipeIds(range: { start: string; end: string }) {
   });
 }
 
+/** recipe_id → latest COOKED event date — powers the "Recently made" sorts.
+ *  Lives under the 'cooking' key prefix so useInvalidateCooking (log/mark/
+ *  delete cook) and the sync pull invalidation both refresh it. */
+export function useLastMadeByRecipe() {
+  const { user } = useAuth();
+  const enabled = useLocalQueryEnabled();
+  return useQuery<Map<string, string>>({
+    queryKey: ['cooking', 'last-made', user?.id],
+    enabled,
+    queryFn: () => cookingEventRepo(user!.id).lastMadeByRecipe(),
+  });
+}
+
 /** Free-form occasions previously used — suggestions for the autocomplete. */
 export function useOccasionSuggestions() {
   const { user } = useAuth();

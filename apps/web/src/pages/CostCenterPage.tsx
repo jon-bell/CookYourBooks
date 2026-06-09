@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { useDisplayNames, useLlmUsage, useLlmUsageSummary } from '../cost/queries.js';
 import type { LlmUsageRow, UsageGroupBy } from '../cost/api.js';
 import { failureRatePct, featureLabel, formatTokens, formatUsdFromMicros } from '../cost/format.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 type RangeKey = '7d' | '30d' | 'all';
 
@@ -143,7 +144,9 @@ export function CostCenterPage() {
       <div>
         <h2 className="text-lg font-semibold">By {GROUPS.find((g) => g.key === groupBy)?.label.toLowerCase()}</h2>
         {summary.isLoading ? (
-          <p className="mt-2 text-stone-500 dark:text-stone-400">Loading…</p>
+          <div className="mt-2">
+            <LoadingState surface="cost-summary" hints={['Fetching the cost report from the server…']} />
+          </div>
         ) : (summary.data ?? []).length === 0 ? (
           <p className="mt-2 text-stone-500 dark:text-stone-400">No usage in this period.</p>
         ) : (
@@ -191,7 +194,9 @@ export function CostCenterPage() {
           <p className="mt-2 text-red-700 dark:text-red-300">{(usage.error as Error).message}</p>
         )}
         {usage.isLoading ? (
-          <p className="mt-2 text-stone-500 dark:text-stone-400">Loading…</p>
+          <div className="mt-2">
+            <LoadingState surface="cost-queries" hints={['Fetching the cost report from the server…']} />
+          </div>
         ) : (usage.data ?? []).length === 0 ? (
           <p className="mt-2 text-stone-500 dark:text-stone-400" data-testid="cost-center-empty">
             No LLM queries yet. Run an import, bake-off, ISBN scan, or link import and the cost will

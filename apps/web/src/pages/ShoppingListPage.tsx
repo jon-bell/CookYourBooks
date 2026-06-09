@@ -4,6 +4,7 @@ import { useRecipeSearch, useRecipesByIds } from '../data/queries.js';
 import { useScheduledRecipeIds } from '../cooking/queries.js';
 import { addDaysISO, todayISO } from '../cooking/dateGrid.js';
 import { PantrySection } from './PantrySection.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 export function ShoppingListPage() {
   // Lightweight selector list (no full-library hydration). Only the
@@ -44,7 +45,7 @@ export function ShoppingListPage() {
     });
   }
 
-  if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  if (isLoading) return <LoadingState surface="shopping" />;
 
   return (
     <div className="space-y-6">

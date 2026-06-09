@@ -25,6 +25,8 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
   test('library page fits the viewport with no horizontal overflow', async ({
     authedPage: page,
   }) => {
+    // authedPage lands on the recipes gallery at `/`; the library lives at /library.
+    await page.goto('/library');
     await expect(page.getByRole('heading', { name: 'Your library' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
@@ -50,7 +52,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
       steps: ['Braise low and slow.'],
     });
     // Back to the collection page, which renders the recipe list.
-    await page.goto('/');
+    await page.goto('/library');
     await page.getByRole('link', { name: /Mobile Ragu Book/ }).first().click();
     await expect(page.getByRole('heading', { name: 'Mobile Ragu Book' })).toBeVisible();
 

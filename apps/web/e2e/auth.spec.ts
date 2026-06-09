@@ -20,11 +20,11 @@ test.describe('Authentication', () => {
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   });
 
-  test('signs in, sees library, signs out', async ({ page }) => {
+  test('signs in, sees recipes, signs out', async ({ page }) => {
     const user = await createTestUser('signin');
     try {
       await signIn(page, user);
-      await expect(page.getByRole('heading', { name: 'Your library' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Recipes', exact: true })).toBeVisible();
 
       // Sign out returns us to the signed-out state — the header "Sign in"
       // link comes back, and the landing page renders in <main>.

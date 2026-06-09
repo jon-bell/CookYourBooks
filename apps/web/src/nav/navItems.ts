@@ -9,8 +9,8 @@ export interface NavItem {
 
 /** Primary destinations: the inline nav on desktop, the top of the sheet on mobile. */
 export const PRIMARY_NAV: readonly NavItem[] = [
-  { label: 'Library', to: '/' },
-  { label: 'Recipes', to: '/recipes' },
+  { label: 'Recipes', to: '/' },
+  { label: 'Library', to: '/library' },
   { label: 'Discover', to: '/discover' },
   { label: 'Search', to: '/search' },
   { label: 'Shopping', to: '/shopping' },

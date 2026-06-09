@@ -14,6 +14,7 @@ import {
   type TocEntryDraft,
 } from './api.js';
 import { normalizeIsbn } from './openLibrary.js';
+import { LoadingState } from '../../components/LoadingState.js';
 
 interface FormState {
   isbn: string;
@@ -47,7 +48,7 @@ export function GlobalCookbookEditor() {
     enabled: !!cookbookId,
   });
 
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
+  if (isLoading) return <LoadingState surface="admin-toc-editor" />;
   if (error) return <p className="text-red-700">{(error as Error).message}</p>;
   if (!cookbook) {
     return (

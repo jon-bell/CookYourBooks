@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { formatQuantity, isMeasured } from '@cookyourbooks/domain';
 import { useRecipe } from '../data/queries.js';
 import { TimerButton } from '../cook/TimerButton.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 // Fires a light haptic tap on platforms that support it. On web the
 // Capacitor plugin no-ops; on iOS/Android it triggers the native engine.
@@ -77,7 +78,7 @@ export function CookModePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [recipe]);
 
-  if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  if (isLoading) return <LoadingState surface="cook-mode" />;
   if (!recipe) return <p className="text-stone-600 dark:text-stone-400">Recipe not found.</p>;
   const total = recipe.instructions.length;
   const step = recipe.instructions[idx];

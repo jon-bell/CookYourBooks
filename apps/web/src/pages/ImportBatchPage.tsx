@@ -38,6 +38,7 @@ import {
 import { useAuth } from '../auth/AuthProvider.js';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ImportItem, ImportItemStatus } from '../import/model.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 // Auto-accept of obviously-good OCR pages is on by default; power users can
 // turn it off per device. Stored as '0' (off) / anything-else (on).
@@ -277,7 +278,7 @@ export function ImportBatchPage() {
   const now = useTickingNow(activeOcrCount > 0);
 
   if (!localReady || batchLoading) {
-    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+    return <LoadingState surface="import-batch" />;
   }
   if (!batch && !hydrated) {
     return <p className="text-stone-500 dark:text-stone-400">Initializing local cache…</p>;

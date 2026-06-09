@@ -6,6 +6,7 @@ import { useCookingCalendar, useMarkCooked } from '../cooking/queries.js';
 import { mealSlotLabel } from '../cooking/format.js';
 import { selectedDateLabel } from '../cooking/CalendarMonth.js';
 import type { CalendarEntry } from '../local/repositories.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * Cook several recipes from one day at once. Loads the day's cooking
@@ -51,7 +52,7 @@ export function CookSessionPage() {
     }
   }
 
-  if (isLoading) return <p className="p-4 text-stone-500">Loading…</p>;
+  if (isLoading) return <LoadingState surface="cook-session" />;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-4">

@@ -10,6 +10,7 @@ import {
   type HouseConversionRule,
 } from '../data/conversions.js';
 import { useAuth } from '../auth/AuthProvider.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 const UNIT_OPTIONS = Object.values(Units)
   // Taste-tier units are meaningless to convert to/from. Exclude them
@@ -281,7 +282,7 @@ export function ConversionsSection() {
       </form>
 
       {(houseLoading || globalLoading) && houseRules.length === 0 && globalRules.length === 0 ? (
-        <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>
+        <LoadingState surface="settings-conversions" size="inline" />
       ) : (
         <RuleList
           houseRules={houseRules}

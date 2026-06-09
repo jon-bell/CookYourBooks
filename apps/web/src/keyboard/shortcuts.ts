@@ -117,6 +117,11 @@ export const APP_SHORTCUTS: Shortcut[] = [
   {
     keys: 'g l',
     description: 'Go to Library',
+    run: ({ navigate }) => navigate('/library'),
+  },
+  {
+    keys: 'g r',
+    description: 'Go to Recipes',
     run: ({ navigate }) => navigate('/'),
   },
   {

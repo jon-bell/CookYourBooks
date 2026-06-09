@@ -7,6 +7,7 @@ import { finalizeGrouping, kickOcr } from '../import/api.js';
 import { rotateImportItemImage } from '../import/rotateItemImage.js';
 import type { ImportItem } from '../import/model.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * "Group then OCR" review page. Shown right after upload for batches
@@ -168,7 +169,7 @@ export function ImportGroupingPage() {
   }
 
   if (!enabled || batchLoading || itemsLoading) {
-    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+    return <LoadingState surface="import-grouping" />;
   }
   if (!batch) {
     return (

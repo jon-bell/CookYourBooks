@@ -21,8 +21,29 @@ import type { CollectionRecipeSummary } from '../local/repositories.js';
 import { CoverImage } from './CoverImage.js';
 
 /** How the cookbook list is ordered. `manual` is the user's drag order
- *  (persisted via sort_order); `name`/`page` are read-only views. */
-export type RecipeSortMode = 'manual' | 'name' | 'page';
+ *  (persisted via sort_order); `name`/`page`/`made` are read-only views. */
+export type RecipeSortMode = 'manual' | 'name' | 'page' | 'made';
+
+export function isRecipeSortMode(v: string): v is RecipeSortMode {
+  return v === 'manual' || v === 'name' || v === 'page' || v === 'made';
+}
+
+/**
+ * Order items by most-recently-made first (per the `lastMade` map of
+ * recipeId → 'YYYY-MM-DD'); never-made items sort last, ties break by title.
+ * Generic over anything with id+title so the gallery page can reuse it.
+ */
+export function sortByLastMade<T extends { id: string; title: string }>(
+  items: readonly T[],
+  lastMade: ReadonlyMap<string, string> | undefined,
+): T[] {
+  return [...items].sort((a, b) => {
+    const da = lastMade?.get(a.id) ?? '';
+    const db = lastMade?.get(b.id) ?? '';
+    if (da !== db) return da < db ? 1 : -1;
+    return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+  });
+}
 
 const UL_CLASS =
   'divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900';
@@ -44,7 +65,9 @@ export function formatPages(pageNumbers: readonly number[] | undefined): string 
 export function sortRecipes(
   recipes: readonly CollectionRecipeSummary[],
   mode: RecipeSortMode,
+  lastMade?: ReadonlyMap<string, string>,
 ): CollectionRecipeSummary[] {
+  if (mode === 'made') return sortByLastMade(recipes, lastMade);
   const arr = [...recipes];
   if (mode === 'name') {
     arr.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
@@ -73,6 +96,7 @@ export function SortableRecipeList({
   onReorder,
   onToggleStar,
   sortMode = 'manual',
+  lastMade,
 }: {
   collectionId: string;
   recipes: readonly CollectionRecipeSummary[];
@@ -82,6 +106,8 @@ export function SortableRecipeList({
    *  usual target but starring is allowed on filled recipes too. */
   onToggleStar?: (recipeId: string) => Promise<void> | void;
   sortMode?: RecipeSortMode;
+  /** recipeId → latest COOKED date; required for `sortMode === 'made'`. */
+  lastMade?: ReadonlyMap<string, string>;
 }) {
   // Keep a local mirror of the order so the drop animates before the
   // server round-trip. Re-sync from props when the incoming list changes.
@@ -110,7 +136,7 @@ export function SortableRecipeList({
   if (sortMode !== 'manual') {
     return (
       <ul className={UL_CLASS}>
-        {sortRecipes(recipes, sortMode).map((recipe) => (
+        {sortRecipes(recipes, sortMode, lastMade).map((recipe) => (
           <li key={recipe.id} className="flex items-center gap-2 pl-3">
             <RecipeRowBody
               collectionId={collectionId}
