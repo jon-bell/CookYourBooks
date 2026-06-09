@@ -37,7 +37,7 @@ test.describe('Right to erasure', () => {
       );
       expect(before.length).toBeGreaterThanOrEqual(1);
 
-      await page.goto('/settings');
+      await page.goto('/settings/danger');
       await page.getByTestId('open-delete-account').click();
       // Wrong text — confirm stays disabled.
       await page.getByTestId('delete-confirm-input').fill('delete');
@@ -97,7 +97,7 @@ test.describe('Right to erasure', () => {
       await seedMembership({ householdId, userId: member.id });
 
       await signIn(page, owner);
-      await page.goto('/settings');
+      await page.goto('/settings/danger');
       await page.getByTestId('open-delete-account').click();
       await page.getByTestId('delete-confirm-input').fill('DELETE');
       await page.getByTestId('confirm-delete-account').click();
@@ -157,7 +157,7 @@ test.describe('Right to erasure', () => {
         body: JSON.stringify({ shared_with_household_id: householdId }),
       });
 
-      await page.goto('/settings');
+      await page.goto('/settings/danger');
       await page.getByTestId('open-delete-account').click();
       await page.getByTestId('delete-confirm-input').fill('DELETE');
       await page.getByTestId('confirm-delete-account').click();

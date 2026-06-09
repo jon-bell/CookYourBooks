@@ -21,6 +21,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
 export const ACCOUNT_NAV: readonly NavItem[] = [
   { label: 'Household', to: '/household' },
   { label: 'LLM costs', to: '/cost' },
+  { label: 'Activity', to: '/activity' },
   { label: 'Settings', to: '/settings' },
 ];
 

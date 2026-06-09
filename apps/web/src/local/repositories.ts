@@ -2174,6 +2174,18 @@ export async function getRecipeSummary(id: string): Promise<RecipeSummary | unde
   return { id: row.id, title: row.title, collectionId: row.collection_id };
 }
 
+/** Batched {@link getRecipeSummary}: title + collection for many ids in one query. */
+export async function getRecipeSummaries(ids: readonly string[]): Promise<RecipeSummary[]> {
+  if (ids.length === 0) return [];
+  const db = await getLocalDb();
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = (await db.execO<{ id: string; title: string; collection_id: string }>(
+    `select id, title, collection_id from recipes where id in (${placeholders}) and deleted = 0`,
+    [...ids],
+  )) as { id: string; title: string; collection_id: string }[];
+  return rows.map((r) => ({ id: r.id, title: r.title, collectionId: r.collection_id }));
+}
+
 export interface RecipeSearchHit {
   recipeId: string;
   recipeTitle: string;

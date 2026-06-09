@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { useLocalDbReady, useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import {
   getRecipeSummary,
+  getRecipeSummaries,
   getRecipesByIds,
   listAdaptations,
   type CollectionPickerOption,
@@ -180,6 +181,21 @@ export function useRecipeSummary(recipeId: string | undefined) {
     queryKey: ['recipe-summary', recipeId],
     enabled: enabled && !!recipeId,
     queryFn: () => getRecipeSummary(recipeId!),
+  });
+}
+
+/**
+ * Batched recipe summaries (title + collection) for a set of ids, returned as a
+ * Map for O(1) lookup. Used by the Activity feed to turn a job's recipe id into
+ * a titled deep-link; ids not in the local cache simply won't be in the map.
+ */
+export function useRecipeSummaries(ids: readonly string[]) {
+  const enabled = useLocalQueryEnabled();
+  const key = [...new Set(ids)].sort();
+  return useQuery<Map<string, RecipeSummary>>({
+    queryKey: ['recipe-summaries', key],
+    enabled: enabled && key.length > 0,
+    queryFn: async () => new Map((await getRecipeSummaries(key)).map((s) => [s.id, s])),
   });
 }
 

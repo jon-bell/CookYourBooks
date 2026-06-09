@@ -205,7 +205,7 @@ test.describe('OCR uploaded-image deletion', () => {
       });
 
       await signIn(page, u);
-      await page.goto('/settings');
+      await page.goto('/settings/danger');
       // Drive the bulk-delete UI to also exercise the dialog wiring.
       await page.getByTestId('open-delete-all-ocr').click();
       await page.getByTestId('confirm-delete-all-ocr').click();
