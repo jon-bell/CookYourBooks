@@ -85,7 +85,7 @@ export function LibraryPage() {
                 }`}
               >
                 <Link to={`/collections/${c.id}`} className="block">
-                  <CoverImage path={c.coverImagePath ?? undefined} className="aspect-[3/2] w-full" />
+                  <CoverImage path={c.coverImagePath ?? undefined} className="aspect-[3/2] w-full" variant="thumb" />
                   <div className="p-4">
                     <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
                       {collectionSubtitle(c)}

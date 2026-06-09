@@ -8,6 +8,7 @@ import {
   getRecipesByIds,
   listAdaptations,
   type CollectionPickerOption,
+  type CollectionRecipeSummary,
   type GalleryRecipeSummary,
   type LibraryCollectionSummary,
   type RecipeSearchHit,
@@ -99,6 +100,33 @@ export function useCollection(collectionId: string | undefined) {
   });
 }
 
+/**
+ * Collection metadata only (recipes: []) for the collection page header +
+ * its publish/cover/share controls. Lightweight: no per-recipe hydration.
+ * The recipe cards come from {@link useCollectionRecipeSummaries}.
+ */
+export function useCollectionMeta(collectionId: string | undefined) {
+  const { user } = useAuth();
+  const enabled = useLocalQueryEnabled();
+  return useQuery<RecipeCollection | undefined>({
+    queryKey: ['collection-meta', collectionId],
+    enabled: enabled && !!collectionId,
+    queryFn: () => collectionRepo(user!.id).getMeta(collectionId!),
+  });
+}
+
+/** Lightweight per-recipe cards for the collection browse view — title,
+ *  cover, page, star, child counts, ingredient names. No full hydration. */
+export function useCollectionRecipeSummaries(collectionId: string | undefined) {
+  const { user } = useAuth();
+  const enabled = useLocalQueryEnabled();
+  return useQuery<CollectionRecipeSummary[]>({
+    queryKey: ['collection-recipes', collectionId],
+    enabled: enabled && !!collectionId,
+    queryFn: () => collectionRepo(user!.id).listCollectionRecipeSummaries(collectionId!),
+  });
+}
+
 export function useRecipe(collectionId: string | undefined, recipeId: string | undefined) {
   const { user } = useAuth();
   const enabled = useLocalQueryEnabled();
@@ -120,6 +148,7 @@ export function useSaveCollection() {
       qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
       qc.invalidateQueries({ queryKey: ['collection-picker', user?.id] });
       qc.invalidateQueries({ queryKey: ['collection', variables.id] });
+      qc.invalidateQueries({ queryKey: ['collection-meta', variables.id] });
       void syncNow();
     },
   });
@@ -150,6 +179,7 @@ export function useSaveRecipe(collectionId: string) {
       qc.invalidateQueries({ queryKey: ['collections', user?.id] });
       qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
+      qc.invalidateQueries({ queryKey: ['collection-recipes', collectionId] });
       qc.invalidateQueries({ queryKey: ['recipe', collectionId, recipe.id] });
       // Save could have created a new adaptation (parentRecipeId set) or
       // renamed an existing one — either way, lineage lists across the
@@ -181,8 +211,47 @@ export function useDeleteRecipe(collectionId: string) {
       qc.invalidateQueries({ queryKey: ['collections', user?.id] });
       qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
+      qc.invalidateQueries({ queryKey: ['collection-recipes', collectionId] });
       qc.invalidateQueries({ queryKey: ['recipe-search'] });
       qc.invalidateQueries({ queryKey: ['recipes-by-ids'] });
+      void syncNow();
+    },
+  });
+}
+
+/**
+ * Flip a single recipe's `starred` flag (the Speed-Importer queue marker).
+ * Reads the recipe via the local repo, constructs the new immutable instance,
+ * and saves through the same path as {@link useSaveRecipe} (including the
+ * embedding push), so the row's full graph is preserved. Invalidates the same
+ * set as a recipe save plus the collection's lightweight card list.
+ */
+export function useToggleRecipeStar(collectionId: string) {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  const { syncNow } = useSync();
+  return useMutation({
+    mutationFn: async (recipeId: string) => {
+      const recipe = await recipeRepo(collectionId).get(recipeId);
+      if (!recipe) return undefined;
+      const next: Recipe = { ...recipe, starred: !(recipe.starred === true) };
+      await recipeRepo(collectionId).save(next);
+      return next;
+    },
+    onSuccess: (recipe) => {
+      qc.invalidateQueries({ queryKey: ['collections', user?.id] });
+      qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
+      qc.invalidateQueries({ queryKey: ['collection', collectionId] });
+      qc.invalidateQueries({ queryKey: ['collection-recipes', collectionId] });
+      qc.invalidateQueries({ queryKey: ['recipe-search'] });
+      qc.invalidateQueries({ queryKey: ['recipes-by-ids'] });
+      if (recipe) {
+        qc.invalidateQueries({ queryKey: ['recipe', collectionId, recipe.id] });
+        qc.invalidateQueries({ queryKey: ['recipe-summary', recipe.id] });
+        void embedAndPushRecipe(recipe).catch(() => {
+          // Recoverable: the worker recomputes the canonical vector.
+        });
+      }
       void syncNow();
     },
   });
@@ -230,6 +299,7 @@ export function useReorderRecipes(collectionId: string) {
       collectionRepo(user!.id).reorderRecipes(collectionId, orderedIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['collection', collectionId] });
+      qc.invalidateQueries({ queryKey: ['collection-recipes', collectionId] });
       qc.invalidateQueries({ queryKey: ['collections', user?.id] });
       qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
       void syncNow();

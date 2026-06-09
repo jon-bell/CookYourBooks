@@ -1,6 +1,6 @@
 import { useDeferredValue, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Recipe } from '@cookyourbooks/domain';
+import type { CollectionRecipeSummary } from '../local/repositories.js';
 import {
   SortableRecipeList,
   formatPages,
@@ -10,10 +10,11 @@ import {
 import { RecipeGalleryGrid } from './RecipeGalleryGrid.js';
 
 /** True if the recipe's title or any ingredient name contains `q`
- *  (the caller passes `q` already trimmed + lowercased). */
-function recipeMatches(recipe: Recipe, q: string): boolean {
+ *  (the caller passes `q` already trimmed + lowercased; `ingredientNames`
+ *  is already lowercased newline-joined). */
+function recipeMatches(recipe: CollectionRecipeSummary, q: string): boolean {
   if (recipe.title.toLowerCase().includes(q)) return true;
-  return recipe.ingredients.some((i) => i.name.toLowerCase().includes(q));
+  return recipe.ingredientNames.includes(q);
 }
 
 /**
@@ -40,7 +41,7 @@ export function CollectionRecipeBrowser({
   onToggleStar,
 }: {
   collectionId: string;
-  recipes: readonly Recipe[];
+  recipes: readonly CollectionRecipeSummary[];
   onReorder: (orderedIds: string[]) => Promise<void> | void;
   onToggleStar?: (recipeId: string) => Promise<void> | void;
 }) {
@@ -65,6 +66,10 @@ export function CollectionRecipeBrowser({
     isFiltering && sortMode === 'manual' ? 'name' : sortMode;
 
   const countLabel = `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}`;
+
+  // Hoist sort so the result is stable across renders; avoids producing a
+  // fresh array on every render which would defeat downstream memo/useMemo.
+  const sorted = useMemo(() => sortRecipes(filtered, sortMode), [filtered, sortMode]);
 
   return (
     <div className="space-y-2">
@@ -126,12 +131,12 @@ export function CollectionRecipeBrowser({
 
       {filtered.length === 0 ? (
         <p className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-4 py-6 text-center text-sm text-stone-500 dark:text-stone-400">
-          No recipes match “{filterQuery.trim()}”.
+          No recipes match &ldquo;{filterQuery.trim()}&rdquo;.
         </p>
       ) : viewMode === 'gallery' ? (
-        <RecipeGallery collectionId={collectionId} recipes={sortRecipes(filtered, sortMode)} />
+        <RecipeGallery collectionId={collectionId} recipes={sorted} />
       ) : viewMode === 'index' ? (
-        <RecipeIndex collectionId={collectionId} recipes={sortRecipes(filtered, sortMode)} />
+        <RecipeIndex collectionId={collectionId} recipes={sorted} />
       ) : (
         <SortableRecipeList
           collectionId={collectionId}
@@ -151,15 +156,15 @@ function RecipeIndex({
   recipes,
 }: {
   collectionId: string;
-  recipes: readonly Recipe[];
+  recipes: readonly CollectionRecipeSummary[];
 }) {
   return (
     <ul className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
       {recipes.map((r) => {
-        const isPlaceholder = r.ingredients.length === 0 && r.instructions.length === 0;
+        const isPlaceholder = r.ingredientCount === 0 && r.instructionCount === 0;
         const pages = formatPages(r.pageNumbers);
         return (
-          <li key={r.id}>
+          <li key={r.id} className="index-row">
             <Link
               to={`/collections/${collectionId}/recipes/${r.id}`}
               title={r.title}
@@ -192,7 +197,7 @@ function RecipeGallery({
   recipes,
 }: {
   collectionId: string;
-  recipes: readonly Recipe[];
+  recipes: readonly CollectionRecipeSummary[];
 }) {
   // Covers first, preserving the caller's chosen sort within each group.
   const items = useMemo(

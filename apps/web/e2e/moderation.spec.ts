@@ -186,6 +186,20 @@ test.describe('Moderation: user reports and admin takedowns', () => {
       await page.getByLabel('Title').fill('Desperate Attempt');
       await page.getByRole('button', { name: 'Create' }).click();
       await expect(page.getByRole('heading', { name: 'Desperate Attempt' })).toBeVisible();
+      // The local-first UI acknowledges before the outbox push lands; wait
+      // for the row to exist server-side before driving REST against it.
+      type CreatedC = Array<{ id: string }>;
+      await expect
+        .poll(
+          async () =>
+            (
+              await adminGet<CreatedC>(
+                `/rest/v1/recipe_collections?select=id&title=eq.Desperate%20Attempt`,
+              )
+            ).length,
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThanOrEqual(1);
 
       // Attempt the publish flip by calling the REST upsert directly with
       // the victim's session. The database trigger must reject it.

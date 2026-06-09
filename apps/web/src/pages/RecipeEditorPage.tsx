@@ -16,7 +16,7 @@ import {
   type Quantity,
   type Recipe,
 } from '@cookyourbooks/domain';
-import { useCollection, useSaveRecipe } from '../data/queries.js';
+import { useCollectionMeta, useRecipe, useSaveRecipe } from '../data/queries.js';
 
 type IngredientDraft = {
   id: string;
@@ -37,12 +37,59 @@ type InstructionDraft = {
 export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
-  const { data: collection, isLoading: collectionLoading } = useCollection(collectionId);
-  const saveRecipe = useSaveRecipe(collectionId ?? '');
+  // Collection metadata + (in edit mode) the one recipe — not the whole
+  // collection graph. The form's useState initializers read `existing` on
+  // their first render, so the form mounts only once the data is in hand,
+  // keyed by recipe id so switching recipes remounts with fresh state.
+  // (Previously this worked only because the full-collection query happened
+  // to be cached by the page that navigated here.)
+  const { data: collection, isLoading: collectionLoading } = useCollectionMeta(collectionId);
+  const { data: existing, isLoading: recipeLoading } = useRecipe(
+    collectionId,
+    mode === 'edit' ? recipeId : undefined,
+  );
 
-  const existing =
-    mode === 'edit' ? collection?.recipes.find((r) => r.id === recipeId) : undefined;
+  useEffect(() => {
+    if (mode === 'edit' && collection && !recipeLoading && !existing) {
+      navigate(`/collections/${collectionId}`);
+    }
+  }, [mode, collection, recipeLoading, existing, collectionId, navigate]);
+
+  if (collectionLoading || (mode === 'edit' && recipeLoading)) {
+    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  }
+  if (!collection) {
+    return (
+      <p className="text-stone-700 dark:text-stone-300">
+        Collection not found.{' '}
+        <button
+          type="button"
+          onClick={() => navigate('/collections')}
+          className="underline"
+        >
+          Back to collections
+        </button>
+      </p>
+    );
+  }
+  // Recipe gone (deleted, or a stale link) — the effect above is redirecting.
+  if (mode === 'edit' && !existing) return null;
+  return (
+    <RecipeEditorForm key={recipeId ?? 'create'} mode={mode} existing={existing} />
+  );
+}
+
+function RecipeEditorForm({
+  mode,
+  existing,
+}: {
+  mode: 'create' | 'edit';
+  existing: Recipe | undefined;
+}) {
+  const { collectionId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const saveRecipe = useSaveRecipe(collectionId ?? '');
 
   // In `create` mode the caller (e.g. the Import-from-photo flow) can pass a
   // {@link ParsedRecipeDraft} in the navigation state to seed the form.
@@ -93,28 +140,6 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
   const [bulkPaste, setBulkPaste] = useState('');
   const [notes, setNotes] = useState(existing?.notes ?? '');
   useEffect(() => setNotes(existing?.notes ?? ''), [existing?.notes]);
-
-  useEffect(() => {
-    if (mode === 'edit' && collection && !existing) navigate(`/collections/${collectionId}`);
-  }, [mode, collection, existing, collectionId, navigate]);
-
-  if (collectionLoading) {
-    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
-  }
-  if (!collection) {
-    return (
-      <p className="text-stone-700 dark:text-stone-300">
-        Collection not found.{' '}
-        <button
-          type="button"
-          onClick={() => navigate('/collections')}
-          className="underline"
-        >
-          Back to collections
-        </button>
-      </p>
-    );
-  }
 
   // The "source" recipe supplies metadata the editor doesn't currently
   // surface but must preserve round-trip: per-step consumed quantities,
@@ -194,7 +219,7 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
       sourceImageText: existing?.sourceImageText ?? seedDraft?.sourceImageText,
     });
     await saveRecipe.mutateAsync(recipe);
-    navigate(`/collections/${collection!.id}/recipes/${recipe.id}`);
+    navigate(`/collections/${collectionId}/recipes/${recipe.id}`);
   }
 
   function preservingIngredient(ing: Ingredient, src: Ingredient | undefined): Ingredient {

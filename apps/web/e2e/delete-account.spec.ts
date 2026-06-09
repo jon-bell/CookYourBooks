@@ -30,12 +30,21 @@ test.describe('Right to erasure', () => {
       await page.getByRole('button', { name: 'Create' }).click();
       await expect(page.getByRole('heading', { name: 'To Be Erased' })).toBeVisible();
 
-      // Confirm the collection exists on the server before deletion.
+      // Confirm the collection exists on the server before deletion. The
+      // local-first UI acknowledges before the outbox push lands, so poll
+      // rather than asserting on the first read.
       type C = Array<{ id: string }>;
-      const before = await adminGet<C>(
-        `/rest/v1/recipe_collections?select=id&owner_id=eq.${u.id}`,
-      );
-      expect(before.length).toBeGreaterThanOrEqual(1);
+      await expect
+        .poll(
+          async () =>
+            (
+              await adminGet<C>(
+                `/rest/v1/recipe_collections?select=id&owner_id=eq.${u.id}`,
+              )
+            ).length,
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThanOrEqual(1);
 
       await page.goto('/settings/danger');
       await page.getByTestId('open-delete-account').click();
@@ -140,13 +149,22 @@ test.describe('Right to erasure', () => {
       await expect(page.getByRole('heading', { name: 'Solo Collection' })).toBeVisible();
 
       // Get the collection id and mark it household-shared via service
-      // role to exercise the unshare branch of the RPC.
+      // role to exercise the unshare branch of the RPC. Poll: the
+      // local-first UI acknowledges before the outbox push lands.
       type C = Array<{ id: string }>;
-      const cols = await adminGet<C>(
-        `/rest/v1/recipe_collections?select=id&owner_id=eq.${owner.id}`,
-      );
-      const collectionId = cols[0]?.id;
-      expect(collectionId).toBeTruthy();
+      let collectionId: string | undefined;
+      await expect
+        .poll(
+          async () => {
+            const cols = await adminGet<C>(
+              `/rest/v1/recipe_collections?select=id&owner_id=eq.${owner.id}`,
+            );
+            collectionId = cols[0]?.id;
+            return collectionId;
+          },
+          { timeout: 10_000 },
+        )
+        .toBeTruthy();
       await fetch(`${SUPABASE_URL}/rest/v1/recipe_collections?id=eq.${collectionId}`, {
         method: 'PATCH',
         headers: {

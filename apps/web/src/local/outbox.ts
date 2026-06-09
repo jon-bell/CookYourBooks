@@ -43,6 +43,18 @@ export interface OutboxEntry {
   last_error: string | null;
 }
 
+/**
+ * Outbox kinds that HARD-delete their server row (vs the soft `deleted` flag
+ * recipes/collections use). These need delete tombstones — see
+ * {@link locallyDeletedIds}.
+ */
+const HARD_DELETE_KINDS: ReadonlySet<OutboxKind> = new Set([
+  'conversion_rule_delete',
+  'cooking_event_delete',
+  'recipe_tag_delete',
+  'collection_note_delete',
+]);
+
 export async function enqueue(entry: {
   kind: OutboxKind;
   entity_id: string;
@@ -53,6 +65,12 @@ export async function enqueue(entry: {
     `insert into outbox (kind, entity_id, collection_id, enqueued_at) values (?,?,?,?)`,
     [entry.kind, entry.entity_id, entry.collection_id ?? null, Date.now()],
   );
+  if (HARD_DELETE_KINDS.has(entry.kind)) {
+    await db.exec(
+      `insert or replace into local_delete_tombstones (entity_id, kind, deleted_at) values (?,?,?)`,
+      [entry.entity_id, entry.kind, Date.now()],
+    );
+  }
 }
 
 export async function listPending(limit = 1000): Promise<OutboxEntry[]> {
@@ -78,6 +96,54 @@ export async function markFailed(id: number, error: string): Promise<void> {
     `update outbox set attempts = attempts + 1, last_error = ? where id = ?`,
     [error, id],
   );
+}
+
+/**
+ * Of the given entity ids, return the ones the user hard-deleted locally —
+ * either a delete still pending in the outbox, or a tombstone in
+ * `local_delete_tombstones` (written at enqueue time, surviving the push).
+ *
+ * The sync apply paths use this to keep a stale pull response (or a realtime
+ * INSERT echo) from resurrecting a row deleted locally while the fetch was in
+ * flight: pulls only ever upsert, and owner-filtered realtime DELETE events
+ * don't deliver (the old record carries just the PK), so a resurrected
+ * hard-deleted row would be permanent. The outbox check alone is not enough —
+ * a response fetched before the delete can apply after the push already
+ * drained the outbox entry. Ids are minted fresh per add (UUID), so a
+ * tombstoned id can never legitimately reappear. Soft-deleted tables
+ * (recipes, collections) don't need this — their tombstone row wins the
+ * updated_at freshness compare instead.
+ */
+export async function locallyDeletedIds(
+  kind: OutboxKind,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (ids.length === 0) return out;
+  const db = await getLocalDb();
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const ph = slice.map(() => '?').join(',');
+    const rows = (await db.execO<{ entity_id: string }>(
+      `select entity_id from outbox where kind = ? and entity_id in (${ph})
+       union
+       select entity_id from local_delete_tombstones where kind = ? and entity_id in (${ph})`,
+      [kind, ...slice, kind, ...slice],
+    )) as { entity_id: string }[];
+    for (const r of rows) out.add(r.entity_id);
+  }
+  return out;
+}
+
+/** Drop tombstones older than `maxAgeMs` (default 30 days). Called at sync
+ *  start — the table only needs to outlive in-flight fetches, but a long
+ *  horizon costs nothing and also covers very stale offline devices. */
+export async function pruneDeleteTombstones(maxAgeMs = 30 * 24 * 60 * 60 * 1000): Promise<void> {
+  const db = await getLocalDb();
+  await db.exec(`delete from local_delete_tombstones where deleted_at < ?`, [
+    Date.now() - maxAgeMs,
+  ]);
 }
 
 export async function countPending(): Promise<number> {

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   adaptRecipe,
@@ -16,8 +15,9 @@ import {
 } from '@cookyourbooks/domain';
 import {
   useAdaptations,
-  useCollection,
+  useCollectionMeta,
   useDeleteRecipe,
+  useRecipe,
   useRecipeSummary,
   useSaveRecipe,
 } from '../data/queries.js';
@@ -54,8 +54,12 @@ import { useRecordRecipeView } from '../cooking/queries.js';
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
-  const { data: collection, isLoading } = useCollection(collectionId);
-  const recipe = collection?.recipes.find((r) => r.id === recipeId);
+  // Collection metadata + the one recipe — not the whole collection graph.
+  // Hydrating every recipe just to find this one made opening a recipe in a
+  // 500-recipe cookbook pay for all 500.
+  const { data: collection, isLoading: collectionLoading } = useCollectionMeta(collectionId);
+  const { data: recipe, isLoading: recipeLoading } = useRecipe(collectionId, recipeId);
+  const isLoading = collectionLoading || recipeLoading;
 
   // Local-only browsing history: record one view per recipe id the page
   // settles on. Fire-and-forget; guarded so re-renders don't double-log.
@@ -68,7 +72,6 @@ export function RecipePage() {
   const saveRecipe = useSaveRecipe(collectionId ?? '');
   const { data: parent } = useRecipeSummary(recipe?.parentRecipeId);
   const { data: adaptations = [] } = useAdaptations(recipe?.id);
-  const qc = useQueryClient();
 
   const [scale, setScale] = useState(1);
   const [targetUnit, setTargetUnit] = useState<string>('');
@@ -151,12 +154,10 @@ export function RecipePage() {
 
   async function adaptThisRecipe() {
     const clone = adaptRecipe(recipe!);
+    // mutateAsync resolves after the local write lands, and the editor
+    // fetches the clone itself via `useRecipe` (a fresh key — nothing
+    // stale to refetch), so navigating immediately is safe.
     await saveRecipe.mutateAsync(clone);
-    // `useSaveRecipe` invalidates the collection query but doesn't await
-    // the refetch. The editor bounces if it renders before the new recipe
-    // appears in `collection.recipes`, so force a refetch here before we
-    // navigate.
-    await qc.refetchQueries({ queryKey: ['collection', collection!.id] });
     navigate(`/collections/${collection!.id}/recipes/${clone.id}/edit`);
   }
 

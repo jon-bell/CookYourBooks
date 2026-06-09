@@ -35,7 +35,13 @@ import {
   type EmbedRecipeInput,
 } from './embed.ts';
 import { buildCoverPrompt, generateCover } from './cover.ts';
-import { COVER_CACHE_CONTROL, coverObjectKey, reencodeCover } from './coverEncode.ts';
+import {
+  COVER_CACHE_CONTROL,
+  coverObjectKey,
+  reencodeCover,
+  reencodeThumb,
+  thumbPathFor,
+} from './coverEncode.ts';
 
 // Self-hosted Sentry for the import worker. Both Deno edge functions
 // report to the same `cyb-deno` project via the shared `SENTRY_DSN`
@@ -190,7 +196,7 @@ let pricingLoadedAt = 0;
 // so we never hit a hard kill from the runtime.
 const LOOP_BUDGET_MS = parseIntEnvOr('OCR_LOOP_BUDGET_MS', 300_000);
 const CLAIM_BATCH = parseIntEnvOr('OCR_CLAIM_BATCH', 8);
-const PARALLEL = parseIntEnvOr('OCR_PARALLEL', 3);
+const PARALLEL = parseIntEnvOr('OCR_PARALLEL', 6);
 const LEASE_SECONDS = parseIntEnvOr('OCR_LEASE_SECONDS', 600);
 const MAX_TRANSIENT_RETRIES = 3;
 const MAX_PARSE_RETRIES = 2;
@@ -402,6 +408,7 @@ async function runLoop(
   let failed = 0;
   let parked = 0;
   let emptyTicks = 0;
+  ocrRateLimitObserved = false;
 
   while (Date.now() - startedAt < LOOP_BUDGET_MS) {
     const items = await claimBatch(workerId, batchId, log);
@@ -429,6 +436,25 @@ async function runLoop(
       if (Date.now() - startedAt >= LOOP_BUDGET_MS) {
         log.info('loop budget hit, draining current chunk only');
         break;
+      }
+      // If any item in this chunk got rate-limited, the provider is
+      // throttling us — back off before the next chunk instead of hammering
+      // it. Budget-aware: if the sleep would push us past LOOP_BUDGET_MS,
+      // exit the loop instead (the unclaimed items stay PENDING for the next
+      // invocation). Jittered to avoid thundering-herd across workers.
+      if (ocrRateLimitObserved) {
+        ocrRateLimitObserved = false;
+        const backoffMs = 10_000 + Math.random() * 5_000;
+        const elapsed = Date.now() - startedAt;
+        if (elapsed + backoffMs >= LOOP_BUDGET_MS) {
+          log.info('rate-limited, backoff would exceed budget — exiting loop', {
+            backoff_ms: Math.round(backoffMs),
+            elapsed_ms: elapsed,
+          });
+          return { processed, failed, parked, remaining: await countPending(batchId, log) };
+        }
+        log.info('rate-limited, backing off before next chunk', { backoff_ms: Math.round(backoffMs) });
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
       }
     }
   }
@@ -472,6 +498,16 @@ async function countPending(batchId: string | null, log: ReturnType<typeof makeL
 // ---------- per-item pipeline ----------
 
 type ItemOutcome = 'OCR_DONE' | 'PENDING' | 'NEEDS_FALLBACK' | 'OCR_FAILED';
+
+// Per-invocation rate-limit signal. processItem (and its recitation/fallback
+// delegate) flip this to true whenever an LLM call returns errorKind
+// 'RATE_LIMIT'. The OCR drain loop reads + clears it after each chunk and
+// backs off before claiming the next chunk so we stop hammering a provider
+// that's already throttling us. ItemOutcome can't carry this (a rate-limited
+// item's outcome is PENDING/OCR_FAILED, indistinguishable from other transient
+// failures), and the loop runs single-threaded so a shared boolean is safe
+// across a chunk's concurrent processItem calls.
+let ocrRateLimitObserved = false;
 
 async function processItem(
   item: ImportItem,
@@ -653,6 +689,7 @@ async function processItem(
 
   // Transient errors.
   if (result.errorKind === 'RATE_LIMIT' || result.errorKind === 'NETWORK' || result.errorKind === 'TIMEOUT') {
+    if (result.errorKind === 'RATE_LIMIT') ocrRateLimitObserved = true;
     const rawPath = await uploadRaw(item, result.rawResponse, log);
     const nextState = item.attempts < MAX_TRANSIENT_RETRIES ? 'PENDING' : 'OCR_FAILED';
     log.warn('transient llm error', { kind: result.errorKind, message: result.errorMessage, next_state: nextState });
@@ -780,6 +817,7 @@ async function handleRecitation(
     return 'OCR_FAILED';
   }
   // Other errors on fallback: terminal.
+  if (fbResult.errorKind === 'RATE_LIMIT') ocrRateLimitObserved = true;
   log.error('fallback llm errored — terminal', { kind: fbResult.errorKind, message: fbResult.errorMessage });
   await failItem(
     item,
@@ -2420,6 +2458,20 @@ async function processCoverJob(
     return 'FAILED';
   }
 
+  // Best-effort thumbnail — never fails the cover job if it errors.
+  try {
+    const thumb = await reencodeThumb(enc.bytes, enc.contentType);
+    await supabase.storage
+      .from('covers')
+      .upload(thumbPathFor(path), new Blob([thumb.bytes as unknown as BlobPart], { type: thumb.contentType }), {
+        upsert: true,
+        contentType: thumb.contentType,
+        cacheControl: COVER_CACHE_CONTROL,
+      });
+  } catch (e) {
+    log.warn('cover thumb upload failed (non-fatal)', { error: String(e) });
+  }
+
   // Stamp the path + mark DONE (one RPC; bumps recipes.updated_at so it syncs).
   const { data: ok, error: completeErr } = await supabase.rpc('cover_complete', {
     p_job_id: job.id,
@@ -2431,9 +2483,11 @@ async function processCoverJob(
   }
 
   // Drop the prior cover object (content-addressed key changed) so a
-  // regenerate doesn't leave orphaned bytes in the bucket.
+  // regenerate doesn't leave orphaned bytes in the bucket. Also drop its thumb.
   if (recipe.cover_image_path && recipe.cover_image_path !== path) {
-    await supabase.storage.from('covers').remove([recipe.cover_image_path]);
+    await supabase.storage
+      .from('covers')
+      .remove([recipe.cover_image_path, thumbPathFor(recipe.cover_image_path)]);
   }
 
   // Meter the successful generation (the work cost the same whether or not the

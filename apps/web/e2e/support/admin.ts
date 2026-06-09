@@ -259,9 +259,28 @@ export async function seedUserImports(params: {
 }
 
 /** Insert a public demo collection owned by the admin for Discover tests. */
+/**
+ * Full graph spec for a single seeded recipe. Used by the
+ * `recipes` form of {@link seedPublicCollection} to seed ingredients /
+ * instructions / refs (and to control sort_order explicitly so tests can
+ * deliberately create natural-key collisions). `refs` links an instruction to
+ * an ingredient by their *index* within this recipe's arrays.
+ */
+export interface SeedRecipeSpec {
+  title: string;
+  sortOrder: number;
+  ingredients?: { name: string; sortOrder: number }[];
+  instructions?: { stepNumber: number; text: string }[];
+  /** Each ref: which instruction (by index) references which ingredient (by index). */
+  refs?: { instructionIndex: number; ingredientIndex: number }[];
+}
+
 export async function seedPublicCollection(params: {
   title: string;
-  recipeTitles: string[];
+  /** Simple form: titles only, sort_order = array index, no children. */
+  recipeTitles?: string[];
+  /** Rich form: full per-recipe graph control. Takes precedence when present. */
+  recipes?: SeedRecipeSpec[];
 }): Promise<{ collectionId: string; ownerId: string; cleanup: () => Promise<void> }> {
   const owner = await createTestUser('publisher');
   const colResp = await fetch(`${SUPABASE_URL}/rest/v1/recipe_collections`, {
@@ -283,18 +302,82 @@ export async function seedPublicCollection(params: {
   const [col] = (await colResp.json()) as { id: string }[];
   if (!col) throw new Error('seed collection: no row returned');
 
-  for (let i = 0; i < params.recipeTitles.length; i += 1) {
-    const t = params.recipeTitles[i]!;
-    const rResp = await fetch(`${SUPABASE_URL}/rest/v1/recipes`, {
+  const post = async (table: string, rows: unknown[]) => {
+    if (rows.length === 0) return;
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
       method: 'POST',
       headers: {
         apikey: SUPABASE_SERVICE_ROLE,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
         'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
       },
-      body: JSON.stringify({ collection_id: col.id, title: t, sort_order: i }),
+      body: JSON.stringify(rows),
     });
-    if (!rResp.ok) throw new Error(`seed recipe: ${await rResp.text()}`);
+    if (!resp.ok) throw new Error(`seed ${table}: ${resp.status} ${await resp.text()}`);
+  };
+
+  if (params.recipes && params.recipes.length > 0) {
+    // Rich form: mint ids client-side so we can stitch ingredient/instruction
+    // refs in one round-trip per table.
+    const recipeRows: Record<string, unknown>[] = [];
+    const ingredientRows: Record<string, unknown>[] = [];
+    const instructionRows: Record<string, unknown>[] = [];
+    const refRows: Record<string, unknown>[] = [];
+
+    for (const spec of params.recipes) {
+      const recipeId = crypto.randomUUID();
+      recipeRows.push({
+        id: recipeId,
+        collection_id: col.id,
+        title: spec.title,
+        sort_order: spec.sortOrder,
+      });
+      const ingIds = (spec.ingredients ?? []).map((ing) => {
+        const id = crypto.randomUUID();
+        ingredientRows.push({
+          id,
+          recipe_id: recipeId,
+          sort_order: ing.sortOrder,
+          type: 'MEASURED',
+          name: ing.name,
+          quantity_type: 'EXACT',
+          quantity_amount: 1,
+          quantity_unit: 'piece',
+        });
+        return id;
+      });
+      const stepIds = (spec.instructions ?? []).map((step) => {
+        const id = crypto.randomUUID();
+        instructionRows.push({
+          id,
+          recipe_id: recipeId,
+          step_number: step.stepNumber,
+          text: step.text,
+        });
+        return id;
+      });
+      for (const ref of spec.refs ?? []) {
+        const instructionId = stepIds[ref.instructionIndex];
+        const ingredientId = ingIds[ref.ingredientIndex];
+        if (!instructionId || !ingredientId) {
+          throw new Error(
+            `seedPublicCollection: ref index out of range for "${spec.title}"`,
+          );
+        }
+        refRows.push({ instruction_id: instructionId, ingredient_id: ingredientId });
+      }
+    }
+
+    await post('recipes', recipeRows);
+    await post('ingredients', ingredientRows);
+    await post('instructions', instructionRows);
+    await post('instruction_ingredient_refs', refRows);
+  } else {
+    for (let i = 0; i < (params.recipeTitles ?? []).length; i += 1) {
+      const t = params.recipeTitles![i]!;
+      await post('recipes', [{ collection_id: col.id, title: t, sort_order: i }]);
+    }
   }
 
   return {

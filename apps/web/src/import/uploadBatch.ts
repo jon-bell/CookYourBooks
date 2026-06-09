@@ -151,18 +151,26 @@ export async function uploadBatch(
     };
   });
 
-  // Step 3: Upload each page + thumb. Sequential upload keeps memory
-  // pressure low for huge batches (100+ pages) and gives a steady
-  // progress signal.
+  // Step 3: Upload each page + thumb with bounded concurrency. All JPEG blobs
+  // were materialized in Step 1, so parallel uploads cost network buffers only.
+  // First failure rejects the pool (fail-fast, same as the old sequential loop);
+  // stray in-flight uploads are harmless (upsert + no DB rows written yet).
   const total = pages.length;
-  for (let i = 0; i < pages.length; i += 1) {
-    const p = pages[i]!;
-    const fullPath = `${input.ownerId}/${batchId}/pages/${p.id}.jpg`;
-    const thumbPath = `${input.ownerId}/${batchId}/thumbs/${p.id}.jpg`;
-    await uploadBlob(fullPath, p.page.fullJpeg);
-    await uploadBlob(thumbPath, p.page.thumbJpeg);
-    onProgress?.({ phase: 'uploading', done: i + 1, total });
-  }
+  let completed = 0;
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= pages.length) return;
+      const p = pages[i]!;
+      await uploadBlob(`${input.ownerId}/${batchId}/pages/${p.id}.jpg`, p.page.fullJpeg);
+      await uploadBlob(`${input.ownerId}/${batchId}/thumbs/${p.id}.jpg`, p.page.thumbJpeg);
+      completed += 1;
+      onProgress?.({ phase: 'uploading', done: completed, total });
+    }
+  };
+  const CONCURRENCY = 5;
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pages.length) }, worker));
 
   // Step 4: Insert the batch + item rows locally and enqueue an outbox
   // push so a network blip after Step 3 doesn't strand the metadata.

@@ -3,6 +3,7 @@ import type { RecipeCollection } from '@cookyourbooks/domain';
 import { supabase } from '../supabase.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { uploadCollectionCover } from '../books/cover.js';
+import { thumbPathFor } from '../recipe/coverImage.js';
 import { CoverImage } from './CoverImage.js';
 
 export function CoverImageEditor({
@@ -41,7 +42,9 @@ export function CoverImageEditor({
     setUploading(true);
     setError(null);
     try {
-      await supabase.storage.from('covers').remove([collection.coverImagePath]);
+      await supabase.storage
+        .from('covers')
+        .remove([collection.coverImagePath, thumbPathFor(collection.coverImagePath)]);
       await onChange(undefined);
     } catch (e) {
       setError((e as Error).message);

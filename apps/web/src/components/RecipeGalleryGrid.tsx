@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { CoverImage } from './CoverImage.js';
 import { formatPages } from './SortableRecipeList.js';
@@ -13,6 +14,25 @@ export interface GalleryCard {
   collectionId: string;
 }
 
+/** Memoized single card cell — prevents re-rendering unaffected cards when
+ *  the parent list reference changes (e.g. after a sort or filter). */
+const GalleryCardCell = memo(function GalleryCardCell({ item }: { item: GalleryCard }) {
+  const pages = formatPages(item.pageNumbers);
+  return (
+    <li className="gallery-card relative overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+      <Link to={`/collections/${item.collectionId}/recipes/${item.id}`} className="block">
+        <CoverImage path={item.coverImagePath ?? undefined} alt={item.title} className="aspect-[3/2] w-full" variant="thumb" />
+        <div className="p-3">
+          <div className="line-clamp-2 font-medium">{item.title}</div>
+          {pages ? (
+            <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{pages}</div>
+          ) : null}
+        </div>
+      </Link>
+    </li>
+  );
+});
+
 /**
  * A responsive grid of 3:2 cover cards, each linking to its recipe. Renders
  * items in the order given — sorting/partitioning is the caller's job (the
@@ -22,25 +42,9 @@ export interface GalleryCard {
 export function RecipeGalleryGrid({ items }: { items: readonly GalleryCard[] }) {
   return (
     <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {items.map((r) => {
-        const pages = formatPages(r.pageNumbers);
-        return (
-          <li
-            key={r.id}
-            className="relative overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900"
-          >
-            <Link to={`/collections/${r.collectionId}/recipes/${r.id}`} className="block">
-              <CoverImage path={r.coverImagePath ?? undefined} alt={r.title} className="aspect-[3/2] w-full" />
-              <div className="p-3">
-                <div className="line-clamp-2 font-medium">{r.title}</div>
-                {pages ? (
-                  <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{pages}</div>
-                ) : null}
-              </div>
-            </Link>
-          </li>
-        );
-      })}
+      {items.map((r) => (
+        <GalleryCardCell key={r.id} item={r} />
+      ))}
     </ul>
   );
 }

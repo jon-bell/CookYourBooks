@@ -1,4 +1,5 @@
 import { test, expect } from './support/fixtures.js';
+import { adminGet } from './support/admin.js';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './support/env.js';
 
 test.describe('CLI tokens', () => {
@@ -8,6 +9,19 @@ test.describe('CLI tokens', () => {
     await page.getByLabel('Title').fill('CLI Fixture');
     await page.getByRole('button', { name: 'Create' }).click();
     await expect(page.getByRole('heading', { name: 'CLI Fixture' })).toBeVisible();
+    // The local-first UI acknowledges before the outbox push lands; the
+    // token-driven export below reads server state, so wait for the row.
+    await expect
+      .poll(
+        async () =>
+          (
+            await adminGet<Array<{ id: string }>>(
+              `/rest/v1/recipe_collections?select=id&title=eq.CLI%20Fixture`,
+            )
+          ).length,
+        { timeout: 10_000 },
+      )
+      .toBeGreaterThanOrEqual(1);
 
     // 2. Mint the token through the Settings UI. The raw string appears
     //    once inside the success panel — we capture it by reading the

@@ -12,6 +12,8 @@
 
 /** Longest-edge cap. Covers render at most ~400px CSS; this covers 2-3x retina. */
 export const COVER_MAX_EDGE = 1280;
+/** Longest-edge cap for gallery thumbnails. Cards render ~330px CSS at lg; 640px covers 2x retina. */
+export const COVER_THUMB_MAX_EDGE = 640;
 /** WebP/JPEG quality (canvas encode, 0-1). */
 export const COVER_QUALITY = 0.82;
 /** Immutable 1-year cache. Safe because new writes are content-addressed. */
@@ -61,20 +63,32 @@ function extForBlob(input: File | Blob): { ext: string; contentType: string } {
 }
 
 /**
- * Decode, downscale to `COVER_MAX_EDGE`, and re-encode `input` as a small
- * WebP — falling back to JPEG when the runtime's canvas can't produce WebP
- * (it silently yields PNG, which we detect via the result's MIME type).
- * If the image can't be decoded/encoded at all (exotic format, corrupt
- * bytes), fall back to the original blob so an upload is never lost —
+ * Derive the thumb storage path for a given full-size cover path.
+ * Pure string append — no schema change required. Old covers without a thumb
+ * fall back to the full image via img onError.
+ */
+export function thumbPathFor(path: string): string {
+  return `${path}.thumb.jpg`;
+}
+
+/**
+ * Decode, downscale to `maxEdge` (default `COVER_MAX_EDGE`), and re-encode
+ * `input` as a small WebP — falling back to JPEG when the runtime's canvas
+ * can't produce WebP (it silently yields PNG, which we detect via the result's
+ * MIME type). If the image can't be decoded/encoded at all (exotic format,
+ * corrupt bytes), fall back to the original blob so an upload is never lost —
  * mirrors the worker's reencodeCover passthrough.
  */
-export async function prepareCoverImage(input: File | Blob): Promise<PreparedCover> {
+export async function prepareCoverImage(
+  input: File | Blob,
+  maxEdge: number = COVER_MAX_EDGE,
+): Promise<PreparedCover> {
   try {
     // `imageOrientation: 'from-image'` bakes EXIF rotation into the pixels —
     // canvas otherwise ignores it and a portrait phone photo lands sideways.
     const bitmap = await createImageBitmap(input, { imageOrientation: 'from-image' });
     try {
-      const scale = Math.min(1, COVER_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+      const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
       const width = Math.max(1, Math.round(bitmap.width * scale));
       const height = Math.max(1, Math.round(bitmap.height * scale));
       const canvas = makeCanvas(width, height);

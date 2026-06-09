@@ -19,9 +19,16 @@
 //   --dry-run     report before/after sizes without uploading
 //   --env-file    override credentials file path
 //   --min-bytes   skip objects smaller than this (default 4096)
+//   --thumbs-only skip the full-size re-encode phase; only mint missing
+//                 .thumb.jpg siblings (leaves existing covers untouched)
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
-import { COVER_CACHE_CONTROL, reencodeCover } from '../supabase/functions/import-worker/coverEncode.ts';
+import {
+  COVER_CACHE_CONTROL,
+  reencodeCover,
+  reencodeThumb,
+  thumbPathFor,
+} from '../supabase/functions/import-worker/coverEncode.ts';
 
 const BUCKET = 'covers';
 
@@ -106,13 +113,27 @@ async function main() {
   if (!url || !key) throw new Error('Missing SUPABASE_URL or service-role key in env file');
   const sb = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 
+  // --- Phase 1: collect all bucket paths so we know which thumbs exist ---
+  console.error('listing bucket…');
+  const allFiles: ListedFile[] = [];
+  for await (const file of listFiles(sb, '')) {
+    allFiles.push(file);
+  }
+  const existingPaths = new Set(allFiles.map((f) => f.path));
+  console.error(`found ${allFiles.length} objects`);
+
+  // --- Phase 2: re-encode full-size covers that still carry old cache headers ---
+  const thumbsOnly = flag('thumbs-only');
   let seen = 0;
   let optimized = 0;
   let headerOnly = 0;
   let skipped = 0;
   let savedBytes = 0;
 
-  for await (const file of listFiles(sb, '')) {
+  for (const file of thumbsOnly ? [] : allFiles) {
+    // Skip thumb-sibling objects — they are handled in phase 3.
+    if (file.path.endsWith('.thumb.jpg')) continue;
+
     seen += 1;
     // Already migrated (carries the immutable header) -> idempotent skip.
     if (file.cacheControl.includes('immutable')) {
@@ -167,6 +188,60 @@ async function main() {
   console.error(
     `\n${dryRun ? '[dry-run] ' : ''}done: ${seen} seen, ${optimized} re-encoded, ` +
       `${headerOnly} header-only, ${skipped} skipped, ${(savedBytes / 1024 / 1024).toFixed(1)} MB saved`,
+  );
+
+  // --- Phase 3: mint missing .thumb.jpg siblings (idempotent) ---
+  let thumbSeen = 0;
+  let thumbMinted = 0;
+  let thumbSkipped = 0;
+
+  for (const file of allFiles) {
+    // Only process original covers (not existing thumbs).
+    if (file.path.endsWith('.thumb.jpg')) continue;
+    // Skip very small objects (unlikely real covers).
+    if (file.size > 0 && file.size < minBytes) continue;
+
+    thumbSeen += 1;
+    const thumbPath = thumbPathFor(file.path);
+
+    // Thumb already exists — skip (idempotent).
+    if (existingPaths.has(thumbPath)) {
+      thumbSkipped += 1;
+      continue;
+    }
+
+    if (dryRun) {
+      console.error(`thumb-missing ${file.path} -> ${thumbPath}`);
+      thumbMinted += 1;
+      continue;
+    }
+
+    const { data: blob, error: dlErr } = await sb.storage.from(BUCKET).download(file.path);
+    if (dlErr || !blob) {
+      console.error(`! thumb download failed ${file.path}: ${dlErr?.message}`);
+      continue;
+    }
+    const original = new Uint8Array(await blob.arrayBuffer());
+    const thumb = await reencodeThumb(original, file.mimetype);
+
+    const { error: upErr } = await sb.storage
+      .from(BUCKET)
+      .upload(thumbPath, new Blob([thumb.bytes], { type: thumb.contentType }), {
+        upsert: true,
+        contentType: thumb.contentType,
+        cacheControl: COVER_CACHE_CONTROL,
+      });
+    if (upErr) {
+      console.error(`! thumb upload failed ${thumbPath}: ${upErr.message}`);
+      continue;
+    }
+    thumbMinted += 1;
+    console.error(`thumb ok ${thumbPath}  ${thumb.bytes.length} bytes`);
+  }
+
+  console.error(
+    `\n${dryRun ? '[dry-run] ' : ''}thumbs: ${thumbSeen} covers checked, ` +
+      `${thumbMinted} minted, ${thumbSkipped} already present`,
   );
 }
 

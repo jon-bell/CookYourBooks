@@ -1174,6 +1174,25 @@ export interface LibraryCollectionSummary {
   filledRecipeCount: number;
 }
 
+/**
+ * One recipe's worth of metadata for the per-collection browse view: enough
+ * to render the cover/list/index cards, filter by title or ingredient name,
+ * and drive the star/placeholder UI — without hydrating the full recipe graph
+ * (ingredients/instructions/refs) for every row.
+ */
+export interface CollectionRecipeSummary {
+  id: string;
+  title: string;
+  coverImagePath: string | null;
+  pageNumbers: number[];
+  sortOrder: number;
+  starred: boolean;
+  ingredientCount: number;
+  instructionCount: number;
+  /** newline-joined, lowercased ingredient names — powers the filter box. */
+  ingredientNames: string;
+}
+
 /** A recipe card for the library-wide gallery: enough to render a cover card
  *  and filter by recipe or by book, plus local view stats for sorting. */
 export interface GalleryRecipeSummary {
@@ -1397,6 +1416,102 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     const row = rows[0];
     if (!row) return undefined;
     return hydrateCollection(row);
+  }
+
+  /**
+   * Collection metadata only — same row fetch + visibility filter as
+   * {@link get}, but the returned RecipeCollection carries `recipes: []`
+   * instead of hydrating every recipe's full graph. The per-collection
+   * browse view reads its recipe cards from
+   * {@link listCollectionRecipeSummaries} instead, so the page no longer
+   * pays to materialize hundreds of ingredient/instruction trees just to
+   * render titles + covers. Spreading this meta object into a
+   * `saveCollection` mutation is also the cheap path for publish/cover/
+   * share toggles: `save` only ever upserts the recipes it's handed, so an
+   * empty list skips the per-recipe re-save + outbox churn.
+   */
+  async getMeta(id: string): Promise<RecipeCollection | undefined> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<CollectionRow>(
+      `select * from recipe_collections where id = ? and deleted = 0`,
+      [id],
+    )) as CollectionRow[];
+    const row = rows[0];
+    if (!row) return undefined;
+    return rowToCollection(row, []);
+  }
+
+  /**
+   * Lightweight per-recipe cards for one collection's browse view — title +
+   * cover + page + star + child counts + lowercased ingredient names, in ONE
+   * statement. Mirrors {@link hydrateCollection}'s ordering exactly
+   * (content-first via the same predicate, then sort_order) and its
+   * deleted-row filter, so swapping the page off full hydration leaves the
+   * visible order unchanged. Placeholder semantics downstream are
+   * `ingredientCount === 0 && instructionCount === 0`.
+   */
+  async listCollectionRecipeSummaries(
+    collectionId: string,
+  ): Promise<CollectionRecipeSummary[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      page_numbers: string | null;
+      sort_order: number;
+      starred: number | boolean;
+      ing_count: number;
+      ins_count: number;
+      ingredient_names: string;
+    }>(
+      `select r.id, r.title, r.cover_image_path, r.page_numbers, r.sort_order, r.starred,
+              (select count(*) from ingredients i where i.recipe_id = r.id) as ing_count,
+              (select count(*) from instructions s where s.recipe_id = r.id) as ins_count,
+              coalesce(
+                (select group_concat(lower(i.name), char(10))
+                   from ingredients i where i.recipe_id = r.id),
+                ''
+              ) as ingredient_names
+         from recipes r
+        where r.collection_id = ? and r.deleted = 0
+        order by ((select count(*) from ingredients i where i.recipe_id = r.id) > 0
+               or (select count(*) from instructions s where s.recipe_id = r.id) > 0) desc,
+                 r.sort_order asc`,
+      [collectionId],
+    )) as Array<{
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      page_numbers: string | null;
+      sort_order: number;
+      starred: number | boolean;
+      ing_count: number;
+      ins_count: number;
+      ingredient_names: string;
+    }>;
+    return rows.map((r) => {
+      let pageNumbers: number[] = [];
+      try {
+        const parsed = JSON.parse(r.page_numbers || '[]');
+        if (Array.isArray(parsed)) {
+          pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
+        }
+      } catch {
+        // leave empty
+      }
+      return {
+        id: r.id,
+        title: r.title,
+        coverImagePath: r.cover_image_path,
+        pageNumbers,
+        sortOrder: Number(r.sort_order),
+        starred: r.starred === true || r.starred === 1,
+        ingredientCount: Number(r.ing_count),
+        instructionCount: Number(r.ins_count),
+        ingredientNames: r.ingredient_names,
+      };
+    });
   }
 
   /**
@@ -2456,6 +2571,11 @@ export function unpackEmbedding(bytes: Uint8Array): Float32Array {
   return new Float32Array(copy);
 }
 
+/**
+ * Upsert a single embedding row — used by the realtime handler in
+ * `sync.ts` and `search/saveHook.ts`. For batch pulls use
+ * `upsertLocalEmbeddingsBatch` instead.
+ */
 export async function upsertLocalEmbedding(row: LocalEmbeddingRow): Promise<void> {
   const db = await getLocalDb();
   await db.exec(
@@ -2495,10 +2615,33 @@ export async function upsertLocalEmbeddingsBatch(
     )) as { recipe_id: string; updated_at: number }[];
     for (const f of found) existing.set(f.recipe_id, f.updated_at);
   }
-  for (const row of rows) {
+
+  const fresh = rows.filter((row) => {
     const local = existing.get(row.recipeId);
-    if (local && local > row.updatedAtMs) continue;
-    await upsertLocalEmbedding(row);
+    return !local || local <= row.updatedAtMs;
+  });
+  if (fresh.length === 0) return;
+
+  const cols = ['recipe_id', 'embedding', 'text_hash', 'model', 'updated_at'];
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  const rowsPerChunk = Math.max(1, Math.floor(MAX_ROWS_PER_INSERT / cols.length));
+  for (let i = 0; i < fresh.length; i += rowsPerChunk) {
+    const chunk = fresh.slice(i, i + rowsPerChunk);
+    const params: unknown[] = [];
+    for (const r of chunk) {
+      params.push(r.recipeId, packEmbedding(r.embedding), r.textHash, r.model, r.updatedAtMs);
+    }
+    await db.exec(
+      `insert into recipe_embeddings (${cols.join(',')})
+       values ${chunk.map(() => tuple).join(',')}
+       on conflict(recipe_id) do update set
+         embedding=excluded.embedding,
+         text_hash=excluded.text_hash,
+         model=excluded.model,
+         updated_at=excluded.updated_at
+       where excluded.updated_at >= recipe_embeddings.updated_at`,
+      params as never[],
+    );
   }
 }
 

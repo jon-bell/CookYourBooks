@@ -965,6 +965,21 @@ export function ImportBatchPage() {
         </div>
       )}
 
+      {activeOcrCount === 0 &&
+        items.length > 0 &&
+        items.some(
+          (i) => i.status === 'REVIEWED' || i.status === 'OCR_DONE' || i.status === 'BAKEOFF_READY',
+        ) && (
+          <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 px-3 py-2 text-xs text-stone-600 dark:text-stone-400">
+            Processing complete. Semantic search indexes recipes in the background — new
+            recipes may take a few minutes to appear in{' '}
+            <Link to="/search" className="underline hover:text-stone-900 dark:hover:text-stone-100">
+              /search
+            </Link>{' '}
+            results. Literal-text search finds them immediately.
+          </div>
+        )}
+
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
         {filtered.map((item) => {
           const titles = item.parsedDrafts
