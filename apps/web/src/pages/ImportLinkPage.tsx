@@ -100,7 +100,7 @@ export function ImportLinkPage() {
           setError(
             <>
               Video import needs a Gemini API key.{' '}
-              <Link to="/settings" className="underline">
+              <Link to="/settings/llm" className="underline">
                 Open settings
               </Link>{' '}
               to add one.

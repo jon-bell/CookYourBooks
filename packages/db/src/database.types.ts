@@ -2072,6 +2072,7 @@ export type Database = {
           claim_expires_at: string
           claim_token: string | null
           created_at: string
+          household_id: string | null
           id: string
           last_error: string | null
           owner_id: string
@@ -2085,6 +2086,7 @@ export type Database = {
           claim_expires_at?: string
           claim_token?: string | null
           created_at?: string
+          household_id?: string | null
           id?: string
           last_error?: string | null
           owner_id: string
@@ -2098,6 +2100,7 @@ export type Database = {
           claim_expires_at?: string
           claim_token?: string | null
           created_at?: string
+          household_id?: string | null
           id?: string
           last_error?: string | null
           owner_id?: string
@@ -2136,6 +2139,7 @@ export type Database = {
           claim_expires_at: string
           claim_token: string | null
           created_at: string
+          household_id: string | null
           id: string
           last_error: string | null
           owner_id: string
@@ -2148,6 +2152,7 @@ export type Database = {
           claim_expires_at?: string
           claim_token?: string | null
           created_at?: string
+          household_id?: string | null
           id?: string
           last_error?: string | null
           owner_id: string
@@ -2160,6 +2165,7 @@ export type Database = {
           claim_expires_at?: string
           claim_token?: string | null
           created_at?: string
+          household_id?: string | null
           id?: string
           last_error?: string | null
           owner_id?: string
@@ -2868,6 +2874,26 @@ export type Database = {
           },
         ]
       }
+      batch_jobs_report: {
+        Row: {
+          attempts: number | null
+          created_at: string | null
+          done_count: number | null
+          failed_count: number | null
+          household_id: string | null
+          id: string | null
+          kind: string | null
+          last_error: string | null
+          owner_id: string | null
+          pending_count: number | null
+          requested_by: string | null
+          status: string | null
+          target_id: string | null
+          target_kind: string | null
+          updated_at: string | null
+        }
+        Relationships: []
+      }
       llm_usage_report: {
         Row: {
           completion_tokens: number | null
@@ -3049,6 +3075,7 @@ export type Database = {
         Returns: Json
       }
       cli_verify_token: { Args: { raw_token: string }; Returns: string }
+      cover_cancel: { Args: { p_job_id: string }; Returns: boolean }
       cover_claim_next: {
         Args: {
           p_lease_seconds?: number
@@ -3060,6 +3087,7 @@ export type Database = {
           claim_expires_at: string
           claim_token: string | null
           created_at: string
+          household_id: string | null
           id: string
           last_error: string | null
           owner_id: string
@@ -3093,6 +3121,7 @@ export type Database = {
         Returns: number
       }
       cover_kick: { Args: never; Returns: undefined }
+      cover_retry: { Args: { p_job_id: string }; Returns: boolean }
       create_household: { Args: { p_name: string }; Returns: string }
       current_household_id: { Args: { p_user_id: string }; Returns: string }
       current_tos_version: { Args: never; Returns: number }
@@ -3110,6 +3139,7 @@ export type Database = {
           claim_expires_at: string
           claim_token: string | null
           created_at: string
+          household_id: string | null
           id: string
           last_error: string | null
           owner_id: string
@@ -3516,6 +3546,7 @@ export type Database = {
         Returns: boolean
       }
       remix_kick: { Args: { p_recipe_id?: string }; Returns: undefined }
+      remix_retry: { Args: { p_job_id: string }; Returns: boolean }
       remix_start: {
         Args: {
           p_input_recipe_json: Json
@@ -3603,6 +3634,7 @@ export type Database = {
         Returns: boolean
       }
       rewrite_kick: { Args: { p_recipe_id?: string }; Returns: undefined }
+      rewrite_retry: { Args: { p_job_id: string }; Returns: boolean }
       rewrite_start: {
         Args: {
           p_model: string

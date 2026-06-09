@@ -32,7 +32,7 @@ export function OcrSetupGuide() {
         </li>
         <li>
           <span className="font-medium">Paste it into{' '}
-            <Link to="/settings" className="underline">
+            <Link to="/settings/llm" className="underline">
               Settings
             </Link>
           </span>{' '}
@@ -46,7 +46,7 @@ export function OcrSetupGuide() {
       </ol>
       <div className="mt-3">
         <Link
-          to="/settings"
+          to="/settings/llm"
           className="inline-block rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900"
         >
           Go to Settings

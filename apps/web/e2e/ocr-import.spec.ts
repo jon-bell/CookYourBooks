@@ -116,14 +116,14 @@ test.describe('OCR import from photo', () => {
 
     await expect(page.getByText(/OCR not configured/)).toBeVisible();
     await page.getByRole('link', { name: /Open settings/ }).click();
-    await page.waitForURL(/\/settings$/);
+    await page.waitForURL(/\/settings\/llm$/);
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
   });
 
   test('Settings form persists default model + prompt server-side', async ({
     authedPage: page,
   }) => {
-    await page.goto('/settings');
+    await page.goto('/settings/llm');
     await page.getByLabel('Default model').fill('gemini-2.5-flash');
     await page.getByRole('button', { name: 'Save settings' }).click();
     await expect(page.getByText(/^Saved\.$/)).toBeVisible();

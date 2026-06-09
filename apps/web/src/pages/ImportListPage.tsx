@@ -125,7 +125,7 @@ export function ImportListPage() {
           className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-4 text-sm text-amber-900 dark:text-amber-200"
         >
           OCR not configured — items won't be processed.{' '}
-          <Link to="/settings" className="font-medium underline">
+          <Link to="/settings/llm" className="font-medium underline">
             Configure in Settings
           </Link>
           .
