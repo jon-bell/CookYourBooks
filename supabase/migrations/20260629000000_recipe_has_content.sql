@@ -92,6 +92,102 @@ create trigger instructions_has_content_upd after update on public.instructions
   referencing new table as new_rows old table as old_rows
   for each statement execute function public.recipes_refresh_has_content();
 
+-- save_recipes_graph inserts recipes via `insert ... select * from
+-- jsonb_populate_recordset(...)`, which sets fields ABSENT from the payload to
+-- NULL (not the column default). The client doesn't (and shouldn't) send
+-- has_content, so the insert would write NULL and trip the NOT NULL constraint.
+-- Redefine it to strip any client has_content and inject `false` on the insert
+-- payload; the trigger above then flips it to true when the ingredient/
+-- instruction inserts land. ON CONFLICT deliberately does NOT set has_content,
+-- so a re-save preserves the trigger-managed value. Otherwise byte-identical to
+-- 20260626000000.
+create or replace function public.save_recipes_graph(p_recipes jsonb)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_recipes jsonb;
+  v_ids uuid[];
+begin
+  if p_recipes is null or jsonb_typeof(p_recipes) <> 'array' then
+    raise exception 'save_recipes_graph: p_recipes must be a jsonb array';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_recipes) item
+    where jsonb_typeof(item -> 'recipe') <> 'object' or (item -> 'recipe' ->> 'id') is null
+  ) then
+    raise exception 'save_recipes_graph: every item needs a recipe object with an id';
+  end if;
+
+  select jsonb_agg(item order by ord)
+    into v_recipes
+  from (
+    select distinct on ((item -> 'recipe' ->> 'id')) item, ord
+    from jsonb_array_elements(p_recipes) with ordinality as t(item, ord)
+    order by (item -> 'recipe' ->> 'id'), ord desc
+  ) d;
+
+  if v_recipes is null then
+    return;
+  end if;
+
+  select array_agg((item -> 'recipe' ->> 'id')::uuid)
+    into v_ids
+  from jsonb_array_elements(v_recipes) item;
+
+  insert into public.recipes
+  select * from jsonb_populate_recordset(
+    null::public.recipes,
+    (select jsonb_agg(
+        ((item -> 'recipe') - 'created_at' - 'updated_at' - 'has_content')
+        || jsonb_build_object('created_at', now(), 'updated_at', now(), 'has_content', false))
+       from jsonb_array_elements(v_recipes) item))
+  on conflict (id) do update set
+    collection_id       = excluded.collection_id,
+    title               = excluded.title,
+    servings_amount     = excluded.servings_amount,
+    servings_description = excluded.servings_description,
+    sort_order          = excluded.sort_order,
+    notes               = excluded.notes,
+    parent_recipe_id    = excluded.parent_recipe_id,
+    description         = excluded.description,
+    time_estimate       = excluded.time_estimate,
+    equipment           = excluded.equipment,
+    book_title          = excluded.book_title,
+    page_numbers        = excluded.page_numbers,
+    source_image_text   = excluded.source_image_text,
+    servings_amount_max = excluded.servings_amount_max,
+    starred             = excluded.starred,
+    source_url          = excluded.source_url,
+    cover_image_path    = excluded.cover_image_path;
+
+  delete from public.ingredients where recipe_id = any (v_ids);
+  delete from public.instructions where recipe_id = any (v_ids);
+
+  insert into public.ingredients
+  select * from jsonb_populate_recordset(null::public.ingredients,
+    (select coalesce(jsonb_agg(ing), '[]'::jsonb)
+       from jsonb_array_elements(v_recipes) item,
+            jsonb_array_elements(coalesce(item -> 'ingredients', '[]'::jsonb)) ing));
+
+  insert into public.instructions
+  select * from jsonb_populate_recordset(null::public.instructions,
+    (select coalesce(jsonb_agg(s), '[]'::jsonb)
+       from jsonb_array_elements(v_recipes) item,
+            jsonb_array_elements(coalesce(item -> 'instructions', '[]'::jsonb)) s));
+
+  insert into public.instruction_ingredient_refs
+  select * from jsonb_populate_recordset(null::public.instruction_ingredient_refs,
+    (select coalesce(jsonb_agg(rf), '[]'::jsonb)
+       from jsonb_array_elements(v_recipes) item,
+            jsonb_array_elements(coalesce(item -> 'refs', '[]'::jsonb)) rf));
+end;
+$$;
+revoke all on function public.save_recipes_graph(jsonb) from public;
+grant execute on function public.save_recipes_graph(jsonb) to authenticated;
+
 -- One-time backfill of existing rows. Suppress the recipes_updated trigger so
 -- this does NOT bump updated_at — otherwise every device would re-pull every
 -- recipe (watermark churn / first-sync wedge risk). Existing devices instead

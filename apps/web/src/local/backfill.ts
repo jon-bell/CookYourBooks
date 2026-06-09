@@ -158,17 +158,20 @@ export async function startBackfills(opts: { shouldPause?: () => boolean } = {})
       const total = await def.total();
       let cursor = state?.cursor ?? '';
       let processed = state?.processed ?? 0;
-      progress.set(def.id, { id: def.id, status: 'running', processed, total });
-      notify();
-      logSync('info', `backfill ${def.id}: start`, { total, processed });
 
-      // Nothing to do (fresh/empty DB) — mark done without churning the UI.
+      // Nothing to do (fresh/empty DB) — mark done WITHOUT ever entering the
+      // running state, so the schema-upgrade overlay never flickers on a fresh
+      // install / e2e context.
       if (total === 0) {
         await writeState(def.id, 'done', cursor, processed);
         progress.set(def.id, { id: def.id, status: 'done', processed, total: 0 });
         notify();
         continue;
       }
+
+      progress.set(def.id, { id: def.id, status: 'running', processed, total });
+      notify();
+      logSync('info', `backfill ${def.id}: start`, { total, processed });
 
       for (;;) {
         while (shouldPause()) await delay(PAUSE_POLL_MS);
