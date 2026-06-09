@@ -383,8 +383,8 @@ export async function upsertRecipeRow(
          (id, collection_id, title, servings_amount, servings_description,
           servings_amount_max, sort_order, notes, parent_recipe_id,
           description, time_estimate, equipment, book_title, page_numbers,
-          source_image_text, source_url, starred, cover_image_path, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+          source_image_text, source_url, starred, cover_image_path, has_content, updated_at, deleted)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
        on conflict(id) do update set
          collection_id=excluded.collection_id,
          title=excluded.title,
@@ -403,6 +403,7 @@ export async function upsertRecipeRow(
          source_url=excluded.source_url,
          starred=excluded.starred,
          cover_image_path=excluded.cover_image_path,
+         has_content=excluded.has_content,
          updated_at=excluded.updated_at,
          deleted=0`,
       [
@@ -424,6 +425,9 @@ export async function upsertRecipeRow(
         recipeRowX.source_url ?? null,
         starredInt,
         recipeRowX.cover_image_path ?? null,
+        // Optimistic: a local save knows its own children, so reflect filled
+        // state immediately instead of waiting for the server round-trip + pull.
+        ingredients.length > 0 || instructions.length > 0 ? 1 : 0,
         incomingTs,
       ],
     );
@@ -856,6 +860,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
     'source_url',
     'starred',
     'cover_image_path',
+    'has_content',
     'updated_at',
     'deleted',
   ];
@@ -902,6 +907,7 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         rx.source_url ?? null,
         starredRaw === true || starredRaw === 1 ? 1 : 0,
         rx.cover_image_path ?? null,
+        r.has_content === true || (r.has_content as unknown) === 1 ? 1 : 0,
         tsToMs(r.updated_at),
         0,
       );
@@ -1241,28 +1247,27 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       recipe_count: number;
       filled_count: number;
     }>(
+      // recipe_count + filled_count in ONE indexed pass over recipes via the
+      // materialized has_content flag — replaces the old per-recipe correlated
+      // EXISTS subqueries that scanned ingredients/instructions for every row
+      // and held the single cr-sqlite connection for minutes on a household-
+      // sized library (Sentry CYB-CAPACITOR-3). Rides recipes_collection_active_idx.
       `select c.id, c.title, c.cover_image_path, c.is_public, c.source_type,
               c.author, c.site_name,
               coalesce(rc.cnt, 0) as recipe_count,
-              coalesce(fc.cnt, 0) as filled_count
+              coalesce(rc.filled, 0) as filled_count
        from recipe_collections c
        left join (
-         select collection_id, count(*) as cnt
+         select collection_id,
+                count(*) as cnt,
+                sum(has_content) as filled
            from recipes
            where deleted = 0
            group by collection_id
        ) rc on rc.collection_id = c.id
-       left join (
-         select r.collection_id, count(*) as cnt
-           from recipes r
-           where r.deleted = 0
-             and (exists (select 1 from ingredients where recipe_id = r.id)
-                  or exists (select 1 from instructions where recipe_id = r.id))
-           group by r.collection_id
-       ) fc on fc.collection_id = c.id
        where (c.owner_id = ? or c.shared_with_household_id is not null)
          and c.deleted = 0
-       order by (filled_count > 0) desc, coalesce(c.updated_at, 0) desc`,
+       order by (coalesce(rc.filled, 0) > 0) desc, coalesce(c.updated_at, 0) desc`,
       [this.ownerId],
     )) as {
       id: string;
@@ -2028,11 +2033,7 @@ async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> 
   const recipeRows = (await db.execO<RecipeRow>(
     `select * from recipes
        where collection_id = ? and deleted = 0
-       order by
-         case when exists (select 1 from ingredients where recipe_id = recipes.id)
-                or exists (select 1 from instructions where recipe_id = recipes.id)
-              then 0 else 1 end asc,
-         sort_order asc`,
+       order by has_content desc, sort_order asc`,
     [row.id],
   )) as RecipeRow[];
   const recipes = await hydrateRecipeRowsForCollection(row.id, recipeRows);

@@ -3842,11 +3842,19 @@ async function loadRecipeForPush(
   ]);
 
   // Drop client-only / trigger-owned columns; the RPC injects created_at /
-  // updated_at and the server has no `deleted` column.
-  const { deleted: _d, created_at: _rc, updated_at: _ru, ...recipeRow } = recipe as RecipeRow & {
+  // updated_at, the server has no `deleted` column, and has_content is owned by
+  // the server trigger on ingredients/instructions (20260629000000).
+  const {
+    deleted: _d,
+    created_at: _rc,
+    updated_at: _ru,
+    has_content: _hc,
+    ...recipeRow
+  } = recipe as RecipeRow & {
     deleted: number;
     created_at?: unknown;
     updated_at?: unknown;
+    has_content?: unknown;
   };
   const starredRaw = (recipeRow as { starred?: unknown }).starred;
   const recipePayload: Record<string, unknown> = {

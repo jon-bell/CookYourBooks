@@ -10,6 +10,8 @@ import {
 import { App } from './App.js';
 import { AuthProvider } from './auth/AuthProvider.js';
 import { SyncProvider } from './local/SyncProvider.js';
+import { SchemaUpgradeOverlay } from './components/SchemaUpgradeOverlay.js';
+import { FirstSyncOverlay } from './components/FirstSyncOverlay.js';
 import { ThemeProvider } from './theme/ThemeProvider.js';
 import { initSentry, reportError, Sentry } from './sentry.js';
 import './styles.css';
@@ -107,6 +109,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               <BrowserRouter>
                 <App />
               </BrowserRouter>
+              {/* Blocking boot overlays — render above the app, self-gate on
+                  whether there's slow migration / first-sync work to show. */}
+              <SchemaUpgradeOverlay />
+              <FirstSyncOverlay />
             </SyncProvider>
           </AuthProvider>
         </ThemeProvider>

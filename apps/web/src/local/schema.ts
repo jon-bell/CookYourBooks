@@ -57,12 +57,19 @@ export const SCHEMA_STATEMENTS: string[] = [
     source_url text,           -- origin URL for video-imported recipes
     starred integer not null default 0,
     cover_image_path text,     -- storage path in the public covers bucket
+    has_content integer not null default 0, -- 1 if recipe has >=1 ingredient/instruction; server-owned (see 20260629000000)
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
 
   `create index if not exists recipes_collection_idx
     on recipes(collection_id)`,
+
+  // Supports the library-summary aggregate (recipe_count / filled_count) and
+  // hydrateCollection ordering — both filter recipes.deleted = 0 and group by
+  // collection_id. Partial so it stays small.
+  `create index if not exists recipes_collection_active_idx
+    on recipes(collection_id) where deleted = 0`,
 
   `create index if not exists recipes_parent_idx
     on recipes(parent_recipe_id)`,
@@ -427,6 +434,17 @@ export const SCHEMA_STATEMENTS: string[] = [
     enqueued_at integer not null,
     attempts integer not null default 0,
     last_error text
+  )`,
+
+  // Backfill/migration runner progress. Local-only, not CRR — each row tracks
+  // one named one-time backfill (status + resumable cursor) so heavy local-DB
+  // population runs off the critical path in chunks and survives reloads.
+  `create table if not exists backfill_state (
+    id text primary key not null,
+    status text not null default 'pending', -- pending | running | done
+    cursor text not null default '',
+    processed integer not null default 0,
+    updated_at integer not null default 0
   )`,
 ];
 
@@ -802,4 +820,12 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   // is_toc as a derived mirror for one release; locally `kind` is the source of
   // truth the worker reads. Additive, NOT NULL with a default per cr-sqlite.
   `alter table import_items add column kind text not null default 'RECIPE'`,
+  // Materialized "has real content" flag (2026-06-29). Server-owned (a trigger
+  // on ingredients/instructions maintains the Postgres column, rides down on
+  // pull); existing local rows are populated once by the backfill runner.
+  // NOT NULL + default per cr-sqlite. The index references it / collection_id —
+  // created AFTER the ALTER so an existing recipes table doesn't throw.
+  `alter table recipes add column has_content integer not null default 0`,
+  `create index if not exists recipes_collection_active_idx
+     on recipes(collection_id) where deleted = 0`,
 ];

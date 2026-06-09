@@ -2278,6 +2278,7 @@ export type Database = {
           created_at: string
           description: string | null
           equipment: Json | null
+          has_content: boolean
           household_id: string | null
           id: string
           notes: string | null
@@ -2302,6 +2303,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           equipment?: Json | null
+          has_content?: boolean
           household_id?: string | null
           id?: string
           notes?: string | null
@@ -2326,6 +2328,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           equipment?: Json | null
+          has_content?: boolean
           household_id?: string | null
           id?: string
           notes?: string | null

@@ -169,6 +169,26 @@ export function snapshotDbOps(): DbLockOp[] {
   return [...liveOps.values()].sort((a, b) => a.id - b.id);
 }
 
+// Lightweight per-window DB-op aggregator for sync telemetry. The sync cycle
+// resets it at the start and reads it at the end, so the numbers capture lock
+// contention during that cycle (including UI queries competing on the single
+// connection). Single-consumer by design.
+export interface DbStats {
+  ops: number;
+  totalWaitMs: number;
+  maxRunMs: number;
+  slowestLabel: string;
+}
+let dbStats: DbStats = { ops: 0, totalWaitMs: 0, maxRunMs: 0, slowestLabel: '' };
+
+export function beginDbStatsWindow(): void {
+  dbStats = { ops: 0, totalWaitMs: 0, maxRunMs: 0, slowestLabel: '' };
+}
+
+export function readDbStats(): DbStats {
+  return { ...dbStats };
+}
+
 async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -204,14 +224,19 @@ async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
     }
   }, SLOW_LOCK_WARN_MS);
   let runTimer: ReturnType<typeof setTimeout> | undefined;
+  let runStartedAt: number | undefined;
   try {
     // `.catch(() => {})` so a failure in the previous op doesn't abort
     // *this* op before we reach release() — we only care about taking
     // our turn, not whether the predecessor succeeded.
     await prev.catch(() => {});
     clearTimeout(waitTimer);
+    const waitStartedAt = op.startedAt;
     op.state = 'running';
     op.startedAt = Date.now();
+    dbStats.ops += 1;
+    dbStats.totalWaitMs += op.startedAt - waitStartedAt;
+    runStartedAt = op.startedAt;
     runTimer = setTimeout(() => {
       if (op.state === 'running') {
         logSync('warn', `db op slow: ${label} still running after ${Date.now() - op.startedAt}ms`, {
@@ -228,6 +253,13 @@ async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
   } finally {
     clearTimeout(waitTimer);
     if (runTimer) clearTimeout(runTimer);
+    if (runStartedAt !== undefined) {
+      const runMs = Date.now() - runStartedAt;
+      if (runMs > dbStats.maxRunMs) {
+        dbStats.maxRunMs = runMs;
+        dbStats.slowestLabel = label;
+      }
+    }
     liveOps.delete(op.id);
     release();
   }
