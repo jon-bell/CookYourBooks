@@ -24,6 +24,9 @@ export async function createRecipeViaUi(
   await page.getByRole('link', { name: 'New collection' }).click();
   await page.getByLabel('Title').fill(opts.collectionTitle);
   await page.getByRole('button', { name: 'Create' }).click();
+  // Same as the recipe save below: creating navigates to the collection page,
+  // whose heading is gated on the create write syncing. Settle first, then assert.
+  await waitForSynced(page);
   await expect(page.getByRole('heading', { name: opts.collectionTitle })).toBeVisible();
 
   await page.getByRole('link', { name: 'Add recipe' }).click();
@@ -59,6 +62,11 @@ export async function createRecipeViaUi(
   }
 
   await page.getByRole('button', { name: 'Save recipe' }).click();
-  await expect(page.getByRole('heading', { name: opts.recipeTitle })).toBeVisible();
+  // Saving queues a sync write and navigates to the recipe detail page, but the
+  // detail heading only renders once that write has synced and the recipe is
+  // readable locally — until then the page is a "Syncing…" placeholder. Asserting
+  // the heading at the default 5s timeout raced the sync under load. Wait for the
+  // SyncProvider to settle first (the signal the heading depends on), then assert.
   await waitForSynced(page);
+  await expect(page.getByRole('heading', { name: opts.recipeTitle })).toBeVisible();
 }

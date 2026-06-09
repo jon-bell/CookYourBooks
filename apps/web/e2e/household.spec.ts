@@ -196,6 +196,11 @@ test.describe('Household sharing', () => {
       // Member view → click "Leave household"
       page.once('dialog', (d) => d.accept());
       await page.getByRole('button', { name: 'Leave household' }).click();
+      // Leaving invalidates + re-pulls the household/cooldown queries and runs a
+      // sync pass; the no-household view + cooldown banner render off that
+      // refreshed state. Wait for the sync to settle before asserting so the
+      // banner check no longer races the leave round-trip at the default 5s.
+      await waitForSynced(page);
       // After leaving, the page shows the no-household view.
       await expect(
         page.getByRole('heading', { name: 'Household sharing' }),
@@ -333,10 +338,15 @@ test.describe('Household sharing', () => {
       // one-time rights attestation is captured in the audit trail.
       page.once('dialog', (d) => d.accept());
       await page.getByTestId('library-sharing-disable').click();
+      // The disable/enable toggle reflects household state re-pulled after the
+      // mutation + sync pass; wait for sync so the button-swap assertions don't
+      // race that round-trip at the default 5s timeout.
+      await waitForSynced(page);
       await expect(page.getByTestId('library-sharing-enable')).toBeVisible();
       await page.getByTestId('library-sharing-enable').click();
       await page.getByTestId('library-attestation-checkbox').check();
       await page.getByTestId('library-sharing-confirm').click();
+      await waitForSynced(page);
       await expect(page.getByTestId('library-sharing-disable')).toBeVisible();
 
       // Service-role view: confirm the audit-log entries exist.
