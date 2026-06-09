@@ -44,6 +44,9 @@ import { SyncBadge } from './components/SyncBadge.js';
 import { ThemePicker } from './theme/ThemePicker.js';
 import { MobileNav } from './nav/MobileNav.js';
 import { PRIMARY_NAV } from './nav/navItems.js';
+import { useScrollRestoration } from './nav/useScrollRestoration.js';
+import { useHardwareBack } from './nav/useHardwareBack.js';
+import { ScrollTopButton } from './nav/ScrollTopButton.js';
 import { useAuth } from './auth/AuthProvider.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
@@ -55,6 +58,9 @@ import { LoadingState } from './components/LoadingState.js';
 export function App() {
   const { user } = useAuth();
   const { showHelp, closeHelp } = useKeyboardShortcuts(APP_SHORTCUTS);
+  // Back returns to where you were; Android hardware back navigates the SPA.
+  useScrollRestoration();
+  useHardwareBack();
   return (
     <div className="min-h-full flex flex-col">
       <ShareIntentListener />
@@ -417,6 +423,7 @@ export function App() {
         </Routes>
       </main>
       <HelpDialog open={showHelp} onClose={closeHelp} shortcuts={APP_SHORTCUTS} />
+      <ScrollTopButton />
     </div>
   );
 }
