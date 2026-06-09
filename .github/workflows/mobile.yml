@@ -23,7 +23,7 @@ on:
         required: true
         default: sync
         type: choice
-        options: [sync, ios, ios-release, android]
+        options: [sync, ios, ios-release, android, android-release]
 
 concurrency:
   group: mobile-${{ github.ref }}
@@ -268,12 +268,50 @@ jobs:
         run: rm -f "$RUNNER_TEMP/asc/AuthKey_${CYB_ASC_KEY_ID}.p8"
 
   android:
-    name: Build Android
-    if: github.event_name == 'workflow_dispatch' && inputs.platform == 'android'
+    name: Build Android (signed AAB → Play internal on push to main)
+    # Mirrors the ios job's cadence, on Linux — no Mac/KVM/emulator is needed to
+    # build the AAB and upload it via the Play API:
+    #   - PRs touching mobile code          → assembleDebug (unsigned sanity)
+    #   - push to main                      → fastlane beta (Play internal track),
+    #                                          or assembleDebug while the Play
+    #                                          secrets aren't configured yet (so
+    #                                          main stays green during setup)
+    #   - workflow_dispatch=android          → assembleDebug (same as PR)
+    #   - workflow_dispatch=android-release  → fastlane release (promote to prod)
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'android' || inputs.platform == 'android-release'))
     runs-on: ripley-cloud-linux-x64
     timeout-minutes: 45
+    env:
+      # Sentry: same org/project as iOS so the bundled JS source maps (and any
+      # ProGuard mapping) land in cyb-capacitor — the project the Capacitor DSN
+      # reports to. @sentry/vite-plugin reads SENTRY_PROJECT during the web
+      # build that feeds cap sync.
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: cyb
+      SENTRY_PROJECT: cyb-capacitor
+      SENTRY_PROJECT_MOBILE: cyb-capacitor
+      VITE_SENTRY_RELEASE: ${{ github.sha }}
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      # Upload-key passwords (the keystore + Play JSON are decoded from base64
+      # secrets into files at job start). The release signingConfig in
+      # app/build.gradle reads these from the environment.
+      CYB_UPLOAD_STORE_PASSWORD: ${{ secrets.CYB_UPLOAD_STORE_PASSWORD }}
+      CYB_UPLOAD_KEY_ALIAS: ${{ secrets.CYB_UPLOAD_KEY_ALIAS }}
+      CYB_UPLOAD_KEY_PASSWORD: ${{ secrets.CYB_UPLOAD_KEY_PASSWORD }}
+      # Dormant-until-configured gate: until the Play service-account secret is
+      # set, push-to-main does a build-only sanity check instead of fastlane
+      # beta, so main stays green during the one-time Play Console setup.
+      HAS_PLAY_SECRETS: ${{ secrets.CYB_PLAY_JSON_KEY_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # fastlane derives versionCode from `git rev-list --count HEAD`; a
+          # shallow clone returns 1 and Play rejects the duplicate versionCode.
+          fetch-depth: 0
 
       # pnpm version resolved from root package.json's `packageManager`.
       - uses: pnpm/action-setup@v4
@@ -296,6 +334,11 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Set up Android SDK
+        # Installs cmdline-tools + accepts licenses; the gradle wrapper pulls
+        # platforms;android-34 / build-tools;34.0.0 on first run.
+        uses: android-actions/setup-android@v3
+
       - name: Cache Gradle caches
         uses: actions/cache@v4
         with:
@@ -312,20 +355,75 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      - name: Write .env.local with Supabase config
+        # Mobile builds bake the hosted Supabase creds into the bundle.
+        run: |
+          cat > apps/web/.env.local <<EOF
+          VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+          VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+          EOF
+
       - name: Build web + cap sync
         run: pnpm --filter @cookyourbooks/mobile sync
 
       - name: Scaffold Android project if missing
+        # Defensive: the android/ shell is committed, so this is normally a
+        # no-op. Kept so a future `cap` upgrade that regenerates it still works.
         run: |
           if [ ! -d apps/mobile/android ]; then
             pnpm --filter @cookyourbooks/mobile exec cap add android
           fi
 
       - name: Regenerate icons + splashes
+        # The repo commits only the base splash (per-density variants are
+        # gitignored — see apps/mobile/.gitignore); regenerate the full set into
+        # the shipped artifact. Non-fatal if asset sources are missing.
         run: pnpm --filter @cookyourbooks/mobile assets || true
 
-      - name: Gradle debug build
+      # ── PR / dispatch=android: unsigned debug sanity build ──────────────────
+      - name: PR / dispatch=android — assembleDebug (sanity)
+        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.platform == 'android') }}
         working-directory: apps/mobile/android
-        # Debug build only — signing keys for release are not on CI.
-        # `assembleDebug` verifies the native project compiles end-to-end.
         run: ./gradlew assembleDebug --no-daemon
+
+      # ── push to main, Play not configured yet: build-only so main stays green ─
+      - name: Push to main — assembleDebug (Play secrets not configured)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_PLAY_SECRETS != 'true' }}
+        working-directory: apps/mobile/android
+        run: |
+          echo "::notice::Play secrets not set — building assembleDebug only. Add CYB_PLAY_JSON_KEY_BASE64 + the upload-keystore secrets (see .github/RUNNERS.md) to ship to the internal track on push to main."
+          ./gradlew assembleDebug --no-daemon
+
+      # ── Release paths (push to main OR dispatch=android-release), secrets set ─
+      - name: Set up Ruby + bundler (fastlane)
+        if: ${{ env.HAS_PLAY_SECRETS == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.platform == 'android-release')) }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          # Resolves + caches the gems from apps/mobile/android/Gemfile.lock
+          # (fastlane + fastlane-plugin-sentry).
+          bundler-cache: true
+          working-directory: apps/mobile/android
+
+      - name: Decode upload keystore + Play service-account JSON
+        if: ${{ env.HAS_PLAY_SECRETS == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.platform == 'android-release')) }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/android-signing"
+          echo "${{ secrets.CYB_UPLOAD_KEYSTORE_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/android-signing/upload.jks"
+          echo "${{ secrets.CYB_PLAY_JSON_KEY_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/android-signing/play.json"
+          echo "CYB_UPLOAD_STORE_FILE=$RUNNER_TEMP/android-signing/upload.jks" >> "$GITHUB_ENV"
+          echo "CYB_PLAY_JSON_KEY=$RUNNER_TEMP/android-signing/play.json" >> "$GITHUB_ENV"
+
+      - name: Push to main — fastlane beta (Play internal)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_PLAY_SECRETS == 'true' }}
+        working-directory: apps/mobile/android
+        run: bundle exec fastlane beta
+
+      - name: Dispatch=android-release — fastlane release (promote to production)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.platform == 'android-release' && env.HAS_PLAY_SECRETS == 'true' }}
+        working-directory: apps/mobile/android
+        run: bundle exec fastlane release
+
+      - name: Clean up decoded signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/android-signing"

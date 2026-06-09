@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Deep links: cookyourbooks:// — wakes the app for the share-target
+                 import flow (apps/web/src/import/shareIntent.ts) and the native
+                 OAuth return (apps/web/src/auth/authDeepLink.ts). The
+                 @capacitor/app plugin delivers the URL to JS via appUrlOpen. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cookyourbooks" />
+            </intent-filter>
+
+            <!-- Share target: receive a shared link (YouTube/TikTok/Instagram or
+                 any URL) as text/plain from another app's share sheet. The
+                 send-intent plugin reads it (apps/web/src/import/shareIntent.ts).
+                 The plugin does NOT contribute this filter on `cap sync`, so it
+                 must be declared here. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Camera + photo library for the OCR import flow (apps/web/src/import/
+         camera.ts → @capacitor/camera). The Camera plugin does not declare
+         these itself; the app must. Mirrors the iOS NSCamera / NSPhotoLibrary
+         usage strings. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Declaring CAMERA otherwise makes Play treat a physical camera as
+         required, excluding camera-less devices. The OCR flow also accepts
+         gallery images, so mark the camera optional. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+</manifest>

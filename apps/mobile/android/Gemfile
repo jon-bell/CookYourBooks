@@ -1,0 +1,12 @@
+source 'https://rubygems.org'
+
+# Pin fastlane to the brew-installed version so `bundle exec` doesn't
+# pull a different release each time bundle resolves. Updating the
+# brew version means also bumping this line.
+gem 'fastlane', '2.234.0'
+
+# Auto-import every plugin declared in fastlane/Pluginfile (currently
+# fastlane-plugin-sentry, for the sentry_debug_files_upload action
+# that the `beta` lane calls post-gym).
+plugins_path = File.join(File.dirname(__FILE__), 'fastlane', 'Pluginfile')
+eval_gemfile(plugins_path) if File.exist?(plugins_path)

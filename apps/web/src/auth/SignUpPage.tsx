@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase.js';
 import { AppleLogo } from './AppleLogo.js';
 import { isCapacitorIOS, signInWithAppleNative } from './appleSignIn.js';
+import { isCapacitorNative, signInWithOAuthNative } from './oauthNative.js';
 
 export function SignUpPage() {
   const navigate = useNavigate();
@@ -41,6 +42,18 @@ export function SignUpPage() {
       try {
         const result = await signInWithAppleNative();
         if (!result.cancelled) navigate('/', { replace: true });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+    // On any native build, OAuth must run in the system browser — Google
+    // rejects the embedded WebView (`disallowed_useragent`). The session is
+    // completed when the cookyourbooks://auth/callback deep link returns
+    // (auth/authDeepLink.ts), which then navigates home.
+    if (isCapacitorNative()) {
+      try {
+        await signInWithOAuthNative(provider);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
