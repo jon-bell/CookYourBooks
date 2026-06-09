@@ -2041,6 +2041,22 @@ async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> 
 }
 
 /**
+ * True when this device has no local library content at all. Used by the
+ * first-sync overlay to tell a genuine first-ever sync (show "setting up…")
+ * from a returning user's per-session initial cycle (don't). Reads the local
+ * DB directly so it works during the pre-hydrated window, unlike the
+ * hydrated-gated library-summary query.
+ */
+export async function isLocalLibraryEmpty(): Promise<boolean> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ c: number }>(
+    `select (select count(*) from recipe_collections where deleted = 0)
+          + (select count(*) from recipes where deleted = 0) as c`,
+  )) as { c: number }[];
+  return (rows[0]?.c ?? 0) === 0;
+}
+
+/**
  * Hydrate every recipe in a collection with a *fixed* number of child
  * queries (three) instead of three-per-recipe.
  *

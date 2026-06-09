@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
-import { useLibrarySummaries } from '../data/queries.js';
+import { isLocalLibraryEmpty } from '../local/repositories.js';
 import { getSyncLog, subscribeSyncLog } from '../local/syncLog.js';
 import { LoadingOverlay } from './LoadingOverlay.js';
 
@@ -30,7 +31,14 @@ function phaseLabel(): string {
 export function FirstSyncOverlay() {
   const { user } = useAuth();
   const { status, localReady, lastSyncedAt, syncingSince, tabRole, lastError, syncNow } = useSync();
-  const { data: summaries } = useLibrarySummaries();
+  // Real local-emptiness probe — runs as soon as the DB is open (not gated on
+  // `hydrated`), so a returning user with existing data is correctly excluded
+  // even though lastSyncedAt is null at the start of every session.
+  const { data: emptyLibrary } = useQuery({
+    queryKey: ['local-library-empty', user?.id],
+    enabled: localReady && lastSyncedAt == null,
+    queryFn: isLocalLibraryEmpty,
+  });
   const [, force] = useState(0);
 
   // Re-render on each sync-log line (live phase) and once a second (elapsed).
@@ -43,10 +51,9 @@ export function FirstSyncOverlay() {
     };
   }, []);
 
-  const emptyLibrary = (summaries?.length ?? 0) === 0;
   const neverSynced = lastSyncedAt == null;
   const eligible =
-    !!user && tabRole === 'leader' && localReady && neverSynced && emptyLibrary;
+    !!user && tabRole === 'leader' && localReady && neverSynced && emptyLibrary === true;
 
   if (!eligible) return null;
   if (status !== 'syncing' && status !== 'error') return null;
