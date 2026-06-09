@@ -43,6 +43,7 @@ import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
 import { useEffect, useRef, useState } from 'react';
 import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
+import { initAuthDeepLink } from './auth/authDeepLink.js';
 
 export function App() {
   const { user } = useAuth();
@@ -50,6 +51,7 @@ export function App() {
   return (
     <div className="min-h-full flex flex-col">
       <ShareIntentListener />
+      <AuthDeepLinkListener />
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-[max(0.5rem,env(safe-area-inset-top))] focus:z-50 focus:rounded focus:bg-stone-900 focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
@@ -469,6 +471,17 @@ function ShareIntentListener() {
       {toast.text}
     </div>
   );
+}
+
+// Completes a native OAuth sign-in: when the system browser redirects back via
+// the cookyourbooks://auth/callback deep link, exchange the code for a session
+// (auth/authDeepLink.ts) and land on the home route. Inert on the web.
+function AuthDeepLinkListener() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    return initAuthDeepLink(() => navigate('/', { replace: true }));
+  }, [navigate]);
+  return null;
 }
 
 // Branches on auth state so `/` is a marketing page for visitors and a

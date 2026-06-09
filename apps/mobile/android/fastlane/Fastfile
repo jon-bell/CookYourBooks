@@ -1,0 +1,153 @@
+default_platform(:android)
+
+# apps/mobile/android/fastlane -> up to repo root (4) and the Gradle project
+# dir (apps/mobile/android, one up from fastlane/).
+REPO_ROOT  = File.expand_path('../../../..', __dir__)
+GRADLE_DIR = File.expand_path('..', __dir__)
+
+# Path to the Play service-account JSON. CI decodes the base64 secret into a
+# file and points CYB_PLAY_JSON_KEY at it; locally set CYB_PLAY_JSON_KEY (or
+# drop the key at fastlane/play-service-account.json).
+def play_json_key
+  ENV["CYB_PLAY_JSON_KEY"] || File.join(__dir__, "play-service-account.json")
+end
+
+# Wrap a Google Play Developer API call in retry-on-transient logic — the
+# Android analog of the iOS Fastfile's with_asc_retry. `supply` talks to the
+# androidpublisher API, which intermittently 5xx's / times out. Transient
+# errors retry after 60s; a "version code already used" response is treated as
+# success when swallow_already_uploaded is set (a prior attempt landed the AAB
+# before the response flaked); anything else (auth / permission / config)
+# re-raises immediately so real failures don't hide under retries.
+def with_play_retry(label, max_attempts: 4, swallow_already_uploaded: false)
+  attempts = 0
+  begin
+    attempts += 1
+    yield
+  rescue => e
+    msg = e.message.to_s
+    if swallow_already_uploaded &&
+       (msg.include?("already been used") || msg.include?("apkUpgradeVersionConflict"))
+      UI.important("#{label}: artifact already present on Play (#{msg.lines.first&.strip}) — treating as success")
+      return
+    end
+    transient = msg.include?("500") || msg.include?("502") || msg.include?("503") ||
+                msg.include?("Service Unavailable") ||
+                msg.include?("backendError") ||
+                msg.include?("internalError") ||
+                msg.include?("ECONNRESET") ||
+                msg.include?("Read timed out") ||
+                msg.include?("execution expired") ||
+                msg.include?("The service is currently unavailable")
+    if transient && attempts < max_attempts
+      UI.important("#{label}: attempt #{attempts} hit transient Play API failure (#{msg.lines.first&.strip}); retrying in 60s")
+      sleep 60
+      retry
+    end
+    raise
+  end
+end
+
+# Upload the R8/ProGuard mapping to self-hosted Sentry so native Android crashes
+# symbolicate. No-op when SENTRY_AUTH_TOKEN is unset (dev / unconfigured
+# machines don't fail) and when there's no mapping.txt — `minifyEnabled` is
+# false by default (see app/build.gradle), so there usually isn't one. The
+# JS-side source maps (the part that matters for a WebView app) upload via
+# @sentry/vite-plugin during the web build, not here. Mirror of the iOS
+# upload_dsyms_to_sentry lane.
+private_lane :upload_mapping_to_sentry do
+  unless ENV["SENTRY_AUTH_TOKEN"]
+    UI.important "SENTRY_AUTH_TOKEN not set — skipping Sentry mapping upload."
+    next
+  end
+  mapping = File.join(GRADLE_DIR, "app/build/outputs/mapping/release/mapping.txt")
+  unless File.exist?(mapping)
+    UI.important "No ProGuard mapping at #{mapping} (minifyEnabled false) — skipping Sentry mapping upload."
+    next
+  end
+  sentry_upload_proguard(
+    url: ENV["SENTRY_URL"] || "https://sentry-cyb.work.ripley.cloud",
+    auth_token: ENV["SENTRY_AUTH_TOKEN"],
+    org_slug: ENV["SENTRY_ORG"] || "cyb",
+    project_slug: ENV["SENTRY_PROJECT_MOBILE"] || "cyb-capacitor",
+    mapping_path: mapping,
+  )
+end
+
+platform :android do
+  desc "Build a signed Release AAB and upload it to the Play **internal** track. " \
+       "The TestFlight analog (no review, ships in minutes). Requires the upload " \
+       "keystore (CYB_UPLOAD_* env) + the Play service-account JSON."
+  lane :beta do
+    # versionCode = commit count on HEAD. Deterministic, monotonic, no network —
+    # exactly the iOS bump_build approach. Play rejects an AAB whose versionCode
+    # is <= one already uploaded; linear main history keeps this increasing.
+    count = `git -C "#{REPO_ROOT}" rev-list --count HEAD`.strip.to_i
+    UI.user_error!("git rev-list returned 0 — can't determine versionCode") if count.zero?
+    UI.message("beta: versionCode = #{count} (commits on HEAD)")
+
+    # The release signingConfig in app/build.gradle reads the upload-key coords
+    # from the CYB_UPLOAD_* env vars, so nothing secret is passed on the command
+    # line. print_command: false keeps even the -P props out of the log.
+    gradle(
+      project_dir: GRADLE_DIR,
+      task: "bundle",
+      build_type: "Release",
+      print_command: false,
+      properties: {
+        "versionCode" => count,
+      },
+    )
+
+    upload_mapping_to_sentry
+
+    aab = lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH] ||
+          File.join(GRADLE_DIR, "app/build/outputs/bundle/release/app-release.aab")
+
+    with_play_retry("supply (internal)", swallow_already_uploaded: true) do
+      upload_to_play_store(
+        package_name: "app.cookyourbooks",
+        json_key: play_json_key,
+        track: "internal",
+        aab: aab,
+        release_status: "completed",
+        # Ship the binary only — store listing / screenshots / changelogs are
+        # managed in the Play Console for now (mirror of the iOS skip_* flags).
+        skip_upload_apk: true,
+        skip_upload_metadata: true,
+        skip_upload_images: true,
+        skip_upload_screenshots: true,
+        skip_upload_changelogs: true,
+      )
+    end
+  end
+
+  desc "Promote the most recent **internal** build to **production** with a " \
+       "staged rollout. Analog of the iOS `release` lane (build on beta, hold " \
+       "the rollout). Manual workflow_dispatch only — never on push."
+  lane :release do
+    with_play_retry("supply (promote internal -> production)") do
+      upload_to_play_store(
+        package_name: "app.cookyourbooks",
+        json_key: play_json_key,
+        track: "internal",
+        track_promote_to: "production",
+        # Staged rollout — ramp manually in the Console (the closest Play analog
+        # to the iOS deliver(automatic_release: false) hold). PLAY_ROLLOUT=1 for
+        # a full release.
+        rollout: ENV["PLAY_ROLLOUT"] || "0.2",
+        skip_upload_apk: true,
+        skip_upload_aab: true,
+        skip_upload_metadata: true,
+        skip_upload_images: true,
+        skip_upload_screenshots: true,
+        skip_upload_changelogs: true,
+      )
+    end
+  end
+
+  desc "Re-upload the R8/ProGuard mapping to Sentry without rebuilding."
+  lane :upload_mapping do
+    upload_mapping_to_sentry
+  end
+end

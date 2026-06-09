@@ -1,0 +1,4 @@
+# fastlane-plugin-sentry uploads the R8/ProGuard mapping to self-hosted Sentry.
+# Same pin as the iOS lane (apps/mobile/ios/fastlane/Pluginfile). Vendored via
+# bundler against the committed Gemfile.lock.
+gem 'fastlane-plugin-sentry', '~> 1.27'

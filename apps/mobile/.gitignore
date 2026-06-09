@@ -11,6 +11,8 @@
 # gem payload they install isn't — `bundle install` materializes it).
 ios/vendor/
 ios/.bundle/
+android/vendor/
+android/.bundle/
 
 # Fastlane local-only state
 ios/fastlane/.env
@@ -24,5 +26,34 @@ ios/fastlane/test_output
 ios/fastlane/README.md
 ios/build/
 
+# Android fastlane local-only state (mirror of the ios/ rules above).
+android/fastlane/.env
+android/fastlane/.env.*
+!android/fastlane/.env.example
+android/fastlane/report.xml
+android/fastlane/README.md
+
+# Android build artifacts not covered by the platform-level android/.gitignore.
+android/.gradle/
+android/app/build/
+android/build/
+android/captures/
+# Machine-specific SDK pointer — never commit.
+android/local.properties
+
 # App Store Connect API key — never commit the .p8 file, even by accident.
 *.p8
+
+# Android signing material — never commit the upload keystore or the Play
+# service-account JSON, even by accident.
+*.jks
+*.keystore
+android/fastlane/play-service-account.json
+google-services.json
+
+# capacitor-assets regenerates per-density/orientation splash variants on every
+# `pnpm assets` run (~22 MB). The launch theme only needs the base
+# res/drawable/splash.png (+ drawable-night for dark mode), which we commit; the
+# system scales it. Keep the bulky density/orientation variants out of git.
+android/app/src/main/res/drawable-land-*/
+android/app/src/main/res/drawable-port-*/

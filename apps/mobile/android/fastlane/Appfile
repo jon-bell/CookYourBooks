@@ -1,0 +1,7 @@
+package_name("app.cookyourbooks")
+
+# Play service-account JSON used by `supply` (upload_to_play_store). CI decodes
+# the base64 secret into a file and points CYB_PLAY_JSON_KEY at it; locally set
+# CYB_PLAY_JSON_KEY or drop the key at fastlane/play-service-account.json
+# (both are gitignored — never commit the JSON). See apps/mobile/README.md.
+json_key_file(ENV["CYB_PLAY_JSON_KEY"] || "fastlane/play-service-account.json")

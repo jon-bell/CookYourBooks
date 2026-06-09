@@ -23,9 +23,12 @@ single classic self-hosted runner and uses the traditional label list.
 - Port range 54420–54429 bound to `127.0.0.1` only; no external exposure
   needed. Multiple runners on the same host would collide here; keep one
   runner per host or shift the port range per runner.
-- For the Android job: JDK 17 (via `actions/setup-java`) and the Android
-  SDK command-line tools. `./gradlew` in the generated project will
-  pull what else it needs on first run.
+- For the Android job: JDK 17 (`actions/setup-java`) + the Android SDK
+  (`android-actions/setup-android`); `./gradlew` pulls the rest on first
+  run. The release path additionally uses Ruby + bundler
+  (`ruby/setup-ruby`, gated on the Play secrets) to run `fastlane`. No
+  emulator / KVM is needed — the job only builds the AAB and uploads it
+  via the Play API, so it runs entirely on this Linux runner.
 
 ### macOS iOS runner (`cyb-mac` label)
 
@@ -167,6 +170,11 @@ the job. Mobile **release** builds (not the PR smoke build) need:
 | `CYB_ASC_KEY_P8_BASE64` | same | The `.p8` private key, base64-encoded. The job decodes it into a file at start and points `CYB_ASC_KEY_PATH` at it. The `CYB_` prefix avoids fastlane's auto-detection of `APP_STORE_CONNECT_API_KEY_*` — see `apps/mobile/ios/fastlane/.env.example`. |
 | `VITE_SUPABASE_URL` | web build (baked into bundle) | Hosted Supabase project URL, e.g. `https://xdyhhycfolcpqdawfkcj.supabase.co`. The mobile app reaches the cloud, not the dev machine, so the URL must be the deployed project. |
 | `VITE_SUPABASE_ANON_KEY` | web build (baked into bundle) | The hosted project's publishable / anon key. Safe to ship in a client — public, RLS-gated. |
+| `CYB_PLAY_JSON_KEY_BASE64` | `fastlane supply` (Android) | base64 of the Google Play service-account JSON. Decoded to a file at job start; `CYB_PLAY_JSON_KEY` points at it. Also the **dormant gate**: when unset, push-to-main builds `assembleDebug` instead of shipping, so `main` stays green. |
+| `CYB_UPLOAD_KEYSTORE_BASE64` | Gradle release signing (Android) | base64 of the upload keystore (`.jks`). Decoded to a file; `CYB_UPLOAD_STORE_FILE` points at it. With Play App Signing this is the recoverable *upload* key, not the app key. |
+| `CYB_UPLOAD_STORE_PASSWORD` | Gradle release signing (Android) | Upload keystore password. |
+| `CYB_UPLOAD_KEY_ALIAS` | Gradle release signing (Android) | Upload key alias (e.g. `upload`). |
+| `CYB_UPLOAD_KEY_PASSWORD` | Gradle release signing (Android) | Upload key password. |
 
 To populate `CYB_ASC_KEY_P8_BASE64`:
 ```bash
@@ -174,8 +182,13 @@ base64 -i ~/.appstoreconnect/AuthKey_XXXXXXXXXX.p8 | pbcopy
 # Paste into Settings → Secrets and variables → Actions → New repository secret
 ```
 
-Android release builds (when Android lands) will additionally want a
-Google Play service-account JSON.
+Android release builds need the five `CYB_PLAY_JSON_KEY_BASE64` /
+`CYB_UPLOAD_*` secrets in the table above (the Play service-account JSON
+plus the upload keystore and its passwords, base64-encoded). Until they're
+set, the `android` job builds `assembleDebug` only, so `main` stays green.
+The full one-time Play setup (developer account, create the app, Play App
+Signing, the manual first AAB upload, and the service account) is in
+`apps/mobile/README.md` → **Android → Publishing to Google Play**.
 
 ## Debugging a failed CI run
 

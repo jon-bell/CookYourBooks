@@ -26,6 +26,7 @@
 import { Sentry } from '../sentry.js';
 import type { VideoPlatform } from './videoPlatform.js';
 import { urlFromIntent } from './shareUrlParse.js';
+import { isAuthCallbackUrl } from '../auth/authDeepLink.js';
 
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
@@ -139,9 +140,15 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
   const App = plugins.App;
   if (App?.addListener) {
     const handle = App.addListener('appUrlOpen', (data: unknown) => {
-      breadcrumb('appUrlOpen fired', {
-        url: data && typeof data === 'object' ? (data as { url?: unknown }).url : undefined,
-      });
+      const url =
+        data && typeof data === 'object' ? (data as { url?: unknown }).url : undefined;
+      // OAuth return links (cookyourbooks://auth/callback) are handled by
+      // auth/authDeepLink.ts — don't try to import them as a shared recipe URL.
+      if (isAuthCallbackUrl(url)) {
+        breadcrumb('appUrlOpen: auth callback — ignoring in share-intent');
+        return;
+      }
+      breadcrumb('appUrlOpen fired', { url });
       dispatch(data, 'appUrlOpen');
     });
     cleanups.push(() => {

@@ -1,0 +1,83 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace "app.cookyourbooks"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "app.cookyourbooks"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        // Monotonic build number from commit count, injected by fastlane
+        // (`-PversionCode=$(git rev-list --count HEAD)`) — mirror of the iOS
+        // bump_build lane. Debug/PR builds fall back to 1 (no flag needed).
+        versionCode project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            // Upload-key coords come from env / -P props (CI decodes the base64
+            // keystore secret to a file and passes the path). Only wired when
+            // present, so `assembleDebug` and PR builds stay unsigned and need
+            // no secrets. See apps/mobile/android/fastlane/.
+            def storeFilePath = project.findProperty('CYB_UPLOAD_STORE_FILE') ?: System.getenv('CYB_UPLOAD_STORE_FILE')
+            if (storeFilePath) {
+                storeFile file(storeFilePath)
+                storePassword project.findProperty('CYB_UPLOAD_STORE_PASSWORD') ?: System.getenv('CYB_UPLOAD_STORE_PASSWORD')
+                keyAlias project.findProperty('CYB_UPLOAD_KEY_ALIAS') ?: System.getenv('CYB_UPLOAD_KEY_ALIAS')
+                keyPassword project.findProperty('CYB_UPLOAD_KEY_PASSWORD') ?: System.getenv('CYB_UPLOAD_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            // Attach the release signing config only when the upload key is
+            // configured; otherwise a release build stays unsigned (so a local
+            // `bundleRelease` dry-run and PR builds don't need the keystore).
+            if (project.findProperty('CYB_UPLOAD_STORE_FILE') ?: System.getenv('CYB_UPLOAD_STORE_FILE')) {
+                signingConfig signingConfigs.release
+            }
+            // Keep R8/ProGuard off: a Capacitor WebView app gains little from
+            // shrinking the thin native/Kotlin surface, and enabling it breaks
+            // the bridge unless every plugin ships -keep rules. JS-side
+            // symbolication comes from bundled source maps (Sentry), not a
+            // mapping.txt. See apps/mobile/README.md (Android pitfalls).
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

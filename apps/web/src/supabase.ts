@@ -13,6 +13,11 @@ if (!url || !anonKey) {
 
 export const supabase = createClient<Database>(url, anonKey, {
   auth: {
+    // PKCE so the native (Capacitor) OAuth flow can complete from a
+    // `cookyourbooks://auth/callback?code=…` deep link via
+    // exchangeCodeForSession (see auth/authDeepLink.ts). Works on the web too —
+    // detectSessionInUrl exchanges the ?code= on load.
+    flowType: 'pkce',
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
