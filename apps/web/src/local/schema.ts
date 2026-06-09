@@ -436,6 +436,20 @@ export const SCHEMA_STATEMENTS: string[] = [
     last_error text
   )`,
 
+  // Tombstones for locally hard-deleted rows (recipe_tags, cooking_events,
+  // conversion_rules, collection_notes). Local-only, not CRR. The outbox
+  // pending-delete check alone has a hole: a pull response fetched BEFORE the
+  // delete can apply AFTER the delete push drained the outbox, resurrecting
+  // the row forever (pulls only upsert; owner-filtered realtime DELETE events
+  // don't deliver). Ids are minted fresh per add (UUID), so "this id was
+  // hard-deleted here" is permanently disqualifying for incoming rows.
+  // Pruned by age at sync start.
+  `create table if not exists local_delete_tombstones (
+    entity_id text primary key not null,
+    kind text not null,
+    deleted_at integer not null
+  )`,
+
   // Backfill/migration runner progress. Local-only, not CRR — each row tracks
   // one named one-time backfill (status + resumable cursor) so heavy local-DB
   // population runs off the critical path in chunks and survives reloads.

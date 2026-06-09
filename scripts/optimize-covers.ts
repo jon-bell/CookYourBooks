@@ -19,6 +19,8 @@
 //   --dry-run     report before/after sizes without uploading
 //   --env-file    override credentials file path
 //   --min-bytes   skip objects smaller than this (default 4096)
+//   --thumbs-only skip the full-size re-encode phase; only mint missing
+//                 .thumb.jpg siblings (leaves existing covers untouched)
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.46.1';
 import {
@@ -121,13 +123,14 @@ async function main() {
   console.error(`found ${allFiles.length} objects`);
 
   // --- Phase 2: re-encode full-size covers that still carry old cache headers ---
+  const thumbsOnly = flag('thumbs-only');
   let seen = 0;
   let optimized = 0;
   let headerOnly = 0;
   let skipped = 0;
   let savedBytes = 0;
 
-  for (const file of allFiles) {
+  for (const file of thumbsOnly ? [] : allFiles) {
     // Skip thumb-sibling objects — they are handled in phase 3.
     if (file.path.endsWith('.thumb.jpg')) continue;
 

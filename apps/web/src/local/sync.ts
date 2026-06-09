@@ -39,7 +39,8 @@ import {
   listPending,
   markDone,
   markFailed,
-  pendingDeleteIds,
+  locallyDeletedIds,
+  pruneDeleteTombstones,
   type OutboxEntry,
   type OutboxKind,
 } from './outbox.js';
@@ -612,6 +613,9 @@ export async function pullAll(
   const pullStart = Date.now();
   logSync('info', 'pullAll: entered');
   await maybeResetWatermarks(ownerId);
+  // Cheap housekeeping: hard-delete tombstones only need to outlive
+  // in-flight fetches; trim old ones so the table stays tiny.
+  await pruneDeleteTombstones();
   logSync('info', 'pull: start');
   function checkAbort(phase: string) {
     if (signal?.aborted) {
@@ -1728,16 +1732,17 @@ function importTocEntryToParams(row: ImportTocEntryRow): readonly unknown[] {
 }
 
 /**
- * Drop incoming rows the user deleted locally while this fetch was in
- * flight (a matching hard-delete still pending in the outbox).
- * `filterFresherIncoming` can't protect these — the local row is already
- * gone, so there's no fresher `updated_at` to win the compare — and without
- * this guard a stale pull response (or an INSERT echo) re-inserts the row
- * *permanently*: pulls only ever upsert, and the owner-filtered realtime
- * DELETE event never delivers (the old record carries just the PK), so
- * nothing would clean the zombie up again. Applies to the hard-delete
- * tables only; soft-deleted tables (recipes, collections) are covered by
- * their tombstone row winning the freshness compare.
+ * Drop incoming rows the user hard-deleted locally (delete pending in the
+ * outbox OR already pushed — see the tombstone discussion on
+ * {@link locallyDeletedIds}). `filterFresherIncoming` can't protect these —
+ * the local row is already gone, so there's no fresher `updated_at` to win
+ * the compare — and without this guard a stale pull response (or an INSERT
+ * echo) re-inserts the row *permanently*: pulls only ever upsert, and the
+ * owner-filtered realtime DELETE event never delivers (the old record
+ * carries just the PK), so nothing would clean the zombie up again. Applies
+ * to the hard-delete tables only; soft-deleted tables (recipes,
+ * collections) are covered by their tombstone row winning the freshness
+ * compare.
  */
 async function dropLocallyDeleted<T>(
   kind: OutboxKind,
@@ -1745,7 +1750,7 @@ async function dropLocallyDeleted<T>(
   getId: (r: T) => string,
 ): Promise<T[]> {
   if (rows.length === 0) return rows;
-  const deleted = await pendingDeleteIds(kind, rows.map(getId));
+  const deleted = await locallyDeletedIds(kind, rows.map(getId));
   if (deleted.size === 0) return rows;
   return rows.filter((r) => !deleted.has(getId(r)));
 }
@@ -3104,7 +3109,7 @@ async function handleConversionRuleEvent(payload: RealtimePayload): Promise<void
   const row = payload.new as unknown as ConversionRuleRow;
   // Don't let our own INSERT echo resurrect a row deleted locally while the
   // event was in flight — see dropLocallyDeleted.
-  if ((await pendingDeleteIds('conversion_rule_delete', [row.id])).size > 0) return;
+  if ((await locallyDeletedIds('conversion_rule_delete', [row.id])).size > 0) return;
   await upsertConversionRuleRow(row);
 }
 
@@ -3160,7 +3165,7 @@ async function handleCookingEventEvent(payload: RealtimePayload): Promise<void> 
     return;
   }
   const row = payload.new as unknown as CookingEventRow;
-  if ((await pendingDeleteIds('cooking_event_delete', [row.id])).size > 0) return;
+  if ((await locallyDeletedIds('cooking_event_delete', [row.id])).size > 0) return;
   await upsertCookingEventRow(row);
 }
 
@@ -3174,7 +3179,7 @@ async function handleRecipeTagEvent(payload: RealtimePayload): Promise<void> {
     return;
   }
   const row = payload.new as unknown as RecipeTagRow;
-  if ((await pendingDeleteIds('recipe_tag_delete', [row.id])).size > 0) return;
+  if ((await locallyDeletedIds('recipe_tag_delete', [row.id])).size > 0) return;
   await upsertRecipeTagRow(row);
 }
 
@@ -3188,7 +3193,7 @@ async function handleCollectionNoteEvent(payload: RealtimePayload): Promise<void
     return;
   }
   const row = payload.new as unknown as CollectionNoteRow;
-  if ((await pendingDeleteIds('collection_note_delete', [row.id])).size > 0) return;
+  if ((await locallyDeletedIds('collection_note_delete', [row.id])).size > 0) return;
   await upsertCollectionNoteRow(row);
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { formatQuantity, isMeasured } from '@cookyourbooks/domain';
-import { useCollection } from '../data/queries.js';
+import { useRecipe } from '../data/queries.js';
 import { TimerButton } from '../cook/TimerButton.js';
 
 // Fires a light haptic tap on platforms that support it. On web the
@@ -33,8 +33,8 @@ function retreat(setIdx: React.Dispatch<React.SetStateAction<number>>): void {
 
 export function CookModePage() {
   const { collectionId, recipeId } = useParams();
-  const { data: collection } = useCollection(collectionId);
-  const recipe = collection?.recipes.find((r) => r.id === recipeId);
+  // Just the one recipe — cook mode never needs the rest of the collection.
+  const { data: recipe, isLoading } = useRecipe(collectionId, recipeId);
   const [idx, setIdx] = useState(0);
   // Ephemeral check-off state. Reset on every Cook Mode entry (the
   // component remounts) — we intentionally don't persist across
@@ -77,7 +77,8 @@ export function CookModePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [recipe]);
 
-  if (!collection || !recipe) return <p className="text-stone-600 dark:text-stone-400">Recipe not found.</p>;
+  if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  if (!recipe) return <p className="text-stone-600 dark:text-stone-400">Recipe not found.</p>;
   const total = recipe.instructions.length;
   const step = recipe.instructions[idx];
   // Referenced ingredients for this step — the user's editor-time
@@ -98,7 +99,7 @@ export function CookModePage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <Link
-          to={`/collections/${collection.id}/recipes/${recipe.id}`}
+          to={`/collections/${collectionId}/recipes/${recipe.id}`}
           className="text-sm text-stone-600 dark:text-stone-400 hover:underline"
         >
           ← {recipe.title}
