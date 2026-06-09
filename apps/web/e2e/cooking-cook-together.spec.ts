@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { test, expect, waitForSynced } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Cook multiple recipes together', () => {
@@ -14,6 +14,9 @@ test.describe('Cook multiple recipes together', () => {
     });
     await page.getByTestId('schedule-cook').click();
     await page.getByTestId('cook-submit').click();
+    // Scheduling queues a sync write; the cooking-history count reflects it only
+    // after that write settles. Wait for sync before asserting (was racing 5s).
+    await waitForSynced(page);
     await expect(page.getByTestId('cooking-history').getByText(/Upcoming \(1\)/)).toBeVisible();
 
     await createRecipeViaUi(page, {
@@ -24,6 +27,9 @@ test.describe('Cook multiple recipes together', () => {
     });
     await page.getByTestId('schedule-cook').click();
     await page.getByTestId('cook-submit').click();
+    // Scheduling queues a sync write; the cooking-history count reflects it only
+    // after that write settles. Wait for sync before asserting (was racing 5s).
+    await waitForSynced(page);
     await expect(page.getByTestId('cooking-history').getByText(/Upcoming \(1\)/)).toBeVisible();
 
     // From the calendar, cook today's two recipes together.
@@ -39,6 +45,9 @@ test.describe('Cook multiple recipes together', () => {
 
     // Mark them all cooked.
     await page.getByTestId('mark-all-cooked').click();
+    // Marking cooked queues sync writes for each entry; the button disappears
+    // only once the calendar reflects them. Wait for sync before asserting.
+    await waitForSynced(page);
     await expect(page.getByTestId('mark-all-cooked')).toHaveCount(0);
 
     // Back on a recipe, the entry is now in history (cooked), not upcoming.
