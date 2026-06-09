@@ -25,8 +25,9 @@ import {
   useHouseConversionRules,
 } from '../data/conversions.js';
 import { shareRecipe } from '../share/share.js';
-import { CopyLinkButton } from '../share/CopyLinkButton.js';
-import { recipeShareUrl } from '../share/shareUrl.js';
+import { ShareLinkButton } from '../share/ShareLinkButton.js';
+import { shareAudience } from '../share/shareAudience.js';
+import { useMyHousehold } from '../household/queries.js';
 import { useRewriteJob } from '../recipe/useRewriteJob.js';
 import { RemixDialog } from '../recipe/RemixDialog.js';
 import {
@@ -90,6 +91,9 @@ export function RecipePage() {
   const [showRemix, setShowRemix] = useState(false);
   const { job: rewriteJob, refresh: refreshRewriteJob } = useRewriteJob(recipeId);
   const { data: importItems = [] } = useImportItemsForRecipe(recipeId);
+  // Household library-sharing state — tells the share button who can open
+  // the link when the collection isn't public.
+  const { data: household } = useMyHousehold();
 
   async function startImprove() {
     setRewriteError(undefined);
@@ -367,12 +371,18 @@ export function RecipePage() {
           <button
             onClick={shareAsMarkdown}
             className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+            title="Export this recipe as Markdown / via the share sheet"
           >
-            Share
+            Export
           </button>
-          {collection.isPublic && collection.moderationState !== 'TAKEN_DOWN' && (
-            <CopyLinkButton url={recipeShareUrl(collection.id, recipe.id)} />
-          )}
+          <ShareLinkButton
+            recipeId={recipe.id}
+            audience={shareAudience({
+              isPublic: collection.isPublic,
+              takenDown: collection.moderationState === 'TAKEN_DOWN',
+              libraryShared: !!household?.libraryShared,
+            })}
+          />
           <button
             onClick={async () => {
               if (confirm(`Delete "${recipe.title}"?`)) {

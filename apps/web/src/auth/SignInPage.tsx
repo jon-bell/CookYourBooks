@@ -114,7 +114,7 @@ export function SignInPage() {
       </button>
       <p className="text-center text-sm text-stone-600 dark:text-stone-400">
         No account?{' '}
-        <Link to="/sign-up" className="font-medium text-stone-900 dark:text-stone-100 underline">
+        <Link to="/sign-up" state={location.state} className="font-medium text-stone-900 dark:text-stone-100 underline">
           Create one
         </Link>
       </p>

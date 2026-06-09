@@ -16,6 +16,7 @@ import { AdminPage } from './pages/AdminPage.js';
 import { AdminGlobalTocPage } from './pages/AdminGlobalTocPage.js';
 import { AdminNutritionPage } from './pages/AdminNutritionPage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
+import { SharedRecipePage } from './pages/SharedRecipePage.js';
 import { LandingPage } from './pages/LandingPage.js';
 import { SettingsLlmPage } from './pages/SettingsLlmPage.js';
 import { SettingsConversionsPage } from './pages/SettingsConversionsPage.js';
@@ -106,6 +107,9 @@ export function App() {
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-up" element={<SignUpPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
+          {/* Bare-uuid recipe share links. Deliberately NOT behind
+              RequireAuth — RLS decides what (if anything) the visitor sees. */}
+          <Route path="/r/:recipeId" element={<SharedRecipePage />} />
           <Route path="/" element={<RootRoute />} />
           <Route
             path="/library"
