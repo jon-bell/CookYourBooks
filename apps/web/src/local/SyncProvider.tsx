@@ -2,8 +2,10 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/AuthProvider.js';
 import { supabase } from '../supabase.js';
-import { getLocalDb } from './db.js';
+import { beginDbStatsWindow, getLocalDb, readDbStats } from './db.js';
 import { countPending } from './outbox.js';
+import { startBackfills } from './backfill.js';
+import { captureSyncDiagnostics } from './syncDiag.js';
 import {
   pullAll,
   pullNutritionEssentials,
@@ -13,7 +15,7 @@ import {
   type RealtimeHandle,
 } from './sync.js';
 import { logSync } from './syncLog.js';
-import { reportError } from '../sentry.js';
+import { reportError, Sentry } from '../sentry.js';
 import {
   ensureLeaderElection,
   getTabRole,
@@ -112,7 +114,7 @@ const PULL_DEBOUNCE_MS = 2000;
 // etc.) we abort the await chain so the badge can leave "Syncing…"
 // and the user can retry. The actual network requests don't get
 // cancelled — we just stop waiting on them.
-const CYCLE_TIMEOUT_MS = 45_000;
+const CYCLE_TIMEOUT_MS = 180_000;
 // How often the watchdog checks for a wedged status. The boot UX is
 // "page reload always fixes it", which is exactly the symptom of a
 // dangling 'syncing' setState that no one comes back to clear. The
@@ -125,6 +127,30 @@ const WATCHDOG_INTERVAL_MS = 5_000;
 // their new content. Cheap: an incremental watermark pull returns
 // nothing when nothing changed.
 const HOUSEHOLD_POLL_MS = 30_000;
+
+type SpanLike = { setAttributes?: (attrs: Record<string, number | string>) => void };
+
+// Attach per-cycle measurements to the sync.cycle span so they're queryable in
+// Sentry (durations + DB-lock contention + device context). Cheap + sync.
+function annotateCycleSpan(
+  span: SpanLike,
+  m: { cycleStart: number; pushMs: number; pullMs: number; outcome: string },
+): void {
+  const stats = readDbStats();
+  const deviceMemory = (navigator as unknown as { deviceMemory?: number }).deviceMemory ?? 0;
+  span.setAttributes?.({
+    'sync.cycle_ms': Date.now() - m.cycleStart,
+    'sync.push_ms': m.pushMs,
+    'sync.pull_ms': m.pullMs,
+    'sync.outcome': m.outcome,
+    'sync.tab_role': getTabRole(),
+    'sync.db_ops': stats.ops,
+    'sync.db_wait_ms': stats.totalWaitMs,
+    'sync.db_max_op_ms': stats.maxRunMs,
+    'sync.db_slowest': stats.slowestLabel,
+    'sync.device_memory_gb': deviceMemory,
+  });
+}
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { user, householdId } = useAuth();
@@ -188,75 +214,102 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
     const ac = new AbortController();
     currentAbort.current = ac;
-    const run = (async () => {
-      const cycleStart = Date.now();
-      logSync('info', 'cycle: start');
-      setSyncing();
-      setLastError(null);
-      try {
-        // Push first so the pull sees our own changes reflected as
-        // server-acknowledged state (avoids echo-induced overwrites).
-        // Wrap in a hard timeout so a single hung request can't trap
-        // the user on "Syncing…" forever — when the timeout fires we
-        // also abort the AbortController so the inner drain loop
-        // bails out instead of continuing to hit the network behind
-        // our back (which would race a later cycle and trip
-        // duplicate-key / FK violations on recipe pushes).
-        logSync('info', 'cycle: invoking pushOutbox');
-        const pushRes = await withTimeout(
-          pushOutbox(supabase, ownerId, ac.signal),
-          CYCLE_TIMEOUT_MS,
-          'push',
-          () => ac.abort(),
-        );
-        logSync('info', 'cycle: pushOutbox returned', pushRes);
-        logSync('info', 'cycle: invoking pullAll');
-        await withTimeout(
-          pullAll(supabase, ownerId, ac.signal, {
-            // Invalidate React Query incrementally so the library card
-            // grid hydrates the moment recipes land, instead of waiting
-            // for imports / conversion_rules / rewrite_jobs to finish.
-            // Skip the 'collections' key from each invalidate (it's
-            // expensive — see scheduleInvalidate predicate).
-            onPhaseComplete: () => scheduleInvalidate(),
-          }),
-          CYCLE_TIMEOUT_MS,
-          'pull',
-          () => ac.abort(),
-        );
-        logSync('info', 'cycle: pullAll returned');
-        // Fire-and-forget: reference data doesn't gate the UI, and
-        // failures shouldn't show up as a sync error to the user.
-        // Throttled internally — only refetches once a month.
-        pullNutritionEssentials(supabase).catch((err) => {
-          logSync('warn', 'nutrition essentials pull failed', { error: stringifyError(err) });
-        });
-        setLastSyncedAt(Date.now());
-        setSettled('idle');
-        logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
-      } catch (err) {
-        // Some thrown values (notably PostgrestError-shaped objects)
-        // aren't Error instances, so `.message` is undefined and the
-        // badge ends up showing "[object Object]". Stringify whatever
-        // we got and prefer fields commonly populated by errors.
-        const msg = stringifyError(err);
-        // Dump the raw shape to the console so a debug session can see
-        // what actually came back — useful when the stringified version
-        // collapses an interesting object into something like
-        // "PostgrestError" with no hint of the underlying cause.
-        console.error('[sync] cycle threw:', err);
-        setSettled('error', msg);
-        logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
-        // The cycle catch only sees pull / cycle-timeout failures (pushOutbox
-        // handles its own per-entry errors internally). Report them so prod
-        // sync stalls — e.g. a pull statement timing out — are visible.
-        reportError(err, { operation: 'sync_cycle' });
-      } finally {
-        if (currentAbort.current === ac) currentAbort.current = null;
-        await refreshPendingCount();
-        scheduleInvalidate();
-      }
-    })();
+    const run = Sentry.startSpan(
+      { name: 'sync.cycle', op: 'sync', forceTransaction: true },
+      async (span: SpanLike) => {
+        const cycleStart = Date.now();
+        // Reset the DB-op aggregator so the span reports contention during
+        // exactly this cycle (incl. UI queries competing on the connection).
+        beginDbStatsWindow();
+        let pushMs = 0;
+        let pullMs = 0;
+        logSync('info', 'cycle: start');
+        setSyncing();
+        setLastError(null);
+        try {
+          // Push first so the pull sees our own changes reflected as
+          // server-acknowledged state (avoids echo-induced overwrites).
+          // Wrap in a hard timeout so a single hung request can't trap
+          // the user on "Syncing…" forever — when the timeout fires we
+          // also abort the AbortController so the inner drain loop
+          // bails out instead of continuing to hit the network behind
+          // our back (which would race a later cycle and trip
+          // duplicate-key / FK violations on recipe pushes).
+          logSync('info', 'cycle: invoking pushOutbox');
+          const pushStart = Date.now();
+          const pushRes = await Sentry.startSpan({ name: 'sync.push', op: 'sync.push' }, () =>
+            withTimeout(
+              pushOutbox(supabase, ownerId, ac.signal),
+              CYCLE_TIMEOUT_MS,
+              'push',
+              () => ac.abort(),
+            ),
+          );
+          pushMs = Date.now() - pushStart;
+          logSync('info', 'cycle: pushOutbox returned', pushRes);
+          logSync('info', 'cycle: invoking pullAll');
+          const pullStart = Date.now();
+          await Sentry.startSpan({ name: 'sync.pull', op: 'sync.pull' }, () =>
+            withTimeout(
+              pullAll(supabase, ownerId, ac.signal, {
+                // Invalidate React Query incrementally so the library card
+                // grid hydrates the moment recipes land, instead of waiting
+                // for imports / conversion_rules / rewrite_jobs to finish.
+                // Skip the 'collections' key from each invalidate (it's
+                // expensive — see scheduleInvalidate predicate).
+                onPhaseComplete: () => scheduleInvalidate(),
+              }),
+              CYCLE_TIMEOUT_MS,
+              'pull',
+              () => ac.abort(),
+            ),
+          );
+          pullMs = Date.now() - pullStart;
+          logSync('info', 'cycle: pullAll returned');
+          // Fire-and-forget: reference data doesn't gate the UI, and
+          // failures shouldn't show up as a sync error to the user.
+          // Throttled internally — only refetches once a month.
+          pullNutritionEssentials(supabase).catch((err) => {
+            logSync('warn', 'nutrition essentials pull failed', { error: stringifyError(err) });
+          });
+          setLastSyncedAt(Date.now());
+          setSettled('idle');
+          annotateCycleSpan(span, { cycleStart, pushMs, pullMs, outcome: 'ok' });
+          logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
+        } catch (err) {
+          // Some thrown values (notably PostgrestError-shaped objects)
+          // aren't Error instances, so `.message` is undefined and the
+          // badge ends up showing "[object Object]". Stringify whatever
+          // we got and prefer fields commonly populated by errors.
+          const msg = stringifyError(err);
+          // Dump the raw shape to the console so a debug session can see
+          // what actually came back — useful when the stringified version
+          // collapses an interesting object into something like
+          // "PostgrestError" with no hint of the underlying cause.
+          console.error('[sync] cycle threw:', err);
+          setSettled('error', msg);
+          logSync('error', `cycle: error after ${Date.now() - cycleStart}ms`, { error: msg });
+          // The cycle catch only sees pull / cycle-timeout failures (pushOutbox
+          // handles its own per-entry errors internally). Report them so prod
+          // sync stalls — e.g. a pull statement timing out — are visible.
+          reportError(err, { operation: 'sync_cycle' });
+          const outcome = /timed out/.test(msg) ? 'timeout' : 'error';
+          annotateCycleSpan(span, { cycleStart, pushMs, pullMs, outcome });
+          // Auto-capture a trimmed diagnostic (throttled) so a wedged device
+          // surfaces without the user manually uploading logs.
+          void captureSyncDiagnostics({
+            status: 'error',
+            lastError: msg,
+            syncingForMs: Date.now() - cycleStart,
+            outcome,
+          });
+        } finally {
+          if (currentAbort.current === ac) currentAbort.current = null;
+          await refreshPendingCount();
+          scheduleInvalidate();
+        }
+      },
+    );
     inFlight.current = run;
     try {
       await run;
@@ -340,6 +393,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       await cycle(ownerId);
       if (cancelled) return;
       setHydrated(true);
+      // First sync settled — run any pending one-time local backfills off the
+      // critical path, pausing whenever a cycle is in flight so a chunk never
+      // competes with an active pull on the single connection.
+      void startBackfills({ shouldPause: () => inFlight.current !== null });
       handle = subscribeRealtime(
         supabase,
         ownerId,

@@ -133,6 +133,15 @@ export function initSentry(): void {
 
   initialized = true;
   lastDsn = dsn;
+  // Sync cycles run frequently on every device; head-sampling them at the
+  // normal 10% would flood traces. Sample them low (overridable) — the
+  // interesting wedged/slow cycles are captured separately + guaranteed via
+  // captureSyncDiagnostics, independent of trace sampling.
+  const syncTraceRate = (() => {
+    const raw = import.meta.env.VITE_SYNC_TRACE_SAMPLE_RATE;
+    const n = raw != null ? Number(raw) : NaN;
+    return Number.isFinite(n) ? n : 0.05;
+  })();
   const commonOptions: Sentry.BrowserOptions = {
     dsn,
     release: RELEASE ?? undefined,
@@ -149,7 +158,12 @@ export function initSentry(): void {
         blockAllMedia: true,
       }),
     ],
-    tracesSampleRate: 0.1,
+    tracesSampler: (ctx) => {
+      // Child spans inherit the root transaction's decision.
+      if (typeof ctx.parentSampled === 'boolean') return ctx.parentSampled;
+      if (ctx.name === 'sync.cycle') return syncTraceRate;
+      return 0.1;
+    },
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 1.0,
     initialScope: {
