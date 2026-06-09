@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { Cookbook, RecipeCollection } from '@cookyourbooks/domain';
 import {
-  useCollection,
+  useCollectionMeta,
+  useCollectionRecipeSummaries,
   useDeleteCollection,
   useReorderRecipes,
   useSaveCollection,
-  useSaveRecipe,
+  useToggleRecipeStar,
 } from '../data/queries.js';
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
 import { EditBookDetailsDialog } from '../books/EditBookDetailsDialog.js';
@@ -25,11 +26,12 @@ export function CollectionPage() {
   const { collectionId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { data: collection, isLoading, error } = useCollection(collectionId);
+  const { data: collection, isLoading, error } = useCollectionMeta(collectionId);
+  const { data: recipeSummaries } = useCollectionRecipeSummaries(collectionId);
   const deleteCollection = useDeleteCollection();
   const saveCollection = useSaveCollection();
   const reorderRecipes = useReorderRecipes(collectionId ?? '');
-  const saveRecipe = useSaveRecipe(collectionId ?? '');
+  const toggleStar = useToggleRecipeStar(collectionId ?? '');
   const [showPublishWarning, setShowPublishWarning] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
   const [hasOpenSession, setHasOpenSession] = useState(false);
@@ -56,6 +58,7 @@ export function CollectionPage() {
   if (!collection) return <p className="text-stone-600 dark:text-stone-400">Collection not found.</p>;
 
   const c = collection;
+  const recipes = recipeSummaries ?? [];
   // Hard rule mirrored at the DB layer: a PUBLISHED_BOOK with an ISBN
   // contains copyrighted material and can never be public.
   const isbnBlocksPublic =
@@ -82,17 +85,12 @@ export function CollectionPage() {
   }
 
   async function onToggleStar(recipeId: string) {
-    const recipe = c.recipes.find((r) => r.id === recipeId);
-    if (!recipe) return;
-    await saveRecipe.mutateAsync({ ...recipe, starred: !(recipe.starred === true) });
+    await toggleStar.mutateAsync(recipeId);
   }
 
-  const starredCount = c.recipes.filter((r) => r.starred === true).length;
-  const starredPlaceholderCount = c.recipes.filter(
-    (r) =>
-      r.starred === true &&
-      r.ingredients.length === 0 &&
-      r.instructions.length === 0,
+  const starredCount = recipes.filter((r) => r.starred).length;
+  const starredPlaceholderCount = recipes.filter(
+    (r) => r.starred && r.ingredientCount === 0 && r.instructionCount === 0,
   ).length;
   const showSpeedImporterCta =
     c.sourceType === 'PUBLISHED_BOOK' && (starredPlaceholderCount > 0 || hasOpenSession);
@@ -136,7 +134,7 @@ export function CollectionPage() {
           Add recipe
         </Link>
         <ImportFromPhoto collectionId={c.id} />
-        {c.recipes.length > 0 && (
+        {recipes.length > 0 && (
           <GenerateCoversButton scope="collection" targetId={c.id} label="Generate covers" />
         )}
         {c.sourceType === 'PUBLISHED_BOOK' && (
@@ -217,12 +215,12 @@ export function CollectionPage() {
 
       <CollectionNotesSection collectionId={c.id} />
 
-      {c.recipes.length === 0 ? (
+      {recipes.length === 0 ? (
         <p className="text-stone-600 dark:text-stone-400">No recipes yet.</p>
       ) : (
         <CollectionRecipeBrowser
           collectionId={c.id}
-          recipes={c.recipes}
+          recipes={recipes}
           onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
           onToggleStar={onToggleStar}
         />

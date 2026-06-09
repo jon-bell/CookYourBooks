@@ -32,3 +32,15 @@ body,
 .dark textarea::placeholder {
   @apply text-stone-500;
 }
+
+.gallery-card {
+  content-visibility: auto;
+  /* ~3:2 image at one-column mobile width + 2 lines of text; `auto`
+     remembers the real rendered size so scrollbars don't jump. */
+  contain-intrinsic-size: auto 300px;
+}
+
+.index-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 40px;
+}

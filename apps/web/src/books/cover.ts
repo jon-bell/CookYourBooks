@@ -1,5 +1,11 @@
 import { supabase } from '../supabase.js';
-import { COVER_CACHE_CONTROL, coverObjectKey, prepareCoverImage } from '../recipe/coverImage.js';
+import {
+  COVER_CACHE_CONTROL,
+  COVER_THUMB_MAX_EDGE,
+  coverObjectKey,
+  prepareCoverImage,
+  thumbPathFor,
+} from '../recipe/coverImage.js';
 
 // Shared cover-upload helper for a user's own collection. Mirrors the path
 // and upsert posture used by CoverImageEditor (`<user>/collections/<id>-<hash>.<ext>`)
@@ -33,8 +39,21 @@ export async function uploadCollectionCover(
       cacheControl: COVER_CACHE_CONTROL,
     });
   if (error) throw error;
+
+  // Best-effort thumbnail upload — a missing thumb never fails the cover set.
+  try {
+    const thumb = await prepareCoverImage(blob, COVER_THUMB_MAX_EDGE);
+    await supabase.storage.from('covers').upload(thumbPathFor(path), thumb.blob, {
+      upsert: true,
+      contentType: thumb.contentType,
+      cacheControl: COVER_CACHE_CONTROL,
+    });
+  } catch (e) {
+    console.warn('cover thumb upload failed (non-fatal):', e);
+  }
+
   if (previousPath && previousPath !== path) {
-    await supabase.storage.from('covers').remove([previousPath]);
+    await supabase.storage.from('covers').remove([previousPath, thumbPathFor(previousPath)]);
   }
   return path;
 }

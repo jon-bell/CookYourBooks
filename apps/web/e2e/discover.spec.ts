@@ -1,5 +1,5 @@
 import { test, expect } from './support/fixtures.js';
-import { seedPublicCollection } from './support/admin.js';
+import { adminGet, seedPublicCollection } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
 
 test.describe('Discover + fork', () => {
@@ -156,6 +156,113 @@ test.describe('Discover + fork', () => {
       await expect(card.getByText('Recipe 8')).toBeVisible();
       await card.getByRole('button', { name: 'Show less' }).click();
       await expect(card.getByText('Recipe 8')).not.toBeVisible();
+    } finally {
+      await seed.cleanup();
+    }
+  });
+
+  // Regression: fork_collection used to rebuild its old->new id maps by
+  // re-joining the inserted rows on natural keys (recipes on (sort_order,
+  // title) etc.). Two recipes sharing a title + the default sort_order made
+  // that join a cross product: row multiplication + cross-wired refs. Seed
+  // exactly that collision and assert the fork is a faithful 1:1 copy.
+  test('fork does not duplicate rows when recipes share title + sort_order', async ({
+    authedPage: page,
+  }) => {
+    const seed = await seedPublicCollection({
+      title: 'Collision Coll',
+      recipes: [
+        {
+          // Two recipes with the SAME title and SAME sort_order (0).
+          title: 'Dupe Recipe',
+          sortOrder: 0,
+          ingredients: [
+            // Two ingredients sharing (sort_order, name) within the recipe.
+            { name: 'flour', sortOrder: 0 },
+            { name: 'flour', sortOrder: 0 },
+            { name: 'sugar', sortOrder: 1 },
+          ],
+          instructions: [
+            { stepNumber: 1, text: 'Mix flour.' },
+            { stepNumber: 2, text: 'Add sugar.' },
+          ],
+          refs: [
+            { instructionIndex: 0, ingredientIndex: 0 },
+            { instructionIndex: 1, ingredientIndex: 2 },
+          ],
+        },
+        {
+          title: 'Dupe Recipe',
+          sortOrder: 0,
+          ingredients: [{ name: 'butter', sortOrder: 0 }],
+          instructions: [{ stepNumber: 1, text: 'Melt butter.' }],
+          refs: [{ instructionIndex: 0, ingredientIndex: 0 }],
+        },
+      ],
+    });
+    try {
+      await page.getByRole('link', { name: 'Discover' }).click();
+      await page.getByPlaceholder(/Search titles/).fill('Collision Coll');
+      await expect(page.getByText('Collision Coll')).toBeVisible();
+      await page.getByRole('button', { name: 'Fork to library' }).click();
+
+      // Fork navigates to /collections/:id of the new copy.
+      await expect(page).toHaveURL(/\/collections\/[0-9a-f-]+$/, { timeout: 15_000 });
+      const forkedId = page.url().split('/collections/')[1]!;
+      expect(forkedId).toMatch(/^[0-9a-f-]+$/);
+
+      // Source counts (the truth the fork must match).
+      const srcRecipes = await adminGet<{ id: string }[]>(
+        `/rest/v1/recipes?select=id&collection_id=eq.${seed.collectionId}`,
+      );
+      const srcRecipeIds = srcRecipes.map((r) => r.id);
+      const inList = (ids: string[]) => `in.(${ids.join(',')})`;
+      const srcIng = await adminGet<{ id: string }[]>(
+        `/rest/v1/ingredients?select=id&recipe_id=${inList(srcRecipeIds)}`,
+      );
+      const srcSteps = await adminGet<{ id: string }[]>(
+        `/rest/v1/instructions?select=id&recipe_id=${inList(srcRecipeIds)}`,
+      );
+      const srcRefs = await adminGet<{ instruction_id: string }[]>(
+        `/rest/v1/instruction_ingredient_refs?select=instruction_id&instruction_id=${inList(
+          srcSteps.map((s) => s.id),
+        )}`,
+      );
+
+      // Forked counts must EQUAL the source — no multiplication.
+      const fRecipes = await adminGet<{ id: string }[]>(
+        `/rest/v1/recipes?select=id&collection_id=eq.${forkedId}`,
+      );
+      const fRecipeIds = fRecipes.map((r) => r.id);
+      expect(fRecipes.length).toBe(srcRecipes.length);
+
+      const fIng = await adminGet<{ id: string }[]>(
+        `/rest/v1/ingredients?select=id&recipe_id=${inList(fRecipeIds)}`,
+      );
+      expect(fIng.length).toBe(srcIng.length);
+
+      const fSteps = await adminGet<{ id: string }[]>(
+        `/rest/v1/instructions?select=id&recipe_id=${inList(fRecipeIds)}`,
+      );
+      expect(fSteps.length).toBe(srcSteps.length);
+
+      // Refs: same count, and each forked ref must join an instruction and an
+      // ingredient that belong to the SAME recipe (no cross-wiring).
+      const fRefs = await adminGet<
+        {
+          instruction: { recipe_id: string } | null;
+          ingredient: { recipe_id: string } | null;
+        }[]
+      >(
+        `/rest/v1/instruction_ingredient_refs` +
+          `?select=instruction:instructions(recipe_id),ingredient:ingredients(recipe_id)` +
+          `&instruction_id=${inList(fSteps.map((s) => s.id))}`,
+      );
+      expect(fRefs.length).toBe(srcRefs.length);
+      for (const ref of fRefs) {
+        expect(ref.instruction?.recipe_id).toBeTruthy();
+        expect(ref.ingredient?.recipe_id).toBe(ref.instruction?.recipe_id);
+      }
     } finally {
       await seed.cleanup();
     }

@@ -39,7 +39,9 @@ import {
   listPending,
   markDone,
   markFailed,
+  pendingDeleteIds,
   type OutboxEntry,
+  type OutboxKind,
 } from './outbox.js';
 import { logSync } from './syncLog.js';
 import { reportError } from '../sentry.js';
@@ -1250,56 +1252,53 @@ async function upsertEssentialsBatch(rows: EssentialsRow[]): Promise<void> {
   const db = await getLocalDb();
   // Chunk so a 7k-row pull doesn't hold the db-lock queue for several
   // seconds in one go — other ops can interleave between chunks.
+  // CHUNK=500: 500 × 16 cols = 8000 params, well under SQLite's 32766 ceiling.
   const CHUNK = 500;
+
+  const cols = [
+    'source', 'source_id', 'data_type', 'description', 'brand', 'brand_owner',
+    'calories_kcal', 'protein_g', 'fat_g', 'saturated_fat_g',
+    'carbs_g', 'sugar_g', 'fiber_g', 'sodium_mg', 'portions', 'search_blob',
+  ] as const;
+  const tuple = `(${cols.map(() => '?').join(',')})`;
+  const setClause = cols
+    .filter((c) => c !== 'source' && c !== 'source_id')
+    .map((c) => `${c} = excluded.${c}`)
+    .join(',\n             ');
+
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
-    await db.tx(async (tx) => {
-      for (const r of chunk) {
-        const blob = [r.description, r.brand ?? '', r.brand_owner ?? '']
-          .join(' ')
-          .toLowerCase();
-        await tx.exec(
-          `insert into nutrition_foods_essentials
-             (source, source_id, data_type, description, brand, brand_owner,
-              calories_kcal, protein_g, fat_g, saturated_fat_g,
-              carbs_g, sugar_g, fiber_g, sodium_mg, portions, search_blob)
-           values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-           on conflict(source, source_id) do update set
-             data_type = excluded.data_type,
-             description = excluded.description,
-             brand = excluded.brand,
-             brand_owner = excluded.brand_owner,
-             calories_kcal = excluded.calories_kcal,
-             protein_g = excluded.protein_g,
-             fat_g = excluded.fat_g,
-             saturated_fat_g = excluded.saturated_fat_g,
-             carbs_g = excluded.carbs_g,
-             sugar_g = excluded.sugar_g,
-             fiber_g = excluded.fiber_g,
-             sodium_mg = excluded.sodium_mg,
-             portions = excluded.portions,
-             search_blob = excluded.search_blob`,
-          [
-            r.source,
-            r.source_id,
-            r.data_type,
-            r.description,
-            r.brand,
-            r.brand_owner,
-            r.calories_kcal,
-            r.protein_g,
-            r.fat_g,
-            r.saturated_fat_g,
-            r.carbs_g,
-            r.sugar_g,
-            r.fiber_g,
-            r.sodium_mg,
-            JSON.stringify(r.portions ?? []),
-            blob,
-          ],
-        );
-      }
-    });
+    const params: unknown[] = [];
+    for (const r of chunk) {
+      const blob = [r.description, r.brand ?? '', r.brand_owner ?? '']
+        .join(' ')
+        .toLowerCase();
+      params.push(
+        r.source,
+        r.source_id,
+        r.data_type,
+        r.description,
+        r.brand,
+        r.brand_owner,
+        r.calories_kcal,
+        r.protein_g,
+        r.fat_g,
+        r.saturated_fat_g,
+        r.carbs_g,
+        r.sugar_g,
+        r.fiber_g,
+        r.sodium_mg,
+        JSON.stringify(r.portions ?? []),
+        blob,
+      );
+    }
+    await db.exec(
+      `insert into nutrition_foods_essentials (${cols.join(',')})
+       values ${chunk.map(() => tuple).join(',')}
+       on conflict(source, source_id) do update set
+             ${setClause}`,
+      params as never[],
+    );
   }
 }
 
@@ -1728,6 +1727,29 @@ function importTocEntryToParams(row: ImportTocEntryRow): readonly unknown[] {
   ];
 }
 
+/**
+ * Drop incoming rows the user deleted locally while this fetch was in
+ * flight (a matching hard-delete still pending in the outbox).
+ * `filterFresherIncoming` can't protect these — the local row is already
+ * gone, so there's no fresher `updated_at` to win the compare — and without
+ * this guard a stale pull response (or an INSERT echo) re-inserts the row
+ * *permanently*: pulls only ever upsert, and the owner-filtered realtime
+ * DELETE event never delivers (the old record carries just the PK), so
+ * nothing would clean the zombie up again. Applies to the hard-delete
+ * tables only; soft-deleted tables (recipes, collections) are covered by
+ * their tombstone row winning the freshness compare.
+ */
+async function dropLocallyDeleted<T>(
+  kind: OutboxKind,
+  rows: T[],
+  getId: (r: T) => string,
+): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  const deleted = await pendingDeleteIds(kind, rows.map(getId));
+  if (deleted.size === 0) return rows;
+  return rows.filter((r) => !deleted.has(getId(r)));
+}
+
 async function pullConversionRules(
   client: CookbooksClient,
   ownerId: string,
@@ -1745,11 +1767,15 @@ async function pullConversionRules(
       .range(from, to),
   );
   if (rows.length > 0) {
-    const fresh = await filterFresherIncoming(
-      'conversion_rules',
-      rows,
+    const fresh = await dropLocallyDeleted(
+      'conversion_rule_delete',
+      await filterFresherIncoming(
+        'conversion_rules',
+        rows,
+        (r) => r.id,
+        (r) => toMs(r.updated_at),
+      ),
       (r) => r.id,
-      (r) => toMs(r.updated_at),
     );
     if (fresh.length > 0) {
       await withSuppressedCrrTriggers(['conversion_rules'], fresh.length, () =>
@@ -1992,11 +2018,15 @@ async function pullCookingEvents(
       .range(from, to),
   );
   if (rows.length > 0) {
-    const fresh = await filterFresherIncoming(
-      'cooking_events',
-      rows,
+    const fresh = await dropLocallyDeleted(
+      'cooking_event_delete',
+      await filterFresherIncoming(
+        'cooking_events',
+        rows,
+        (r) => r.id,
+        (r) => toMs(r.updated_at),
+      ),
       (r) => r.id,
-      (r) => toMs(r.updated_at),
     );
     if (fresh.length > 0) {
       await withSuppressedCrrTriggers(['cooking_events'], fresh.length, () =>
@@ -2029,11 +2059,15 @@ async function pullRecipeTags(
       .range(from, to),
   );
   if (rows.length > 0) {
-    const fresh = await filterFresherIncoming(
-      'recipe_tags',
-      rows,
+    const fresh = await dropLocallyDeleted(
+      'recipe_tag_delete',
+      await filterFresherIncoming(
+        'recipe_tags',
+        rows,
+        (r) => r.id,
+        (r) => toMs(r.updated_at),
+      ),
       (r) => r.id,
-      (r) => toMs(r.updated_at),
     );
     if (fresh.length > 0) {
       await withSuppressedCrrTriggers(['recipe_tags'], fresh.length, () =>
@@ -2148,11 +2182,15 @@ async function pullCollectionNotes(
       .range(from, to),
   );
   if (rows.length > 0) {
-    const fresh = await filterFresherIncoming(
-      'collection_notes',
-      rows,
+    const fresh = await dropLocallyDeleted(
+      'collection_note_delete',
+      await filterFresherIncoming(
+        'collection_notes',
+        rows,
+        (r) => r.id,
+        (r) => toMs(r.updated_at),
+      ),
       (r) => r.id,
-      (r) => toMs(r.updated_at),
     );
     if (fresh.length > 0) {
       await withSuppressedCrrTriggers(['collection_notes'], fresh.length, () =>
@@ -3063,7 +3101,11 @@ async function handleConversionRuleEvent(payload: RealtimePayload): Promise<void
     }
     return;
   }
-  await upsertConversionRuleRow(payload.new as unknown as ConversionRuleRow);
+  const row = payload.new as unknown as ConversionRuleRow;
+  // Don't let our own INSERT echo resurrect a row deleted locally while the
+  // event was in flight — see dropLocallyDeleted.
+  if ((await pendingDeleteIds('conversion_rule_delete', [row.id])).size > 0) return;
+  await upsertConversionRuleRow(row);
 }
 
 async function handleRewriteJobEvent(payload: RealtimePayload): Promise<void> {
@@ -3117,7 +3159,9 @@ async function handleCookingEventEvent(payload: RealtimePayload): Promise<void> 
     }
     return;
   }
-  await upsertCookingEventRow(payload.new as unknown as CookingEventRow);
+  const row = payload.new as unknown as CookingEventRow;
+  if ((await pendingDeleteIds('cooking_event_delete', [row.id])).size > 0) return;
+  await upsertCookingEventRow(row);
 }
 
 async function handleRecipeTagEvent(payload: RealtimePayload): Promise<void> {
@@ -3129,7 +3173,9 @@ async function handleRecipeTagEvent(payload: RealtimePayload): Promise<void> {
     }
     return;
   }
-  await upsertRecipeTagRow(payload.new as unknown as RecipeTagRow);
+  const row = payload.new as unknown as RecipeTagRow;
+  if ((await pendingDeleteIds('recipe_tag_delete', [row.id])).size > 0) return;
+  await upsertRecipeTagRow(row);
 }
 
 async function handleCollectionNoteEvent(payload: RealtimePayload): Promise<void> {
@@ -3141,7 +3187,9 @@ async function handleCollectionNoteEvent(payload: RealtimePayload): Promise<void
     }
     return;
   }
-  await upsertCollectionNoteRow(payload.new as unknown as CollectionNoteRow);
+  const row = payload.new as unknown as CollectionNoteRow;
+  if ((await pendingDeleteIds('collection_note_delete', [row.id])).size > 0) return;
+  await upsertCollectionNoteRow(row);
 }
 
 // ---------- push ----------

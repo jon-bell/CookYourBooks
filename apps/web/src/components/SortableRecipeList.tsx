@@ -17,7 +17,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { Recipe } from '@cookyourbooks/domain';
+import type { CollectionRecipeSummary } from '../local/repositories.js';
 import { CoverImage } from './CoverImage.js';
 
 /** How the cookbook list is ordered. `manual` is the user's drag order
@@ -29,7 +29,7 @@ const UL_CLASS =
 
 /** Smallest page number on a recipe, or +Infinity if it has none (so
  *  page-less entries sort last). */
-function minPage(recipe: Recipe): number {
+function minPage(recipe: CollectionRecipeSummary): number {
   const ps = (recipe.pageNumbers ?? []).filter((n) => Number.isFinite(n));
   return ps.length ? Math.min(...ps) : Number.POSITIVE_INFINITY;
 }
@@ -41,7 +41,10 @@ export function formatPages(pageNumbers: readonly number[] | undefined): string 
   return ps.length === 1 ? `p. ${ps[0]}` : `pp. ${ps.join(', ')}`;
 }
 
-export function sortRecipes(recipes: readonly Recipe[], mode: RecipeSortMode): Recipe[] {
+export function sortRecipes(
+  recipes: readonly CollectionRecipeSummary[],
+  mode: RecipeSortMode,
+): CollectionRecipeSummary[] {
   const arr = [...recipes];
   if (mode === 'name') {
     arr.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
@@ -72,7 +75,7 @@ export function SortableRecipeList({
   sortMode = 'manual',
 }: {
   collectionId: string;
-  recipes: readonly Recipe[];
+  recipes: readonly CollectionRecipeSummary[];
   onReorder: (orderedIds: string[]) => Promise<void> | void;
   /** When provided, renders a ★/☆ button per row. The Speed Importer
    *  queue is derived from `recipes.starred`; placeholders are the
@@ -152,7 +155,7 @@ function SortableRow({
 }: {
   id: string;
   collectionId: string;
-  recipe: Recipe;
+  recipe: CollectionRecipeSummary;
   onToggleStar?: (recipeId: string) => Promise<void> | void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -189,13 +192,13 @@ function RecipeRowBody({
   onToggleStar,
 }: {
   collectionId: string;
-  recipe: Recipe;
+  recipe: CollectionRecipeSummary;
   onToggleStar?: (recipeId: string) => Promise<void> | void;
 }) {
   // A "placeholder" recipe is a ToC entry the user hasn't imported /
   // hand-entered yet. Render it muted so the imported ones pop.
-  const isPlaceholder = recipe.ingredients.length === 0 && recipe.instructions.length === 0;
-  const starred = recipe.starred === true;
+  const isPlaceholder = recipe.ingredientCount === 0 && recipe.instructionCount === 0;
+  const starred = recipe.starred;
   const pages = formatPages(recipe.pageNumbers);
   return (
     <>
@@ -238,6 +241,7 @@ function RecipeRowBody({
               path={recipe.coverImagePath}
               alt=""
               className="h-8 w-8 shrink-0 rounded border border-stone-200 dark:border-stone-700"
+              variant="thumb"
             />
           )}
           <span className={`line-clamp-2 min-w-0 ${isPlaceholder ? '' : 'font-medium'}`}>{recipe.title}</span>
@@ -253,7 +257,7 @@ function RecipeRowBody({
         <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400 sm:text-sm">
           {isPlaceholder
             ? '—'
-            : `${recipe.ingredients.length} ing · ${recipe.instructions.length} steps`}
+            : `${recipe.ingredientCount} ing · ${recipe.instructionCount} steps`}
         </span>
       </Link>
     </>

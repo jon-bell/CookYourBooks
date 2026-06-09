@@ -80,6 +80,36 @@ export async function markFailed(id: number, error: string): Promise<void> {
   );
 }
 
+/**
+ * Of the given entity ids, return the ones that have a pending delete of
+ * `kind` sitting in the outbox. The sync apply paths use this to keep a
+ * stale pull response (or a realtime INSERT echo) from resurrecting a row
+ * the user deleted locally while the fetch was in flight: pulls only ever
+ * upsert, and owner-filtered realtime DELETE events don't deliver (the old
+ * record carries just the PK), so a resurrected hard-deleted row would be
+ * permanent. Soft-deleted tables (recipes, collections) don't need this —
+ * their tombstone row wins the updated_at freshness compare instead.
+ */
+export async function pendingDeleteIds(
+  kind: OutboxKind,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (ids.length === 0) return out;
+  const db = await getLocalDb();
+  const CHUNK = 500;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const ph = slice.map(() => '?').join(',');
+    const rows = (await db.execO<{ entity_id: string }>(
+      `select entity_id from outbox where kind = ? and entity_id in (${ph})`,
+      [kind, ...slice],
+    )) as { entity_id: string }[];
+    for (const r of rows) out.add(r.entity_id);
+  }
+  return out;
+}
+
 export async function countPending(): Promise<number> {
   const db = await getLocalDb();
   const rows = (await db.execO<{ c: number }>(`select count(*) as c from outbox`)) as {

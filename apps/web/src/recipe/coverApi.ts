@@ -8,7 +8,13 @@
 
 import { supabase } from '../supabase.js';
 import { OcrWorkerNotConfiguredError } from '../import/api.js';
-import { COVER_CACHE_CONTROL, coverObjectKey, prepareCoverImage } from './coverImage.js';
+import {
+  COVER_CACHE_CONTROL,
+  COVER_THUMB_MAX_EDGE,
+  coverObjectKey,
+  prepareCoverImage,
+  thumbPathFor,
+} from './coverImage.js';
 
 export type CoverScope = 'recipe' | 'collection' | 'library';
 
@@ -82,14 +88,27 @@ export async function uploadRecipeCover(
     .from('covers')
     .upload(path, blob, { upsert: true, contentType, cacheControl: COVER_CACHE_CONTROL });
   if (error) throw error;
+
+  // Best-effort thumbnail upload — a missing thumb never fails the cover set.
+  try {
+    const thumb = await prepareCoverImage(file, COVER_THUMB_MAX_EDGE);
+    await supabase.storage.from('covers').upload(thumbPathFor(path), thumb.blob, {
+      upsert: true,
+      contentType: thumb.contentType,
+      cacheControl: COVER_CACHE_CONTROL,
+    });
+  } catch (e) {
+    console.warn('recipe cover thumb upload failed (non-fatal):', e);
+  }
+
   if (previousPath && previousPath !== path) {
-    await supabase.storage.from('covers').remove([previousPath]);
+    await supabase.storage.from('covers').remove([previousPath, thumbPathFor(previousPath)]);
   }
   return path;
 }
 
 export async function removeRecipeCover(path: string): Promise<void> {
-  const { error } = await supabase.storage.from('covers').remove([path]);
+  const { error } = await supabase.storage.from('covers').remove([path, thumbPathFor(path)]);
   if (error) throw error;
 }
 
