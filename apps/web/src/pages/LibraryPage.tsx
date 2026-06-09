@@ -1,3 +1,4 @@
+import { useDeferredValue, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useLibrarySummaries } from '../data/queries.js';
 import { useSync } from '../local/SyncProvider.js';
@@ -7,6 +8,23 @@ import { CoverImage } from '../components/CoverImage.js';
 export function LibraryPage() {
   const { localReady, hydrated, status } = useSync();
   const { data: collections = [], isLoading, error } = useLibrarySummaries();
+
+  const [filterQuery, setFilterQuery] = useState('');
+  // Defer the query so typing stays snappy; the input stays bound to the
+  // immediate value so the field itself never lags.
+  const deferredQuery = useDeferredValue(filterQuery);
+  const q = deferredQuery.trim().toLowerCase();
+  const isFiltering = q !== '';
+
+  const filtered = useMemo(() => {
+    if (!isFiltering) return collections;
+    return collections.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        (c.author?.toLowerCase().includes(q) ?? false) ||
+        (c.siteName?.toLowerCase().includes(q) ?? false),
+    );
+  }, [collections, q, isFiltering]);
 
   const waitingForData = isLoading && collections.length === 0;
   // The first server pull hasn't finished yet. The local cache might
@@ -40,8 +58,22 @@ export function LibraryPage() {
           </p>
         )
       ) : (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {collections.map((c) => {
+        <>
+          <input
+            type="search"
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            placeholder="Filter by title, author, or site…"
+            aria-label="Filter your library"
+            className="w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-1.5 text-sm"
+          />
+          {filtered.length === 0 ? (
+            <p className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-4 py-6 text-center text-sm text-stone-500 dark:text-stone-400">
+              No collections match “{filterQuery.trim()}”.
+            </p>
+          ) : (
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((c) => {
             const isPlaceholder = c.filledRecipeCount === 0 && c.recipeCount > 0;
             return (
               <li
@@ -65,10 +97,12 @@ export function LibraryPage() {
                     </div>
                   </div>
                 </Link>
-              </li>
-            );
-          })}
-        </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
       )}
     </div>
   );
