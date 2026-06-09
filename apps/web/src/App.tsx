@@ -1,4 +1,4 @@
-import { Link, Route, Routes, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { LibraryPage } from './pages/LibraryPage.js';
 import { CollectionPage } from './pages/CollectionPage.js';
 import { RecipePage } from './pages/RecipePage.js';
@@ -16,10 +16,14 @@ import { AdminGlobalTocPage } from './pages/AdminGlobalTocPage.js';
 import { AdminNutritionPage } from './pages/AdminNutritionPage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
 import { LandingPage } from './pages/LandingPage.js';
-import { SettingsPage } from './pages/SettingsPage.js';
+import { SettingsLlmPage } from './pages/SettingsLlmPage.js';
+import { SettingsConversionsPage } from './pages/SettingsConversionsPage.js';
+import { SettingsCliPage } from './pages/SettingsCliPage.js';
+import { SettingsDangerPage } from './pages/SettingsDangerPage.js';
 import { HouseholdPage } from './pages/HouseholdPage.js';
 import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
 import { CostCenterPage } from './pages/CostCenterPage.js';
+import { ActivityPage } from './pages/ActivityPage.js';
 import { LegalPage } from './pages/LegalPage.js';
 import { ImportListPage } from './pages/ImportListPage.js';
 import { ImportNewPage } from './pages/ImportNewPage.js';
@@ -284,11 +288,36 @@ export function App() {
               </RequireAuth>
             }
           />
+          <Route path="/settings" element={<Navigate to="/settings/llm" replace />} />
           <Route
-            path="/settings"
+            path="/settings/llm"
             element={
               <RequireAuth>
-                <SettingsPage />
+                <SettingsLlmPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/settings/conversions"
+            element={
+              <RequireAuth>
+                <SettingsConversionsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/settings/cli"
+            element={
+              <RequireAuth>
+                <SettingsCliPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/settings/danger"
+            element={
+              <RequireAuth>
+                <SettingsDangerPage />
               </RequireAuth>
             }
           />
@@ -309,6 +338,14 @@ export function App() {
             element={
               <RequireAuth>
                 <CostCenterPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/activity"
+            element={
+              <RequireAuth>
+                <ActivityPage />
               </RequireAuth>
             }
           />

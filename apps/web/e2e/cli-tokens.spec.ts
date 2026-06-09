@@ -12,7 +12,7 @@ test.describe('CLI tokens', () => {
     // 2. Mint the token through the Settings UI. The raw string appears
     //    once inside the success panel — we capture it by reading the
     //    rendered `<code>` block.
-    await page.goto('/settings');
+    await page.goto('/settings/cli');
     await page.getByLabel(/New token label/).fill('e2e');
     await page.getByRole('button', { name: 'Create token' }).click();
     await expect(

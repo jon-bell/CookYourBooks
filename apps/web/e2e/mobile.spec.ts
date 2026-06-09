@@ -79,6 +79,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
       'Cooking',
       'Import',
       'Household',
+      'Activity',
       'Settings',
     ]) {
       await expect(sheet.getByRole('link', { name: label, exact: true })).toBeVisible();

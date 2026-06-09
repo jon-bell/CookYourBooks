@@ -109,7 +109,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
         setError(
           <>
             OCR not configured.{' '}
-            <Link to="/settings" className="underline">
+            <Link to="/settings/llm" className="underline">
               Open settings
             </Link>{' '}
             to add an API key.

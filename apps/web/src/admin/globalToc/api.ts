@@ -1,4 +1,5 @@
 import { supabase } from '../../supabase.js';
+import { COVER_CACHE_CONTROL, prepareCoverImage } from '../../recipe/coverImage.js';
 import { lookupOpenLibrary, normalizeIsbn } from './openLibrary.js';
 
 // Thin wrapper over the global_cookbooks / global_toc_entries tables.
@@ -266,11 +267,16 @@ export async function fetchFromOpenLibrary(
   let coverPath: string | null = null;
 
   if (lookup.cover) {
-    const path = `global/${cookbookId}-${Date.now()}.jpg`;
+    // Downscale + re-encode (WebP/JPEG) before storing, same as every other
+    // cover upload path; the `<ts>` keeps the key unique so the immutable
+    // 1-year cache is safe.
+    const prepared = await prepareCoverImage(lookup.cover);
+    const path = `global/${cookbookId}-${Date.now()}.${prepared.ext}`;
     const { error } = await supabase.storage
       .from('covers')
-      .upload(path, lookup.cover, {
-        contentType: 'image/jpeg',
+      .upload(path, prepared.blob, {
+        contentType: prepared.contentType,
+        cacheControl: COVER_CACHE_CONTROL,
         upsert: false,
       });
     if (error) throw error;
@@ -328,31 +334,16 @@ export async function uploadCoverFile(
   cookbookId: string,
   file: Blob,
 ): Promise<string> {
-  const ext = extensionFromMime(file.type) ?? 'jpg';
-  const path = `global/${cookbookId}-${Date.now()}.${ext}`;
-  const { error } = await supabase.storage.from('covers').upload(path, file, {
-    contentType: file.type || `image/${ext}`,
+  const prepared = await prepareCoverImage(file);
+  const path = `global/${cookbookId}-${Date.now()}.${prepared.ext}`;
+  const { error } = await supabase.storage.from('covers').upload(path, prepared.blob, {
+    contentType: prepared.contentType,
+    cacheControl: COVER_CACHE_CONTROL,
     upsert: false,
   });
   if (error) throw error;
   await sweepOldCovers(cookbookId, path);
   return path;
-}
-
-function extensionFromMime(mime: string): string | null {
-  switch (mime) {
-    case 'image/jpeg':
-    case 'image/jpg':
-      return 'jpg';
-    case 'image/png':
-      return 'png';
-    case 'image/webp':
-      return 'webp';
-    case 'image/gif':
-      return 'gif';
-    default:
-      return null;
-  }
 }
 
 export type CoverBackfillResult =
