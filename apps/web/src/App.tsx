@@ -1,5 +1,6 @@
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { LibraryPage } from './pages/LibraryPage.js';
+import { AllRecipesPage } from './pages/AllRecipesPage.js';
 import { CollectionPage } from './pages/CollectionPage.js';
 import { RecipePage } from './pages/RecipePage.js';
 import { RecipeEditorPage } from './pages/RecipeEditorPage.js';
@@ -149,6 +150,14 @@ export function App() {
             element={
               <RequireAuth>
                 <CookModePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/recipes"
+            element={
+              <RequireAuth>
+                <AllRecipesPage />
               </RequireAuth>
             }
           />

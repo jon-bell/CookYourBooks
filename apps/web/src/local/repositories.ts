@@ -1174,6 +1174,20 @@ export interface LibraryCollectionSummary {
   filledRecipeCount: number;
 }
 
+/** A recipe card for the library-wide gallery: enough to render a cover card
+ *  and filter by recipe or by book, plus local view stats for sorting. */
+export interface GalleryRecipeSummary {
+  id: string;
+  title: string;
+  coverImagePath: string | null;
+  pageNumbers: number[];
+  collectionId: string;
+  collectionTitle: string;
+  collectionAuthor: string | null;
+  viewCount: number;
+  lastViewedAt: number | null;
+}
+
 export class LocalRecipeCollectionRepository implements RecipeCollectionRepository {
   constructor(private readonly ownerId: string) {}
 
@@ -1291,6 +1305,73 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       recipeCount: Number(row.recipe_count),
       filledRecipeCount: Number(row.filled_count),
     }));
+  }
+
+  /**
+   * Every non-empty recipe across the visible library (own + household-shared)
+   * for the library-wide gallery, default-sorted by personal view frequency
+   * then recency. Lightweight: title + cover + page + owning book only — no
+   * ingredient/instruction hydration. `recipe_views` is the local-only,
+   * never-synced view log; it left-joins so never-viewed recipes still appear
+   * (falling to the bottom, then title order).
+   */
+  async listGalleryRecipes(): Promise<GalleryRecipeSummary[]> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      page_numbers: string | null;
+      collection_id: string;
+      collection_title: string;
+      collection_author: string | null;
+      view_count: number;
+      last_viewed: number | null;
+    }>(
+      `select r.id, r.title, r.cover_image_path, r.page_numbers, r.collection_id,
+              c.title as collection_title, c.author as collection_author,
+              coalesce(v.cnt, 0) as view_count, v.last_viewed
+         from recipes r
+         join recipe_collections c on c.id = r.collection_id and c.deleted = 0
+         left join (
+           select recipe_id, count(*) as cnt, max(viewed_at) as last_viewed
+             from recipe_views group by recipe_id
+         ) v on v.recipe_id = r.id
+        where r.deleted = 0 and r.has_content = 1
+          and (c.owner_id = ? or c.shared_with_household_id is not null)
+        order by (view_count > 0) desc, view_count desc, v.last_viewed desc, lower(r.title) asc`,
+      [this.ownerId],
+    )) as Array<{
+      id: string;
+      title: string;
+      cover_image_path: string | null;
+      page_numbers: string | null;
+      collection_id: string;
+      collection_title: string;
+      collection_author: string | null;
+      view_count: number;
+      last_viewed: number | null;
+    }>;
+    return rows.map((r) => {
+      let pageNumbers: number[] = [];
+      try {
+        const parsed = JSON.parse(r.page_numbers || '[]');
+        if (Array.isArray(parsed)) pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
+      } catch {
+        // leave empty
+      }
+      return {
+        id: r.id,
+        title: r.title,
+        coverImagePath: r.cover_image_path,
+        pageNumbers,
+        collectionId: r.collection_id,
+        collectionTitle: r.collection_title,
+        collectionAuthor: r.collection_author,
+        viewCount: Number(r.view_count),
+        lastViewedAt: r.last_viewed,
+      };
+    });
   }
 
   async list(): Promise<RecipeCollection[]> {

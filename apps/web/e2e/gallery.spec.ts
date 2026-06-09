@@ -56,7 +56,8 @@ test.describe('Collection gallery view', () => {
     await expect(page.getByRole('heading', { name: 'Gallerybook' })).toBeVisible();
     await page.reload();
     await waitForSynced(page);
-    await page.getByRole('button', { name: 'Gallery view' }).click();
+    // Cover view is the default now; click it anyway to be explicit/robust.
+    await page.getByRole('button', { name: 'Cover view' }).click();
 
     // Force Name (A–Z) sort so name order alone would put Apple Pie first and
     // Zebra Cake last — proving covers-first overrides the active sort.
@@ -98,90 +99,5 @@ test.describe('Collection gallery view', () => {
     await zebraCard.getByRole('link').click();
     await expect(page).toHaveURL(/\/recipes\//);
     await expect(page.getByRole('heading', { name: 'Zebra Cake' })).toBeVisible();
-  });
-
-  test('shares a recipe as a composed social-card image', async ({ authedPage: page }) => {
-    // Stub Web Share (files) so we can capture the shared payload instead of
-    // popping a real OS sheet. Registered before any navigation, so it's in
-    // place by the time the gallery renders.
-    await page.addInitScript(() => {
-      const w = window as unknown as { __shared: unknown };
-      w.__shared = null;
-      const stub = {
-        canShare: (data?: { files?: unknown[] }) =>
-          !!data && Array.isArray(data.files) && data.files.length > 0,
-        share: async (data: { title?: string; text?: string; files?: File[] }) => {
-          const f = data.files?.[0];
-          w.__shared = {
-            title: data.title ?? null,
-            text: data.text ?? null,
-            fileName: f?.name ?? null,
-            fileType: f?.type ?? null,
-            fileSize: f?.size ?? 0,
-          };
-        },
-      };
-      try {
-        Object.defineProperty(navigator, 'canShare', { configurable: true, value: stub.canShare });
-        Object.defineProperty(navigator, 'share', { configurable: true, value: stub.share });
-      } catch {
-        Object.assign(navigator, stub);
-      }
-    });
-
-    await createRecipeViaUi(page, {
-      collectionTitle: 'Sharebook',
-      recipeTitle: 'Choco Tart',
-      ingredients: [{ kind: 'vague', name: 'chocolate' }],
-      steps: ['Bake.'],
-    });
-
-    // Give it a cover so the composed card carries a photo.
-    const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Add cover' }).click();
-    const chooser = await fileChooserPromise;
-    await chooser.setFiles({ name: 'cover.png', mimeType: 'image/png', buffer: PNG_BYTES });
-    await expect(page.getByRole('button', { name: 'Replace cover' })).toBeVisible({
-      timeout: 10_000,
-    });
-    // Let the cover's local save + sync echoes settle before reading it from a
-    // different query (the collection list) on another page.
-    await waitForSynced(page);
-
-    // Open the collection, switch to Gallery, and share the card. Hard-reload
-    // first so the recipe list is read from the freshly-synced state (the cover
-    // converges through sync; a clean boot re-pulls it deterministically).
-    await page.getByRole('link', { name: 'Library' }).click();
-    await page.getByRole('link', { name: 'Sharebook' }).first().click();
-    await expect(page.getByRole('heading', { name: 'Sharebook' })).toBeVisible();
-    await page.reload();
-    await waitForSynced(page);
-    await page.getByRole('button', { name: 'Gallery view' }).click();
-    // Wait for the cover to land in the gallery so the composed card carries the photo.
-    await expect(
-      page.locator('li', { hasText: 'Choco Tart' }).getByRole('img', { name: 'Choco Tart' }),
-    ).toHaveAttribute('src', COVERS_URL, { timeout: 15_000 });
-    await page.getByRole('button', { name: 'Share Choco Tart' }).click();
-
-    // A PNG card image reached the share sheet, named after the recipe, with
-    // the recipe link in the share text.
-    await expect
-      .poll(async () =>
-        page.evaluate(
-          () => (window as unknown as { __shared: { fileName?: string } | null }).__shared?.fileName ?? null,
-        ),
-      )
-      .toBe('choco-tart.png');
-    const shared = await page.evaluate(
-      () => (window as unknown as { __shared: Record<string, unknown> | null }).__shared,
-    );
-    expect(shared?.fileType).toBe('image/png');
-    expect(shared?.fileSize as number).toBeGreaterThan(1000);
-    expect(String(shared?.text)).toContain('/recipes/');
-    expect(shared?.title).toBe('Choco Tart');
-
-    // The share button didn't hijack the card's link.
-    await page.locator('li', { hasText: 'Choco Tart' }).getByRole('link').click();
-    await expect(page).toHaveURL(/\/recipes\//);
   });
 });

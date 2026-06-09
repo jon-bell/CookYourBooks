@@ -8,6 +8,7 @@ import {
   getRecipesByIds,
   listAdaptations,
   type CollectionPickerOption,
+  type GalleryRecipeSummary,
   type LibraryCollectionSummary,
   type RecipeSearchHit,
   type RecipeSummary,
@@ -33,6 +34,18 @@ export function useLibrarySummaries() {
     queryKey: ['library-summaries', user?.id],
     enabled,
     queryFn: () => collectionRepo(user!.id).listLibrarySummaries(),
+  });
+}
+
+/** Library-wide cover gallery — every non-empty recipe (own + household-shared),
+ *  view-sorted. Lightweight rows, no full hydration. */
+export function useGalleryRecipes() {
+  const { user } = useAuth();
+  const enabled = useLocalDbReady();
+  return useQuery<GalleryRecipeSummary[]>({
+    queryKey: ['gallery-recipes', user?.id],
+    enabled,
+    queryFn: () => collectionRepo(user!.id).listGalleryRecipes(),
   });
 }
 
