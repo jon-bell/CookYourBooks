@@ -61,7 +61,11 @@ export function LoadingOverlay({
       data-testid={testId}
     >
       <div className="w-full max-w-sm rounded-xl border border-stone-200 bg-white p-6 shadow-xl dark:border-stone-700 dark:bg-stone-900">
-        <h2 className="text-base font-semibold text-stone-900 dark:text-stone-100">{title}</h2>
+        {/* Intentionally NOT a heading element: a heading whose name contains
+            "your library" collides with the many getByRole('heading', { name:
+            'Your library' }) assertions/fixtures while this overlay is briefly
+            up during first sync. The dialog's aria-label already names it. */}
+        <div className="text-base font-semibold text-stone-900 dark:text-stone-100">{title}</div>
         {subtitle && (
           <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{subtitle}</p>
         )}
