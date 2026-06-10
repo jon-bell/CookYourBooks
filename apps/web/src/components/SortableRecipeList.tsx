@@ -20,64 +20,21 @@ import { CSS } from '@dnd-kit/utilities';
 import type { CollectionRecipeSummary } from '../local/repositories.js';
 import { CoverImage } from './CoverImage.js';
 
-/** How the cookbook list is ordered. `manual` is the user's drag order
- *  (persisted via sort_order); `name`/`page`/`made` are read-only views. */
-export type RecipeSortMode = 'manual' | 'name' | 'page' | 'made';
-
-export function isRecipeSortMode(v: string): v is RecipeSortMode {
-  return v === 'manual' || v === 'name' || v === 'page' || v === 'made';
-}
-
-/**
- * Order items by most-recently-made first (per the `lastMade` map of
- * recipeId → 'YYYY-MM-DD'); never-made items sort last, ties break by title.
- * Generic over anything with id+title so the gallery page can reuse it.
- */
-export function sortByLastMade<T extends { id: string; title: string }>(
-  items: readonly T[],
-  lastMade: ReadonlyMap<string, string> | undefined,
-): T[] {
-  return [...items].sort((a, b) => {
-    const da = lastMade?.get(a.id) ?? '';
-    const db = lastMade?.get(b.id) ?? '';
-    if (da !== db) return da < db ? 1 : -1;
-    return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
-  });
-}
+// Sort logic lives in recipeSort.ts (pure, no component imports — unit tests
+// use it without pulling the supabase client into the module graph).
+// Re-exported here so existing component-side importers keep working.
+import { sortRecipes, type RecipeSortMode } from './recipeSort.js';
+export { isRecipeSortMode, sortByLastMade, sortRecipes } from './recipeSort.js';
+export type { RecipeSortMode } from './recipeSort.js';
 
 const UL_CLASS =
   'divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900';
-
-/** Smallest page number on a recipe, or +Infinity if it has none (so
- *  page-less entries sort last). */
-function minPage(recipe: CollectionRecipeSummary): number {
-  const ps = (recipe.pageNumbers ?? []).filter((n) => Number.isFinite(n));
-  return ps.length ? Math.min(...ps) : Number.POSITIVE_INFINITY;
-}
 
 /** "p. 42" / "pp. 42, 51" / null when the recipe carries no page. */
 export function formatPages(pageNumbers: readonly number[] | undefined): string | null {
   const ps = [...(pageNumbers ?? [])].filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
   if (ps.length === 0) return null;
   return ps.length === 1 ? `p. ${ps[0]}` : `pp. ${ps.join(', ')}`;
-}
-
-export function sortRecipes(
-  recipes: readonly CollectionRecipeSummary[],
-  mode: RecipeSortMode,
-  lastMade?: ReadonlyMap<string, string>,
-): CollectionRecipeSummary[] {
-  if (mode === 'made') return sortByLastMade(recipes, lastMade);
-  const arr = [...recipes];
-  if (mode === 'name') {
-    arr.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-  } else if (mode === 'page') {
-    arr.sort((a, b) => {
-      const d = minPage(a) - minPage(b);
-      return d !== 0 ? d : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
-    });
-  }
-  return arr;
 }
 
 /**

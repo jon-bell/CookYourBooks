@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isRecipeSortMode, sortByLastMade } from './SortableRecipeList.js';
+import { isRecipeSortMode, sortByLastMade } from './recipeSort.js';
 
 const items = [
   { id: 'a', title: 'Apple pie' },
