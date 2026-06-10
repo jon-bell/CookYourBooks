@@ -35,12 +35,14 @@ test.describe('Collection gallery view', () => {
     await page.getByRole('button', { name: 'Save recipe' }).click();
     await expect(page.getByRole('heading', { name: 'Zebra Cake' })).toBeVisible();
 
-    // Upload a cover to Zebra Cake from its recipe page.
+    // Upload a cover to Zebra Cake from its recipe page (the cover-less
+    // placeholder invites an upload; once a cover exists, the actions hide
+    // behind the ⋯ overlay menu).
     const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Add cover' }).click();
+    await page.getByRole('button', { name: 'Upload an image' }).click();
     const chooser = await fileChooserPromise;
     await chooser.setFiles({ name: 'cover.png', mimeType: 'image/png', buffer: PNG_BYTES });
-    await expect(page.getByRole('button', { name: 'Replace cover' })).toBeVisible({
+    await expect(page.getByTestId('cover-menu')).toBeVisible({
       timeout: 10_000,
     });
     // Let the cover's local save + sync echoes settle before reading it from a
@@ -95,9 +97,21 @@ test.describe('Collection gallery view', () => {
       })
       .toBe(true);
 
+    // In-collection cards don't repeat the collection name — the context
+    // is already the collection.
+    await expect(zebraCard.getByRole('link', { name: 'Gallerybook' })).toHaveCount(0);
+
     // Tapping the card opens that recipe.
     await zebraCard.getByRole('link').click();
     await expect(page).toHaveURL(/\/recipes\//);
     await expect(page.getByRole('heading', { name: 'Zebra Cake' })).toBeVisible();
+
+    // Removing the cover (via the ⋯ overlay menu) brings the placeholder
+    // invite back.
+    await page.getByTestId('cover-menu').click();
+    await page.getByRole('menuitem', { name: 'Remove' }).click();
+    await expect(page.getByRole('button', { name: 'Upload an image' })).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

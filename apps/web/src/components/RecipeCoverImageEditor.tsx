@@ -8,12 +8,17 @@ import {
   uploadRecipeCover,
 } from '../recipe/coverApi.js';
 import { CoverImage } from './CoverImage.js';
+import { DropdownMenu, DropdownMenuItem } from './DropdownMenu.js';
 
 /**
  * Recipe cover: upload / replace / remove a user image, or generate one with
  * Gemini. Parallels CoverImageEditor (collection covers); generation enqueues a
  * single-recipe cover job — the worker stamps cover_image_path server-side, so
  * the new cover flows back in via sync (no local write here).
+ *
+ * Rendered as the header cover itself (via RecipeHeaderMeta's coverSlot):
+ * with a cover, the actions hide behind a small ⋯ menu overlaid on the
+ * image; without one, a placeholder invites uploading or generating.
  */
 export function RecipeCoverImageEditor({
   recipe,
@@ -74,21 +79,65 @@ export function RecipeCoverImageEditor({
   }
 
   return (
-    <div className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
-      <div className="flex flex-wrap items-center gap-4">
-        <CoverImage
-          path={recipe.coverImagePath}
-          alt={`${recipe.title} cover`}
-          className="h-24 w-36 rounded-md border border-stone-200 dark:border-stone-700"
-        />
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
+    <div className="mt-3 w-full max-w-md">
+      {recipe.coverImagePath ? (
+        <div className="relative">
+          <CoverImage
+            path={recipe.coverImagePath}
+            alt={`${recipe.title} cover`}
+            className="h-48 w-full rounded-lg border border-stone-200 dark:border-stone-700"
+          />
+          <div className="absolute right-2 top-2">
+            <DropdownMenu
+              label="Cover options"
+              testId="cover-menu"
+              triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-full bg-stone-900/60 text-white backdrop-blur-sm hover:bg-stone-900/80"
+            >
+              {(close) => (
+                <>
+                  <DropdownMenuItem
+                    disabled={busy}
+                    onSelect={() => {
+                      close();
+                      fileInput.current?.click();
+                    }}
+                  >
+                    Replace cover
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={busy}
+                    onSelect={() => {
+                      close();
+                      void generate();
+                    }}
+                  >
+                    ✨ Generate with AI
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    tone="danger"
+                    disabled={busy}
+                    onSelect={() => {
+                      close();
+                      void remove();
+                    }}
+                  >
+                    Remove
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenu>
+          </div>
+        </div>
+      ) : (
+        <div className="flex h-48 w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-600 dark:bg-stone-900">
+          <p className="text-sm text-stone-600 dark:text-stone-400">Add a cover</p>
+          <div className="flex flex-wrap justify-center gap-2">
             <button
               onClick={() => fileInput.current?.click()}
               disabled={busy}
               className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
             >
-              {recipe.coverImagePath ? 'Replace cover' : 'Add cover'}
+              Upload an image
             </button>
             <button
               onClick={generate}
@@ -97,31 +146,22 @@ export function RecipeCoverImageEditor({
             >
               ✨ Generate with AI
             </button>
-            {recipe.coverImagePath && (
-              <button
-                onClick={remove}
-                disabled={busy}
-                className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50"
-              >
-                Remove
-              </button>
-            )}
           </div>
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleFile(f);
-              e.target.value = '';
-            }}
-          />
-          {status && <p className="text-xs text-stone-500 dark:text-stone-400">{status}</p>}
-          {error && <p className="text-xs text-red-700 dark:text-red-300">{error}</p>}
         </div>
-      </div>
+      )}
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleFile(f);
+          e.target.value = '';
+        }}
+      />
+      {status && <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">{status}</p>}
+      {error && <p className="mt-1 text-xs text-red-700 dark:text-red-300">{error}</p>}
     </div>
   );
 }

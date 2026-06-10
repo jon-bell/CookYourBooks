@@ -1,6 +1,12 @@
 import { expect, type Page } from '@playwright/test';
 import { waitForSynced } from './fixtures.js';
 
+/** Open the recipe page's "⋯ More" actions menu (Improve / Adapt / Remix /
+ *  Star / Export / Delete live in there now, as role=menuitem). */
+export async function openRecipeMoreMenu(page: Page): Promise<void> {
+  await page.getByTestId('recipe-more-menu').click();
+}
+
 /**
  * Build a collection + recipe through the UI. Returns when the new recipe
  * detail page is open and the save has been synced to the backend, so

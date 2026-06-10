@@ -1,5 +1,5 @@
 import { test, expect } from './support/fixtures.js';
-import { createRecipeViaUi } from './support/helpers.js';
+import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 import { configureOcrKey, pumpWorker, seedRemixFixture } from './support/imports.js';
 
 /**
@@ -73,7 +73,8 @@ test.describe('Recipe Remix', () => {
       recipes: [SHEETPAN],
     });
 
-    // Open the dialog and run the first remix turn.
+    // Open the dialog (via the ⋯ More menu) and run the first remix turn.
+    await openRecipeMoreMenu(page);
     await page.getByTestId('remix-open').click();
     await expect(page.getByTestId('remix-dialog')).toBeVisible();
     await page.getByTestId('remix-instruction').fill('make it a sheet-pan dinner');
@@ -150,6 +151,7 @@ test.describe('Recipe Remix', () => {
     // Force the worker down the PARSE error path.
     await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', errorKind: 'PARSE', upsert: true });
 
+    await openRecipeMoreMenu(page);
     await page.getByTestId('remix-open').click();
     await page.getByTestId('remix-instruction').fill('make it fancy');
     await page.getByTestId('remix-run').click();

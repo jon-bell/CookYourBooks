@@ -44,6 +44,7 @@ import {
 import { useImportItemsForRecipe } from '../import/queries.js';
 import { RecipeScanDialog } from '../components/RecipeScanDialog.js';
 import { RecipeCoverImageEditor } from '../components/RecipeCoverImageEditor.js';
+import { DropdownMenu, DropdownMenuItem } from '../components/DropdownMenu.js';
 import { RecipeHeaderMeta, RecipeContentGrid } from '../recipe/RecipeBody.js';
 import { useRecipeTextScale, TEXT_SCALE_MAX, TEXT_SCALE_MIN } from '../recipe/useRecipeTextScale.js';
 import { usePinchTextScale } from '../recipe/usePinchTextScale.js';
@@ -90,6 +91,11 @@ export function RecipePage() {
   const [showScan, setShowScan] = useState(false);
   const [showRemix, setShowRemix] = useState(false);
   const { job: rewriteJob, refresh: refreshRewriteJob } = useRewriteJob(recipeId);
+  // While the local-DB query is still loading, fall back to the
+  // start-state to keep the toolbar from flickering.
+  const rewriteInFlight = rewriteJob?.status === 'PENDING' || rewriteJob?.status === 'CLAIMED';
+  const rewriteFailed =
+    rewriteJob?.status === 'FAILED' && (rewriteJob.lastError ?? '') !== 'CANCELLED';
   const { data: importItems = [] } = useImportItemsForRecipe(recipeId);
   // Household library-sharing state — tells the share button who can open
   // the link when the collection isn't public.
@@ -209,6 +215,8 @@ export function RecipePage() {
           recipe={scaled}
           collection={collection}
           isAdaptation={!!parent}
+          coverSlot={<RecipeCoverImageEditor recipe={recipe} onChange={setCover} />}
+          collectionHref={`/collections/${collection.id}`}
         >
           {importItems.length > 0 && (
             <button
@@ -235,10 +243,6 @@ export function RecipePage() {
         </RecipeHeaderMeta>
 
         <TagEditor recipeId={recipe.id} />
-
-        <div className="mt-4">
-          <RecipeCoverImageEditor recipe={recipe} onChange={setCover} />
-        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
@@ -324,57 +328,12 @@ export function RecipePage() {
           >
             Cook mode
           </Link>
-          <ImproveInstructionsButton
-            job={rewriteJob}
-            onStart={startImprove}
-            onCancel={cancelImprove}
-          />
           <Link
             to={`/collections/${collection.id}/recipes/${recipe.id}/edit`}
             className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Edit
           </Link>
-          <button
-            onClick={adaptThisRecipe}
-            disabled={saveRecipe.isPending}
-            className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50"
-          >
-            Adapt
-          </button>
-          <button
-            onClick={() => setShowRemix(true)}
-            className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
-            data-testid="remix-open"
-          >
-            Remix
-          </button>
-          <button
-            type="button"
-            onClick={toggleStar}
-            disabled={saveRecipe.isPending}
-            aria-pressed={recipe.starred === true}
-            title={
-              recipe.starred === true
-                ? 'Unstar (remove from Speed Importer queue)'
-                : 'Star this recipe so the Speed Importer queues it for scanning'
-            }
-            className={`rounded-md px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-50 ${
-              recipe.starred === true
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-stone-700 dark:text-stone-300'
-            }`}
-          >
-            <span aria-hidden>{recipe.starred === true ? '★' : '☆'}</span>{' '}
-            {recipe.starred === true ? 'Starred' : 'Star'}
-          </button>
-          <button
-            onClick={shareAsMarkdown}
-            className="rounded-md px-3 py-1.5 text-sm text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
-            title="Export this recipe as Markdown / via the share sheet"
-          >
-            Export
-          </button>
           <ShareLinkButton
             recipeId={recipe.id}
             audience={shareAudience({
@@ -383,17 +342,99 @@ export function RecipePage() {
               libraryShared: !!household?.libraryShared,
             })}
           />
-          <button
-            onClick={async () => {
-              if (confirm(`Delete "${recipe.title}"?`)) {
-                await deleteRecipe.mutateAsync(recipe.id);
-                navigate(`/collections/${collection.id}`);
-              }
-            }}
-            className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"
-          >
-            Delete
-          </button>
+          {/* In-flight rewrite stays visible as a toolbar chip — the menu
+              closes after starting, so the status (and cancel) can't live
+              only inside it. */}
+          {rewriteInFlight && (
+            <button
+              type="button"
+              onClick={cancelImprove}
+              className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
+              data-testid="rewrite-status"
+              title="Cancel rewrite"
+            >
+              Rewriting…
+            </button>
+          )}
+          <DropdownMenu label="More actions" testId="recipe-more-menu">
+            {(close) => (
+              <>
+                {!rewriteInFlight && (
+                  <DropdownMenuItem
+                    testId={rewriteFailed ? 'rewrite-retry' : 'improve-instructions'}
+                    title={rewriteFailed ? rewriteJob?.lastError ?? 'Rewrite failed' : undefined}
+                    onSelect={() => {
+                      close();
+                      void startImprove();
+                    }}
+                  >
+                    {rewriteFailed ? 'Retry rewrite' : 'Improve instructions'}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem
+                  disabled={saveRecipe.isPending}
+                  onSelect={() => {
+                    close();
+                    void adaptThisRecipe();
+                  }}
+                >
+                  Adapt
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  testId="remix-open"
+                  onSelect={() => {
+                    close();
+                    setShowRemix(true);
+                  }}
+                >
+                  Remix
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={saveRecipe.isPending}
+                  title={
+                    recipe.starred === true
+                      ? 'Unstar (remove from Speed Importer queue)'
+                      : 'Star this recipe so the Speed Importer queues it for scanning'
+                  }
+                  onSelect={() => {
+                    close();
+                    void toggleStar();
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    className={recipe.starred === true ? 'text-amber-600 dark:text-amber-400' : ''}
+                  >
+                    {recipe.starred === true ? '★' : '☆'}
+                  </span>{' '}
+                  {recipe.starred === true ? 'Starred' : 'Star'}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  title="Export this recipe as Markdown / via the share sheet"
+                  onSelect={() => {
+                    close();
+                    void shareAsMarkdown();
+                  }}
+                >
+                  Export
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  tone="danger"
+                  onSelect={async () => {
+                    // Close before confirm() — the native dialog would
+                    // otherwise race the menu's outside-click handler.
+                    close();
+                    if (confirm(`Delete "${recipe.title}"?`)) {
+                      await deleteRecipe.mutateAsync(recipe.id);
+                      navigate(`/collections/${collection.id}`);
+                    }
+                  }}
+                >
+                  Delete
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenu>
         </div>
       </div>
 
@@ -416,9 +457,9 @@ export function RecipePage() {
 
       <CookingPanel recipe={recipe} />
 
-      <RecipeNutritionPanel recipe={recipe} />
-
       <CookingHistoryPanel recipe={recipe} />
+
+      <RecipeNutritionPanel recipe={recipe} />
 
       {adaptations.length > 0 && (
         <section className="space-y-2">
@@ -440,55 +481,6 @@ export function RecipePage() {
         </section>
       )}
     </div>
-  );
-}
-
-function ImproveInstructionsButton(props: {
-  job: ReturnType<typeof useRewriteJob>['job'];
-  onStart: () => Promise<void>;
-  onCancel: () => Promise<void>;
-}) {
-  const { job, onStart, onCancel } = props;
-  // While the local-DB query is still loading, fall back to the
-  // start-state to keep the toolbar from flickering.
-  const inFlight = job?.status === 'PENDING' || job?.status === 'CLAIMED';
-  const failed = job?.status === 'FAILED' && (job.lastError ?? '') !== 'CANCELLED';
-
-  if (inFlight) {
-    return (
-      <button
-        type="button"
-        onClick={onCancel}
-        className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800"
-        data-testid="rewrite-status"
-        title="Cancel rewrite"
-      >
-        Rewriting…
-      </button>
-    );
-  }
-  if (failed) {
-    return (
-      <button
-        type="button"
-        onClick={onStart}
-        className="rounded-md border border-amber-400 px-3 py-1.5 text-sm text-amber-800 hover:bg-amber-50 dark:border-amber-500/60 dark:text-amber-200 dark:hover:bg-amber-950/40"
-        data-testid="rewrite-retry"
-        title={job?.lastError ?? 'Rewrite failed'}
-      >
-        Retry rewrite
-      </button>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={onStart}
-      className="rounded-md px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
-      data-testid="improve-instructions"
-    >
-      Improve instructions
-    </button>
   );
 }
 

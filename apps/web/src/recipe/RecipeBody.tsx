@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { formatQuantity, formatServings, isMeasured, type Quantity, type Recipe } from '@cookyourbooks/domain';
 import { CoverImage } from '../components/CoverImage.js';
 
@@ -24,6 +25,8 @@ export function RecipeHeaderMeta({
   collection,
   isAdaptation = false,
   children,
+  coverSlot,
+  collectionHref,
 }: {
   /** Pass the scaled recipe so servings reflect the current scale. */
   recipe: Recipe;
@@ -31,16 +34,25 @@ export function RecipeHeaderMeta({
   /** Suppresses the "Headnote from …" caption (adaptations aren't quotes). */
   isAdaptation?: boolean;
   children?: ReactNode;
+  /** Overrides the default read-only cover. Owner pages pass an editable
+   *  cover component; the public share view passes nothing. */
+  coverSlot?: ReactNode;
+  /** When set, the book/collection title line links here (the owner view
+   *  passes the collection route; the public share view passes nothing —
+   *  anonymous viewers can't open the collection). */
+  collectionHref?: string;
 }) {
   return (
     <>
-      {recipe.coverImagePath && (
-        <CoverImage
-          path={recipe.coverImagePath}
-          alt={`${recipe.title} cover`}
-          className="mt-3 h-48 w-full max-w-md rounded-lg border border-stone-200 dark:border-stone-700"
-        />
-      )}
+      {coverSlot !== undefined
+        ? coverSlot
+        : recipe.coverImagePath && (
+            <CoverImage
+              path={recipe.coverImagePath}
+              alt={`${recipe.title} cover`}
+              className="mt-3 h-48 w-full max-w-md rounded-lg border border-stone-200 dark:border-stone-700"
+            />
+          )}
       <h1 className="mt-1 break-words text-3xl font-semibold">{recipe.title}</h1>
       {collection?.sourceType === 'PUBLISHED_BOOK' && collection.author && (
         <p className="mt-1 text-base text-stone-600 dark:text-stone-400">
@@ -60,7 +72,13 @@ export function RecipeHeaderMeta({
       )}
       {(recipe.bookTitle || (recipe.pageNumbers && recipe.pageNumbers.length > 0)) && (
         <p className="mt-1 break-words text-sm text-stone-500 dark:text-stone-400">
-          {recipe.bookTitle}
+          {recipe.bookTitle && collectionHref ? (
+            <Link to={collectionHref} className="underline-offset-2 hover:underline">
+              {recipe.bookTitle}
+            </Link>
+          ) : (
+            recipe.bookTitle
+          )}
           {recipe.bookTitle && recipe.pageNumbers && recipe.pageNumbers.length > 0 ? ' · ' : ''}
           {recipe.pageNumbers && recipe.pageNumbers.length > 0
             ? `p. ${recipe.pageNumbers.join(', ')}`

@@ -1,4 +1,5 @@
 import { test, expect, waitForSynced } from './support/fixtures.js';
+import { openRecipeMoreMenu } from './support/helpers.js';
 
 async function seedCollection(page: import('@playwright/test').Page, title: string) {
   await page.goto('/library');
@@ -25,9 +26,11 @@ test.describe('Recipe adaptations', () => {
     await seedCollection(page, 'Bakery');
     await seedRecipe(page, 'Base Loaf');
 
-    // Fork it. The Adapt button lands us on the editor for the new recipe,
-    // with a pre-filled title the user can refine before saving.
-    await page.getByRole('button', { name: 'Adapt' }).click();
+    // Fork it. The Adapt action (in the ⋯ More menu) lands us on the editor
+    // for the new recipe, with a pre-filled title the user can refine
+    // before saving.
+    await openRecipeMoreMenu(page);
+    await page.getByRole('menuitem', { name: 'Adapt' }).click();
     await page.waitForURL(/\/edit$/);
 
     const title = page.locator('main input').first();

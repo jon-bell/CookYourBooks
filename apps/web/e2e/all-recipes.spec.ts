@@ -39,8 +39,17 @@ test.describe('Library-wide Recipes gallery', () => {
     await expect(cards.filter({ hasText: 'Pancakes' })).toHaveCount(1);
     await expect(cards.filter({ hasText: 'Waffles' })).toHaveCount(0);
 
-    // Tapping a card opens that recipe.
+    // Each card names its owning book with a link straight to the
+    // collection (a sibling of the recipe link, so the card click is
+    // unaffected).
     await search.fill('');
+    const pancakesCard = page.locator('li', { hasText: 'Pancakes' });
+    await pancakesCard.getByRole('link', { name: 'Alpha Cookbook' }).click();
+    await expect(page).toHaveURL(/\/collections\/[0-9a-f-]+$/);
+    await expect(page.getByRole('heading', { name: 'Alpha Cookbook' })).toBeVisible();
+
+    // Tapping a card opens that recipe.
+    await page.goBack();
     await cards.filter({ hasText: 'Pancakes' }).click();
     await expect(page).toHaveURL(/\/recipes\//);
     await expect(page.getByRole('heading', { name: 'Pancakes' })).toBeVisible();
