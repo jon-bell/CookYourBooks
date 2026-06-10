@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CollectionPickerOption } from '../local/repositories.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 function pickerCountLabel(opt: CollectionPickerOption): string {
   const total = opt.recipeCount;
@@ -167,7 +168,7 @@ export function CookbookCombobox({
           </div>
           <ul className="py-1 text-sm">
             {loading && filtered.length === 0 && (
-              <li className="px-3 py-2 text-stone-500 dark:text-stone-400">Loading…</li>
+              <li className="px-3 py-2"><LoadingState surface="cookbook-combobox" size="inline" report={false} /></li>
             )}
             {!loading && filtered.length === 0 && !showUnassigned && !onCreateNew && (
               <li className="px-3 py-2 text-stone-500 dark:text-stone-400">No matches.</li>

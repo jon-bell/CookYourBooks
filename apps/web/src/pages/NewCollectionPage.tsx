@@ -124,7 +124,7 @@ export function NewCollectionPage() {
         </button>
         <button
           type="button"
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/library')}
           className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
         >
           Cancel

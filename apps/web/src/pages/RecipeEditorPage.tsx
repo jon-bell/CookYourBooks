@@ -17,6 +17,7 @@ import {
   type Recipe,
 } from '@cookyourbooks/domain';
 import { useCollectionMeta, useRecipe, useSaveRecipe } from '../data/queries.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 type IngredientDraft = {
   id: string;
@@ -56,7 +57,7 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
   }, [mode, collection, recipeLoading, existing, collectionId, navigate]);
 
   if (collectionLoading || (mode === 'edit' && recipeLoading)) {
-    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+    return <LoadingState surface="recipe-editor" />;
   }
   if (!collection) {
     return (

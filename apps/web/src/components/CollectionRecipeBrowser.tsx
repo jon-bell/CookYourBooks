@@ -4,10 +4,14 @@ import type { CollectionRecipeSummary } from '../local/repositories.js';
 import {
   SortableRecipeList,
   formatPages,
+  isRecipeSortMode,
   sortRecipes,
   type RecipeSortMode,
 } from './SortableRecipeList.js';
 import { RecipeGalleryGrid } from './RecipeGalleryGrid.js';
+import { EmptyMadeHint } from './EmptyMadeHint.js';
+import { usePersistedState } from './usePersistedState.js';
+import { useLastMadeByRecipe } from '../cooking/queries.js';
 
 /** True if the recipe's title or any ingredient name contains `q`
  *  (the caller passes `q` already trimmed + lowercased; `ingredientNames`
@@ -47,7 +51,13 @@ export function CollectionRecipeBrowser({
 }) {
   const [filterQuery, setFilterQuery] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'index' | 'gallery'>('gallery');
-  const [sortMode, setSortMode] = useState<RecipeSortMode>('manual');
+  // Persisted per-surface (one preference for all collections, not per-id).
+  const [sortMode, setSortMode] = usePersistedState<RecipeSortMode>(
+    'cookyourbooks.sort.collection.v1',
+    'manual',
+    isRecipeSortMode,
+  );
+  const lastMade = useLastMadeByRecipe().data;
 
   // Defer the query so typing stays snappy on big cookbooks; the input is
   // bound to the immediate value so the field itself never lags.
@@ -69,7 +79,10 @@ export function CollectionRecipeBrowser({
 
   // Hoist sort so the result is stable across renders; avoids producing a
   // fresh array on every render which would defeat downstream memo/useMemo.
-  const sorted = useMemo(() => sortRecipes(filtered, sortMode), [filtered, sortMode]);
+  const sorted = useMemo(
+    () => sortRecipes(filtered, sortMode, lastMade),
+    [filtered, sortMode, lastMade],
+  );
 
   return (
     <div className="space-y-2">
@@ -119,8 +132,11 @@ export function CollectionRecipeBrowser({
           <option value="manual">Manual order</option>
           <option value="name">Name (A–Z)</option>
           <option value="page">Page number</option>
+          <option value="made">Recently made</option>
         </select>
       </div>
+
+      {sortMode === 'made' && (lastMade?.size ?? 0) === 0 && <EmptyMadeHint />}
 
       <div className="flex flex-wrap items-center justify-between gap-x-3 text-xs text-stone-400 dark:text-stone-500">
         <span>{isFiltering ? `${filtered.length} of ${countLabel}` : countLabel}</span>
@@ -144,6 +160,7 @@ export function CollectionRecipeBrowser({
           onReorder={onReorder}
           onToggleStar={onToggleStar}
           sortMode={effectiveSortMode}
+          lastMade={lastMade}
         />
       )}
     </div>

@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * Gates an admin-only route. We render an explicit "restricted" message
@@ -10,7 +11,7 @@ import { useIsAdmin } from '../moderation/useIsAdmin.js';
 export function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { isAdmin, isLoading } = useIsAdmin();
   const location = useLocation();
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
+  if (isLoading) return <LoadingState surface="admin-gate" />;
   if (!isAdmin) {
     return (
       <div className="space-y-3">

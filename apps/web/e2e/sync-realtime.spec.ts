@@ -6,6 +6,7 @@ test.describe('Local-first: realtime propagates across sessions', () => {
     user,
     browser,
   }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Realtime Source');
     await page.getByRole('button', { name: 'Create' }).click();
@@ -16,6 +17,9 @@ test.describe('Local-first: realtime propagates across sessions', () => {
     const ctxB = await browser.newContext();
     const pageB = await ctxB.newPage();
     await signIn(pageB, user);
+    // The landing page is now the recipes gallery; the collection card
+    // lives on the library grid.
+    await pageB.goto('/library');
     await expect(pageB.getByText('Realtime Source')).toBeVisible();
 
     // We're already on the collection detail page in tab A after creation.

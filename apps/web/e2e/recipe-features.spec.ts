@@ -37,7 +37,7 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
     await expect(page.getByText(/3 teaspoon sugar/)).toBeVisible();
   });
 
-  test('"Share" falls back to a Markdown download in desktop Chromium', async ({
+  test('"Export" falls back to a Markdown download in desktop Chromium', async ({
     authedPage: page,
   }) => {
     // The share helper prefers `navigator.share` but headless Chromium on
@@ -45,7 +45,7 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
     // is exactly the fallback behaviour we need to cover.
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Share' }).click(),
+      page.getByRole('button', { name: 'Export' }).click(),
     ]);
     const name = download.suggestedFilename();
     expect(name).toMatch(/test-cookies\.md$/);
@@ -60,7 +60,7 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
     expect(body).toContain('1. Mix everything.');
   });
 
-  test('"Share" uses the Web Share API when it is available', async ({
+  test('"Export" uses the Web Share API when it is available', async ({
     authedPage: page,
   }) => {
     // Polyfill a minimal navigator.share so we cover the happy path of the
@@ -74,7 +74,7 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
     });
     await page.reload();
 
-    await page.getByRole('button', { name: 'Share' }).click();
+    await page.getByRole('button', { name: 'Export' }).click();
     const shared = await page.evaluate(
       () => (window as unknown as { __lastShare?: { title?: string; text?: string } }).__lastShare,
     );

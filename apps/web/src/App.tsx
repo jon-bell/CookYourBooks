@@ -16,6 +16,7 @@ import { AdminPage } from './pages/AdminPage.js';
 import { AdminGlobalTocPage } from './pages/AdminGlobalTocPage.js';
 import { AdminNutritionPage } from './pages/AdminNutritionPage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
+import { SharedRecipePage } from './pages/SharedRecipePage.js';
 import { LandingPage } from './pages/LandingPage.js';
 import { SettingsLlmPage } from './pages/SettingsLlmPage.js';
 import { SettingsConversionsPage } from './pages/SettingsConversionsPage.js';
@@ -43,15 +44,23 @@ import { SyncBadge } from './components/SyncBadge.js';
 import { ThemePicker } from './theme/ThemePicker.js';
 import { MobileNav } from './nav/MobileNav.js';
 import { PRIMARY_NAV } from './nav/navItems.js';
+import { useScrollRestoration } from './nav/useScrollRestoration.js';
+import { useHardwareBack } from './nav/useHardwareBack.js';
+import { ScrollTopButton } from './nav/ScrollTopButton.js';
 import { useAuth } from './auth/AuthProvider.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
+import { useToast } from './components/ToastProvider.js';
+import { LoadingState } from './components/LoadingState.js';
 
 export function App() {
   const { user } = useAuth();
   const { showHelp, closeHelp } = useKeyboardShortcuts(APP_SHORTCUTS);
+  // Back returns to where you were; Android hardware back navigates the SPA.
+  useScrollRestoration();
+  useHardwareBack();
   return (
     <div className="min-h-full flex flex-col">
       <ShareIntentListener />
@@ -104,7 +113,18 @@ export function App() {
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-up" element={<SignUpPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
+          {/* Bare-uuid recipe share links. Deliberately NOT behind
+              RequireAuth — RLS decides what (if anything) the visitor sees. */}
+          <Route path="/r/:recipeId" element={<SharedRecipePage />} />
           <Route path="/" element={<RootRoute />} />
+          <Route
+            path="/library"
+            element={
+              <RequireAuth>
+                <LibraryPage />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/collections/new"
             element={
@@ -403,6 +423,7 @@ export function App() {
         </Routes>
       </main>
       <HelpDialog open={showHelp} onClose={closeHelp} shortcuts={APP_SHORTCUTS} />
+      <ScrollTopButton />
     </div>
   );
 }
@@ -420,27 +441,13 @@ export function App() {
 function ShareIntentListener() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
   // useRef so the listener (which never re-registers) always reads the
   // current user without forcing the effect to re-run.
   const userRef = useRef(user);
   useEffect(() => {
     userRef.current = user;
   }, [user]);
-
-  const [toast, setToast] = useState<{
-    text: string;
-    tone: 'info' | 'success' | 'warn';
-  } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const showToast = (text: string, tone: 'info' | 'success' | 'warn', ms = 4000): void => {
-    setToast({ text, tone });
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), ms);
-  };
-
-  useEffect(() => () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-  }, []);
 
   // If the user signs in after being bounced from a share, finish the
   // import flow by consuming the URL we stashed in sessionStorage.
@@ -457,10 +464,7 @@ function ShareIntentListener() {
       showToast('Resuming import after sign-in…', 'success');
       navigate(`/import/link?url=${encodeURIComponent(pending)}`);
     }
-    // showToast is stable (defined inline above, refs are stable);
-    // disabling exhaustive-deps would be noisy — list the real deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, navigate]);
+  }, [user, navigate, showToast]);
 
   useEffect(() => {
     return initShareIntent((outcome: ShareIntentOutcome) => {
@@ -497,32 +501,17 @@ function ShareIntentListener() {
         5000,
       );
     });
-  }, [navigate]);
+  }, [navigate, showToast]);
 
-  if (!toast) return null;
-  const palette =
-    toast.tone === 'success'
-      ? 'bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950'
-      : toast.tone === 'warn'
-        ? 'bg-amber-600 text-white dark:bg-amber-400 dark:text-amber-950'
-        : 'bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900';
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={`pointer-events-none fixed left-1/2 top-[max(1rem,env(safe-area-inset-top))] z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-medium shadow-lg ${palette}`}
-    >
-      {toast.text}
-    </div>
-  );
+  return null;
 }
 
-// Branches on auth state so `/` is a marketing page for visitors and a
-// library for signed-in users. We wait for the auth hydration to finish
-// before deciding so a brief token refresh doesn't flash the landing page
-// at a returning user.
+// Branches on auth state so `/` is a marketing page for visitors and the
+// all-recipes gallery for signed-in users (the collections Library lives at
+// /library). We wait for the auth hydration to finish before deciding so a
+// brief token refresh doesn't flash the landing page at a returning user.
 function RootRoute() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="text-stone-500 dark:text-stone-400">Loading…</div>;
-  return user ? <LibraryPage /> : <LandingPage />;
+  if (loading) return <LoadingState surface="root" />;
+  return user ? <AllRecipesPage /> : <LandingPage />;
 }

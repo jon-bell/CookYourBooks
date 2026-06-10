@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRotatingLine } from './useRotatingLine.js';
 
 /**
  * Full-screen blocking overlay used by the first-sync and schema-upgrade
@@ -34,18 +34,7 @@ export function LoadingOverlay({
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  const [lineIdx, setLineIdx] = useState(0);
-  const lineCount = lines?.length ?? 0;
-  // Pick a stable random starting line per mount so repeat visits differ.
-  const start = useRef(lineCount > 0 ? Math.floor(Math.random() * lineCount) : 0);
-  useEffect(() => {
-    if (reducedMotion || lineCount <= 1) return;
-    const t = setInterval(() => setLineIdx((i) => i + 1), rotateMs);
-    return () => clearInterval(t);
-  }, [reducedMotion, lineCount, rotateMs]);
-
-  const flavor =
-    lineCount > 0 ? lines![(start.current + lineIdx) % lineCount] : undefined;
+  const flavor = useRotatingLine(lines, rotateMs);
 
   const pct =
     progress && progress.total > 0
@@ -61,10 +50,11 @@ export function LoadingOverlay({
       data-testid={testId}
     >
       <div className="w-full max-w-sm rounded-xl border border-stone-200 bg-white p-6 shadow-xl dark:border-stone-700 dark:bg-stone-900">
-        {/* Intentionally NOT a heading element: a heading whose name contains
-            "your library" collides with the many getByRole('heading', { name:
-            'Your library' }) assertions/fixtures while this overlay is briefly
-            up during first sync. The dialog's aria-label already names it. */}
+        {/* Intentionally NOT a heading element: a heading here would collide
+            with the post-login getByRole('heading', { name: 'Recipes' }) /
+            'Your library' assertions in the e2e fixtures while this overlay is
+            briefly up during first sync. The dialog's aria-label already names
+            it. */}
         <div className="text-base font-semibold text-stone-900 dark:text-stone-100">{title}</div>
         {subtitle && (
           <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{subtitle}</p>

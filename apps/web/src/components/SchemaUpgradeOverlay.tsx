@@ -1,31 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getBackfillProgress, subscribeBackfill } from '../local/backfill.js';
 import { LoadingOverlay } from './LoadingOverlay.js';
-
-// Cooking-flavored homage to the classic SimCity loading screen. Rotates while
-// the one-time data backfill runs so the wait reads as "we know this is slow
-// and it's working", not "frozen".
-const FUNNY_LINES = [
-  'Reticulating roux…',
-  'Proofing the dough…',
-  'Caramelizing onions (slowly, as one must)…',
-  'Deglazing the database…',
-  'Whisking the watermarks…',
-  'Mincing shallots…',
-  'Folding in the cheese…',
-  'Blanching the foreign keys…',
-  'Resting the brisket…',
-  'Decanting the indexes…',
-  'Tempering the chocolate…',
-  'Seasoning to taste…',
-  'Aligning the mise en place…',
-  'Reducing the stock (by half)…',
-  'Calibrating the oven mitts…',
-  'Emulsifying the vinaigrette…',
-  'Sharpening the knives…',
-  'Consulting grandma’s notes…',
-  'Preheating to 425°F…',
-];
+import { COOKING_FLAVOR_LINES } from './loadingLines.js';
 
 /**
  * Shown only while a one-time local backfill is actively running. We
@@ -57,7 +33,7 @@ export function SchemaUpgradeOverlay() {
       subtitle="This only happens once — hang tight."
       step="Filling in the details…"
       progress={backfill.total ? { processed: backfill.processed, total: backfill.total } : null}
-      lines={FUNNY_LINES}
+      lines={[...COOKING_FLAVOR_LINES]}
       testId="schema-upgrade-overlay"
     />
   );

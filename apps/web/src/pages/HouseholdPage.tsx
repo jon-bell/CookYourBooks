@@ -45,7 +45,7 @@ export function HouseholdPage() {
       </p>
     );
   }
-  if (my.isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  if (my.isLoading) return <LoadingState surface="household" hints={['Fetching household from the server…']} />;
   if (my.error) return <p className="text-red-700 dark:text-red-300">{(my.error as Error).message}</p>;
 
   const data = my.data;
@@ -174,6 +174,7 @@ function NoHouseholdView({
 // ---------- Member-of-household view ----------
 
 import type { Household, HouseholdMemberWithProfile, HouseholdRole } from '../household/api.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 function HouseholdView({
   household,

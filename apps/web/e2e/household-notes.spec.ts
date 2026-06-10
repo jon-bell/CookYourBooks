@@ -11,7 +11,7 @@ async function createCookbook(
   page: import('@playwright/test').Page,
   title: string,
 ): Promise<string> {
-  await page.goto('/');
+  await page.goto('/library');
   await waitForSynced(page);
   await page.getByRole('link', { name: 'New collection' }).click();
   await page.getByLabel('Title').fill(title);

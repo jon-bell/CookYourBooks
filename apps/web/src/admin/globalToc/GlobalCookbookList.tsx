@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CoverImage } from '../../components/CoverImage.js';
+import { LoadingState } from '../../components/LoadingState.js';
 import {
   backfillCoversFromOpenLibrary,
   createCookbook,
@@ -81,7 +82,7 @@ export function GlobalCookbookList() {
         <p className="text-sm text-red-700">{(create.error as Error).message}</p>
       )}
 
-      {isLoading && <p className="text-stone-500">Loading…</p>}
+      {isLoading && <LoadingState surface="admin-toc" />}
       {error && <p className="text-red-700">{(error as Error).message}</p>}
       {data && data.length === 0 && (
         <p className="text-stone-600">

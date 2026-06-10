@@ -32,7 +32,7 @@ async function signInAndWaitForSync(
   await page.getByLabel('Email').fill(user.email);
   await page.getByLabel('Password').fill(user.password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Your library' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recipes', exact: true })).toBeVisible();
   await expect(page.locator('header button', { hasText: 'Synced' })).toBeVisible({
     timeout: syncTimeoutMs,
   });

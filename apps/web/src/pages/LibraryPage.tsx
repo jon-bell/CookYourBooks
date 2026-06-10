@@ -4,10 +4,25 @@ import { useLibrarySummaries } from '../data/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 import type { LibraryCollectionSummary } from '../local/repositories.js';
 import { CoverImage } from '../components/CoverImage.js';
+import { EmptyMadeHint } from '../components/EmptyMadeHint.js';
+import { usePersistedState } from '../components/usePersistedState.js';
+import { LoadingState } from '../components/LoadingState.js';
+
+/** `recent` is the query's native order (filled first, then updated_at). */
+type LibrarySortMode = 'recent' | 'name' | 'made';
+
+function isLibrarySortMode(v: string): v is LibrarySortMode {
+  return v === 'recent' || v === 'name' || v === 'made';
+}
 
 export function LibraryPage() {
   const { localReady, hydrated, status } = useSync();
   const { data: collections = [], isLoading, error } = useLibrarySummaries();
+  const [sortMode, setSortMode] = usePersistedState<LibrarySortMode>(
+    'cookyourbooks.sort.library.v1',
+    'recent',
+    isLibrarySortMode,
+  );
 
   const [filterQuery, setFilterQuery] = useState('');
   // Defer the query so typing stays snappy; the input stays bound to the
@@ -26,6 +41,26 @@ export function LibraryPage() {
     );
   }, [collections, q, isFiltering]);
 
+  // 'recent' keeps the query's native order; the other modes re-sort in JS.
+  const sorted = useMemo(() => {
+    if (sortMode === 'name') {
+      return [...filtered].sort((a, b) =>
+        a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
+      );
+    }
+    if (sortMode === 'made') {
+      return [...filtered].sort((a, b) => {
+        const da = a.lastMadeAt ?? '';
+        const db = b.lastMadeAt ?? '';
+        if (da !== db) return da < db ? 1 : -1;
+        return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+      });
+    }
+    return filtered;
+  }, [filtered, sortMode]);
+
+  const nothingMade = collections.every((c) => c.lastMadeAt == null);
+
   const waitingForData = isLoading && collections.length === 0;
   // The first server pull hasn't finished yet. The local cache might
   // be empty simply because we haven't read from the network — show
@@ -33,7 +68,7 @@ export function LibraryPage() {
   const awaitingFirstSync =
     collections.length === 0 && (!hydrated || status === 'syncing' || status === 'initializing');
 
-  if (!localReady || waitingForData) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  if (!localReady || waitingForData) return <LoadingState surface="library" />;
   if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
 
   return (
@@ -49,9 +84,12 @@ export function LibraryPage() {
       </div>
       {collections.length === 0 ? (
         awaitingFirstSync ? (
-          <p className="text-stone-600 dark:text-stone-400">
-            No data locally cached, refreshing from server…
-          </p>
+          // Not truly empty — the first pull just hasn't landed yet. Show the
+          // loading treatment instead of an empty-looking page.
+          <LoadingState
+            surface="library"
+            hints={['No data cached on this device yet — pulling your library…']}
+          />
         ) : (
           <p className="text-stone-600 dark:text-stone-400">
             No collections yet. Create your first to start adding recipes.
@@ -59,21 +97,37 @@ export function LibraryPage() {
         )
       ) : (
         <>
-          <input
-            type="search"
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            placeholder="Filter by title, author, or site…"
-            aria-label="Filter your library"
-            className="w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-1.5 text-sm"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              placeholder="Filter by title, author, or site…"
+              aria-label="Filter your library"
+              className="min-w-0 flex-1 rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-1.5 text-sm"
+            />
+            <label htmlFor="library-sort" className="sr-only">
+              Sort
+            </label>
+            <select
+              id="library-sort"
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as LibrarySortMode)}
+              className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 text-sm"
+            >
+              <option value="recent">Recently updated</option>
+              <option value="name">Name (A–Z)</option>
+              <option value="made">Recently made</option>
+            </select>
+          </div>
+          {sortMode === 'made' && nothingMade && <EmptyMadeHint />}
           {filtered.length === 0 ? (
             <p className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-4 py-6 text-center text-sm text-stone-500 dark:text-stone-400">
               No collections match “{filterQuery.trim()}”.
             </p>
           ) : (
             <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {filtered.map((c) => {
+              {sorted.map((c) => {
             const isPlaceholder = c.filledRecipeCount === 0 && c.recipeCount > 0;
             return (
               <li

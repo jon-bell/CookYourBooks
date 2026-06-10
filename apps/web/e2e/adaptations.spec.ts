@@ -1,6 +1,7 @@
 import { test, expect, waitForSynced } from './support/fixtures.js';
 
 async function seedCollection(page: import('@playwright/test').Page, title: string) {
+  await page.goto('/library');
   await page.getByRole('link', { name: 'New collection' }).click();
   await page.getByLabel('Title').fill(title);
   await page.getByRole('button', { name: 'Create' }).click();

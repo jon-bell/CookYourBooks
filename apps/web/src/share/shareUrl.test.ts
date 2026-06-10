@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { absoluteUrl, recipeShareUrl, collectionShareUrl } from './shareUrl.js';
+import {
+  absoluteUrl,
+  bareRecipeShareUrl,
+  collectionShareUrl,
+  recipeShareUrl,
+} from './shareUrl.js';
 
 describe('shareUrl', () => {
   beforeEach(() => {
@@ -26,5 +31,11 @@ describe('shareUrl', () => {
       'https://cookyourbooks.app/collections/col-1/recipes/rec-2',
     );
     expect(collectionShareUrl('col-1')).toBe('https://cookyourbooks.app/collections/col-1');
+  });
+
+  it('builds bare-uuid share links under /r/', () => {
+    expect(bareRecipeShareUrl('11111111-2222-3333-4444-555555555555')).toBe(
+      'https://cookyourbooks.app/r/11111111-2222-3333-4444-555555555555',
+    );
   });
 });

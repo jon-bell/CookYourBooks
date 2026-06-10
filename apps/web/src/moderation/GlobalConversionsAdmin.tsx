@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Units, canonicalUnitName } from '@cookyourbooks/domain';
+import { LoadingState } from '../components/LoadingState.js';
 import {
   deleteGlobalConversion,
   upsertGlobalConversion,
@@ -204,7 +205,7 @@ export function GlobalConversionsAdmin() {
       </form>
 
       {isLoading && rules.length === 0 ? (
-        <p className="text-sm text-stone-500 dark:text-stone-400">Loading…</p>
+        <LoadingState surface="admin-conversions" size="inline" />
       ) : (
         <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
           {[...rules]

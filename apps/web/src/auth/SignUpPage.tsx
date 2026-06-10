@@ -1,11 +1,15 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase.js';
 import { AppleLogo } from './AppleLogo.js';
 import { isCapacitorIOS, signInWithAppleNative } from './appleSignIn.js';
 
 export function SignUpPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Mirrors SignInPage: a page that bounced the visitor here (e.g. a shared
+  // recipe's "sign up to save" CTA) passes state.from so we land back on it.
+  const redirectTo = (location.state as { from?: string } | null)?.from ?? '/';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -29,7 +33,7 @@ export function SignUpPage() {
       return;
     }
     if (data.session) {
-      navigate('/', { replace: true });
+      navigate(redirectTo, { replace: true });
     } else {
       setInfo('Check your email (Mailpit at http://127.0.0.1:54424) to confirm.');
     }
@@ -127,7 +131,7 @@ export function SignUpPage() {
       </button>
       <p className="text-center text-sm text-stone-600 dark:text-stone-400">
         Already have one?{' '}
-        <Link to="/sign-in" className="font-medium text-stone-900 dark:text-stone-100 underline">
+        <Link to="/sign-in" state={location.state} className="font-medium text-stone-900 dark:text-stone-100 underline">
           Sign in
         </Link>
       </p>

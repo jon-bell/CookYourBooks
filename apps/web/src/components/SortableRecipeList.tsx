@@ -20,41 +20,21 @@ import { CSS } from '@dnd-kit/utilities';
 import type { CollectionRecipeSummary } from '../local/repositories.js';
 import { CoverImage } from './CoverImage.js';
 
-/** How the cookbook list is ordered. `manual` is the user's drag order
- *  (persisted via sort_order); `name`/`page` are read-only views. */
-export type RecipeSortMode = 'manual' | 'name' | 'page';
+// Sort logic lives in recipeSort.ts (pure, no component imports — unit tests
+// use it without pulling the supabase client into the module graph).
+// Re-exported here so existing component-side importers keep working.
+import { sortRecipes, type RecipeSortMode } from './recipeSort.js';
+export { isRecipeSortMode, sortByLastMade, sortRecipes } from './recipeSort.js';
+export type { RecipeSortMode } from './recipeSort.js';
 
 const UL_CLASS =
   'divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900';
-
-/** Smallest page number on a recipe, or +Infinity if it has none (so
- *  page-less entries sort last). */
-function minPage(recipe: CollectionRecipeSummary): number {
-  const ps = (recipe.pageNumbers ?? []).filter((n) => Number.isFinite(n));
-  return ps.length ? Math.min(...ps) : Number.POSITIVE_INFINITY;
-}
 
 /** "p. 42" / "pp. 42, 51" / null when the recipe carries no page. */
 export function formatPages(pageNumbers: readonly number[] | undefined): string | null {
   const ps = [...(pageNumbers ?? [])].filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
   if (ps.length === 0) return null;
   return ps.length === 1 ? `p. ${ps[0]}` : `pp. ${ps.join(', ')}`;
-}
-
-export function sortRecipes(
-  recipes: readonly CollectionRecipeSummary[],
-  mode: RecipeSortMode,
-): CollectionRecipeSummary[] {
-  const arr = [...recipes];
-  if (mode === 'name') {
-    arr.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-  } else if (mode === 'page') {
-    arr.sort((a, b) => {
-      const d = minPage(a) - minPage(b);
-      return d !== 0 ? d : a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
-    });
-  }
-  return arr;
 }
 
 /**
@@ -73,6 +53,7 @@ export function SortableRecipeList({
   onReorder,
   onToggleStar,
   sortMode = 'manual',
+  lastMade,
 }: {
   collectionId: string;
   recipes: readonly CollectionRecipeSummary[];
@@ -82,6 +63,8 @@ export function SortableRecipeList({
    *  usual target but starring is allowed on filled recipes too. */
   onToggleStar?: (recipeId: string) => Promise<void> | void;
   sortMode?: RecipeSortMode;
+  /** recipeId → latest COOKED date; required for `sortMode === 'made'`. */
+  lastMade?: ReadonlyMap<string, string>;
 }) {
   // Keep a local mirror of the order so the drop animates before the
   // server round-trip. Re-sync from props when the incoming list changes.
@@ -110,7 +93,7 @@ export function SortableRecipeList({
   if (sortMode !== 'manual') {
     return (
       <ul className={UL_CLASS}>
-        {sortRecipes(recipes, sortMode).map((recipe) => (
+        {sortRecipes(recipes, sortMode, lastMade).map((recipe) => (
           <li key={recipe.id} className="flex items-center gap-2 pl-3">
             <RecipeRowBody
               collectionId={collectionId}

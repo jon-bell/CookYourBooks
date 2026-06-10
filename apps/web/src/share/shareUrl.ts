@@ -20,6 +20,13 @@ export function recipeShareUrl(collectionId: string, recipeId: string): string {
   return absoluteUrl(`/collections/${collectionId}/recipes/${recipeId}`);
 }
 
+/** The short share link: just the recipe uuid. Resolves via /r/:recipeId for
+ *  the owner, household co-members, and (when the collection is public)
+ *  anyone — including signed-out visitors. */
+export function bareRecipeShareUrl(recipeId: string): string {
+  return absoluteUrl(`/r/${recipeId}`);
+}
+
 export function collectionShareUrl(collectionId: string): string {
   return absoluteUrl(`/collections/${collectionId}`);
 }

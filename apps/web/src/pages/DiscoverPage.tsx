@@ -17,6 +17,7 @@ import {
   type GlobalCookbookSummary,
 } from '../data/globalCookbookLookup.js';
 import { CoverImage } from '../components/CoverImage.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 export function DiscoverPage() {
   const [q, setQ] = useState('');
@@ -157,7 +158,7 @@ export function DiscoverPage() {
         <h2 className="text-lg font-semibold pt-2">Public collections</h2>
       )}
       {isLoading ? (
-        <p className="text-stone-500 dark:text-stone-400">Loading…</p>
+        <LoadingState surface="discover" hints={['Fetching public collections…']} />
       ) : error ? (
         <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>
       ) : (data ?? []).length === 0 ? (

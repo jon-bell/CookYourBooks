@@ -22,6 +22,7 @@ import { CollectionShareSection } from '../household/CollectionShareSection.js';
 import { CollectionNotesSection } from '../components/CollectionNotesSection.js';
 import { useAuth } from '../auth/AuthProvider.js';
 import { findOpenPlannerSession } from '../import/localRepos.js';
+import { LoadingState } from '../components/LoadingState.js';
 export function CollectionPage() {
   const { collectionId } = useParams();
   const navigate = useNavigate();
@@ -53,7 +54,7 @@ export function CollectionPage() {
     };
   }, [user, collection]);
 
-  if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+  if (isLoading) return <LoadingState surface="collection" />;
   if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
   if (!collection) return <p className="text-stone-600 dark:text-stone-400">Collection not found.</p>;
 
@@ -179,7 +180,7 @@ export function CollectionPage() {
           onClick={async () => {
             if (confirm(`Delete "${c.title}" and all its recipes?`)) {
               await deleteCollection.mutateAsync(c.id);
-              navigate('/');
+              navigate('/library');
             }
           }}
           className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40"

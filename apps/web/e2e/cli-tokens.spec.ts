@@ -5,6 +5,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from './support/env.js';
 test.describe('CLI tokens', () => {
   test('user mints a token, uses it to drive RPCs, revokes it', async ({ authedPage: page }) => {
     // 1. Create a collection so there's something to export.
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('CLI Fixture');
     await page.getByRole('button', { name: 'Create' }).click();
@@ -104,6 +105,7 @@ test.describe('CLI tokens', () => {
   test('ToC export lists titles; ToC import seeds placeholders', async ({ authedPage: page }) => {
     // Seed: one collection with one existing recipe so we can assert
     // append-style sort ordering after import.
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('ToC Fixture');
     await page.getByRole('button', { name: 'Create' }).click();

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ingredientLookupKey, type NutritionFact } from '@cookyourbooks/domain';
 import { deleteMapping, saveMapping, searchNutrition } from './api.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * Lets the user pick the right USDA / Open Food Facts entry for an
@@ -90,7 +91,7 @@ export function IngredientMatchOverrideDialog({
           autoFocus
         />
         {search.isLoading && (
-          <p className="text-sm text-stone-500 dark:text-stone-400">Searching…</p>
+          <LoadingState surface="nutrition-override" size="inline" />
         )}
         {search.error && (
           <p className="text-sm text-red-700 dark:text-red-300">

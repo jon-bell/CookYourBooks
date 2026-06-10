@@ -4,6 +4,7 @@ import { ingredientLookupKey, type NutritionFact } from '@cookyourbooks/domain';
 import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
 import { supabase } from '../supabase.js';
 import { searchNutrition } from '../nutrition/api.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * Admin nutrition surface. Three sections:
@@ -90,7 +91,7 @@ function PlatformMappingsSection() {
           string. Edit through bulk load below or via per-row controls here.
         </p>
       </header>
-      {list.isLoading && <p className="text-sm text-stone-500">Loading…</p>}
+      {list.isLoading && <LoadingState surface="admin-nutrition" size="inline" />}
       {list.error && (
         <p className="text-sm text-red-700">{(list.error as Error).message}</p>
       )}

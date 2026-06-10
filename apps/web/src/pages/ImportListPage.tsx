@@ -7,6 +7,7 @@ import { LocalImportItemRepository } from '../import/localRepos.js';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useLocalQueryEnabled } from '../local/SyncProvider.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 interface BatchStats {
   total: number;
@@ -69,7 +70,7 @@ export function ImportListPage() {
   }
 
   if (isLoading) {
-    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+    return <LoadingState surface="import-list" />;
   }
 
   return (

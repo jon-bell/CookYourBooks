@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { previewInvite, type HouseholdInvitePreview, isTosNotAcceptedError } from '../household/api.js';
 import { useAcceptHouseholdInvite } from '../household/queries.js';
 import { AcceptTosGate } from '../household/AcceptTosGate.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * Invite acceptance page. URL: /household/join?token=<token>.
@@ -53,7 +54,7 @@ export function HouseholdJoinPage() {
   // placeholder so we don't briefly flash a sign-in CTA at users who are
   // in fact about to be recognised as signed in.
   if (authLoading) {
-    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+    return <LoadingState surface="household-join" />;
   }
   if (!user) {
     return (

@@ -7,6 +7,7 @@ import { isInFlight, jobKindLabel, sortJobsForFeed, statusLabel, statusPillClass
 import { useDisplayNames } from '../cost/queries.js';
 import { useRecipeSummaries } from '../data/queries.js';
 import type { RecipeSummary } from '../local/repositories.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * Activity — a read-only live view of the user's (and, when library sharing is
@@ -108,7 +109,7 @@ export function ActivityPage() {
       )}
 
       {jobs.isLoading ? (
-        <p className="text-stone-500 dark:text-stone-400">Loading…</p>
+        <LoadingState surface="activity" hints={['Fetching background jobs…']} />
       ) : rows.length === 0 ? (
         <p className="text-stone-500 dark:text-stone-400" data-testid="activity-empty">
           No background jobs yet. Run an import, remix, or rewrite and it'll show up here.

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { SourceType } from '@cookyourbooks/domain';
 import { useSearch } from '../search/useSearch.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 type Filter = '' | SourceType;
 
@@ -57,7 +58,7 @@ export function SearchPage() {
           Type to search across every recipe in your library.
         </p>
       ) : isLoading ? (
-        <p className="text-stone-500 dark:text-stone-400">Searching…</p>
+        <LoadingState surface="search" hints={['Searching every recipe…']} />
       ) : (
         <>
           <div className="text-sm text-stone-600 dark:text-stone-400">

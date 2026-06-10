@@ -1,10 +1,11 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthProvider.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <div className="text-stone-500 dark:text-stone-400">Loading…</div>;
+  if (loading) return <LoadingState surface="auth" />;
   if (!user) {
     return <Navigate to="/sign-in" state={{ from: location.pathname }} replace />;
   }

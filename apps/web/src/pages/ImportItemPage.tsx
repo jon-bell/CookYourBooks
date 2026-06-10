@@ -44,6 +44,7 @@ import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
 import { deleteOcrStorage } from '../import/deleteStorage.js';
+import { LoadingState } from '../components/LoadingState.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -323,7 +324,7 @@ export function ImportItemPage() {
   }
 
   if (!localReady || batchLoading || itemLoading) {
-    return <p className="text-stone-500 dark:text-stone-400">Loading…</p>;
+    return <LoadingState surface="import-item" />;
   }
   if ((!batch || !item) && !hydrated) {
     return <p className="text-stone-500 dark:text-stone-400">Initializing local cache…</p>;

@@ -1172,6 +1172,10 @@ export interface LibraryCollectionSummary {
   siteName: string | null;
   recipeCount: number;
   filledRecipeCount: number;
+  /** Latest COOKED cooking_event date ('YYYY-MM-DD') across the collection's
+   *  recipes, null when nothing in it has been made. Drives the library
+   *  grid's "Recently made" sort. */
+  lastMadeAt: string | null;
 }
 
 /**
@@ -1279,16 +1283,20 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       site_name: string | null;
       recipe_count: number;
       filled_count: number;
+      last_made: string | null;
     }>(
       // recipe_count + filled_count in ONE indexed pass over recipes via the
       // materialized has_content flag — replaces the old per-recipe correlated
       // EXISTS subqueries that scanned ingredients/instructions for every row
       // and held the single cr-sqlite connection for minutes on a household-
       // sized library (Sentry CYB-CAPACITOR-3). Rides recipes_collection_active_idx.
+      // last_made = newest COOKED cooking_event across the collection's
+      // recipes; powers the "Recently made" library sort.
       `select c.id, c.title, c.cover_image_path, c.is_public, c.source_type,
               c.author, c.site_name,
               coalesce(rc.cnt, 0) as recipe_count,
-              coalesce(rc.filled, 0) as filled_count
+              coalesce(rc.filled, 0) as filled_count,
+              lm.last_made as last_made
        from recipe_collections c
        left join (
          select collection_id,
@@ -1298,6 +1306,13 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
            where deleted = 0
            group by collection_id
        ) rc on rc.collection_id = c.id
+       left join (
+         select r.collection_id, max(ce.event_date) as last_made
+           from cooking_events ce
+           join recipes r on r.id = ce.recipe_id and r.deleted = 0
+          where ce.deleted = 0 and ce.status = 'COOKED'
+          group by r.collection_id
+       ) lm on lm.collection_id = c.id
        where (c.owner_id = ? or c.shared_with_household_id is not null)
          and c.deleted = 0
        order by (coalesce(rc.filled, 0) > 0) desc, coalesce(c.updated_at, 0) desc`,
@@ -1312,6 +1327,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       site_name: string | null;
       recipe_count: number;
       filled_count: number;
+      last_made: string | null;
     }[];
     return rows.map((row) => ({
       id: row.id,
@@ -1323,6 +1339,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       siteName: row.site_name,
       recipeCount: Number(row.recipe_count),
       filledRecipeCount: Number(row.filled_count),
+      lastMadeAt: row.last_made,
     }));
   }
 
@@ -1862,6 +1879,21 @@ export class LocalCookingEventRepository implements CookingEventRepository {
       [this.ownerId],
     )) as { occasion_note: string }[];
     return rows.map((r) => r.occasion_note);
+  }
+
+  /** recipe_id → latest COOKED event_date ('YYYY-MM-DD'), own + household-shared.
+   *  Powers the "Recently made" sort; one map serves every list surface. */
+  async lastMadeByRecipe(): Promise<Map<string, string>> {
+    const db = await getLocalDb();
+    const rows = (await db.execO<{ recipe_id: string; last_made: string }>(
+      `select recipe_id, max(event_date) as last_made
+         from cooking_events
+        where deleted = 0 and status = 'COOKED' and recipe_id is not null
+          and (owner_id = ? or shared_with_household_id is not null)
+        group by recipe_id`,
+      [this.ownerId],
+    )) as { recipe_id: string; last_made: string }[];
+    return new Map(rows.map((r) => [r.recipe_id, r.last_made]));
   }
 
   /** Past + upcoming events for one recipe (own + household-shared), newest first. */
