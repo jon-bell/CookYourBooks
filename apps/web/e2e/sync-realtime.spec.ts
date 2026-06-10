@@ -6,6 +6,7 @@ test.describe('Local-first: realtime propagates across sessions', () => {
     user,
     browser,
   }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Realtime Source');
     await page.getByRole('button', { name: 'Create' }).click();

@@ -12,6 +12,7 @@ const PNG_BYTES = Buffer.from(
 
 test.describe('Cover images', () => {
   test('upload, display, remove', async ({ authedPage: page }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Photo Shoot');
     await page.getByRole('button', { name: 'Create' }).click();

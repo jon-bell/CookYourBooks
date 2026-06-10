@@ -2,6 +2,7 @@ import { test, expect } from './support/fixtures.js';
 
 test.describe('Collections', () => {
   test('creates a personal collection and it appears in the library', async ({ authedPage: page }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Weeknight Dinners');
     await page.getByLabel('Description').fill('Quick things for Tuesdays');
@@ -13,6 +14,7 @@ test.describe('Collections', () => {
   });
 
   test('creates a cookbook with author metadata', async ({ authedPage: page }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Type').selectOption('PUBLISHED_BOOK');
     await page.getByLabel('Title').fill('Salt Fat Acid Heat');
@@ -24,6 +26,7 @@ test.describe('Collections', () => {
   });
 
   test('creates a web collection with a source URL', async ({ authedPage: page }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Type').selectOption('WEBSITE');
     await page.getByLabel('Title').fill('Serious Eats picks');
@@ -36,6 +39,7 @@ test.describe('Collections', () => {
   test('makes a collection public then private and the badge updates', async ({
     authedPage: page,
   }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Greens');
     await page.getByRole('button', { name: 'Create' }).click();
@@ -62,6 +66,7 @@ test.describe('Collections', () => {
   test('deletes a collection (with confirm accept) and it leaves the library', async ({
     authedPage: page,
   }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Temporary');
     await page.getByRole('button', { name: 'Create' }).click();
@@ -72,7 +77,7 @@ test.describe('Collections', () => {
     // Navigation happens inside the mutation's onSuccess, which also
     // invalidates the collections query — but the invalidation is async.
     // Assert against the final UI rather than an instantaneous snapshot.
-    await page.waitForURL('/');
+    await page.waitForURL(/\/library$/);
     await expect(page.locator('main').getByText('Temporary')).toHaveCount(0, {
       timeout: 10_000,
     });

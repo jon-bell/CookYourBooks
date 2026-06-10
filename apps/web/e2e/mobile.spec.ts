@@ -124,6 +124,41 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
     await expectNoHorizontalOverflow(page);
   });
 
+  test('recipe page with unbreakable tokens stays at 100% width and A+ scales text', async ({
+    authedPage: page,
+  }) => {
+    // The classic horizontal-overscroll culprits: an unbreakable ingredient
+    // token and a long unbroken instruction word.
+    const longToken = 'Supercalifragilisticexpialidocious'.repeat(3);
+    await createRecipeViaUi(page, {
+      collectionTitle: 'Overflow Book',
+      recipeTitle: 'Wide Recipe',
+      ingredients: [{ kind: 'vague', name: longToken }],
+      steps: [`Handle the ${longToken} carefully without overflowing.`],
+    });
+    await expect(page.getByRole('heading', { name: 'Wide Recipe' })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+
+    // A+ bumps the persisted text scale and applies CSS zoom to the body.
+    const grid = page.getByTestId('ingredient-list');
+    await page.getByTestId('text-size-increase').click();
+    await page.getByTestId('text-size-increase').click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('cookyourbooks.recipeTextScale.v1')),
+      )
+      .toBe('1.2');
+    await expect(grid).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+
+    // The preference survives a reload.
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Wide Recipe' })).toBeVisible();
+    expect(
+      await page.evaluate(() => localStorage.getItem('cookyourbooks.recipeTextScale.v1')),
+    ).toBe('1.2');
+  });
+
   test('scan pages creates a batch and OCRs every captured page', async ({
     authedPage: page,
   }) => {

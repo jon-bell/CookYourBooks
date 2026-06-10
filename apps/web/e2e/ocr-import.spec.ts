@@ -64,6 +64,7 @@ test.describe('OCR import from photo', () => {
       draft: FAKE_DRAFT,
     });
 
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Photo Imports');
     await page.getByRole('button', { name: 'Create' }).click();
@@ -100,6 +101,7 @@ test.describe('OCR import from photo', () => {
     // Don't configure any OCR key. The page's listOcrKeys call returns
     // empty and the click surfaces the inline "OCR not configured"
     // error.
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Needs Setup');
     await page.getByRole('button', { name: 'Create' }).click();
@@ -136,6 +138,7 @@ test.describe('OCR import from photo', () => {
   test('shortcut `n` on a collection page opens the recipe editor', async ({
     authedPage: page,
   }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Shortcut Land');
     await page.getByRole('button', { name: 'Create' }).click();

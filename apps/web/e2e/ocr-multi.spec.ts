@@ -61,6 +61,7 @@ async function uploadAndOpenPicker(
   page: import('@playwright/test').Page,
   collectionTitle: string,
 ): Promise<void> {
+  await page.goto('/library');
   await page.getByRole('link', { name: 'New collection' }).click();
   await page.getByLabel('Title').fill(collectionTitle);
   await page.getByRole('button', { name: 'Create' }).click();

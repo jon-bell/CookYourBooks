@@ -133,6 +133,7 @@ test.describe('Admin nutrition surface', () => {
       const readerPage = await readerCtx.newPage();
       try {
         await signIn(readerPage, reader);
+        await readerPage.goto('/library');
         await readerPage.getByRole('link', { name: 'New collection' }).click();
         await readerPage.getByLabel('Title').fill('Platform Test');
         await readerPage.getByRole('button', { name: 'Create' }).click();

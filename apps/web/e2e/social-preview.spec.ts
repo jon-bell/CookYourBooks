@@ -31,6 +31,7 @@ test.describe('Sharing + social preview', () => {
     // and we'd be exercising only the fallback.
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Public Bakery');
     await page.getByRole('button', { name: 'Create' }).click();

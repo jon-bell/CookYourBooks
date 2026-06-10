@@ -53,6 +53,7 @@ test.describe('MCP-backed RPCs', () => {
     authedPage: page,
   }) => {
     // Seed a collection + two recipes so searches have something to hit.
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('MCP Collection');
     await page.getByRole('button', { name: 'Create' }).click();

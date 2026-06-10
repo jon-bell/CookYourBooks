@@ -182,6 +182,7 @@ test.describe('Moderation: user reports and admin takedowns', () => {
       ).toBeVisible();
       await signIn(page, victim);
 
+      await page.goto('/library');
       await page.getByRole('link', { name: 'New collection' }).click();
       await page.getByLabel('Title').fill('Desperate Attempt');
       await page.getByRole('button', { name: 'Create' }).click();

@@ -25,6 +25,7 @@ test.describe('Right to erasure', () => {
       await signIn(page, u);
 
       // Create a private collection so we have content to cascade-delete.
+      await page.goto('/library');
       await page.getByRole('link', { name: 'New collection' }).click();
       await page.getByLabel('Title').fill('To Be Erased');
       await page.getByRole('button', { name: 'Create' }).click();
@@ -143,6 +144,7 @@ test.describe('Right to erasure', () => {
       // the owner afterward (which is correct: the owner deleted their
       // own collection by deleting their account).
       await signIn(page, owner);
+      await page.goto('/library');
       await page.getByRole('link', { name: 'New collection' }).click();
       await page.getByLabel('Title').fill('Solo Collection');
       await page.getByRole('button', { name: 'Create' }).click();

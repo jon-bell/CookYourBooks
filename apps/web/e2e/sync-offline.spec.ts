@@ -7,6 +7,7 @@ test.describe('Local-first: offline writes flush on reconnect', () => {
     context,
     user,
   }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Offline Box');
     await page.getByRole('button', { name: 'Create' }).click();
@@ -58,6 +59,7 @@ test.describe('Local-first: offline writes flush on reconnect', () => {
   });
 
   test('local reads work without the network', async ({ authedPage: page, context }) => {
+    await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Cache Me');
     await page.getByRole('button', { name: 'Create' }).click();
