@@ -1,6 +1,6 @@
 import { test, expect, signIn } from './support/fixtures.js';
 import { createTestUser, type TestUser } from './support/admin.js';
-import { createRecipeViaUi } from './support/helpers.js';
+import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 import { configureOcrKey, pumpWorker, seedRemixFixture } from './support/imports.js';
 import { cleanupHouseholdFor, seedHousehold, seedMembership } from './support/household.js';
 import type { Page } from '@playwright/test';
@@ -40,6 +40,7 @@ const SOURCE = {
 
 /** Open the Remix dialog and run one turn (creates a remix_jobs row). */
 async function startRemix(page: Page, instruction: string): Promise<void> {
+  await openRecipeMoreMenu(page);
   await page.getByTestId('remix-open').click();
   await expect(page.getByTestId('remix-dialog')).toBeVisible();
   await page.getByTestId('remix-instruction').fill(instruction);

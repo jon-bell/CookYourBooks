@@ -1,5 +1,5 @@
 import { test, expect } from './support/fixtures.js';
-import { createRecipeViaUi } from './support/helpers.js';
+import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 import { addDaysISO, todayISO } from '../src/cooking/dateGrid.js';
 
 async function makeRecipe(page: import('@playwright/test').Page, recipeTitle: string) {
@@ -86,10 +86,11 @@ test.describe('Cooking tracker', () => {
     await page.getByTestId('cook-submit').click();
     await expect(page.getByTestId('cooking-history').getByText(/History \(1\)/)).toBeVisible();
 
-    // Delete the recipe (toolbar Delete is first in DOM order; the cook
-    // entry also has a "Delete").
+    // Delete the recipe via the ⋯ More menu — its Delete is a menuitem, so
+    // it can't collide with the cook entry's plain "Delete" button.
     page.once('dialog', (d) => d.accept());
-    await page.getByRole('button', { name: 'Delete', exact: true }).first().click();
+    await openRecipeMoreMenu(page);
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
     // The delete handler awaits the local delete, THEN navigates to the
     // collection. Playwright's click() resolves on dispatch, not when that
     // async handler finishes — so wait for the redirect before reading the

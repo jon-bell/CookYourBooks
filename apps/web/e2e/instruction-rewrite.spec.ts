@@ -1,5 +1,5 @@
 import { test, expect } from './support/fixtures.js';
-import { createRecipeViaUi } from './support/helpers.js';
+import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 import {
   configureOcrKey,
   seedRewriteFixture,
@@ -84,10 +84,12 @@ test.describe('Instruction rewriting', () => {
       ],
     });
 
+    await openRecipeMoreMenu(page);
     await page.getByTestId('improve-instructions').click();
 
     // The page kicks the worker but the test env has no vault secret;
-    // drive the worker by hand.
+    // drive the worker by hand. The in-flight status renders as a toolbar
+    // chip (the menu closed when the action was picked).
     await expect(page.getByTestId('rewrite-status')).toBeVisible({ timeout: 5_000 });
     await triggerWorker();
 

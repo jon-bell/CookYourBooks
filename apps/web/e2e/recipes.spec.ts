@@ -1,4 +1,5 @@
 import { test, expect, waitForSynced } from './support/fixtures.js';
+import { openRecipeMoreMenu } from './support/helpers.js';
 
 async function seedCollection(page: import('@playwright/test').Page, title: string) {
   await page.goto('/library');
@@ -105,7 +106,8 @@ test.describe('Recipes — CRUD + editor', () => {
     await expect(page.getByRole('heading', { name: 'Doomed Recipe' })).toBeVisible();
 
     page.once('dialog', (d) => d.accept());
-    await page.getByRole('button', { name: 'Delete' }).click();
+    await openRecipeMoreMenu(page);
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
 
     await expect(page).toHaveURL(/\/collections\//);
     await expect(page.getByText('Doomed Recipe')).toHaveCount(0);

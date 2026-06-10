@@ -1,5 +1,5 @@
 import { test, expect } from './support/fixtures.js';
-import { createRecipeViaUi } from './support/helpers.js';
+import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 
 test.describe('Recipe features: scale, convert, export, cook mode', () => {
   test.beforeEach(async ({ authedPage: page }) => {
@@ -43,9 +43,10 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
     // The share helper prefers `navigator.share` but headless Chromium on
     // Linux doesn't expose it, so it downloads a .md file instead — which
     // is exactly the fallback behaviour we need to cover.
+    await openRecipeMoreMenu(page);
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Export' }).click(),
+      page.getByRole('menuitem', { name: 'Export' }).click(),
     ]);
     const name = download.suggestedFilename();
     expect(name).toMatch(/test-cookies\.md$/);
@@ -74,7 +75,8 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
     });
     await page.reload();
 
-    await page.getByRole('button', { name: 'Export' }).click();
+    await openRecipeMoreMenu(page);
+    await page.getByRole('menuitem', { name: 'Export' }).click();
     const shared = await page.evaluate(
       () => (window as unknown as { __lastShare?: { title?: string; text?: string } }).__lastShare,
     );

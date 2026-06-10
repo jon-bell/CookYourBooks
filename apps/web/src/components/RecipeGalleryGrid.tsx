@@ -12,6 +12,10 @@ export interface GalleryCard {
   coverImagePath?: string | null;
   pageNumbers?: readonly number[];
   collectionId: string;
+  /** When set, the card shows a secondary link to the owning collection.
+   *  The in-collection browser omits it — the context is already the
+   *  collection. */
+  collectionTitle?: string;
 }
 
 /** Memoized single card cell — prevents re-rendering unaffected cards when
@@ -22,13 +26,26 @@ const GalleryCardCell = memo(function GalleryCardCell({ item }: { item: GalleryC
     <li className="gallery-card relative overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
       <Link to={`/collections/${item.collectionId}/recipes/${item.id}`} className="block">
         <CoverImage path={item.coverImagePath ?? undefined} alt={item.title} className="aspect-[3/2] w-full" variant="thumb" />
-        <div className="p-3">
+        <div className={item.collectionTitle ? 'px-3 pt-3' : 'p-3'}>
           <div className="line-clamp-2 font-medium">{item.title}</div>
           {pages ? (
             <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{pages}</div>
           ) : null}
         </div>
       </Link>
+      {/* Sibling of the recipe Link, not nested inside it — nested anchors
+          are invalid HTML (same pattern as the row star in
+          SortableRecipeList). */}
+      {item.collectionTitle && (
+        <div className="px-3 pb-3 pt-0.5">
+          <Link
+            to={`/collections/${item.collectionId}`}
+            className="line-clamp-1 text-xs text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
+          >
+            {item.collectionTitle}
+          </Link>
+        </div>
+      )}
     </li>
   );
 });

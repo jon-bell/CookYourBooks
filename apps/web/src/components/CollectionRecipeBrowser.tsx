@@ -228,6 +228,7 @@ function RecipeGallery({
         coverImagePath: r.coverImagePath,
         pageNumbers: r.pageNumbers,
         collectionId,
+        // No collectionTitle on purpose — we're already inside the collection.
       })),
     [recipes, collectionId],
   );
