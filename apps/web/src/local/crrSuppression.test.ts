@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CRR_SUPPRESS_MIN_ROWS,
-  shouldSuppressCrrTriggers,
-} from './crrSuppression.js';
+
+import { CRR_SUPPRESS_MIN_ROWS, shouldSuppressCrrTriggers } from './crrSuppression.js';
 
 describe('shouldSuppressCrrTriggers', () => {
   it('does not suppress for the incremental steady state', () => {

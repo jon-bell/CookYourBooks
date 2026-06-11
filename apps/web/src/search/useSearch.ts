@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import {
+  type EmbedderStatus,
   getEmbedderStatus,
   preloadEmbedder,
   subscribeEmbedderStatus,
-  type EmbedderStatus,
 } from './embedder.js';
-import { searchSemantic, searchSubstring, type SearchHit } from './semanticSearch.js';
+import { type SearchHit, searchSemantic, searchSubstring } from './semanticSearch.js';
 
 export interface UseSearchResult {
   hits: SearchHit[];

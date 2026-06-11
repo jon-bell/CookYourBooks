@@ -1,11 +1,12 @@
 import { useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import type { CollectionNoteRecord } from '../local/repositories.js';
 import {
   useCollectionNotes,
-  useSaveCollectionNote,
   useDeleteCollectionNote,
+  useSaveCollectionNote,
 } from '../notes/queries.js';
-import type { CollectionNoteRecord } from '../local/repositories.js';
 
 /**
  * "General notes" attached to a collection — OCR'd intro/prose pages (marked

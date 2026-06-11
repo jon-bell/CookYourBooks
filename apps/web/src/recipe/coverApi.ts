@@ -6,8 +6,8 @@
 // recipes.cover_image_path — the upload path via the normal recipe save/push,
 // the generation path server-side under the worker's service role.
 
-import { supabase } from '../supabase.js';
 import { OcrWorkerNotConfiguredError } from '../import/api.js';
+import { supabase } from '../supabase.js';
 import {
   COVER_CACHE_CONTROL,
   COVER_THUMB_MAX_EDGE,
@@ -55,9 +55,7 @@ export interface CoverJobProgress {
 
 /** Cover-job counts the caller can see (their own jobs + jobs against their recipes). */
 export async function getCoverJobProgress(): Promise<CoverJobProgress> {
-  const { data, error } = await supabase
-    .from('recipe_cover_jobs')
-    .select('status');
+  const { data, error } = await supabase.from('recipe_cover_jobs').select('status');
   if (error) throw error;
   const counts: CoverJobProgress = { pending: 0, claimed: 0, done: 0, failed: 0 };
   for (const row of (data ?? []) as { status: string }[]) {
@@ -130,7 +128,7 @@ export async function getUserCoverPrefs(): Promise<UserCoverPrefs | null> {
     .select('model, prompt, updated_at')
     .maybeSingle();
   if (error) throw error;
-  return (data as UserCoverPrefs) ?? null;
+  return data ?? null;
 }
 
 export async function setUserCoverPrefs(prefs: { model: string; prompt: string }): Promise<void> {

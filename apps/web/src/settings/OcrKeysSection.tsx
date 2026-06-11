@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+
 import {
   deleteOcrKey,
   listOcrKeys,
-  setOcrKey,
   type OcrKeySummary,
   type OcrProvider,
+  setOcrKey,
 } from '../import/api.js';
 
 const PROVIDERS: OcrProvider[] = ['gemini', 'openai-compatible'];
@@ -22,7 +23,9 @@ const LABELS: Record<OcrProvider, string> = {
 export function OcrKeysSection() {
   const [keys, setKeys] = useState<OcrKeySummary[] | undefined>();
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Record<OcrProvider, { key: string; baseUrl: string; busy: boolean }>>({
+  const [draft, setDraft] = useState<
+    Record<OcrProvider, { key: string; baseUrl: string; busy: boolean }>
+  >({
     gemini: { key: '', baseUrl: '', busy: false },
     'openai-compatible': { key: '', baseUrl: '', busy: false },
   });
@@ -68,9 +71,7 @@ export function OcrKeysSection() {
     }
   }
 
-  const keyByProvider = new Map<string, OcrKeySummary>(
-    (keys ?? []).map((k) => [k.provider, k]),
-  );
+  const keyByProvider = new Map<string, OcrKeySummary>((keys ?? []).map((k) => [k.provider, k]));
 
   return (
     <section className="space-y-4 rounded-lg border border-stone-200 bg-white p-5">
@@ -78,8 +79,8 @@ export function OcrKeysSection() {
         <h2 className="text-lg font-semibold">OCR keys</h2>
         <p className="mt-1 text-sm text-stone-600">
           API keys for the OCR worker. Stored in Supabase Vault — only the worker (running as the
-          service role) can decrypt them. The browser never reads the key back. The same keys
-          power the bulk import flow and the bakeoff page.
+          service role) can decrypt them. The browser never reads the key back. The same keys power
+          the bulk import flow and the bakeoff page.
         </p>
         <p className="mt-1 text-sm text-stone-600">
           Need a key? Create a free Google Gemini key at{' '}

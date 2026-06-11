@@ -1,5 +1,6 @@
 import { createElement } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
+
 import { MultiShotCameraDialog, type MultiShotCameraDialogProps } from './MultiShotCameraDialog.js';
 
 const DEFAULT_MAX_SHOTS = 200;
@@ -104,11 +105,11 @@ function mountDialog(props: MultiShotCameraDialogProps): void {
   const host = document.createElement('div');
   host.setAttribute('data-multi-shot-camera-root', '');
   document.body.appendChild(host);
-  let root: Root | undefined;
+  const root = createRoot(host);
 
   const cleanup = () => {
     queueMicrotask(() => {
-      root?.unmount();
+      root.unmount();
       if (host.parentNode) host.parentNode.removeChild(host);
     });
   };
@@ -131,7 +132,6 @@ function mountDialog(props: MultiShotCameraDialogProps): void {
     },
   };
 
-  root = createRoot(host);
   root.render(createElement(MultiShotCameraDialog, wrapped));
 }
 

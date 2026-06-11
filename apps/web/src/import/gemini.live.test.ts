@@ -1,9 +1,11 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
-import { parseLlmJson } from './llm.js';
+
 import { DEFAULT_PROMPT } from '../settings/ocrSettings.js';
+import { parseLlmJson } from './llm.js';
 
 // Live Gemini integration test. Hits the real Google API with the
 // shipped DEFAULT_PROMPT against the fixtures in repo-root /test-images.
@@ -63,10 +65,7 @@ async function callGemini(
       contents: [
         {
           role: 'user',
-          parts: [
-            { text: DEFAULT_PROMPT },
-            { inline_data: { mime_type: mime, data: imageB64 } },
-          ],
+          parts: [{ text: DEFAULT_PROMPT }, { inline_data: { mime_type: mime, data: imageB64 } }],
         },
       ],
       generationConfig: { responseMimeType: 'application/json', temperature: 0 },

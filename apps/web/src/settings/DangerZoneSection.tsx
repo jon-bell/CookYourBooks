@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../supabase.js';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { supabase } from '../supabase.js';
 
 /**
  * Right-to-erasure UX.
@@ -61,16 +62,18 @@ export function DangerZoneSection() {
     >
       <h2 className="text-lg font-semibold text-red-900 dark:text-red-200">Delete account</h2>
       <p className="mt-1 text-sm text-stone-700 dark:text-stone-300">
-        Permanently delete your account, your recipe library, your collections, your import
-        history, and any household memberships. This cannot be undone.
+        Permanently delete your account, your recipe library, your collections, your import history,
+        and any household memberships. This cannot be undone.
       </p>
       <p className="mt-2 text-xs text-stone-600 dark:text-stone-400">
         Your audit-log entries (sharing, attestation, ToS acceptance) are{' '}
         <strong>retained indefinitely</strong> with the actor link removed, per the
         legitimate-interest carve-out in our{' '}
-        <a href="/legal/privacy" className="underline">Privacy Policy</a> for takedown
-        defense and abuse investigation. If you own a household with other active members,
-        transfer ownership first.
+        <a href="/legal/privacy" className="underline">
+          Privacy Policy
+        </a>{' '}
+        for takedown defense and abuse investigation. If you own a household with other active
+        members, transfer ownership first.
       </p>
       <button
         type="button"

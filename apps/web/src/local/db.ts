@@ -1,5 +1,6 @@
 import initWasm, { DB } from '@vlcn.io/crsqlite-wasm';
 import wasmUrl from '@vlcn.io/crsqlite-wasm/crsqlite.wasm?url';
+
 import { CRR_TABLES, POST_SCHEMA_MIGRATIONS, SCHEMA_STATEMENTS } from './schema.js';
 import { logSync } from './syncLog.js';
 
@@ -50,7 +51,8 @@ const AUTO_RECOVER_COOLDOWN_MS = 60_000;
 // Exported for unit testing — classifies an error into the recovery strategy
 // (or null = not a local-DB-unusable error, leave it alone).
 export function recoveryKind(err: unknown): 'corrupt' | 'txn' | null {
-  const msg = String((err as { message?: unknown } | null)?.message ?? err ?? '');
+  const raw = (err as { message?: unknown } | null)?.message ?? err ?? '';
+  const msg = typeof raw === 'string' ? raw : JSON.stringify(raw);
   if (
     /database disk image is malformed|SQLITE_CORRUPT|file is not a database|not a database|sqlite3_open|failed compacting tables post alteration/i.test(
       msg,
@@ -58,7 +60,11 @@ export function recoveryKind(err: unknown): 'corrupt' | 'txn' | null {
   ) {
     return 'corrupt';
   }
-  if (/without an in-progress transaction|transaction (is inactive|has finished|was aborted)/i.test(msg)) {
+  if (
+    /without an in-progress transaction|transaction (is inactive|has finished|was aborted)/i.test(
+      msg,
+    )
+  ) {
     return 'txn';
   }
   return null;
@@ -66,7 +72,9 @@ export function recoveryKind(err: unknown): 'corrupt' | 'txn' | null {
 
 function recentlyAutoRecovered(): boolean {
   try {
-    return Date.now() - Number(localStorage.getItem(AUTO_RECOVER_AT_KEY) ?? 0) < AUTO_RECOVER_COOLDOWN_MS;
+    return (
+      Date.now() - Number(localStorage.getItem(AUTO_RECOVER_AT_KEY) ?? 0) < AUTO_RECOVER_COOLDOWN_MS
+    );
   } catch {
     return false;
   }
@@ -82,7 +90,10 @@ function maybeAutoRecover(err: unknown): void {
   const kind = recoveryKind(err);
   if (!kind) return;
   if (recentlyAutoRecovered()) {
-    logSync('error', `db ${kind}: still failing after a recent auto-recovery — leaving it to surface`);
+    logSync(
+      'error',
+      `db ${kind}: still failing after a recent auto-recovery — leaving it to surface`,
+    );
     return;
   }
   try {
@@ -91,7 +102,10 @@ function maybeAutoRecover(err: unknown): void {
     // no localStorage → can't rate-limit; bail rather than risk a reload loop
     return;
   }
-  logSync('warn', `db ${kind}: auto-recovering (${kind === 'corrupt' ? 'reset + reload' : 'reload'})`);
+  logSync(
+    'warn',
+    `db ${kind}: auto-recovering (${kind === 'corrupt' ? 'reset + reload' : 'reload'})`,
+  );
   if (kind === 'corrupt') {
     // Deletes the VFS idb (or arms a pre-init delete) then reloads.
     void emergencyResetLocalDb().catch(() => {});
@@ -199,7 +213,10 @@ async function withDbLock<T>(fn: () => Promise<T>, label: string): Promise<T> {
   // op turns `dbLockTail` into a rejected promise, and every future
   // `await prev` throws before reaching release(), permanently wedging
   // the queue.
-  dbLockTail = prev.then(() => held, () => held);
+  dbLockTail = prev.then(
+    () => held,
+    () => held,
+  );
   const op: DbLockOp = {
     id: dbOpSeq++,
     label,
@@ -312,13 +329,10 @@ export function getLocalDb(): Promise<LocalDb> {
       .then((db) => {
         initState.finishedAt = Date.now();
         initState.step = 'ready';
-        logSync(
-          'info',
-          `db init: ready in ${initState.finishedAt - (initState.startedAt ?? 0)}ms`,
-        );
+        logSync('info', `db init: ready in ${initState.finishedAt - (initState.startedAt ?? 0)}ms`);
         return db;
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         const msg = (err as Error).message;
         initState.error = msg;
         initState.step = `failed (${msg})`;
@@ -423,13 +437,14 @@ async function maybeHealCrrTriggers(db: LocalDb): Promise<void> {
     await db.exec(`select crsql_commit_alter('${table}')`);
   }
 
-  await db.exec(
-    `insert or replace into crsql_master (key, value) values (?, ?)`,
-    ['cyb_crr_trigger_heal', CRR_TRIGGER_HEAL_VERSION],
-  );
+  await db.exec(`insert or replace into crsql_master (key, value) values (?, ?)`, [
+    'cyb_crr_trigger_heal',
+    CRR_TRIGGER_HEAL_VERSION,
+  ]);
 }
 
-const ADD_COLUMN_RE = /^\s*alter\s+table\s+([a-z_][a-z0-9_]*)\s+add\s+column\s+([a-z_][a-z0-9_]*)\b/i;
+const ADD_COLUMN_RE =
+  /^\s*alter\s+table\s+([a-z_][a-z0-9_]*)\s+add\s+column\s+([a-z_][a-z0-9_]*)\b/i;
 
 async function applyPostSchemaMigration(db: LocalDb, stmt: string): Promise<void> {
   const addCol = stmt.match(ADD_COLUMN_RE);

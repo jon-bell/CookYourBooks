@@ -24,13 +24,32 @@
 // real diagnostic signal when "share opens app but nothing happens."
 
 import { Sentry } from '../sentry.js';
-import type { VideoPlatform } from './videoPlatform.js';
 import { urlFromIntent } from './shareUrlParse.js';
+import type { VideoPlatform } from './videoPlatform.js';
+
+// Minimal structural types for the two plugins we touch via the global
+// registry — we deliberately don't import the npm packages (see above).
+interface SendIntentPlugin {
+  checkSendIntentReceived?: () => Promise<unknown>;
+}
+
+interface PluginListenerHandle {
+  remove?: () => void;
+}
+
+interface AppPlugin {
+  addListener?: (
+    event: 'appUrlOpen',
+    cb: (data: unknown) => void,
+  ) => PluginListenerHandle | Promise<PluginListenerHandle | undefined>;
+}
 
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
-  // deno-lint-ignore no-explicit-any
-  Plugins?: Record<string, any>;
+  Plugins?: {
+    SendIntent?: SendIntentPlugin;
+    App?: AppPlugin;
+  };
 }
 
 function capacitor(): CapacitorGlobal | undefined {
@@ -89,8 +108,7 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
     breadcrumb(`${source}: payload received`, {
       hasUrl: !!url,
       platform,
-      rawPayloadKeys:
-        payload && typeof payload === 'object' ? Object.keys(payload as object) : [],
+      rawPayloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
     });
     if (url) {
       // Social platform when detected, otherwise a generic recipe website —
@@ -146,7 +164,7 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
     });
     cleanups.push(() => {
       void Promise.resolve(handle)
-        .then((h: { remove?: () => void } | undefined) => h?.remove?.())
+        .then((h) => h?.remove?.())
         .catch(() => {});
     });
   }
@@ -155,9 +173,10 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
   // plugin forwards it as a window event. Re-drain the store so we
   // don't depend on `appUrlOpen` racing the listener registration.
   if (typeof window !== 'undefined' && SendIntent?.checkSendIntentReceived) {
+    const checkSendIntentReceived = SendIntent.checkSendIntentReceived.bind(SendIntent);
     const onEvent = (): void => {
       breadcrumb('sendIntentReceived window event: re-checking SendIntent');
-      void SendIntent.checkSendIntentReceived()
+      void checkSendIntentReceived()
         .then((res: unknown) => dispatch(res, 'sendIntentReceived'))
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);

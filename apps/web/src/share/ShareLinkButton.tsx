@@ -1,10 +1,10 @@
 import { useToast } from '../components/ToastProvider.js';
-import { bareRecipeShareUrl, copyToClipboard } from './shareUrl.js';
 import {
   SHARE_AUDIENCE_MESSAGE,
   SHARE_AUDIENCE_TONE,
   type ShareAudience,
 } from './shareAudience.js';
+import { bareRecipeShareUrl, copyToClipboard } from './shareUrl.js';
 
 /**
  * Copies the recipe's bare-uuid share link (/r/<id>) and pops a toast that

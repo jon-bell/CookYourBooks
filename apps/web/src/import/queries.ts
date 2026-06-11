@@ -1,17 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { listOcrKeys, type OcrKeySummary } from './api.js';
-import {
-  LocalImportBatchRepository,
-  LocalImportItemRepository,
-} from './localRepos.js';
-import type {
-  ImportBatch,
-  ImportItem,
-  ImportItemAttempt,
-  ImportTocEntry,
-} from './model.js';
+import { LocalImportBatchRepository, LocalImportItemRepository } from './localRepos.js';
+import type { ImportBatch, ImportItem, ImportItemAttempt, ImportTocEntry } from './model.js';
 
 export function useImportBatches() {
   const { user } = useAuth();
@@ -49,8 +42,7 @@ export function useImportItemsForRecipe(recipeId: string | undefined) {
   return useQuery<ImportItem[]>({
     queryKey: ['import-items-for-recipe', recipeId, user?.id],
     enabled: enabled && !!recipeId,
-    queryFn: () =>
-      new LocalImportItemRepository(user!.id).listByCreatedRecipeId(recipeId!),
+    queryFn: () => new LocalImportItemRepository(user!.id).listByCreatedRecipeId(recipeId!),
   });
 }
 
@@ -70,8 +62,7 @@ export function useImportItemAttempts(itemId: string | undefined) {
   return useQuery<ImportItemAttempt[]>({
     queryKey: ['import-item-attempts', itemId],
     enabled: enabled && !!itemId,
-    queryFn: () =>
-      new LocalImportItemRepository(user!.id).listAttempts(itemId!),
+    queryFn: () => new LocalImportItemRepository(user!.id).listAttempts(itemId!),
   });
 }
 
@@ -81,8 +72,7 @@ export function useImportTocEntries(batchId: string | undefined) {
   return useQuery<ImportTocEntry[]>({
     queryKey: ['import-toc', batchId],
     enabled: enabled && !!batchId,
-    queryFn: () =>
-      new LocalImportItemRepository(user!.id).listTocEntries(batchId!),
+    queryFn: () => new LocalImportItemRepository(user!.id).listTocEntries(batchId!),
   });
 }
 

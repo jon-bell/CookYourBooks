@@ -1,11 +1,9 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 
 // The signed-in landing surface is the all-recipes gallery; the collections
 // grid moved to /library (nav item + `g l` chord follow it).
 test.describe('Default landing', () => {
-  test('signed-in / lands on Recipes; Library lives at /library', async ({
-    authedPage: page,
-  }) => {
+  test('signed-in / lands on Recipes; Library lives at /library', async ({ authedPage: page }) => {
     // authedPage signs in and lands on `/` — the fixture already asserted
     // the Recipes heading. Double-check the URL is the root, not a redirect.
     await expect(page).toHaveURL('/');

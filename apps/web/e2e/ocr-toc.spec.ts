@@ -1,8 +1,6 @@
-import { expect, test } from './support/fixtures.js';
-import { waitForSynced } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import {
   configureOcrKey,
-  listBatchItems,
   seedOcrFixture,
   triggerWorker,
   uploadTestImages,
@@ -18,10 +16,7 @@ async function batchIdFromUrl(page: import('@playwright/test').Page): Promise<st
   return m[1]!;
 }
 
-async function createCookbook(
-  page: import('@playwright/test').Page,
-  title: string,
-): Promise<void> {
+async function createCookbook(page: import('@playwright/test').Page, title: string): Promise<void> {
   await page.goto('/library');
   await waitForSynced(page);
   await page.getByRole('link', { name: 'New collection' }).click();
@@ -139,7 +134,7 @@ test.describe('OCR table-of-contents review', () => {
     await expect(page.getByText('Weeknight Ragu')).toHaveCount(0);
   });
 
-  test('a page already OCR\'d as a recipe can be re-read as a table of contents', async ({
+  test("a page already OCR'd as a recipe can be re-read as a table of contents", async ({
     authedPage: page,
   }) => {
     await configureOcrKey(page, 'gemini');
@@ -220,9 +215,7 @@ test.describe('OCR table-of-contents review', () => {
     await expect(page.getByText('Misread As A Recipe')).toHaveCount(0);
   });
 
-  test('bulk "Mark as ToC" re-OCRs the selected pages', async ({
-    authedPage: page,
-  }) => {
+  test('bulk "Mark as ToC" re-OCRs the selected pages', async ({ authedPage: page }) => {
     await configureOcrKey(page, 'gemini');
 
     await page.goto('/import/new');

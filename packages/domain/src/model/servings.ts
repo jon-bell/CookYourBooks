@@ -8,11 +8,7 @@ export interface Servings {
   readonly amountMax?: number;
 }
 
-export function servings(
-  amount: number,
-  description?: string,
-  amountMax?: number,
-): Servings {
+export function servings(amount: number, description?: string, amountMax?: number): Servings {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error(`Invalid servings amount: ${amount}`);
   }
@@ -37,8 +33,7 @@ export function formatServings(s: Servings): string {
   // For range yields pluralize against the upper bound — "1–4 people"
   // not "1–4 person", matching how cookbooks render this.
   const countForGrammar = s.amountMax ?? s.amount;
-  const desc =
-    s.description?.trim() || (countForGrammar === 1 ? 'serving' : 'servings');
+  const desc = s.description?.trim() || (countForGrammar === 1 ? 'serving' : 'servings');
   const word = countForGrammar === 1 ? singular(desc) : plural(desc);
   if (s.amountMax !== undefined && s.amountMax > s.amount) {
     return `${amount}–${formatAmount(s.amountMax)} ${word}`;
@@ -78,7 +73,7 @@ const IRREGULAR_PLURAL: Record<string, string> = {
 
 function singular(word: string): string {
   const lower = word.toLowerCase();
-  if (IRREGULAR_SINGULAR[lower]) return matchCase(word, IRREGULAR_SINGULAR[lower]!);
+  if (IRREGULAR_SINGULAR[lower]) return matchCase(word, IRREGULAR_SINGULAR[lower]);
   if (lower.endsWith('ies') && lower.length > 3) return matchCase(word, lower.slice(0, -3) + 'y');
   if (lower.endsWith('es') && !lower.endsWith('oes')) return matchCase(word, lower.slice(0, -2));
   if (lower.endsWith('s') && !lower.endsWith('ss')) return matchCase(word, lower.slice(0, -1));
@@ -87,7 +82,7 @@ function singular(word: string): string {
 
 function plural(word: string): string {
   const lower = word.toLowerCase();
-  if (IRREGULAR_PLURAL[lower]) return matchCase(word, IRREGULAR_PLURAL[lower]!);
+  if (IRREGULAR_PLURAL[lower]) return matchCase(word, IRREGULAR_PLURAL[lower]);
   if (lower.endsWith('s') || lower.endsWith('x') || lower.endsWith('z')) return word;
   if (lower.endsWith('y') && !/[aeiou]y$/.test(lower))
     return matchCase(word, lower.slice(0, -1) + 'ies');

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+
 import { useRecipesByTag } from '../cooking/queries.js';
 import { TagFilterBar } from '../cooking/TagFilterBar.js';
 
@@ -15,9 +16,7 @@ export function TagBrowsePage() {
   const { data: hits = [], isLoading } = useRecipesByTag(selected);
 
   function toggle(label: string) {
-    setSelected((cur) =>
-      cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label],
-    );
+    setSelected((cur) => (cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label]));
   }
 
   return (

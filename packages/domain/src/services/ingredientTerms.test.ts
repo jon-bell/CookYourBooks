@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
 import { extractIngredientTerms, ingredientSearchQuery } from './ingredientTerms.js';
 
 // The cases below are real ingredient strings pulled from the production

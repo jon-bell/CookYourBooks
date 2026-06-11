@@ -1,9 +1,10 @@
+import { type CollectionNote, createCollectionNote } from '@cookyourbooks/domain';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createCollectionNote, type CollectionNote } from '@cookyourbooks/domain';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
-import type { CollectionNoteRecord } from '../local/repositories.js';
 import { collectionNoteRepo } from '../data/repos.js';
+import type { CollectionNoteRecord } from '../local/repositories.js';
+import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 
 export function useCollectionNotes(collectionId: string | undefined) {
   const { user } = useAuth();

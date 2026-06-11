@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { submitReport, type ReportReason, type ReportTargetType } from './api.js';
+
+import { type ReportReason, type ReportTargetType, submitReport } from './api.js';
 
 const REASON_LABELS: Record<ReportReason, string> = {
   SPAM: 'Spam or scam',
@@ -78,7 +79,9 @@ export function ReportDialog({
         ) : (
           <form onSubmit={submit} className="space-y-4">
             <label className="block">
-              <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Reason</span>
+              <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+                Reason
+              </span>
               <select
                 value={reason}
                 onChange={(e) => setReason(e.target.value as ReportReason)}

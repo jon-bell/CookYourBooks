@@ -1,6 +1,6 @@
-import { test, expect } from './support/fixtures.js';
 import { adminGet, seedPublicCollection } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, test } from './support/fixtures.js';
 
 test.describe('Discover + fork', () => {
   test('lists a public collection seeded by another user', async ({ authedPage: page }) => {

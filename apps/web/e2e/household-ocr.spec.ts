@@ -1,7 +1,8 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
 import { createTestUser, type TestUser } from './support/admin.js';
 import { SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
-import { seedHousehold, seedMembership, cleanupHouseholdFor } from './support/household.js';
+import { cleanupHouseholdFor, seedHousehold, seedMembership } from './support/household.js';
 
 // Security-critical coverage for shared household OCR. No browser/OCR
 // needed — these assert the RPC + RLS contract directly:

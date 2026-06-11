@@ -1,16 +1,17 @@
+import { canonicalUnitName, Units } from '@cookyourbooks/domain';
 import { useEffect, useMemo, useState } from 'react';
-import { Units, canonicalUnitName } from '@cookyourbooks/domain';
-import { getLocalDb } from '../local/db.js';
+
+import { useAuth } from '../auth/AuthProvider.js';
+import { LoadingState } from '../components/LoadingState.js';
 import {
+  type GlobalConversionRule,
+  type HouseConversionRule,
   useDeleteHouseConversionRule,
   useGlobalConversionRules,
   useHouseConversionRules,
   useUpsertHouseConversionRule,
-  type GlobalConversionRule,
-  type HouseConversionRule,
 } from '../data/conversions.js';
-import { useAuth } from '../auth/AuthProvider.js';
-import { LoadingState } from '../components/LoadingState.js';
+import { getLocalDb } from '../local/db.js';
 
 const UNIT_OPTIONS = Object.values(Units)
   // Taste-tier units are meaningless to convert to/from. Exclude them
@@ -52,11 +53,8 @@ export function ConversionsSection() {
   // Build the override-vs-add lookup: a tuple key (from, to, ingredient)
   // maps to whichever HOUSE or GLOBAL row currently wins. Renderer
   // walks both lists and consults this map per row.
-  const ruleKey = (
-    fromUnit: string,
-    toUnit: string,
-    ingredient: string | null,
-  ) => `${fromUnit}::${toUnit}::${ingredient ?? ''}`;
+  const ruleKey = (fromUnit: string, toUnit: string, ingredient: string | null) =>
+    `${fromUnit}::${toUnit}::${ingredient ?? ''}`;
   const houseByKey = useMemo(() => {
     const m = new Map<string, HouseConversionRule>();
     for (const r of houseRules) m.set(ruleKey(r.fromUnit, r.toUnit, r.ingredientName), r);
@@ -161,9 +159,8 @@ export function ConversionsSection() {
       <div>
         <h2 className="text-lg font-semibold">House conversions</h2>
         <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-          Personal equivalents that override the global defaults — e.g. "1 whole onion
-          ≈ 240 g". Used everywhere the app converts a recipe quantity from one unit
-          to another.
+          Personal equivalents that override the global defaults — e.g. "1 whole onion ≈ 240 g".
+          Used everywhere the app converts a recipe quantity from one unit to another.
         </p>
       </div>
 
@@ -344,9 +341,7 @@ function RuleList({
   });
 
   if (rows.length === 0) {
-    return (
-      <p className="text-sm text-stone-500 dark:text-stone-400">No rules yet.</p>
-    );
+    return <p className="text-sm text-stone-500 dark:text-stone-400">No rules yet.</p>;
   }
 
   return (
@@ -364,11 +359,13 @@ function RuleList({
             factor={row.rule.factor}
             ingredient={row.rule.ingredientName}
           />
-          {row.kind === 'house' && row.globalOverride && row.globalOverride.factor !== row.rule.factor && (
-            <span className="rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              Overrides global ({row.globalOverride.factor} → {row.rule.factor})
-            </span>
-          )}
+          {row.kind === 'house' &&
+            row.globalOverride &&
+            row.globalOverride.factor !== row.rule.factor && (
+              <span className="rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                Overrides global ({row.globalOverride.factor} → {row.rule.factor})
+              </span>
+            )}
           {row.kind === 'global' && (
             <span className="rounded border border-stone-300 dark:border-stone-700 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
               Global default

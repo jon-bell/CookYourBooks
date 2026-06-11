@@ -1,15 +1,16 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   createPersonalCollection,
   createWebCollection,
   type RecipeCollection,
 } from '@cookyourbooks/domain';
-import { useSaveCollection } from '../data/queries.js';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { type BookForm, emptyBookForm } from '../books/bookForm.js';
 import { BookMetadataFields } from '../books/BookMetadataFields.js';
-import { emptyBookForm, type BookForm } from '../books/bookForm.js';
 import { buildCookbookFromForm } from '../books/buildCookbook.js';
+import { useSaveCollection } from '../data/queries.js';
 
 type Kind = 'PERSONAL' | 'PUBLISHED_BOOK' | 'WEBSITE';
 
@@ -111,7 +112,7 @@ export function NewCollectionPage() {
 
       {save.isError && (
         <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-          {(save.error as Error).message}
+          {save.error.message}
         </div>
       )}
       <div className="flex gap-3">
@@ -137,7 +138,9 @@ export function NewCollectionPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+        {label}
+      </span>
       {children}
     </label>
   );

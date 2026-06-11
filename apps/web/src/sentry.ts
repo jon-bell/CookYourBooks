@@ -1,5 +1,5 @@
-import * as Sentry from '@sentry/react';
 import { init as initSentryCapacitor } from '@sentry/capacitor';
+import * as Sentry from '@sentry/react';
 
 /**
  * Per-surface DSNs. Sentry DSNs are designed to be public — they only
@@ -12,10 +12,8 @@ import { init as initSentryCapacitor } from '@sentry/capacitor';
  * - Edge function (Deno) → cookyourbooks-edge (project /3) — wired
  *   from supabase/functions/import-worker/index.ts.
  */
-const DSN_WEB =
-  'https://b34dd32e79fff3427b0265461fe08ae2@sentry-cyb.work.ripley.cloud/2';
-const DSN_CAPACITOR =
-  'https://95f056bdf526b045e58cba49100bc71c@sentry-cyb.work.ripley.cloud/4';
+const DSN_WEB = 'https://b34dd32e79fff3427b0265461fe08ae2@sentry-cyb.work.ripley.cloud/2';
+const DSN_CAPACITOR = 'https://95f056bdf526b045e58cba49100bc71c@sentry-cyb.work.ripley.cloud/4';
 
 /**
  * Build-time release tag. `vite.config.ts` resolves the release
@@ -33,8 +31,7 @@ const RELEASE = (import.meta.env.VITE_SENTRY_RELEASE as string | undefined) ?? n
  * Capacitor package into pure-web builds.
  */
 function detectPlatform(): 'capacitor-ios' | 'capacitor-android' | 'web' {
-  const cap = (globalThis as unknown as { Capacitor?: { getPlatform?: () => string } })
-    .Capacitor;
+  const cap = (globalThis as unknown as { Capacitor?: { getPlatform?: () => string } }).Capacitor;
   const p = cap?.getPlatform?.();
   if (p === 'ios') return 'capacitor-ios';
   if (p === 'android') return 'capacitor-android';
@@ -138,7 +135,7 @@ export function initSentry(): void {
   // interesting wedged/slow cycles are captured separately + guaranteed via
   // captureSyncDiagnostics, independent of trace sampling.
   const syncTraceRate = (() => {
-    const raw = import.meta.env.VITE_SYNC_TRACE_SAMPLE_RATE;
+    const raw: unknown = import.meta.env.VITE_SYNC_TRACE_SAMPLE_RATE;
     const n = raw != null ? Number(raw) : NaN;
     return Number.isFinite(n) ? n : 0.05;
   })();

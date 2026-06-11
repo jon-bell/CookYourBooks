@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
-import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './env.js';
+
 import type { TestUser } from './admin.js';
+import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './env.js';
 
 // Helpers for the household e2e suite. Direct service-role inserts are
 // used for setup (creating a 5-member household quickly) so that the
@@ -61,10 +62,7 @@ export async function seedHousehold(opts: {
 }
 
 /** Add a member to a household directly. Same caveats as seedHousehold. */
-export async function seedMembership(opts: {
-  householdId: string;
-  userId: string;
-}): Promise<void> {
+export async function seedMembership(opts: { householdId: string; userId: string }): Promise<void> {
   await rest('/rest/v1/household_members', {
     method: 'POST',
     body: {

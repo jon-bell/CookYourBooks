@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CollectionPickerOption } from '../local/repositories.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import type { CollectionPickerOption } from '../local/repositories.js';
 
 function pickerCountLabel(opt: CollectionPickerOption): string {
   const total = opt.recipeCount;
@@ -44,18 +45,13 @@ export function CookbookCombobox({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const selected = useMemo(
-    () => options.find((o) => o.id === value),
-    [options, value],
-  );
+  const selected = useMemo(() => options.find((o) => o.id === value), [options, value]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
     return options.filter(
-      (o) =>
-        o.title.toLowerCase().includes(q) ||
-        (o.author?.toLowerCase().includes(q) ?? false),
+      (o) => o.title.toLowerCase().includes(q) || (o.author?.toLowerCase().includes(q) ?? false),
     );
   }, [options, query]);
 
@@ -116,9 +112,7 @@ export function CookbookCombobox({
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  const summaryLabel = selected
-    ? selected.title
-    : '(unassigned)';
+  const summaryLabel = selected ? selected.title : '(unassigned)';
 
   return (
     <div ref={containerRef} className="relative">
@@ -134,7 +128,9 @@ export function CookbookCombobox({
             {summaryLabel}
           </span>
           {selected?.author && (
-            <span className="text-[11px] text-stone-500 dark:text-stone-400">{selected.author}</span>
+            <span className="text-[11px] text-stone-500 dark:text-stone-400">
+              {selected.author}
+            </span>
           )}
           {matchedExistingTitle && (
             <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
@@ -168,7 +164,9 @@ export function CookbookCombobox({
           </div>
           <ul className="py-1 text-sm">
             {loading && filtered.length === 0 && (
-              <li className="px-3 py-2"><LoadingState surface="cookbook-combobox" size="inline" report={false} /></li>
+              <li className="px-3 py-2">
+                <LoadingState surface="cookbook-combobox" size="inline" report={false} />
+              </li>
             )}
             {!loading && filtered.length === 0 && !showUnassigned && !onCreateNew && (
               <li className="px-3 py-2 text-stone-500 dark:text-stone-400">No matches.</li>
@@ -207,16 +205,18 @@ export function CookbookCombobox({
                     }`}
                   >
                     <span className="flex min-w-0 flex-col">
-                      <span className="truncate font-medium text-stone-900 dark:text-stone-100">{opt.title}</span>
+                      <span className="truncate font-medium text-stone-900 dark:text-stone-100">
+                        {opt.title}
+                      </span>
                       {opt.author && (
-                        <span className="truncate text-[11px] text-stone-500 dark:text-stone-400">{opt.author}</span>
+                        <span className="truncate text-[11px] text-stone-500 dark:text-stone-400">
+                          {opt.author}
+                        </span>
                       )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
-                      <span>
-                        {pickerCountLabel(opt)}
-                      </span>
-                      {isCurrent && <span className="text-stone-400">·  current</span>}
+                      <span>{pickerCountLabel(opt)}</span>
+                      {isCurrent && <span className="text-stone-400">· current</span>}
                     </span>
                   </button>
                 </li>

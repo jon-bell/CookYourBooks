@@ -1,24 +1,22 @@
-import { useQuery } from '@tanstack/react-query';
 import {
-  ingredientLookupKey,
-  quantityToGrams,
-  tokenizeIngredient,
-  totalNutrition,
   type ConversionContext,
+  ingredientLookupKey,
   type IngredientNutritionRow,
   type NutritionFact,
   type NutritionTotals,
+  type Quantity,
+  quantityToGrams,
+  type Recipe,
+  tokenizeIngredient,
+  totalNutrition,
 } from '@cookyourbooks/domain';
-import type { Recipe, Quantity } from '@cookyourbooks/domain';
+import { useQuery } from '@tanstack/react-query';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { useLocalQueryEnabled } from '../local/SyncProvider.js';
-import {
-  readCachedFact,
-  resolveMapping,
-  searchNutrition,
-} from './api.js';
-import { searchLocalEssentials } from './localCache.js';
+import { readCachedFact, resolveMapping, searchNutrition } from './api.js';
 import { listConversionRulesForOwner } from './conversions.js';
+import { searchLocalEssentials } from './localCache.js';
 
 /**
  * Resolve nutrition for every measured ingredient on a recipe and
@@ -136,7 +134,7 @@ export function useRecipeNutrition(recipe: Recipe | undefined) {
               ingredientName: r.ingredientName,
             })),
           portions: fact?.portions ?? [],
-          override: mapping?.custom_grams_per_unit as Record<string, number> | undefined,
+          override: mapping?.custom_grams_per_unit,
         };
         const quantityAmount = quantityAmountToNumber(ing.quantity);
         const conv =

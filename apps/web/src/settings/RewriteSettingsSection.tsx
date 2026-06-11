@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+
 import { getUserRewritePrefs, setUserRewritePrefs } from '../import/api.js';
 import {
   DEFAULT_REWRITE_MODEL_BY_PROVIDER,
@@ -33,7 +34,7 @@ export function RewriteSettingsSection() {
         setPrompt(p.prompt || DEFAULT_REWRITE_PROMPT);
         setLoaded(true);
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         if (!cancelled) {
           setError((e as Error).message);
           setLoaded(true);
@@ -73,8 +74,8 @@ export function RewriteSettingsSection() {
         <h2 className="text-lg font-semibold">Instruction rewriter</h2>
         <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
           When you click <em>Improve instructions</em> on a recipe, the worker uses these defaults
-          to rewrite dense steps into atomic ones for Cook Mode. The API key is shared with the
-          OCR import flow above.
+          to rewrite dense steps into atomic ones for Cook Mode. The API key is shared with the OCR
+          import flow above.
         </p>
       </div>
 
@@ -109,8 +110,8 @@ export function RewriteSettingsSection() {
           data-testid="rewrite-model"
         />
         <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-          Text-only is enough; rewrites don't read images. Examples:{' '}
-          <code>gemini-2.5-flash</code>, <code>gpt-4o-mini</code>.
+          Text-only is enough; rewrites don't read images. Examples: <code>gemini-2.5-flash</code>,{' '}
+          <code>gpt-4o-mini</code>.
         </p>
       </Field>
 

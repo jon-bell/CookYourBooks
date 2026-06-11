@@ -1,26 +1,25 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
 import { Command } from 'commander';
-import { loadConfig, requireConfig, saveConfig } from './config.js';
+
 import {
+  type CookbookEntry,
+  type CookbookMetadata,
+  type ExportedRecipe,
   exportLibrary,
   exportToc,
   importCookbook,
   importRecipe,
   importToc,
-  type CookbookEntry,
-  type CookbookMetadata,
-  type ExportedRecipe,
   type TocCollection,
 } from './api.js';
+import { loadConfig, requireConfig, saveConfig } from './config.js';
 
 const program = new Command();
 
-program
-  .name('cyb')
-  .description('CookYourBooks command-line client')
-  .version('0.0.0');
+program.name('cyb').description('CookYourBooks command-line client').version('0.0.0');
 
 program
   .command('login')
@@ -140,9 +139,7 @@ tocCommand
 
 tocCommand
   .command('import-cookbooks')
-  .description(
-    'Bulk-import Eat Your Books-style ToC JSON files as new cookbook collections',
-  )
+  .description('Bulk-import Eat Your Books-style ToC JSON files as new cookbook collections')
   .argument('<paths...>', 'JSON files and/or directories containing *.json ToC dumps')
   .action(async (paths: string[]) => {
     const config = requireConfig();
@@ -274,9 +271,7 @@ function extractTocTitles(input: unknown): string[] {
   if (Array.isArray(obj.titles)) return extractTocTitles(obj.titles);
   if (Array.isArray(obj.recipes)) return extractTocTitles(obj.recipes);
   if (Array.isArray(obj.collections)) {
-    return obj.collections.flatMap((c) =>
-      extractTocTitles((c as { recipes?: unknown }).recipes),
-    );
+    return obj.collections.flatMap((c) => extractTocTitles((c as { recipes?: unknown }).recipes));
   }
   return [];
 }
@@ -377,15 +372,14 @@ function parseCookbookFile(input: unknown): ParsedCookbook | null {
   if (!title) return null;
 
   const authorList = Array.isArray(root.bookDetails?.authors)
-    ? root.bookDetails!.authors!
+    ? root.bookDetails.authors
         .map((a) => (typeof a?.title === 'string' ? a.title.trim() : ''))
         .filter((t) => t.length > 0)
     : [];
   const author = authorList.length > 0 ? authorList.join(', ') : null;
 
-  const isbn = typeof book.isbn13 === 'string' && book.isbn13.trim() !== ''
-    ? book.isbn13.trim()
-    : null;
+  const isbn =
+    typeof book.isbn13 === 'string' && book.isbn13.trim() !== '' ? book.isbn13.trim() : null;
 
   let publicationYear: number | null = null;
   if (typeof book.datePublished === 'string') {
@@ -398,9 +392,7 @@ function parseCookbookFile(input: unknown): ParsedCookbook | null {
     const recipeTitle = typeof r?.title === 'string' ? r.title.trim() : '';
     if (!recipeTitle) continue;
     const page =
-      typeof r?.pageNumber === 'number' && Number.isFinite(r.pageNumber)
-        ? r.pageNumber
-        : null;
+      typeof r?.pageNumber === 'number' && Number.isFinite(r.pageNumber) ? r.pageNumber : null;
     entries.push({ title: recipeTitle, page_number: page });
   }
 
@@ -424,7 +416,7 @@ function exitWith(message: string): never {
   process.exit(1);
 }
 
-program.parseAsync(process.argv).catch((err) => {
-  console.error((err as Error).message ?? String(err));
+program.parseAsync(process.argv).catch((err: unknown) => {
+  console.error(err instanceof Error ? err.message : JSON.stringify(err));
   process.exit(1);
 });

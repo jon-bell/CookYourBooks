@@ -1,9 +1,31 @@
+import type { ParsedRecipeDraft, RecipeCollection } from '@cookyourbooks/domain';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { ParsedRecipeDraft, RecipeCollection } from '@cookyourbooks/domain';
-import { deleteOcrStorage } from '../import/deleteStorage.js';
+
+import { useAuth } from '../auth/AuthProvider.js';
+import { LoadingState } from '../components/LoadingState.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
 import { collectionRepo, recipeRepo } from '../data/repos.js';
+import {
+  kickOcr,
+  mergeImportItems,
+  OcrWorkerNotConfiguredError,
+  retryRecitationFailures,
+  setBatchFallback,
+  setImportItemToc,
+  setRecitationPolicy,
+} from '../import/api.js';
+import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { deleteOcrStorage } from '../import/deleteStorage.js';
+import { ImportThumb } from '../import/ImportThumb.js';
+import { LocalImportItemRepository } from '../import/localRepos.js';
+import type { ImportItem, ImportItemStatus, OcrProvider } from '../import/model.js';
+import {
+  compactOcrQueueLabel,
+  computeBatchQueueInfo,
+  isOcrInProgress,
+} from '../import/ocrStatus.js';
 import {
   buildRecipeFromDraft,
   isAutoAcceptable,
@@ -15,30 +37,8 @@ import {
   useUpdateImportBatch,
   useUpdateImportItem,
 } from '../import/queries.js';
-import {
-  kickOcr,
-  mergeImportItems,
-  OcrWorkerNotConfiguredError,
-  retryRecitationFailures,
-  setBatchFallback,
-  setImportItemToc,
-  setRecitationPolicy,
-} from '../import/api.js';
-import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
-import type { OcrProvider } from '../import/model.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
-import { ImportThumb } from '../import/ImportThumb.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
-import { LocalImportItemRepository } from '../import/localRepos.js';
-import {
-  compactOcrQueueLabel,
-  computeBatchQueueInfo,
-  isOcrInProgress,
-} from '../import/ocrStatus.js';
-import { useAuth } from '../auth/AuthProvider.js';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ImportItem, ImportItemStatus } from '../import/model.js';
-import { LoadingState } from '../components/LoadingState.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
 // Auto-accept of obviously-good OCR pages is on by default; power users can
 // turn it off per device. Stored as '0' (off) / anything-else (on).
@@ -95,7 +95,11 @@ function matchesFilter(item: ImportItem, filter: Filter): boolean {
     case 'DONE':
       return item.status === 'REVIEWED';
     case 'NEEDS_REVIEW':
-      return item.status === 'OCR_DONE' || item.status === 'NEEDS_FALLBACK' || item.status === 'BAKEOFF_READY';
+      return (
+        item.status === 'OCR_DONE' ||
+        item.status === 'NEEDS_FALLBACK' ||
+        item.status === 'BAKEOFF_READY'
+      );
     case 'FAILED':
       return item.status === 'OCR_FAILED';
     case 'TOC':
@@ -151,44 +155,31 @@ export function ImportBatchPage() {
       const out: Record<string, number[]> = {};
       for (const item of items) {
         const a = await repo.listAttempts(item.id);
-        out[item.id] = a
-          .filter((x) => x.finishedAt != null)
-          .map((x) => x.finishedAt!);
+        out[item.id] = a.filter((x) => x.finishedAt != null).map((x) => x.finishedAt!);
       }
       return out;
     },
   });
 
-  const collectionsById = useMemo(
-    () => new Map(pickerOptions.map((c) => [c.id, c])),
-    [pickerOptions],
-  );
-
   const totalCost = items.reduce((acc, i) => acc + i.costUsdMicros, 0) / 1_000_000;
 
   const needsFallbackCount = items.filter((i) => i.status === 'NEEDS_FALLBACK').length;
   const recitationFailedCount = items.filter(
-    (i) =>
-      i.status === 'OCR_FAILED' &&
-      (i.lastError ?? '').toLowerCase().includes('recitation'),
+    (i) => i.status === 'OCR_FAILED' && (i.lastError ?? '').toLowerCase().includes('recitation'),
   ).length;
 
   const { itemsPerMin, eta } = useMemo(() => {
     const cutoff = Date.now() - 60_000;
     let recent = 0;
-    let totalLatency = 0;
     let completed = 0;
     for (const finishes of Object.values(attemptsByItem)) {
       for (const t of finishes) {
         if (t >= cutoff) recent += 1;
         completed += 1;
-        totalLatency += 1;
       }
     }
     const perMin = recent;
-    const remaining = items.filter(
-      (i) => i.status === 'PENDING' || i.status === 'CLAIMED',
-    ).length;
+    const remaining = items.filter((i) => i.status === 'PENDING' || i.status === 'CLAIMED').length;
     const avgPerItemSecs = completed > 0 && perMin > 0 ? 60 / perMin : 0;
     const etaSecs = remaining * avgPerItemSecs;
     return {
@@ -212,9 +203,7 @@ export function ImportBatchPage() {
     if (batch.batchKind !== 'STANDARD') return;
     if (runningRef.current) return;
     const candidates = items.filter(
-      (i) =>
-        !processedRef.current.has(i.id) &&
-        isAutoAcceptable(i, batch.targetCollectionId),
+      (i) => !processedRef.current.has(i.id) && isAutoAcceptable(i, batch.targetCollectionId),
     );
     if (candidates.length === 0) return;
     // Claim synchronously before any await so a re-render can't re-grab them.
@@ -271,9 +260,7 @@ export function ImportBatchPage() {
 
   const pendingCount = items.filter((i) => i.status === 'PENDING').length;
   const stalledCount = items.filter((i) => i.status === 'CLAIMED').length;
-  const awaitingGroupingCount = items.filter(
-    (i) => i.status === 'AWAITING_GROUPING',
-  ).length;
+  const awaitingGroupingCount = items.filter((i) => i.status === 'AWAITING_GROUPING').length;
   const activeOcrCount = pendingCount + stalledCount;
   const now = useTickingNow(activeOcrCount > 0);
 
@@ -318,9 +305,7 @@ export function ImportBatchPage() {
     }
   }
 
-  async function applyBulk(
-    patch: Parameters<typeof updateItem.mutateAsync>[0]['patch'],
-  ) {
+  async function applyBulk(patch: Parameters<typeof updateItem.mutateAsync>[0]['patch']) {
     for (const id of selected) {
       await updateItem.mutateAsync({ id, patch });
     }
@@ -518,22 +503,19 @@ export function ImportBatchPage() {
   // After 30s with pending items and no observable progress, the worker
   // probably isn't reachable. Surface a kick + a setup pointer.
   const showStuckBanner =
-    pendingCount > 0 &&
-    movedCount === 0 &&
-    stalledCount === 0 &&
-    batchAgeMs > 30_000;
+    pendingCount > 0 && movedCount === 0 && stalledCount === 0 && batchAgeMs > 30_000;
 
   return (
     <div className="space-y-6 pb-20">
       {awaitingGroupingCount > 0 && (
         <div className="sticky top-0 z-10 rounded-md border border-violet-300 bg-violet-50 p-3 text-sm text-violet-900">
           <div className="font-medium">
-            {awaitingGroupingCount} page{awaitingGroupingCount === 1 ? '' : 's'} waiting
-            for grouping
+            {awaitingGroupingCount} page{awaitingGroupingCount === 1 ? '' : 's'} waiting for
+            grouping
           </div>
           <div className="mt-1 text-violet-800">
-            This batch was uploaded as "Group then OCR". Decide which pages go
-            together — OCR runs once you confirm.
+            This batch was uploaded as "Group then OCR". Decide which pages go together — OCR runs
+            once you confirm.
           </div>
           <div className="mt-2">
             <Link
@@ -556,8 +538,8 @@ export function ImportBatchPage() {
             ✓ {autoAccepted.length} recipe{autoAccepted.length === 1 ? '' : 's'} auto-accepted
           </span>
           <span className="text-emerald-800 dark:text-emerald-300">
-            High-confidence pages were saved for you — only pages that need a look stay
-            in “Needs review”.
+            High-confidence pages were saved for you — only pages that need a look stay in “Needs
+            review”.
           </span>
           <span className="ml-auto flex gap-2">
             <button
@@ -587,13 +569,12 @@ export function ImportBatchPage() {
       {showStuckBanner && (
         <div className="rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-3 text-sm text-stone-800 dark:text-stone-200">
           <div className="font-medium">
-            {pendingCount} item{pendingCount === 1 ? '' : 's'} queued — worker hasn't
-            picked them up.
+            {pendingCount} item{pendingCount === 1 ? '' : 's'} queued — worker hasn't picked them
+            up.
           </div>
           <div className="mt-1 text-stone-600 dark:text-stone-400">
-            Pending = uploaded and waiting for the OCR worker. If this doesn't
-            clear, the worker may not be configured or running. See CLAUDE.md →
-            "Setting up the OCR worker".
+            Pending = uploaded and waiting for the OCR worker. If this doesn't clear, the worker may
+            not be configured or running. See CLAUDE.md → "Setting up the OCR worker".
           </div>
           <div className="mt-2 flex gap-2">
             <button
@@ -616,8 +597,8 @@ export function ImportBatchPage() {
       {recitationFailedCount > 0 && batch.recitationPolicy !== 'ASK' && (
         <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
-            {recitationFailedCount} item{recitationFailedCount === 1 ? '' : 's'} failed
-            on recitation.
+            {recitationFailedCount} item{recitationFailedCount === 1 ? '' : 's'} failed on
+            recitation.
           </div>
           <div className="mt-1">
             {batch.fallbackProvider && batch.fallbackModel ? (
@@ -630,16 +611,12 @@ export function ImportBatchPage() {
             <button
               type="button"
               onClick={() => void retryFailedWithFallback()}
-              disabled={
-                retryBusy || !batch.fallbackProvider || !batch.fallbackModel
-              }
+              disabled={retryBusy || !batch.fallbackProvider || !batch.fallbackModel}
               className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
               {retryBusy ? 'Retrying…' : 'Retry with fallback'}
             </button>
-            {retryToast && (
-              <span className="self-center text-xs">{retryToast}</span>
-            )}
+            {retryToast && <span className="self-center text-xs">{retryToast}</span>}
           </div>
         </div>
       )}
@@ -647,8 +624,7 @@ export function ImportBatchPage() {
       {needsFallbackCount > 0 && batch.recitationPolicy === 'ASK' && (
         <div className="sticky top-0 z-10 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
-            {needsFallbackCount} item{needsFallbackCount === 1 ? '' : 's'} hit copyright
-            recitation.
+            {needsFallbackCount} item{needsFallbackCount === 1 ? '' : 's'} hit copyright recitation.
           </div>
           <div className="mt-1">
             Use fallback model{batch.fallbackModel ? ` (${batch.fallbackModel})` : ''}?
@@ -752,9 +728,7 @@ export function ImportBatchPage() {
                 {fallbackDraft.provider && (
                   <input
                     value={fallbackDraft.model}
-                    onChange={(e) =>
-                      setFallbackDraft((d) => ({ ...d, model: e.target.value }))
-                    }
+                    onChange={(e) => setFallbackDraft((d) => ({ ...d, model: e.target.value }))}
                     placeholder={DEFAULT_MODEL_BY_PROVIDER[fallbackDraft.provider]}
                     className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
                   />
@@ -896,7 +870,9 @@ export function ImportBatchPage() {
           >
             Discard
           </button>
-          <ReassignBulkButton onApply={(collectionId) => applyBulk({ assignedCollectionId: collectionId })} />
+          <ReassignBulkButton
+            onApply={(collectionId) => applyBulk({ assignedCollectionId: collectionId })}
+          />
           {selected.size === 1 && (
             <span className="text-xs italic text-stone-500 dark:text-stone-400">
               Select one more page to merge them into one recipe →
@@ -953,7 +929,9 @@ export function ImportBatchPage() {
 
       {selected.size === 0 && filtered.length > 1 && (
         <div className="flex items-start gap-2 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 px-3 py-2 text-xs text-stone-600 dark:text-stone-400">
-          <span aria-hidden className="mt-px text-sm leading-none">⧉</span>
+          <span aria-hidden className="mt-px text-sm leading-none">
+            ⧉
+          </span>
           <span>
             <strong className="font-medium text-stone-700 dark:text-stone-200">
               Pages split wrong?
@@ -972,8 +950,8 @@ export function ImportBatchPage() {
           (i) => i.status === 'REVIEWED' || i.status === 'OCR_DONE' || i.status === 'BAKEOFF_READY',
         ) && (
           <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 px-3 py-2 text-xs text-stone-600 dark:text-stone-400">
-            Processing complete. Semantic search indexes recipes in the background — new
-            recipes may take a few minutes to appear in{' '}
+            Processing complete. Semantic search indexes recipes in the background — new recipes may
+            take a few minutes to appear in{' '}
             <Link to="/search" className="underline hover:text-stone-900 dark:hover:text-stone-100">
               /search
             </Link>{' '}
@@ -1054,7 +1032,9 @@ export function ImportBatchPage() {
                     <ItemStatusPill status={item.status} />
                   </div>
                   {queueLabel && (
-                    <div className="text-[10px] leading-tight text-stone-600 dark:text-stone-400">{queueLabel}</div>
+                    <div className="text-[10px] leading-tight text-stone-600 dark:text-stone-400">
+                      {queueLabel}
+                    </div>
                   )}
                   {titles.length > 0 ? (
                     <ul className="space-y-0.5">
@@ -1158,11 +1138,7 @@ function ItemStatusPill({ status }: { status: ImportItemStatus }) {
     DISCARDED: { label: 'Discarded', cls: 'bg-stone-100 text-stone-500' },
   };
   const { label, cls } = map[status];
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>
-      {label}
-    </span>
-  );
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>{label}</span>;
 }
 
 function formatEta(seconds: number): string {
@@ -1223,9 +1199,7 @@ function BatchDeleteStorageButton({ batchId }: { batchId: string }) {
       >
         {busy ? 'Deleting images…' : 'Delete all uploaded images'}
       </button>
-      {error && (
-        <p className="px-3 py-1 text-xs text-red-700 dark:text-red-300">{error}</p>
-      )}
+      {error && <p className="px-3 py-1 text-xs text-red-700 dark:text-red-300">{error}</p>}
     </>
   );
 }

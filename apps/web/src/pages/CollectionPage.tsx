@@ -1,6 +1,16 @@
+import type { RecipeCollection } from '@cookyourbooks/domain';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { Cookbook, RecipeCollection } from '@cookyourbooks/domain';
+
+import { useAuth } from '../auth/AuthProvider.js';
+import { EditBookDetailsDialog } from '../books/EditBookDetailsDialog.js';
+import { CollectionNotesSection } from '../components/CollectionNotesSection.js';
+import { CollectionRecipeBrowser } from '../components/CollectionRecipeBrowser.js';
+import { CoverImageEditor } from '../components/CoverImageEditor.js';
+import { GenerateCoversButton } from '../components/GenerateCoversButton.js';
+import { LoadingState } from '../components/LoadingState.js';
+import { MakePublicDialog } from '../components/MakePublicDialog.js';
+import { ShareToGlobalButton } from '../components/ShareToGlobalButton.js';
 import {
   useCollectionMeta,
   useCollectionRecipeSummaries,
@@ -9,20 +19,11 @@ import {
   useSaveCollection,
   useToggleRecipeStar,
 } from '../data/queries.js';
-import { CoverImageEditor } from '../components/CoverImageEditor.js';
-import { EditBookDetailsDialog } from '../books/EditBookDetailsDialog.js';
+import { CollectionShareSection } from '../household/CollectionShareSection.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
-import { GenerateCoversButton } from '../components/GenerateCoversButton.js';
-import { CollectionRecipeBrowser } from '../components/CollectionRecipeBrowser.js';
+import { findOpenPlannerSession } from '../import/localRepos.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
-import { ShareToGlobalButton } from '../components/ShareToGlobalButton.js';
-import { MakePublicDialog } from '../components/MakePublicDialog.js';
-import { CollectionShareSection } from '../household/CollectionShareSection.js';
-import { CollectionNotesSection } from '../components/CollectionNotesSection.js';
-import { useAuth } from '../auth/AuthProvider.js';
-import { findOpenPlannerSession } from '../import/localRepos.js';
-import { LoadingState } from '../components/LoadingState.js';
 export function CollectionPage() {
   const { collectionId } = useParams();
   const navigate = useNavigate();
@@ -55,17 +56,15 @@ export function CollectionPage() {
   }, [user, collection]);
 
   if (isLoading) return <LoadingState surface="collection" />;
-  if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
-  if (!collection) return <p className="text-stone-600 dark:text-stone-400">Collection not found.</p>;
+  if (error) return <p className="text-red-700 dark:text-red-300">{error.message}</p>;
+  if (!collection)
+    return <p className="text-stone-600 dark:text-stone-400">Collection not found.</p>;
 
   const c = collection;
   const recipes = recipeSummaries ?? [];
   // Hard rule mirrored at the DB layer: a PUBLISHED_BOOK with an ISBN
   // contains copyrighted material and can never be public.
-  const isbnBlocksPublic =
-    c.sourceType === 'PUBLISHED_BOOK' &&
-    !!(c as Cookbook).isbn &&
-    (c as Cookbook).isbn!.trim() !== '';
+  const isbnBlocksPublic = c.sourceType === 'PUBLISHED_BOOK' && !!c.isbn && c.isbn.trim() !== '';
 
   function onPublicClick() {
     if (c.isPublic) {
@@ -78,11 +77,11 @@ export function CollectionPage() {
 
   async function togglePublic() {
     setShowPublishWarning(false);
-    await saveCollection.mutateAsync({ ...c, isPublic: !c.isPublic } as RecipeCollection);
+    await saveCollection.mutateAsync({ ...c, isPublic: !c.isPublic });
   }
 
   async function onCoverChange(newPath: string | undefined) {
-    await saveCollection.mutateAsync({ ...c, coverImagePath: newPath } as RecipeCollection);
+    await saveCollection.mutateAsync({ ...c, coverImagePath: newPath });
   }
 
   async function onToggleStar(recipeId: string) {
@@ -99,7 +98,9 @@ export function CollectionPage() {
   return (
     <div className="space-y-6">
       <div>
-        <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">{subtitle(c)}</div>
+        <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+          {subtitle(c)}
+        </div>
         <h1 className="mt-1 text-2xl font-semibold">{c.title}</h1>
         {c.sourceType === 'PERSONAL' && c.description && (
           <p className="mt-2 text-stone-600 dark:text-stone-400">{c.description}</p>
@@ -119,8 +120,8 @@ export function CollectionPage() {
             </div>
           )}
           <div className="mt-2 text-amber-800 dark:text-amber-300">
-            It is not visible on Discover and cannot be re-published without moderator review.
-            Your local recipes and edits are untouched.
+            It is not visible on Discover and cannot be re-published without moderator review. Your
+            local recipes and edits are untouched.
           </div>
         </div>
       )}
@@ -173,9 +174,7 @@ export function CollectionPage() {
         {c.sourceType === 'PUBLISHED_BOOK' && c.moderationState !== 'TAKEN_DOWN' && (
           <ShareToGlobalButton cookbook={c} />
         )}
-        {c.moderationState !== 'TAKEN_DOWN' && (
-          <CollectionShareSection />
-        )}
+        {c.moderationState !== 'TAKEN_DOWN' && <CollectionShareSection />}
         <button
           onClick={async () => {
             if (confirm(`Delete "${c.title}" and all its recipes?`)) {
@@ -195,7 +194,9 @@ export function CollectionPage() {
           className="flex items-center justify-between rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 px-4 py-3 text-sm hover:bg-indigo-100 dark:hover:bg-indigo-900/60"
         >
           <span className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200">
-            <span aria-hidden className="text-base">★</span>
+            <span aria-hidden className="text-base">
+              ★
+            </span>
             <span>
               <strong>Speed Importer</strong>
               {starredCount > 0 && (
@@ -228,7 +229,7 @@ export function CollectionPage() {
       )}
       {c.sourceType === 'PUBLISHED_BOOK' && (
         <EditBookDetailsDialog
-          cookbook={c as Cookbook}
+          cookbook={c}
           open={editingDetails}
           onClose={() => setEditingDetails(false)}
         />

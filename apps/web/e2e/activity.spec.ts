@@ -1,9 +1,10 @@
-import { test, expect, signIn } from './support/fixtures.js';
-import { createTestUser, type TestUser } from './support/admin.js';
-import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
-import { configureOcrKey, pumpWorker, seedRemixFixture } from './support/imports.js';
-import { cleanupHouseholdFor, seedHousehold, seedMembership } from './support/household.js';
 import type { Page } from '@playwright/test';
+
+import { createTestUser } from './support/admin.js';
+import { expect, signIn, test } from './support/fixtures.js';
+import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
+import { cleanupHouseholdFor, seedHousehold, seedMembership } from './support/household.js';
+import { configureOcrKey, pumpWorker, seedRemixFixture } from './support/imports.js';
 
 /**
  * End-to-end for the Activity page (/activity) — the unified background-jobs
@@ -71,7 +72,13 @@ test.describe('Activity feed', () => {
   }) => {
     await configureOcrKey(page, 'gemini');
     await createRecipeViaUi(page, SOURCE);
-    await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', upsert: true, recipes: [REMIXED] });
+    await seedRemixFixture({
+      recipeId: '*',
+      provider: 'gemini',
+      model: '',
+      upsert: true,
+      recipes: [REMIXED],
+    });
 
     await startRemix(page, 'make it vegetarian');
     await waitForRemixJob(page); // ensure the job exists before we navigate
@@ -90,13 +97,25 @@ test.describe('Activity feed', () => {
     await expect(recentRow).toBeVisible({ timeout: 30_000 });
     await expect(recentRow).toContainText('Done');
     // Recipe-bound rows deep-link to the source recipe by its (locally-cached) title.
-    await expect(recentRow.getByRole('link', { name: SOURCE.recipeTitle })).toBeVisible({ timeout: 15_000 });
+    await expect(recentRow.getByRole('link', { name: SOURCE.recipeTitle })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('owner can cancel a queued job', async ({ authedPage: page }) => {
     await configureOcrKey(page, 'gemini');
-    await createRecipeViaUi(page, { ...SOURCE, collectionTitle: 'Cancel', recipeTitle: 'Cancel Source' });
-    await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', upsert: true, recipes: [REMIXED] });
+    await createRecipeViaUi(page, {
+      ...SOURCE,
+      collectionTitle: 'Cancel',
+      recipeTitle: 'Cancel Source',
+    });
+    await seedRemixFixture({
+      recipeId: '*',
+      provider: 'gemini',
+      model: '',
+      upsert: true,
+      recipes: [REMIXED],
+    });
 
     await startRemix(page, 'make it spicy');
     await waitForRemixJob(page);
@@ -115,9 +134,19 @@ test.describe('Activity feed', () => {
 
   test('owner can retry a failed job', async ({ authedPage: page }) => {
     await configureOcrKey(page, 'gemini');
-    await createRecipeViaUi(page, { ...SOURCE, collectionTitle: 'Retry', recipeTitle: 'Retry Source' });
+    await createRecipeViaUi(page, {
+      ...SOURCE,
+      collectionTitle: 'Retry',
+      recipeTitle: 'Retry Source',
+    });
     // First attempt fails (PARSE error path).
-    await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', errorKind: 'PARSE', upsert: true });
+    await seedRemixFixture({
+      recipeId: '*',
+      provider: 'gemini',
+      model: '',
+      errorKind: 'PARSE',
+      upsert: true,
+    });
 
     await startRemix(page, 'make it gluten-free');
     await waitForRemixJob(page);
@@ -129,7 +158,13 @@ test.describe('Activity feed', () => {
 
     // Re-seed a success and retry; it re-queues (back to in-flight) and, after
     // a pump, lands DONE.
-    await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', upsert: true, recipes: [REMIXED] });
+    await seedRemixFixture({
+      recipeId: '*',
+      provider: 'gemini',
+      model: '',
+      upsert: true,
+      recipes: [REMIXED],
+    });
     await recentRow.getByTestId('activity-retry').click();
     // Wait for the reset to land (row back in-flight) before pumping, else the
     // pump runs against a still-FAILED row and is a no-op.
@@ -143,15 +178,25 @@ test.describe('Activity feed', () => {
     ).toContainText('Done', { timeout: 30_000 });
   });
 
-  test('a non-household user sees none of another user\'s jobs (RLS boundary)', async ({
+  test("a non-household user sees none of another user's jobs (RLS boundary)", async ({
     authedPage: page,
     user: userA,
     browser,
   }) => {
     // User A queues a remix job.
     await configureOcrKey(page, 'gemini');
-    await createRecipeViaUi(page, { ...SOURCE, collectionTitle: 'Private', recipeTitle: 'Private Source' });
-    await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', upsert: true, recipes: [REMIXED] });
+    await createRecipeViaUi(page, {
+      ...SOURCE,
+      collectionTitle: 'Private',
+      recipeTitle: 'Private Source',
+    });
+    await seedRemixFixture({
+      recipeId: '*',
+      provider: 'gemini',
+      model: '',
+      upsert: true,
+      recipes: [REMIXED],
+    });
     await startRemix(page, 'make it private');
     await waitForRemixJob(page);
 
@@ -195,8 +240,18 @@ test.describe('Activity feed', () => {
       // A queues + completes a remix (its household_id is stamped because A is a
       // sharing member at insert time).
       await configureOcrKey(page, 'gemini');
-      await createRecipeViaUi(page, { ...SOURCE, collectionTitle: 'Shared', recipeTitle: 'Shared Source' });
-      await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', upsert: true, recipes: [REMIXED] });
+      await createRecipeViaUi(page, {
+        ...SOURCE,
+        collectionTitle: 'Shared',
+        recipeTitle: 'Shared Source',
+      });
+      await seedRemixFixture({
+        recipeId: '*',
+        provider: 'gemini',
+        model: '',
+        upsert: true,
+        recipes: [REMIXED],
+      });
       await startRemix(page, 'make it a co-member can see');
       await waitForRemixJob(page);
       await pumpWorker();

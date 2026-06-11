@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../supabase.js';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { supabase } from '../supabase.js';
 
 // Server-persisted shopping items — the "pantry" / extras list. This
 // is the same surface the MCP server reads and writes, so items added
@@ -16,8 +17,6 @@ interface PantryItem {
   checked: boolean;
   created_at: string;
 }
-
-type Row = Omit<PantryItem, 'created_at'> & { created_at: string };
 
 export function PantrySection() {
   const { user } = useAuth();
@@ -35,7 +34,7 @@ export function PantrySection() {
         .select('id,name,quantity_text,note,recipe_id,checked,created_at')
         .order('checked', { ascending: true })
         .order('created_at', { ascending: false });
-      if (!cancelled && !error && data) setItems(data as Row[]);
+      if (!cancelled && !error && data) setItems(data);
       if (!cancelled) setLoading(false);
     }
     void load();
@@ -104,10 +103,7 @@ export function PantrySection() {
         {hasChecked && (
           <button
             onClick={async () => {
-              await supabase
-                .from('shopping_list_items')
-                .delete()
-                .eq('checked', true);
+              await supabase.from('shopping_list_items').delete().eq('checked', true);
             }}
             className="text-xs text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 hover:underline"
           >
@@ -156,15 +152,13 @@ export function PantrySection() {
                 checked={item.checked}
                 onChange={() => void toggle(item)}
               />
-              <span
-                className={`flex-1 ${item.checked ? 'text-stone-400 line-through' : ''}`}
-              >
-                {item.quantity_text && (
-                  <span className="font-medium">{item.quantity_text} </span>
-                )}
+              <span className={`flex-1 ${item.checked ? 'text-stone-400 line-through' : ''}`}>
+                {item.quantity_text && <span className="font-medium">{item.quantity_text} </span>}
                 {item.name}
                 {item.note && (
-                  <span className="ml-2 text-xs text-stone-500 dark:text-stone-400">· {item.note}</span>
+                  <span className="ml-2 text-xs text-stone-500 dark:text-stone-400">
+                    · {item.note}
+                  </span>
                 )}
               </span>
               <button

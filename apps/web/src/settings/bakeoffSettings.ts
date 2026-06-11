@@ -3,11 +3,7 @@
 // every actual run is server-owned and creates fresh bakeoff_variants
 // rows.
 
-import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  DEFAULT_PROMPT,
-  type OcrProvider,
-} from './ocrSettings.js';
+import { DEFAULT_MODEL_BY_PROVIDER, DEFAULT_PROMPT, type OcrProvider } from './ocrSettings.js';
 
 /** UI-only variant template. Server-side variants live in
  *  `bakeoff_variants` and have additional result columns. */

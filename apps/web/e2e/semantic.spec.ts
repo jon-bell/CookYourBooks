@@ -1,8 +1,8 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { createTestUser } from './support/admin.js';
-import { seedHousehold, seedMembership } from './support/household.js';
-import { createRecipeViaUi } from './support/helpers.js';
 import { createUserRecipe, waitForEmbedding } from './support/embeddings.js';
+import { expect, signIn, test } from './support/fixtures.js';
+import { createRecipeViaUi } from './support/helpers.js';
+import { seedHousehold, seedMembership } from './support/household.js';
 
 // Browser-level semantic success with the REAL model (no __cybDisableEmbedder).
 // Documents are embedded by the edge worker (native gte-small); the browser

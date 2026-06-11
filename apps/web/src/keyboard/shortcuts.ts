@@ -104,7 +104,7 @@ export const APP_SHORTCUTS: Shortcut[] = [
     keys: '/',
     description: 'Focus search',
     run: ({ navigate, pathname }) => {
-      if (pathname !== '/search') navigate('/search');
+      if (pathname !== '/search') void navigate('/search');
       // Defer focus until the page mounts.
       setTimeout(() => {
         const el = document.querySelector<HTMLInputElement>(
@@ -117,39 +117,39 @@ export const APP_SHORTCUTS: Shortcut[] = [
   {
     keys: 'g l',
     description: 'Go to Library',
-    run: ({ navigate }) => navigate('/library'),
+    run: ({ navigate }) => void navigate('/library'),
   },
   {
     keys: 'g r',
     description: 'Go to Recipes',
-    run: ({ navigate }) => navigate('/'),
+    run: ({ navigate }) => void navigate('/'),
   },
   {
     keys: 'g d',
     description: 'Go to Discover',
-    run: ({ navigate }) => navigate('/discover'),
+    run: ({ navigate }) => void navigate('/discover'),
   },
   {
     keys: 'g s',
     description: 'Go to Shopping list',
-    run: ({ navigate }) => navigate('/shopping'),
+    run: ({ navigate }) => void navigate('/shopping'),
   },
   {
     keys: 'n',
     description: 'New recipe (in current collection)',
     when: (p) => /^\/collections\/[^/]+$/.test(p),
-    run: ({ navigate, pathname }) => navigate(`${pathname}/recipes/new`),
+    run: ({ navigate, pathname }) => void navigate(`${pathname}/recipes/new`),
   },
   {
     keys: 'e',
     description: 'Edit this recipe',
     when: (p) => /^\/collections\/[^/]+\/recipes\/[^/]+$/.test(p),
-    run: ({ navigate, pathname }) => navigate(`${pathname}/edit`),
+    run: ({ navigate, pathname }) => void navigate(`${pathname}/edit`),
   },
   {
     keys: 'c',
     description: 'Cook mode',
     when: (p) => /^\/collections\/[^/]+\/recipes\/[^/]+$/.test(p),
-    run: ({ navigate, pathname }) => navigate(`${pathname}/cook`),
+    run: ({ navigate, pathname }) => void navigate(`${pathname}/cook`),
   },
 ];

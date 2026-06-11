@@ -138,7 +138,7 @@ export function quantityToGrams(
 
   // 1. Explicit per-ingredient override.
   if (ctx.override && ctx.override[u] != null) {
-    return { grams: amount * ctx.override[u]!, approximate: false, source: 'override' };
+    return { grams: amount * ctx.override[u], approximate: false, source: 'override' };
   }
 
   // 2. Match a density rule whose ingredient_name's tokens are all
@@ -198,14 +198,14 @@ export function quantityToGrams(
 
   // 4. Pure mass.
   if (MASS_TO_G[u] != null) {
-    return { grams: amount * MASS_TO_G[u]!, approximate: false, source: 'mass' };
+    return { grams: amount * MASS_TO_G[u], approximate: false, source: 'mass' };
   }
 
   // 5. Pure volume with water-equivalent density. Marked approximate
   //    so the UI can disclaim.
   if (VOLUME_TO_ML[u] != null) {
     return {
-      grams: amount * VOLUME_TO_ML[u]!,
+      grams: amount * VOLUME_TO_ML[u],
       approximate: true,
       source: 'water-equiv',
     };

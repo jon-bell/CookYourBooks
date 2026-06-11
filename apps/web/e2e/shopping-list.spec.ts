@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Shopping list', () => {
@@ -57,20 +57,13 @@ test.describe('Shopping list', () => {
     await page.locator('header').getByRole('link', { name: 'Shopping', exact: true }).click();
     await page.getByRole('checkbox').first().check();
     // Check the grocery item.
-    await page
-      .locator('section', { hasText: 'Groceries' })
-      .getByRole('checkbox')
-      .first()
-      .check();
+    await page.locator('section', { hasText: 'Groceries' }).getByRole('checkbox').first().check();
 
     await page.getByRole('link', { name: 'Library' }).click();
     await page.locator('header').getByRole('link', { name: 'Shopping', exact: true }).click();
     await page.getByRole('checkbox').first().check();
     await expect(
-      page
-        .locator('section', { hasText: 'Groceries' })
-        .getByRole('checkbox')
-        .first(),
+      page.locator('section', { hasText: 'Groceries' }).getByRole('checkbox').first(),
     ).toBeChecked();
   });
 });

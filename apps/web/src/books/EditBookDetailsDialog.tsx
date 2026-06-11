@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
 import type { Cookbook } from '@cookyourbooks/domain';
-import { useSaveCollection } from '../data/queries.js';
+import { useEffect, useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { useSaveCollection } from '../data/queries.js';
+import { type BookForm, bookFormFromCookbook } from './bookForm.js';
 import { BookMetadataFields } from './BookMetadataFields.js';
-import { bookFormFromCookbook, type BookForm } from './bookForm.js';
 import { buildCookbookFromForm } from './buildCookbook.js';
 
 /**
@@ -67,7 +68,7 @@ export function EditBookDetailsDialog({
         </h2>
         <BookMetadataFields value={form} onChange={setForm} />
         {save.isError && (
-          <p className="text-sm text-red-700 dark:text-red-300">{(save.error as Error).message}</p>
+          <p className="text-sm text-red-700 dark:text-red-300">{save.error.message}</p>
         )}
         <div className="flex justify-end gap-2 pt-1">
           <button

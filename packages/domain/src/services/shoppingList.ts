@@ -1,6 +1,6 @@
 import type { Ingredient } from '../model/ingredient.js';
 import { isMeasured } from '../model/ingredient.js';
-import { quantityToNumber, exact } from '../model/quantity.js';
+import { quantityToNumber } from '../model/quantity.js';
 import type { Recipe } from '../model/recipe.js';
 
 export interface ShoppingItem {
@@ -91,9 +91,8 @@ function addIngredient(
 
 function formatAmount(amount: number, unit: string): string {
   const rounded = Math.round(amount * 100) / 100;
-  const str = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/\.?0+$/, '');
+  const str = Number.isInteger(rounded)
+    ? String(rounded)
+    : rounded.toFixed(2).replace(/\.?0+$/, '');
   return unit ? `${str} ${unit}` : str;
 }
-
-// Exposed for consumers that want to reconstruct an exact quantity.
-export { exact };

@@ -1,21 +1,22 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Recipe, RecipeCollection } from '@cookyourbooks/domain';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useLocalDbReady, useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import {
-  getRecipeSummary,
-  getRecipeSummaries,
-  getRecipesByIds,
-  listAdaptations,
   type CollectionPickerOption,
   type CollectionRecipeSummary,
   type GalleryRecipeSummary,
+  getRecipesByIds,
+  getRecipeSummaries,
+  getRecipeSummary,
   type LibraryCollectionSummary,
+  listAdaptations,
   type RecipeSearchHit,
   type RecipeSummary,
 } from '../local/repositories.js';
-import { collectionRepo, recipeRepo } from './repos.js';
+import { useLocalDbReady, useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { embedAndPushRecipe } from '../search/saveHook.js';
+import { collectionRepo, recipeRepo } from './repos.js';
 
 export function useCollections() {
   const { user } = useAuth();
@@ -128,7 +129,6 @@ export function useCollectionRecipeSummaries(collectionId: string | undefined) {
 }
 
 export function useRecipe(collectionId: string | undefined, recipeId: string | undefined) {
-  const { user } = useAuth();
   const enabled = useLocalQueryEnabled();
   return useQuery<Recipe | undefined>({
     queryKey: ['recipe', collectionId, recipeId],

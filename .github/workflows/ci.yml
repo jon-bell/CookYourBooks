@@ -24,10 +24,10 @@ jobs:
     env:
       # Forces Playwright's reporter into html + list; tests already check
       # this to turn retries on.
-      CI: "true"
+      CI: 'true'
       # Skip Playwright's bundled-browser auto-download; we manage them
       # explicitly below so the cache is shared across CI jobs.
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '0'
       # The vendored Supabase CLI is at ./.bin/supabase (checked in).
       SUPABASE_CLI: ./.bin/supabase
 
@@ -84,6 +84,12 @@ jobs:
 
       - name: Typecheck (all packages)
         run: pnpm -w typecheck
+
+      - name: Lint
+        run: pnpm -w lint
+
+      - name: Formatting
+        run: pnpm -w format
 
       - name: Unit tests (domain + db + web)
         run: pnpm -w test

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { createRegistry } from '../src/conversion/registry.js';
 import { conversionRule } from '../src/conversion/rules.js';
 
@@ -127,7 +128,7 @@ describe('ConversionRegistry', () => {
   });
 
   it('inverse lookup preserves the original rule priority', () => {
-    let reg = createRegistry()
+    const reg = createRegistry()
       .withRule(
         // A GLOBAL ml → g rule (water density seeded by the admin).
         conversionRule({

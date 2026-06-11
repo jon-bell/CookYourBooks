@@ -1,4 +1,5 @@
 import { useState } from 'react';
+
 import { useSync } from '../local/SyncProvider.js';
 import { SyncDebugDialog } from './SyncDebugDialog.js';
 
@@ -15,14 +16,13 @@ export function SyncBadge() {
   const { text, tone } = LABEL[status] ?? LABEL.idle!;
   const [open, setOpen] = useState(false);
   const errorHint = status === 'error' ? shortError(lastError) : '';
-  const suffix =
-    errorHint
-      ? ` · ${errorHint}`
-      : pendingWrites > 0
-        ? ` · ${pendingWrites} queued`
-        : lastSyncedAt && status === 'idle'
-          ? ` · ${relativeTime(lastSyncedAt)}`
-          : '';
+  const suffix = errorHint
+    ? ` · ${errorHint}`
+    : pendingWrites > 0
+      ? ` · ${pendingWrites} queued`
+      : lastSyncedAt && status === 'idle'
+        ? ` · ${relativeTime(lastSyncedAt)}`
+        : '';
   return (
     <>
       <button

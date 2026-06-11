@@ -79,6 +79,8 @@ class LayeredConversionRegistry implements ConversionRegistry {
   }
 }
 
-export function createRegistry(rules: readonly ConversionRule[] = StandardConversions): ConversionRegistry {
+export function createRegistry(
+  rules: readonly ConversionRule[] = StandardConversions,
+): ConversionRegistry {
   return new LayeredConversionRegistry(rules);
 }

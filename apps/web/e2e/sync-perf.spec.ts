@@ -1,7 +1,8 @@
-import { test, expect } from './support/fixtures.js';
-import { seedUserLibrary, seedUserImports } from './support/admin.js';
 import type { Page } from '@playwright/test';
+
 import type { TestUser } from './support/admin.js';
+import { seedUserImports, seedUserLibrary } from './support/admin.js';
+import { expect, test } from './support/fixtures.js';
 
 /**
  * Inline sign-in — copy of fixtures.signIn that lets the perf test wait
@@ -17,7 +18,6 @@ async function signInAndWaitForSync(
     // Mirror sync logs and any error console output to the test
     // runner's stdout so we can see what the badge can't show us.
     if (m.type() === 'error' || m.text().startsWith('[sync]')) {
-      // eslint-disable-next-line no-console
       console.log(`[browser:${m.type()}] ${m.text()}`);
     }
   });
@@ -61,10 +61,7 @@ declare global {
  * in the pull path or the upsert path.
  */
 test.describe('Sync performance', () => {
-  test('fresh-library pull of 50 recipes completes within budget', async ({
-    user,
-    page,
-  }) => {
+  test('fresh-library pull of 50 recipes completes within budget', async ({ user, page }) => {
     test.setTimeout(180_000);
     const RECIPE_COUNT = 50;
     const PULL_BUDGET_MS = 20_000;
@@ -76,7 +73,7 @@ test.describe('Sync performance', () => {
     });
     await signInAndWaitForSync(page, user, 60_000);
 
-    const log = (await page.evaluate(() => window.__cybSyncLog?.() ?? [])) as SyncLogEntry[];
+    const log = await page.evaluate(() => window.__cybSyncLog?.() ?? []);
     const cycleStart = log.find((e) => e.message === 'cycle: start');
     const cycleIdle = log.find((e) => e.message.startsWith('cycle: idle'));
     const pullRecipes = log.find((e) => e.message.startsWith('pull recipes:'));
@@ -111,10 +108,7 @@ test.describe('Sync performance', () => {
     ).toBe(0);
   });
 
-  test('library page remains interactive during a 50-recipe pull', async ({
-    user,
-    page,
-  }) => {
+  test('library page remains interactive during a 50-recipe pull', async ({ user, page }) => {
     test.setTimeout(180_000);
     // Smaller threshold than the cold pull — we're testing UI responsiveness
     // mid-pull, not raw throughput.
@@ -151,10 +145,7 @@ test.describe('Sync performance', () => {
     });
   });
 
-  test('tail-table pull (50 import_items) stays under budget', async ({
-    user,
-    page,
-  }) => {
+  test('tail-table pull (50 import_items) stays under budget', async ({ user, page }) => {
     test.setTimeout(180_000);
     // 5 batches × 10 items — exercises the bulk import_batches +
     // import_items path with enough rows that the per-row codepath
@@ -168,18 +159,15 @@ test.describe('Sync performance', () => {
     });
     await signInAndWaitForSync(page, user, 60_000);
 
-    const log = (await page.evaluate(
-      () => window.__cybSyncLog?.() ?? [],
-    )) as SyncLogEntry[];
+    const log = await page.evaluate(() => window.__cybSyncLog?.() ?? []);
     const importsDone = log.find((e) => e.message.startsWith('pull imports done'));
     expect(importsDone, 'pull imports done should have logged').toBeTruthy();
     const importsMatch = /pull imports done in (\d+)ms/.exec(importsDone!.message);
     expect(importsMatch).toBeTruthy();
     const importsMs = Number(importsMatch![1]);
-    expect(
-      importsMs,
-      `imports phase under ${TAIL_BUDGET_MS}ms (got ${importsMs}ms)`,
-    ).toBeLessThan(TAIL_BUDGET_MS);
+    expect(importsMs, `imports phase under ${TAIL_BUDGET_MS}ms (got ${importsMs}ms)`).toBeLessThan(
+      TAIL_BUDGET_MS,
+    );
 
     const data = importsDone!.data as { items?: number } | undefined;
     expect(data?.items).toBe(ITEM_COUNT);

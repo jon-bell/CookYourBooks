@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useDisplayNames, useLlmUsage, useLlmUsageSummary } from '../cost/queries.js';
+import { LoadingState } from '../components/LoadingState.js';
 import type { LlmUsageRow, UsageGroupBy } from '../cost/api.js';
 import { failureRatePct, featureLabel, formatTokens, formatUsdFromMicros } from '../cost/format.js';
-import { LoadingState } from '../components/LoadingState.js';
+import { useDisplayNames, useLlmUsage, useLlmUsageSummary } from '../cost/queries.js';
 
 type RangeKey = '7d' | '30d' | 'all';
 
@@ -86,7 +87,10 @@ export function CostCenterPage() {
   if (!user) {
     return (
       <p className="text-stone-600 dark:text-stone-400">
-        <Link to="/sign-in" className="underline">Sign in</Link> to view your LLM costs.
+        <Link to="/sign-in" className="underline">
+          Sign in
+        </Link>{' '}
+        to view your LLM costs.
       </p>
     );
   }
@@ -125,13 +129,15 @@ export function CostCenterPage() {
         />
       </div>
 
-      {summary.error && (
-        <p className="text-red-700 dark:text-red-300">{(summary.error as Error).message}</p>
-      )}
+      {summary.error && <p className="text-red-700 dark:text-red-300">{summary.error.message}</p>}
 
       {/* Totals */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total spend" value={formatUsdFromMicros(totals.cost)} testid="cost-center-total" />
+        <Stat
+          label="Total spend"
+          value={formatUsdFromMicros(totals.cost)}
+          testid="cost-center-total"
+        />
         <Stat label="Queries" value={totals.queries.toLocaleString()} />
         <Stat label="Tokens" value={formatTokens(totals.tokens)} />
         <Stat
@@ -142,10 +148,15 @@ export function CostCenterPage() {
 
       {/* Rollup */}
       <div>
-        <h2 className="text-lg font-semibold">By {GROUPS.find((g) => g.key === groupBy)?.label.toLowerCase()}</h2>
+        <h2 className="text-lg font-semibold">
+          By {GROUPS.find((g) => g.key === groupBy)?.label.toLowerCase()}
+        </h2>
         {summary.isLoading ? (
           <div className="mt-2">
-            <LoadingState surface="cost-summary" hints={['Fetching the cost report from the server…']} />
+            <LoadingState
+              surface="cost-summary"
+              hints={['Fetching the cost report from the server…']}
+            />
           </div>
         ) : (summary.data ?? []).length === 0 ? (
           <p className="mt-2 text-stone-500 dark:text-stone-400">No usage in this period.</p>
@@ -154,7 +165,9 @@ export function CostCenterPage() {
             <table className="w-full text-sm">
               <thead className="bg-stone-50 dark:bg-stone-800 text-left text-xs uppercase text-stone-500 dark:text-stone-400">
                 <tr>
-                  <th className="px-3 py-2 font-medium">{GROUPS.find((g) => g.key === groupBy)?.label}</th>
+                  <th className="px-3 py-2 font-medium">
+                    {GROUPS.find((g) => g.key === groupBy)?.label}
+                  </th>
                   <th className="px-3 py-2 text-right font-medium">Queries</th>
                   <th className="px-3 py-2 text-right font-medium">Tokens</th>
                   <th className="px-3 py-2 text-right font-medium">Cost</th>
@@ -168,14 +181,18 @@ export function CostCenterPage() {
                   .map((r, i) => (
                     <tr key={`${r.bucket}-${i}`}>
                       <td className="px-3 py-2">{bucketLabel(r.bucket)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{num(r.queries).toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {num(r.queries).toLocaleString()}
+                      </td>
                       <td className="px-3 py-2 text-right tabular-nums">
                         {formatTokens(num(r.prompt_tokens) + num(r.completion_tokens))}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">
                         {formatUsdFromMicros(num(r.cost_usd_micros))}
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{num(r.failures).toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {num(r.failures).toLocaleString()}
+                      </td>
                       <td className="px-3 py-2 text-right tabular-nums">
                         {Math.round(num(r.avg_latency_ms))}
                       </td>
@@ -191,11 +208,14 @@ export function CostCenterPage() {
       <div>
         <h2 className="text-lg font-semibold">Queries</h2>
         {usage.error && (
-          <p className="mt-2 text-red-700 dark:text-red-300">{(usage.error as Error).message}</p>
+          <p className="mt-2 text-red-700 dark:text-red-300">{usage.error.message}</p>
         )}
         {usage.isLoading ? (
           <div className="mt-2">
-            <LoadingState surface="cost-queries" hints={['Fetching the cost report from the server…']} />
+            <LoadingState
+              surface="cost-queries"
+              hints={['Fetching the cost report from the server…']}
+            />
           </div>
         ) : (usage.data ?? []).length === 0 ? (
           <p className="mt-2 text-stone-500 dark:text-stone-400" data-testid="cost-center-empty">
@@ -269,7 +289,9 @@ function UsageRow({ row, who }: { row: LlmUsageRow; who: string }) {
           </span>
         )}
         {row.latency_ms > 0 && (
-          <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">{row.latency_ms} ms</div>
+          <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+            {row.latency_ms} ms
+          </div>
         )}
       </td>
       <td className="px-3 py-2 max-w-[16rem]">

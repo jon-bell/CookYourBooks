@@ -1,10 +1,6 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
-import {
-  configureOcrKey,
-  seedRewriteFixture,
-  triggerWorker,
-} from './support/imports.js';
+import { configureOcrKey, seedRewriteFixture, triggerWorker } from './support/imports.js';
 
 /**
  * End-to-end happy path for "Improve instructions". Creates a recipe via
@@ -103,7 +99,9 @@ test.describe('Instruction rewriting', () => {
     const simplified = page.getByTestId('simplified-list');
     await expect(simplified).toBeVisible();
     await expect(simplified.getByRole('listitem')).toHaveCount(3);
-    await expect(simplified.getByText('Toast the seeds, shaking the pan, until aromatic')).toBeVisible();
+    await expect(
+      simplified.getByText('Toast the seeds, shaking the pan, until aromatic'),
+    ).toBeVisible();
     await expect(page.getByTestId('timer-start')).toBeVisible();
     await expect(page.getByTestId('timer-start')).toContainText('2:00');
 

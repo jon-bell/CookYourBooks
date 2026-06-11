@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { useMyHousehold } from '../household/queries.js';
 

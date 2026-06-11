@@ -1,5 +1,6 @@
 import type { NutritionFact, NutritionSource } from '@cookyourbooks/domain';
 import { extractIngredientTerms } from '@cookyourbooks/domain';
+
 import { getLocalDb } from '../local/db.js';
 
 // Lazy local mirror of the server's nutrition_facts_cache. Populated
@@ -59,10 +60,10 @@ export async function readLocalFact(
   sourceId: string,
 ): Promise<NutritionFact | null> {
   const db = await getLocalDb();
-  const rows = (await db.execO<LocalNutritionRow>(
+  const rows = await db.execO<LocalNutritionRow>(
     `select * from nutrition_facts where source = ? and source_id = ?`,
     [source, sourceId],
-  )) as LocalNutritionRow[];
+  );
   if (rows.length === 0) return null;
   return rowToFact(rows[0]!);
 }
@@ -179,10 +180,7 @@ function essentialsToFact(r: EssentialsLocalRow): NutritionFact {
  * not in the snapshot the caller falls back to the remote
  * `searchNutrition()` path (which adds Branded + the semantic fallback).
  */
-export async function searchLocalEssentials(
-  q: string,
-  limit = 10,
-): Promise<NutritionFact[]> {
+export async function searchLocalEssentials(q: string, limit = 10): Promise<NutritionFact[]> {
   const { terms } = extractIngredientTerms(q);
   if (terms.length === 0) return [];
   const db = await getLocalDb();
@@ -193,7 +191,7 @@ export async function searchLocalEssentials(
   const likeParams = terms.map((t) => `%${t}%`);
   const orWhere = terms.map(() => 'search_blob like ?').join(' or ');
   const coverageExpr = terms.map(() => '(search_blob like ?)').join(' + ');
-  const rows = (await db.execO<EssentialsLocalRow>(
+  const rows = await db.execO<EssentialsLocalRow>(
     `select * from nutrition_foods_essentials
        where ${orWhere}
        order by
@@ -206,6 +204,6 @@ export async function searchLocalEssentials(
     // Params: OR predicates, then the coverage predicates (same LIKEs
     // again), then the limit.
     [...likeParams, ...likeParams, limit],
-  )) as EssentialsLocalRow[];
+  );
   return rows.map(essentialsToFact);
 }

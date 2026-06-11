@@ -1,23 +1,24 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   forkCollection,
   listPublicCollectionRecipeTitles,
   listPublicCollections,
   type PublicCollectionSummary,
 } from '@cookyourbooks/db';
-import { supabase } from '../supabase.js';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
-import { ReportDialog } from '../moderation/ReportDialog.js';
-import {
-  listGlobalCookbooks,
-  listGlobalTocEntries,
-  type GlobalCookbookSummary,
-} from '../data/globalCookbookLookup.js';
 import { CoverImage } from '../components/CoverImage.js';
 import { LoadingState } from '../components/LoadingState.js';
+import {
+  type GlobalCookbookSummary,
+  listGlobalCookbooks,
+  listGlobalTocEntries,
+} from '../data/globalCookbookLookup.js';
+import { useSync } from '../local/SyncProvider.js';
+import { ReportDialog } from '../moderation/ReportDialog.js';
+import { supabase } from '../supabase.js';
 
 export function DiscoverPage() {
   const [q, setQ] = useState('');
@@ -88,10 +89,10 @@ export function DiscoverPage() {
     <div className="space-y-5">
       <h1 className="text-2xl font-semibold">Discover</h1>
       <p className="text-sm text-stone-600 dark:text-stone-400">
-        Two ways to find recipes: the <strong>global cookbook catalog</strong> is an
-        admin-curated index of known cookbooks — you can browse their tables of contents and
-        seed your own copy by ISBN. <strong>Public collections</strong> are user-published
-        libraries you can fork into your own account.
+        Two ways to find recipes: the <strong>global cookbook catalog</strong> is an admin-curated
+        index of known cookbooks — you can browse their tables of contents and seed your own copy by
+        ISBN. <strong>Public collections</strong> are user-published libraries you can fork into
+        your own account.
       </p>
       <div className="flex flex-wrap items-center gap-3">
         <input
@@ -160,9 +161,11 @@ export function DiscoverPage() {
       {isLoading ? (
         <LoadingState surface="discover" hints={['Fetching public collections…']} />
       ) : error ? (
-        <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>
+        <p className="text-red-700 dark:text-red-300">{error.message}</p>
       ) : (data ?? []).length === 0 ? (
-        <p className="text-stone-600 dark:text-stone-400">No public collections match that filter.</p>
+        <p className="text-stone-600 dark:text-stone-400">
+          No public collections match that filter.
+        </p>
       ) : (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {(data ?? []).map((c) => (
@@ -199,7 +202,9 @@ export function DiscoverPage() {
                   </button>
                 )}
                 {!user && (
-                  <span className="text-xs text-stone-500 dark:text-stone-400">Sign in to fork</span>
+                  <span className="text-xs text-stone-500 dark:text-stone-400">
+                    Sign in to fork
+                  </span>
                 )}
                 {user && (
                   <button
@@ -217,7 +222,7 @@ export function DiscoverPage() {
       )}
       {fork.isError && (
         <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-          {(fork.error as Error).message}
+          {fork.error.message}
         </div>
       )}
       <ReportDialog
@@ -253,9 +258,7 @@ function RecipeTitleList({
 }) {
   const [expanded, setExpanded] = useState(false);
   if (titles.length === 0) {
-    return (
-      <p className="mt-2 text-xs italic text-stone-500 dark:text-stone-400">{emptyMessage}</p>
-    );
+    return <p className="mt-2 text-xs italic text-stone-500 dark:text-stone-400">{emptyMessage}</p>;
   }
   const shown = expanded ? titles : titles.slice(0, DEFAULT_PREVIEW);
   const hidden = titles.length - shown.length;

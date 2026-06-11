@@ -1,12 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from './support/fixtures.js';
-import {
-  configureOcrKey,
-  seedOcrFixture,
-  triggerWorker,
-} from './support/imports.js';
+
+import { expect, test } from './support/fixtures.js';
+import { configureOcrKey, seedOcrFixture, triggerWorker } from './support/imports.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = resolve(__dirname, 'fixtures');
@@ -66,16 +63,17 @@ async function gotoBakeoffNew(page: import('@playwright/test').Page): Promise<vo
 
 async function uploadFakeImage(page: import('@playwright/test').Page): Promise<void> {
   await page.getByRole('button', { name: 'Choose images' }).click();
-  await page.locator('input[type="file"]').first().setInputFiles({
-    name: 'recipe.png',
-    mimeType: 'image/png',
-    buffer: readFileSync(resolve(FIXTURES_DIR, 'page1.png')),
-  });
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: 'recipe.png',
+      mimeType: 'image/png',
+      buffer: readFileSync(resolve(FIXTURES_DIR, 'page1.png')),
+    });
 }
 
-async function clearVariantLocalStorage(
-  page: import('@playwright/test').Page,
-): Promise<void> {
+async function clearVariantLocalStorage(page: import('@playwright/test').Page): Promise<void> {
   await page.evaluate(() => localStorage.removeItem('cookyourbooks.bakeoff.v1'));
 }
 
@@ -115,16 +113,12 @@ async function runBakeoffAndConfirmGrouping(
  * iteration to absorb both the variant fan-out latency and any rare
  * lease-loss retries.
  */
-async function waitForBakeoffReady(
-  page: import('@playwright/test').Page,
-): Promise<void> {
+async function waitForBakeoffReady(page: import('@playwright/test').Page): Promise<void> {
   await expect
     .poll(
       async () => {
         await triggerWorker();
-        return page
-          .getByRole('link', { name: /Pick winner|Needs review/i })
-          .count();
+        return page.getByRole('link', { name: /Pick winner|Needs review/i }).count();
       },
       { timeout: 60_000, intervals: [500, 1_000, 2_000, 5_000] },
     )
@@ -152,7 +146,10 @@ test.describe('OCR bakeoff import', () => {
     // Pump the worker until the item lands on BAKEOFF_READY ("Pick winner").
     await waitForBakeoffReady(page);
 
-    await page.getByRole('link', { name: /Pick winner|Needs review/i }).first().click();
+    await page
+      .getByRole('link', { name: /Pick winner|Needs review/i })
+      .first()
+      .click();
     await expect(page.getByTestId('bakeoff-item-review')).toBeVisible({ timeout: 60_000 });
 
     const rows = page.getByTestId('bakeoff-result-row');
@@ -171,9 +168,12 @@ test.describe('OCR bakeoff import', () => {
     await runBakeoffAndConfirmGrouping(page);
     await waitForBakeoffReady(page);
 
-    await page.getByRole('link', { name: /Pick winner|Needs review/i }).first().click({
-      timeout: 60_000,
-    });
+    await page
+      .getByRole('link', { name: /Pick winner|Needs review/i })
+      .first()
+      .click({
+        timeout: 60_000,
+      });
     // The new BakeoffItemReview shows a side-by-side "Compare" panel
     // with one <article> per variant (instead of the old textual
     // unified diff). Verify the two seeded fixtures render distinct
@@ -189,13 +189,14 @@ test.describe('OCR bakeoff import', () => {
     await expect(diff.getByText('all-purpose flour', { exact: true })).toHaveCount(1);
     // Match a standalone "flour" cell (avoid the "all-purpose flour" substring).
     await expect(
-      diff.locator('article').filter({ hasText: /^.*Quick Cookies.*/ }).filter({ hasNotText: 'revised' }),
+      diff
+        .locator('article')
+        .filter({ hasText: /^.*Quick Cookies.*/ })
+        .filter({ hasNotText: 'revised' }),
     ).toContainText('flour');
   });
 
-  test('"Set as default" promotes a variant into user_ocr_prefs', async ({
-    authedPage: page,
-  }) => {
+  test('"Set as default" promotes a variant into user_ocr_prefs', async ({ authedPage: page }) => {
     await configureOcrKey(page, 'gemini');
     await seedBakeoffFixtures();
     await clearVariantLocalStorage(page);
@@ -205,9 +206,12 @@ test.describe('OCR bakeoff import', () => {
     await runBakeoffAndConfirmGrouping(page);
     await waitForBakeoffReady(page);
 
-    await page.getByRole('link', { name: /Pick winner|Needs review/i }).first().click({
-      timeout: 60_000,
-    });
+    await page
+      .getByRole('link', { name: /Pick winner|Needs review/i })
+      .first()
+      .click({
+        timeout: 60_000,
+      });
     await expect(page.getByTestId('bakeoff-promote').first()).toBeVisible({ timeout: 60_000 });
     await page.getByTestId('bakeoff-promote').first().click();
 
@@ -215,15 +219,17 @@ test.describe('OCR bakeoff import', () => {
       .poll(
         async () =>
           page.evaluate(async () => {
-            const sb = (window as unknown as {
-              __cybSupabase?: {
-                from: (t: string) => {
-                  select: (c: string) => {
-                    maybeSingle: () => Promise<{ data?: { model?: string } | null }>;
+            const sb = (
+              window as unknown as {
+                __cybSupabase?: {
+                  from: (t: string) => {
+                    select: (c: string) => {
+                      maybeSingle: () => Promise<{ data?: { model?: string } | null }>;
+                    };
                   };
                 };
-              };
-            }).__cybSupabase;
+              }
+            ).__cybSupabase;
             const r = await sb!.from('user_ocr_prefs').select('model').maybeSingle();
             return r.data?.model ?? '';
           }),

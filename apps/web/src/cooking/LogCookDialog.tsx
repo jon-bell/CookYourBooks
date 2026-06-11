@@ -1,10 +1,11 @@
+import type { MealSlot, Recipe, RecipeAdjustment } from '@cookyourbooks/domain';
 import { useEffect, useState } from 'react';
 import CreatableSelect from 'react-select/creatable';
-import type { MealSlot, Recipe, RecipeAdjustment } from '@cookyourbooks/domain';
+
+import { AdjustmentsEditor } from './AdjustmentsEditor.js';
 import { todayISO } from './dateGrid.js';
 import { MEAL_SLOT_OPTIONS } from './format.js';
 import { useOccasionSuggestions } from './queries.js';
-import { AdjustmentsEditor } from './AdjustmentsEditor.js';
 
 export type CookMode = 'made' | 'schedule';
 

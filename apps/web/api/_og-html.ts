@@ -92,6 +92,7 @@ export function renderOgHtml(meta: OgMeta): string {
 export function cleanDescription(raw: string | null | undefined, max = 200): string {
   if (!raw) return '';
   const squashed = raw
+    // eslint-disable-next-line no-control-regex -- stripping control chars is the point
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

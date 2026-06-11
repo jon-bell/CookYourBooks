@@ -1,16 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from './support/fixtures.js';
-import { waitForSynced } from './support/fixtures.js';
+
+import { expect, test, waitForSynced } from './support/fixtures.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = resolve(__dirname, 'fixtures');
-import {
-  configureOcrKey,
-  pumpWorker,
-  seedOcrFixture,
-} from './support/imports.js';
+import { configureOcrKey, pumpWorker, seedOcrFixture } from './support/imports.js';
 
 const FAKE_DRAFTS = [
   {

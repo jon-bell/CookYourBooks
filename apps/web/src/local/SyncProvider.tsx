@@ -1,27 +1,23 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { reportError, Sentry } from '../sentry.js';
 import { supabase } from '../supabase.js';
+import { startBackfills } from './backfill.js';
 import { beginDbStatsWindow, getLocalDb, readDbStats } from './db.js';
 import { countPending } from './outbox.js';
-import { startBackfills } from './backfill.js';
-import { captureSyncDiagnostics } from './syncDiag.js';
 import {
   pullAll,
   pullNutritionEssentials,
   pushOutbox,
+  type RealtimeHandle,
   resetHouseholdWatermarks,
   subscribeRealtime,
-  type RealtimeHandle,
 } from './sync.js';
+import { captureSyncDiagnostics } from './syncDiag.js';
 import { logSync } from './syncLog.js';
-import { reportError, Sentry } from '../sentry.js';
-import {
-  ensureLeaderElection,
-  getTabRole,
-  subscribeTabRole,
-  type TabRole,
-} from './tabLeader.js';
+import { ensureLeaderElection, getTabRole, subscribeTabRole, type TabRole } from './tabLeader.js';
 
 function stringifyError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -36,7 +32,8 @@ function stringifyError(err: unknown): string {
     try {
       return JSON.stringify(err);
     } catch {
-      return String(err);
+      // Circular structure — String() would only give "[object Object]".
+      return '[unserializable error]';
     }
   }
   return String(err);
@@ -58,13 +55,14 @@ function withTimeout<T>(
         clearTimeout(t);
         resolve(v);
       },
-      (e) => {
+      (e: unknown) => {
         clearTimeout(t);
         // Preserve the original error so the outer catch can extract
         // shape (.message / .code / .hint on PostgrestErrors, etc).
         // Earlier this wrapped non-Errors in `new Error(String(e))`,
         // which collapses an object into "[object Object]" and hides
         // what actually went wrong.
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         reject(e);
       },
     );
@@ -238,11 +236,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           logSync('info', 'cycle: invoking pushOutbox');
           const pushStart = Date.now();
           const pushRes = await Sentry.startSpan({ name: 'sync.push', op: 'sync.push' }, () =>
-            withTimeout(
-              pushOutbox(supabase, ownerId, ac.signal),
-              CYCLE_TIMEOUT_MS,
-              'push',
-              () => ac.abort(),
+            withTimeout(pushOutbox(supabase, ownerId, ac.signal), CYCLE_TIMEOUT_MS, 'push', () =>
+              ac.abort(),
             ),
           );
           pushMs = Date.now() - pushStart;
@@ -269,7 +264,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           // Fire-and-forget: reference data doesn't gate the UI, and
           // failures shouldn't show up as a sync error to the user.
           // Throttled internally — only refetches once a month.
-          pullNutritionEssentials(supabase).catch((err) => {
+          pullNutritionEssentials(supabase).catch((err: unknown) => {
             logSync('warn', 'nutrition essentials pull failed', { error: stringifyError(err) });
           });
           setLastSyncedAt(Date.now());
@@ -470,10 +465,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       currentAbort.current?.abort();
       inFlight.current = null;
       logSync('error', 'watchdog: cycle stalled, aborting + clearing inFlight');
-      setSettled(
-        'error',
-        'Sync stalled — click "Syncing…" or refresh to retry.',
-      );
+      setSettled('error', 'Sync stalled — click "Syncing…" or refresh to retry.');
     }, WATCHDOG_INTERVAL_MS);
     return () => clearInterval(tick);
   }, [status]);

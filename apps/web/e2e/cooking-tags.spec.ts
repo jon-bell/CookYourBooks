@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Recipe tags', () => {
@@ -24,12 +24,13 @@ test.describe('Recipe tags', () => {
     // Remove the tag; it disappears from the browse results.
     await page.goto(recipeUrl);
     await expect(page.getByTestId('tag-editor').getByText('weeknight')).toBeVisible();
-    await page.getByTestId('tag-editor').getByRole('button', { name: 'Remove tag weeknight' }).click();
+    await page
+      .getByTestId('tag-editor')
+      .getByRole('button', { name: 'Remove tag weeknight' })
+      .click();
     await expect(page.getByTestId('tag-editor').getByText('weeknight')).toHaveCount(0);
 
     await page.goto('/tags/weeknight');
-    await expect(
-      page.getByText('No recipes match the selected tags.'),
-    ).toBeVisible();
+    await expect(page.getByText('No recipes match the selected tags.')).toBeVisible();
   });
 });

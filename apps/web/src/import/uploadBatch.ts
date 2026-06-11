@@ -1,11 +1,11 @@
-import { supabase } from '../supabase.js';
-import { kickOcr } from './api.js';
-import { prepareImage, renderPdfToJpegs, type PreparedPage } from './imageProcessing.js';
-import { enqueue } from '../local/outbox.js';
 import { getLocalDb } from '../local/db.js';
-import type { OcrProvider, SourceKind, BatchKind } from './model.js';
+import { enqueue } from '../local/outbox.js';
+import { supabase } from '../supabase.js';
 import type { BakeoffVariantInput } from './api.js';
-import { type PageMarker, DEFAULT_MARKER, planPageGroups } from './pageMarker.js';
+import { kickOcr } from './api.js';
+import { type PreparedPage, prepareImage, renderPdfToJpegs } from './imageProcessing.js';
+import type { BatchKind, OcrProvider, SourceKind } from './model.js';
+import { DEFAULT_MARKER, type PageMarker, planPageGroups } from './pageMarker.js';
 
 export interface UploadBatchInput {
   ownerId: string;
@@ -76,10 +76,7 @@ async function uploadBlob(path: string, blob: Blob): Promise<void> {
  * + RLS — bakeoff blobs live under `<ownerId>/bakeoffs/<uuid>.jpg` so the
  * existing per-owner folder policy keeps them isolated.
  */
-export async function uploadBakeoffImage(
-  ownerId: string,
-  file: File,
-): Promise<string> {
+export async function uploadBakeoffImage(ownerId: string, file: File): Promise<string> {
   const prepared = await prepareImage(file);
   const path = `${ownerId}/bakeoffs/${crypto.randomUUID()}.jpg`;
   await uploadBlob(path, prepared.fullJpeg);

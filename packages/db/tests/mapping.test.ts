@@ -1,26 +1,27 @@
-import { describe, expect, it } from 'vitest';
 import {
   createPersonalCollection,
   createRecipe,
   exact,
   fractional,
   instruction,
+  isMeasured,
   measured,
   servings,
   vague,
-  isMeasured,
 } from '@cookyourbooks/domain';
+import { describe, expect, it } from 'vitest';
+
 import {
-  collectionToInsert,
-  ingredientToInsert,
-  instructionToInsert,
-  recipeToInsert,
-  rowToCollection,
-  rowsToRecipe,
   type CollectionRow,
+  collectionToInsert,
   type IngredientRow,
+  ingredientToInsert,
   type InstructionRow,
+  instructionToInsert,
   type RecipeRow,
+  recipeToInsert,
+  rowsToRecipe,
+  rowToCollection,
 } from '../src/mapping.js';
 
 const OWNER = '00000000-0000-0000-0000-0000000000aa';
@@ -87,8 +88,7 @@ describe('recipe mapping', () => {
       servings_description: recipe.servings!.description ?? null,
     } as RecipeRow;
     const ingRows: IngredientRow[] = recipe.ingredients.map(
-      (ing, i) =>
-        ({ ...ingredientToInsert(ing, recipe.id, i), id: ing.id }) as IngredientRow,
+      (ing, i) => ({ ...ingredientToInsert(ing, recipe.id, i), id: ing.id }) as IngredientRow,
     );
     const stepRows: InstructionRow[] = recipe.instructions.map(
       (s) => ({ ...instructionToInsert(s, recipe.id), id: s.id }) as InstructionRow,
@@ -130,7 +130,7 @@ describe('recipe mapping', () => {
       source_url?: string | null;
     };
     expect(insert.source_url).toBe('https://www.youtube.com/watch?v=abc123');
-    const recipeRow = { ...insert, created_at: '', updated_at: '' } as RecipeRow;
+    const recipeRow = { ...insert, created_at: '', updated_at: '' };
     const back = rowsToRecipe(recipeRow, [], []);
     expect(back.sourceUrl).toBe('https://www.youtube.com/watch?v=abc123');
   });
@@ -141,7 +141,7 @@ describe('recipe mapping', () => {
       source_url?: string | null;
     };
     expect(insert.source_url).toBeNull();
-    const recipeRow = { ...insert, created_at: '', updated_at: '' } as RecipeRow;
+    const recipeRow = { ...insert, created_at: '', updated_at: '' };
     expect(rowsToRecipe(recipeRow, [], []).sourceUrl).toBeUndefined();
   });
 
@@ -167,7 +167,7 @@ describe('recipe mapping', () => {
     const row: InstructionRow = {
       ...insert,
       id: step.id,
-    } as InstructionRow;
+    };
     const recipeRow = {
       id: 'r-1',
       collection_id: 'c',

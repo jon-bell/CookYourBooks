@@ -1,6 +1,6 @@
+import { type Ingredient, measured, vague } from '../model/ingredient.js';
 import { exact, fractional, type Quantity } from '../model/quantity.js';
 import { findUnit } from '../model/unit.js';
-import { measured, vague, type Ingredient } from '../model/ingredient.js';
 
 // Very small natural-language ingredient parser.
 // Handles: "2 cups flour", "1 1/2 tsp salt", "3 cloves garlic, minced",
@@ -14,9 +14,7 @@ export function parseIngredientLine(line: string): Ingredient | undefined {
     return vague({ name: stripVaguePhrases(trimmed) });
   }
 
-  const match = trimmed.match(
-    /^(\d+(?:\s+\d+\/\d+)?|\d+\/\d+|\d+(?:\.\d+)?)\s+(\S+)\s+(.+)$/,
-  );
+  const match = trimmed.match(/^(\d+(?:\s+\d+\/\d+)?|\d+\/\d+|\d+(?:\.\d+)?)\s+(\S+)\s+(.+)$/);
   if (!match) {
     return vague({ name: trimmed });
   }

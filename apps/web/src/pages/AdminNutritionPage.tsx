@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ingredientLookupKey, type NutritionFact } from '@cookyourbooks/domain';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+
 import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
-import { supabase } from '../supabase.js';
-import { searchNutrition } from '../nutrition/api.js';
 import { LoadingState } from '../components/LoadingState.js';
+import { searchNutrition } from '../nutrition/api.js';
+import { supabase } from '../supabase.js';
 
 /**
  * Admin nutrition surface. Three sections:
@@ -76,7 +77,8 @@ function PlatformMappingsSection() {
         .is('owner_id', null);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'nutrition', 'platform-mappings'] }),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ['admin', 'nutrition', 'platform-mappings'] }),
   });
 
   return (
@@ -87,14 +89,12 @@ function PlatformMappingsSection() {
       <header>
         <h2 className="text-lg font-semibold">Platform default mappings</h2>
         <p className="text-xs text-stone-600 dark:text-stone-400">
-          Apply to every user who hasn't set a personal override for the same ingredient
-          string. Edit through bulk load below or via per-row controls here.
+          Apply to every user who hasn't set a personal override for the same ingredient string.
+          Edit through bulk load below or via per-row controls here.
         </p>
       </header>
       {list.isLoading && <LoadingState surface="admin-nutrition" size="inline" />}
-      {list.error && (
-        <p className="text-sm text-red-700">{(list.error as Error).message}</p>
-      )}
+      {list.error && <p className="text-sm text-red-700">{list.error.message}</p>}
       {list.data && list.data.length === 0 && (
         <p className="text-sm text-stone-500 dark:text-stone-400">
           No platform defaults yet. Use bulk load below to seed the most common ingredients.
@@ -208,8 +208,8 @@ function CacheTweakSection() {
         <h2 className="text-lg font-semibold">Cache tweak</h2>
         <p className="text-xs text-stone-600 dark:text-stone-400">
           Override the per-100g values on a cached fact. Goes through{' '}
-          <code>admin_nutrition_upsert_fact</code> so the cache stays service-role-write
-          for the edge function.
+          <code>admin_nutrition_upsert_fact</code> so the cache stays service-role-write for the
+          edge function.
         </p>
       </header>
       <input
@@ -250,7 +250,7 @@ function CacheTweakSection() {
           onClose={() => setEditing(null)}
           onSave={(next) => save.mutate(next)}
           saving={save.isPending}
-          error={save.error ? (save.error as Error).message : null}
+          error={save.error ? save.error.message : null}
         />
       )}
     </section>
@@ -321,9 +321,7 @@ function CacheEditDialog({
           {field('fiber_g', 'Fiber', 'g')}
           {field('sodium_mg', 'Sodium', 'mg')}
         </div>
-        {error && (
-          <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
-        )}
+        {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button
             onClick={onClose}
@@ -433,9 +431,9 @@ function BulkLoadSection() {
       <header>
         <h2 className="text-lg font-semibold">Bulk load platform defaults</h2>
         <p className="text-xs text-stone-600 dark:text-stone-400">
-          Paste ingredient names (one per line). Preview runs each through USDA / Open Food
-          Facts and shows the auto-matched top result. Uncheck any wrong matches before
-          saving — those won't be written.
+          Paste ingredient names (one per line). Preview runs each through USDA / Open Food Facts
+          and shows the auto-matched top result. Uncheck any wrong matches before saving — those
+          won't be written.
         </p>
       </header>
       <textarea
@@ -499,9 +497,7 @@ function BulkLoadSection() {
               <div className="flex-1 min-w-0">
                 <div className="font-medium">{row.ingredientKey}</div>
                 <div className="truncate text-xs text-stone-500 dark:text-stone-400">
-                  {row.match
-                    ? `${row.match.description} (${row.match.source})`
-                    : 'no match found'}
+                  {row.match ? `${row.match.description} (${row.match.source})` : 'no match found'}
                 </div>
               </div>
             </li>

@@ -1,7 +1,6 @@
-import { test, expect } from './support/fixtures.js';
-import { createTestUser } from './support/admin.js';
-import { seedHousehold, seedMembership } from './support/household.js';
 import { EMBEDDING_STORED_MODEL } from '@cookyourbooks/domain';
+
+import { createTestUser } from './support/admin.js';
 import {
   cosine,
   createUserRecipe,
@@ -10,6 +9,8 @@ import {
   userCanReadEmbedding,
   waitForEmbedding,
 } from './support/embeddings.js';
+import { expect, test } from './support/fixtures.js';
+import { seedHousehold, seedMembership } from './support/household.js';
 
 // Edge-function-level semantic success: prove the import-worker actually
 // embeds recipes server-side (native Supabase.ai gte-small) into

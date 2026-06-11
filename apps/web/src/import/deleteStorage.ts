@@ -18,17 +18,12 @@ export type StorageDeleteScope =
 
 export async function deleteOcrStorage(scope: StorageDeleteScope): Promise<number> {
   const scopeText = scope.kind;
-  const id =
-    scope.kind === 'item'
-      ? scope.itemId
-      : scope.kind === 'batch'
-        ? scope.batchId
-        : null;
+  const id = scope.kind === 'item' ? scope.itemId : scope.kind === 'batch' ? scope.batchId : null;
 
-  const { data: paths, error: rpcError } = await supabase.rpc(
-    'clear_my_import_storage',
-    { p_scope: scopeText, p_id: id ?? undefined },
-  );
+  const { data: paths, error: rpcError } = await supabase.rpc('clear_my_import_storage', {
+    p_scope: scopeText,
+    p_id: id ?? undefined,
+  });
   if (rpcError) throw new Error(rpcError.message);
 
   const list = (paths as string[] | null) ?? [];
@@ -40,9 +35,7 @@ export async function deleteOcrStorage(scope: StorageDeleteScope): Promise<numbe
   let removed = 0;
   for (let i = 0; i < list.length; i += CHUNK) {
     const slice = list.slice(i, i + CHUNK);
-    const { error: storageError } = await supabase.storage
-      .from('imports')
-      .remove(slice);
+    const { error: storageError } = await supabase.storage.from('imports').remove(slice);
     if (storageError) {
       // Soft-fail: the DB columns are already cleared. The bucket
       // objects will be orphaned but the user no longer references

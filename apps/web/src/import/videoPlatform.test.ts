@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { detectVideoPlatform, firstVideoUrl } from './videoPlatform.js';
 
 describe('detectVideoPlatform', () => {
@@ -28,9 +29,7 @@ describe('detectVideoPlatform', () => {
 
 describe('firstVideoUrl', () => {
   it('extracts a supported URL embedded in shared text', () => {
-    expect(firstVideoUrl('Check this out https://youtu.be/abc #yum')).toBe(
-      'https://youtu.be/abc',
-    );
+    expect(firstVideoUrl('Check this out https://youtu.be/abc #yum')).toBe('https://youtu.be/abc');
   });
 
   it('returns a bare supported URL unchanged', () => {

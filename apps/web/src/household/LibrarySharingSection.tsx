@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useSetLibrarySharing } from './queries.js';
-import { isTosNotAcceptedError } from './api.js';
+
 import { AcceptTosGate } from './AcceptTosGate.js';
+import { isTosNotAcceptedError } from './api.js';
+import { useSetLibrarySharing } from './queries.js';
 
 const DEFAULT_ATTESTATION =
   'I own the content in my library or have explicit permission to share it with my household.';
@@ -65,8 +66,8 @@ export function LibrarySharingSection({
               <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 px-2 py-0.5 text-xs text-emerald-900 dark:text-emerald-200">
                 Sharing on
               </span>{' '}
-              Everyone in <strong>{householdName}</strong> can read your whole library. They
-              can't edit, fork, or re-share it.
+              Everyone in <strong>{householdName}</strong> can read your whole library. They can't
+              edit, fork, or re-share it.
             </p>
             <button
               onClick={disable}
@@ -83,8 +84,8 @@ export function LibrarySharingSection({
               <span className="rounded-md bg-stone-100 dark:bg-stone-800 border border-stone-300 dark:border-stone-600 px-2 py-0.5 text-xs">
                 Sharing off
               </span>{' '}
-              Your library is private. Turn sharing on so the rest of {householdName} can read
-              your collections.
+              Your library is private. Turn sharing on so the rest of {householdName} can read your
+              collections.
             </p>
             <button
               onClick={() => setDialogOpen(true)}

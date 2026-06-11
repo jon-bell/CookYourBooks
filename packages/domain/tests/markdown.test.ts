@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
+
 import { recipeToMarkdown } from '../src/export/markdown.js';
-import { createRecipe } from '../src/model/recipe.js';
 import { measured, vague } from '../src/model/ingredient.js';
-import { exact } from '../src/model/quantity.js';
-import { servings } from '../src/model/servings.js';
 import { instruction } from '../src/model/instruction.js';
+import { exact } from '../src/model/quantity.js';
+import { createRecipe } from '../src/model/recipe.js';
+import { servings } from '../src/model/servings.js';
 
 describe('recipeToMarkdown', () => {
   it('renders a full recipe', () => {

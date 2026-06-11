@@ -1,18 +1,16 @@
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
-import { useOcrKeys } from '../import/queries.js';
-import { useSync } from '../local/SyncProvider.js';
-import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
 import { kickOcr, seedBakeoffBatch } from '../import/api.js';
-import {
-  BakeoffVariantEditor,
-  useBakeoffVariantState,
-} from '../import/BakeoffVariantEditor.js';
+import { BakeoffVariantEditor, useBakeoffVariantState } from '../import/BakeoffVariantEditor.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
+import { useOcrKeys } from '../import/queries.js';
+import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
+import { useSync } from '../local/SyncProvider.js';
 
 type Step = 'source' | 'review' | 'uploading';
 
@@ -32,23 +30,12 @@ export function ImportBakeoffNewPage() {
 
   const [step, setStep] = useState<Step>('source');
   const [files, setFiles] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
   const [name, setName] = useState(() => `Bakeoff ${new Date().toLocaleDateString()}`);
   const [targetCollectionId, setTargetCollectionId] = useState('');
   const [importMode, setImportMode] = useState<'ocr-first' | 'group-first'>('group-first');
   const [variants, setVariants] = useBakeoffVariantState();
   const [progress, setProgress] = useState<UploadProgress | undefined>();
   const [error, setError] = useState<string | undefined>();
-
-  useEffect(() => {
-    const urls = files.map((f) =>
-      f.type === 'application/pdf' ? '' : URL.createObjectURL(f),
-    );
-    setPreviews(urls);
-    return () => {
-      for (const u of urls) if (u) URL.revokeObjectURL(u);
-    };
-  }, [files]);
 
   const totalSizeMb = useMemo(
     () => (files.reduce((acc, f) => acc + f.size, 0) / 1_048_576).toFixed(1),

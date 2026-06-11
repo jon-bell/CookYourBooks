@@ -1,15 +1,16 @@
+import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
-import { capturePhoto, pickPhoto } from './camera.js';
-import { getEffectiveOcrConfig, listOcrKeys } from './api.js';
-import { LocalImportItemRepository } from './localRepos.js';
-import { uploadBatch } from './uploadBatch.js';
-import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import { resolveImportFallback } from '../settings/FallbackModelSection.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
+import { getEffectiveOcrConfig, listOcrKeys } from './api.js';
+import { capturePhoto, pickPhoto } from './camera.js';
+import { LocalImportItemRepository } from './localRepos.js';
 import type { ImportItem } from './model.js';
+import { uploadBatch } from './uploadBatch.js';
 
 type Progress = { status: string };
 
@@ -67,7 +68,12 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
           // channel landing the update.
           await syncNow();
           const item = await repo.get(itemId);
-          if (item && (item.status === 'OCR_DONE' || item.status === 'OCR_FAILED' || item.status === 'NEEDS_FALLBACK')) {
+          if (
+            item &&
+            (item.status === 'OCR_DONE' ||
+              item.status === 'OCR_FAILED' ||
+              item.status === 'NEEDS_FALLBACK')
+          ) {
             if (waitTimer.current) window.clearInterval(waitTimer.current);
             resolve(item);
             return;
@@ -78,7 +84,7 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
           }
         } catch (e) {
           if (waitTimer.current) window.clearInterval(waitTimer.current);
-          reject(e as Error);
+          reject(e instanceof Error ? e : new Error('Photo import failed', { cause: e }));
         }
       };
       waitTimer.current = window.setInterval(() => void tick(), 2500);
@@ -206,7 +212,9 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
           {busy ? 'Reading image…' : 'Upload image'}
         </button>
       </div>
-      {progress && <span className="text-xs text-stone-500 dark:text-stone-400">{progress.status}…</span>}
+      {progress && (
+        <span className="text-xs text-stone-500 dark:text-stone-400">{progress.status}…</span>
+      )}
       {error && <span className="text-xs text-red-700 dark:text-red-300">{error}</span>}
 
       {pending && (

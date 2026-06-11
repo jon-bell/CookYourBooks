@@ -1,22 +1,12 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  type UseQueryResult,
-} from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { getHouseholdOcrConfig, listOcrKeys, setHouseholdOcrConfig } from '../import/api.js';
 import { useSync } from '../local/SyncProvider.js';
 import * as api from './api.js';
-import {
-  getHouseholdOcrConfig,
-  setHouseholdOcrConfig,
-  listOcrKeys,
-} from '../import/api.js';
 
 /** Active household + members + role for the signed-in user. */
-export function useMyHousehold(): UseQueryResult<
-  Awaited<ReturnType<typeof api.getMyHousehold>>
-> {
+export function useMyHousehold(): UseQueryResult<Awaited<ReturnType<typeof api.getMyHousehold>>> {
   const { user } = useAuth();
   return useQuery({
     queryKey: ['household', 'mine', user?.id],

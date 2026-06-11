@@ -1,6 +1,6 @@
-import { defineConfig, loadEnv } from 'vite';
-import react from '@vitejs/plugin-react';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
+import react from '@vitejs/plugin-react';
+import { defineConfig, loadEnv } from 'vite';
 
 // Vite only exposes `VITE_*`-prefixed env vars to `import.meta.env`.
 // Vercel's Supabase integration ships unprefixed names (`SUPABASE_URL`,
@@ -16,10 +16,7 @@ export default defineConfig(({ mode }) => {
   const env: Record<string, string | undefined> = { ...fileEnv, ...process.env };
   const supabaseUrl = env.VITE_SUPABASE_URL ?? env.SUPABASE_URL ?? '';
   const supabaseAnonKey =
-    env.VITE_SUPABASE_ANON_KEY ??
-    env.SUPABASE_PUBLISHABLE_KEY ??
-    env.SUPABASE_ANON_KEY ??
-    '';
+    env.VITE_SUPABASE_ANON_KEY ?? env.SUPABASE_PUBLISHABLE_KEY ?? env.SUPABASE_ANON_KEY ?? '';
 
   // Source-map upload to self-hosted Sentry. Skip the plugin unless
   // SENTRY_AUTH_TOKEN is set in the build env so dev builds don't
@@ -31,8 +28,7 @@ export default defineConfig(({ mode }) => {
   // CI build overrides SENTRY_PROJECT to `cyb-capacitor` so the bundle
   // shipped in the IPA uploads its maps to the project its events go to.
   const sentryProject = env.SENTRY_PROJECT ?? 'cyb-react';
-  const sentryRelease =
-    env.VITE_SENTRY_RELEASE ?? env.VERCEL_GIT_COMMIT_SHA ?? undefined;
+  const sentryRelease = env.VITE_SENTRY_RELEASE ?? env.VERCEL_GIT_COMMIT_SHA ?? undefined;
 
   return {
     plugins: [

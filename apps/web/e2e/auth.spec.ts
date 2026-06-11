@@ -1,13 +1,11 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { createTestUser } from './support/admin.js';
+import { expect, signIn, test } from './support/fixtures.js';
 
 test.describe('Authentication', () => {
   test('unauthenticated visit to / shows the landing page with CTAs', async ({ page }) => {
     await page.goto('/');
     await expect(page).toHaveURL('/');
-    await expect(
-      page.getByRole('heading', { name: /cookbook library/i }),
-    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: /cookbook library/i })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Create an account' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Sign in' }).first()).toBeVisible();
   });
@@ -29,9 +27,7 @@ test.describe('Authentication', () => {
       // Sign out returns us to the signed-out state — the header "Sign in"
       // link comes back, and the landing page renders in <main>.
       await page.getByRole('button', { name: 'Sign out' }).click();
-      await expect(
-        page.locator('header').getByRole('link', { name: 'Sign in' }),
-      ).toBeVisible();
+      await expect(page.locator('header').getByRole('link', { name: 'Sign in' })).toBeVisible();
     } finally {
       await user.cleanup();
     }
