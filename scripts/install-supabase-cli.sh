@@ -6,8 +6,13 @@
 # platform-specific), so new clones + CI need to fetch it once.
 #
 # Usage:
-#   scripts/install-supabase-cli.sh          # pick sensible defaults
+#   scripts/install-supabase-cli.sh          # latest release
 #   SUPABASE_CLI_VERSION=2.90.0 scripts/install-supabase-cli.sh
+#
+# CLI >= 2.106.0 no longer auto-exposes public schema objects through
+# the Data API (local start/reset revokes the default anon/authenticated
+# grants). That's fine here: the Data API grants are explicit — see
+# supabase/migrations/20260701000200_explicit_data_api_grants.sql.
 
 set -euo pipefail
 
