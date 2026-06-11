@@ -6,12 +6,23 @@
 # platform-specific), so new clones + CI need to fetch it once.
 #
 # Usage:
-#   scripts/install-supabase-cli.sh          # pick sensible defaults
+#   scripts/install-supabase-cli.sh          # pinned default
 #   SUPABASE_CLI_VERSION=2.90.0 scripts/install-supabase-cli.sh
+#
+# The default is pinned, not "latest": CI re-fetches the CLI on every
+# run, so an upstream release can break every branch with zero repo
+# changes. v2.106.0 (2026-06-11) did exactly that — it flipped
+# `auto_expose_new_tables` to false and made local start/reset revoke
+# the anon/authenticated Data API grants on `public`, 401-ing the
+# PostgREST readiness probe. Bump deliberately, after a green local
+# `db reset` + e2e run. Before moving to >= 2.106.0, land explicit
+# GRANTs for anon/authenticated/service_role in a migration (the
+# deprecated `auto_expose_new_tables = true` escape hatch is removed
+# 2026-10-30).
 
 set -euo pipefail
 
-VERSION="${SUPABASE_CLI_VERSION:-latest}"
+VERSION="${SUPABASE_CLI_VERSION:-2.105.0}"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
