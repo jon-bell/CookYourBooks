@@ -1,12 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from './support/fixtures.js';
-import {
-  configureOcrKey,
-  pumpWorker,
-  seedOcrFixture,
-} from './support/imports.js';
+
+import { expect, test } from './support/fixtures.js';
+import { configureOcrKey, pumpWorker, seedOcrFixture } from './support/imports.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = resolve(__dirname, 'fixtures');
@@ -87,12 +84,10 @@ test.describe('OCR import from photo', () => {
     await pumpWorker();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/, { timeout: 30_000 });
-    await expect(
-      page.getByRole('button', { name: "Grandma's Lemon Bars" }),
-    ).toBeVisible({ timeout: 30_000 });
-    await expect(
-      page.getByRole('button', { name: 'powdered sugar', exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole('button', { name: "Grandma's Lemon Bars" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByRole('button', { name: 'powdered sugar', exact: true })).toBeVisible();
   });
 
   test('import button directs to Settings when no OCR key is configured', async ({

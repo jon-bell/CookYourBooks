@@ -60,9 +60,9 @@ function writePersisted(key: string, value: PersistedTimer): void {
 }
 
 function formatMMSS(sec: number): string {
-  if (sec < 0) sec = 0;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
+  const total = Math.max(0, sec);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 

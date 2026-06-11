@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Cookbook recipe sort', () => {
@@ -25,7 +25,9 @@ test.describe('Cookbook recipe sort', () => {
     await expect(page.getByRole('heading', { name: 'Sortbook' })).toBeVisible();
 
     // Recipe rows are the links into /recipes/. Wait for both to render.
-    const rows = page.locator('ul a[href*="/recipes/"]').filter({ hasText: /Zebra Cake|Apple Pie/ });
+    const rows = page
+      .locator('ul a[href*="/recipes/"]')
+      .filter({ hasText: /Zebra Cake|Apple Pie/ });
     await expect(rows).toHaveCount(2);
     const order = async () => {
       const texts = await rows.allInnerTexts();
@@ -41,8 +43,6 @@ test.describe('Cookbook recipe sort', () => {
 
     // Switch to Name (A–Z): Apple now sorts before Zebra.
     await page.getByLabel('Sort').selectOption('name');
-    await expect
-      .poll(async () => (await order()).apple)
-      .toBeLessThan((await order()).zebra);
+    await expect.poll(async () => (await order()).apple).toBeLessThan((await order()).zebra);
   });
 });

@@ -1,21 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Sentry, getSentryStatus } from '../sentry.js';
-import { useSync } from '../local/SyncProvider.js';
-import {
-  getSyncLog,
-  subscribeSyncLog,
-  clearSyncLog,
-  type SyncLogEntry,
-} from '../local/syncLog.js';
+
+import { emergencyResetLocalDb, snapshotDbInit, snapshotDbOps } from '../local/db.js';
+import type { OutboxEntry } from '../local/outbox.js';
 import { listOutboxForDebug, outboxKindCounts } from '../local/outbox.js';
 import { listWatermarks } from '../local/sync.js';
-import { snapshotDbOps, snapshotDbInit, emergencyResetLocalDb } from '../local/db.js';
-import {
-  releaseLeadership,
-  forceReelect,
-  queryLeaderLockState,
-} from '../local/tabLeader.js';
-import type { OutboxEntry } from '../local/outbox.js';
+import { clearSyncLog, getSyncLog, subscribeSyncLog, type SyncLogEntry } from '../local/syncLog.js';
+import { useSync } from '../local/SyncProvider.js';
+import { forceReelect, queryLeaderLockState, releaseLeadership } from '../local/tabLeader.js';
+import { getSentryStatus, Sentry } from '../sentry.js';
 
 interface DbOpView {
   id: number;
@@ -179,10 +171,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
       if (!sentry.initialized) {
         setUpload({
           state: 'error',
-          message:
-            sentry.skipReason
-              ? `Sentry init skipped: ${sentry.skipReason}`
-              : 'Sentry not initialized yet — try again in a moment.',
+          message: sentry.skipReason
+            ? `Sentry init skipped: ${sentry.skipReason}`
+            : 'Sentry not initialized yet — try again in a moment.',
         });
         return;
       }
@@ -318,10 +309,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
           <Section title="Status">
             <KV k="state" v={status} />
             <KV k="tab role" v={tabRole} />
-            <KV
-              k="syncing for"
-              v={syncingSince ? relMs(now - syncingSince) : '—'}
-            />
+            <KV k="syncing for" v={syncingSince ? relMs(now - syncingSince) : '—'} />
             <KV k="pending writes" v={String(pendingWrites)} />
             <KV
               k="last synced"
@@ -331,13 +319,11 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
             {tabRole === 'follower' && (
               <div className="mt-2 space-y-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                 <p>
-                  Another tab is the sync leader. This tab reads from the
-                  local cache but doesn&apos;t push/pull or listen for
-                  realtime updates.
+                  Another tab is the sync leader. This tab reads from the local cache but
+                  doesn&apos;t push/pull or listen for realtime updates.
                 </p>
                 <p className="text-amber-700 dark:text-amber-400">
-                  If no other tab is open, the lock may be wedged — click
-                  Force re-elect to reset.
+                  If no other tab is open, the lock may be wedged — click Force re-elect to reset.
                 </p>
               </div>
             )}
@@ -388,9 +374,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                   <span className="font-mono">{snap.lockPending.length}</span>
                 </div>
                 <p className="mt-1 text-[11px] text-stone-500">
-                  If you only have one tab open but role is &quot;follower&quot;,
-                  the lock is held by a stale context (a recently closed tab,
-                  bfcached page). Force re-elect should clear it.
+                  If you only have one tab open but role is &quot;follower&quot;, the lock is held
+                  by a stale context (a recently closed tab, bfcached page). Force re-elect should
+                  clear it.
                 </p>
               </>
             )}
@@ -400,12 +386,11 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
 
           <SentryStatusSection />
 
-
           <Section title="Emergency reset" className="md:col-span-2">
             <p className="mb-2 text-xs text-stone-600 dark:text-stone-400">
-              If <code>db init</code> is stuck, the persisted SQLite database is wedged.
-              This deletes the local <code>idb-batch-atomic</code> IndexedDB and reloads —
-              the next pull rehydrates from Supabase. Pending offline writes will be lost.
+              If <code>db init</code> is stuck, the persisted SQLite database is wedged. This
+              deletes the local <code>idb-batch-atomic</code> IndexedDB and reloads — the next pull
+              rehydrates from Supabase. Pending offline writes will be lost.
             </p>
             {!confirmReset ? (
               <button
@@ -480,28 +465,26 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
               <p className="text-sm text-stone-500">None yet.</p>
             ) : (
               <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead className="text-stone-500">
-                  <tr>
-                    <th className="py-1">topic</th>
-                    <th className="py-1">high_water_mark</th>
-                    <th className="py-1">as time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snap.watermarks.map((w) => (
-                    <tr key={w.topic} className="border-t border-stone-100 dark:border-stone-800">
-                      <td className="py-1 pr-2 break-all">{w.topic}</td>
-                      <td className="py-1 pr-2">{w.high_water_mark}</td>
-                      <td className="py-1 text-stone-500">
-                        {w.high_water_mark
-                          ? new Date(w.high_water_mark).toLocaleString()
-                          : '—'}
-                      </td>
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="text-stone-500">
+                    <tr>
+                      <th className="py-1">topic</th>
+                      <th className="py-1">high_water_mark</th>
+                      <th className="py-1">as time</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {snap.watermarks.map((w) => (
+                      <tr key={w.topic} className="border-t border-stone-100 dark:border-stone-800">
+                        <td className="py-1 pr-2 break-all">{w.topic}</td>
+                        <td className="py-1 pr-2">{w.high_water_mark}</td>
+                        <td className="py-1 text-stone-500">
+                          {w.high_water_mark ? new Date(w.high_water_mark).toLocaleString() : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </Section>
@@ -511,39 +494,39 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
               <p className="text-sm text-stone-500">Empty.</p>
             ) : (
               <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead className="text-stone-500">
-                  <tr>
-                    <th className="py-1">id</th>
-                    <th className="py-1">kind</th>
-                    <th className="py-1">entity_id</th>
-                    <th className="py-1">attempts</th>
-                    <th className="py-1">age</th>
-                    <th className="py-1">last_error</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snap.outbox.slice(0, 50).map((e) => (
-                    <tr key={e.id} className="border-t border-stone-100 dark:border-stone-800">
-                      <td className="py-1 pr-2 break-all">{e.id}</td>
-                      <td className="py-1 pr-2">{e.kind}</td>
-                      <td className="py-1 pr-2 max-w-[20ch] truncate" title={e.entity_id}>
-                        {e.entity_id}
-                      </td>
-                      <td className="py-1 pr-2">{e.attempts}</td>
-                      <td className="py-1 pr-2 text-stone-500">
-                        {relMs(Date.now() - e.enqueued_at)}
-                      </td>
-                      <td
-                        className="py-1 max-w-[30ch] truncate text-red-700 dark:text-red-400"
-                        title={e.last_error ?? ''}
-                      >
-                        {e.last_error ?? ''}
-                      </td>
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="text-stone-500">
+                    <tr>
+                      <th className="py-1">id</th>
+                      <th className="py-1">kind</th>
+                      <th className="py-1">entity_id</th>
+                      <th className="py-1">attempts</th>
+                      <th className="py-1">age</th>
+                      <th className="py-1">last_error</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {snap.outbox.slice(0, 50).map((e) => (
+                      <tr key={e.id} className="border-t border-stone-100 dark:border-stone-800">
+                        <td className="py-1 pr-2 break-all">{e.id}</td>
+                        <td className="py-1 pr-2">{e.kind}</td>
+                        <td className="py-1 pr-2 max-w-[20ch] truncate" title={e.entity_id}>
+                          {e.entity_id}
+                        </td>
+                        <td className="py-1 pr-2">{e.attempts}</td>
+                        <td className="py-1 pr-2 text-stone-500">
+                          {relMs(Date.now() - e.enqueued_at)}
+                        </td>
+                        <td
+                          className="py-1 max-w-[30ch] truncate text-red-700 dark:text-red-400"
+                          title={e.last_error ?? ''}
+                        >
+                          {e.last_error ?? ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </Section>
@@ -564,9 +547,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                           : 'text-stone-700 dark:text-stone-300'
                     }
                   >
-                    <span className="text-stone-400">
-                      {new Date(e.at).toLocaleTimeString()}{' '}
-                    </span>
+                    <span className="text-stone-400">{new Date(e.at).toLocaleTimeString()} </span>
                     {e.message}
                     {e.data && Object.keys(e.data).length > 0 ? (
                       <span className="text-stone-500"> {JSON.stringify(e.data)}</span>
@@ -595,9 +576,7 @@ function Section({
     <section
       className={`min-w-0 rounded border border-stone-200 p-3 dark:border-stone-700 ${className ?? ''}`}
     >
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
-        {title}
-      </h3>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">{title}</h3>
       {children}
     </section>
   );
@@ -621,17 +600,12 @@ function relMs(ms: number): string {
 
 function DbInitSection({ now }: { now: number }) {
   const init = snapshotDbInit();
-  const elapsed = init.startedAt
-    ? (init.finishedAt ?? now) - init.startedAt
-    : null;
+  const elapsed = init.startedAt ? (init.finishedAt ?? now) - init.startedAt : null;
   const stuck = !init.finishedAt && elapsed !== null && elapsed > 3000;
   return (
     <Section title="Local DB init">
       <KV k="step" v={init.step} mono />
-      <KV
-        k="elapsed"
-        v={elapsed === null ? '—' : `${relMs(elapsed)}${stuck ? ' (stuck)' : ''}`}
-      />
+      <KV k="elapsed" v={elapsed === null ? '—' : `${relMs(elapsed)}${stuck ? ' (stuck)' : ''}`} />
       <KV k="ready" v={init.finishedAt ? 'yes' : 'no'} />
       {init.error && <KV k="error" v={init.error} mono />}
     </Section>

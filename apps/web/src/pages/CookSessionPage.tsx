@@ -1,12 +1,13 @@
+import { buildShoppingList, type Recipe } from '@cookyourbooks/domain';
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { buildShoppingList, type Recipe } from '@cookyourbooks/domain';
-import { useRecipesByIds } from '../data/queries.js';
-import { useCookingCalendar, useMarkCooked } from '../cooking/queries.js';
-import { mealSlotLabel } from '../cooking/format.js';
-import { selectedDateLabel } from '../cooking/CalendarMonth.js';
-import type { CalendarEntry } from '../local/repositories.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { selectedDateLabel } from '../cooking/CalendarMonth.js';
+import { mealSlotLabel } from '../cooking/format.js';
+import { useCookingCalendar, useMarkCooked } from '../cooking/queries.js';
+import { useRecipesByIds } from '../data/queries.js';
+import type { CalendarEntry } from '../local/repositories.js';
 
 /**
  * Cook several recipes from one day at once. Loads the day's cooking
@@ -95,7 +96,10 @@ export function CookSessionPage() {
                   </li>
                 ))}
                 {combined.uncountable.map((item) => (
-                  <li key={`u:${item.name}`} className="px-4 py-2 text-sm text-stone-600 dark:text-stone-400">
+                  <li
+                    key={`u:${item.name}`}
+                    className="px-4 py-2 text-sm text-stone-600 dark:text-stone-400"
+                  >
                     {item.name}
                   </li>
                 ))}
@@ -106,7 +110,11 @@ export function CookSessionPage() {
           <section className="space-y-3" data-testid="cook-session-recipes">
             <h2 className="text-lg font-semibold">Recipes ({entries.length})</h2>
             {entries.map((e) => (
-              <CookSessionRecipe key={e.id} entry={e} recipe={recipes.find((r) => r.id === e.recipeId)} />
+              <CookSessionRecipe
+                key={e.id}
+                entry={e}
+                recipe={recipes.find((r) => r.id === e.recipeId)}
+              />
             ))}
           </section>
         </>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { createTag, normalizeLabel } from '../src/model/tag.js';
 
 describe('normalizeLabel', () => {

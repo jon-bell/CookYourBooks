@@ -1,4 +1,5 @@
 import type { Cookbook } from '@cookyourbooks/domain';
+
 import type { BookMetadataMatch } from './bookLookup.js';
 
 // NOTE: keep this module free of any import that transitively pulls
@@ -62,7 +63,9 @@ export function applyMatch(form: BookForm, match: BookMetadataMatch): BookForm {
     // Only adopt the looked-up cover if the user hasn't already got one.
     coverImagePath: form.coverImagePath ?? match.coverImagePath,
     coverBlob: form.coverImagePath ? form.coverBlob : (match.coverBlob ?? form.coverBlob),
-    coverPreviewUrl: form.coverImagePath ? form.coverPreviewUrl : (match.coverUrl ?? form.coverPreviewUrl),
+    coverPreviewUrl: form.coverImagePath
+      ? form.coverPreviewUrl
+      : (match.coverUrl ?? form.coverPreviewUrl),
     tocEntries: match.tocEntries ?? form.tocEntries,
   };
 }

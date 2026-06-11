@@ -22,9 +22,7 @@ export async function listConversionRulesForOwner(
       .select('from_unit, factor, ingredient_name, to_unit')
       .eq('owner_id', ownerId)
       .eq('priority', 'HOUSE'),
-    supabase
-      .from('global_conversions')
-      .select('from_unit, to_unit, factor, ingredient_name'),
+    supabase.from('global_conversions').select('from_unit, to_unit, factor, ingredient_name'),
   ]);
   const out: NutritionDensityRule[] = [];
   // Only keep rules whose target unit is grams — those convert recipe

@@ -169,5 +169,5 @@ export async function listModerationActions(limit = 100): Promise<ModerationActi
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return (data ?? []) as ModerationAction[];
+  return data ?? [];
 }

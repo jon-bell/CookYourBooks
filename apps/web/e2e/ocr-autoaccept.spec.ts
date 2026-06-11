@@ -1,13 +1,12 @@
-import { test, expect } from './support/fixtures.js';
-import { waitForSynced } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import {
   configureOcrKey,
+  type FakeRecipeDraft,
   seedOcrFixture,
   triggerWorker,
   uploadTestImages,
   waitForBatchItemCount,
   waitForItemStatuses,
-  type FakeRecipeDraft,
 } from './support/imports.js';
 
 // Clears the Conservative auto-accept bar: one recipe, real title, 3
@@ -82,8 +81,16 @@ async function setupBatch(
   const batchId = await batchIdFromUrl(page);
 
   const items = await waitForBatchItemCount(batchId, 2);
-  await seedOcrFixture({ storagePath: items[0]!.storage_path, kind: 'recipe', draft: highConfidenceDraft(highTitle) });
-  await seedOcrFixture({ storagePath: items[1]!.storage_path, kind: 'recipe', draft: lowConfidenceDraft(lowTitle) });
+  await seedOcrFixture({
+    storagePath: items[0]!.storage_path,
+    kind: 'recipe',
+    draft: highConfidenceDraft(highTitle),
+  });
+  await seedOcrFixture({
+    storagePath: items[1]!.storage_path,
+    kind: 'recipe',
+    draft: lowConfidenceDraft(lowTitle),
+  });
   await triggerWorker(batchId);
   return batchId;
 }
@@ -159,7 +166,11 @@ test.describe('OCR auto-accept', () => {
     await page.getByLabel('Auto-accept obvious recipes').uncheck();
 
     const items = await waitForBatchItemCount(batchId, 1);
-    await seedOcrFixture({ storagePath: items[0]!.storage_path, kind: 'recipe', draft: highConfidenceDraft('Should Wait') });
+    await seedOcrFixture({
+      storagePath: items[0]!.storage_path,
+      kind: 'recipe',
+      draft: highConfidenceDraft('Should Wait'),
+    });
     await triggerWorker(batchId);
 
     // Even though it clears the bar, it stays in review — no banner, no promote.

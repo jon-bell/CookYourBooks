@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from './AuthProvider.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { useAuth } from './AuthProvider.js';
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();

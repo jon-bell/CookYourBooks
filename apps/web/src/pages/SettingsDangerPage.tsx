@@ -1,6 +1,6 @@
-import { SettingsLayout } from '../settings/SettingsTabs.js';
-import { OcrStorageSection } from '../settings/OcrStorageSection.js';
 import { DangerZoneSection } from '../settings/DangerZoneSection.js';
+import { OcrStorageSection } from '../settings/OcrStorageSection.js';
+import { SettingsLayout } from '../settings/SettingsTabs.js';
 
 /**
  * Data & deletion settings: bulk-delete OCR source images, and the

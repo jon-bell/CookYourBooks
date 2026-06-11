@@ -1,10 +1,6 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import {
-  absoluteUrl,
-  bareRecipeShareUrl,
-  collectionShareUrl,
-  recipeShareUrl,
-} from './shareUrl.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { absoluteUrl, bareRecipeShareUrl, collectionShareUrl, recipeShareUrl } from './shareUrl.js';
 
 describe('shareUrl', () => {
   beforeEach(() => {

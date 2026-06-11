@@ -63,7 +63,7 @@ function commonFields(params: BaseParams) {
     coverImagePath: params.coverImagePath,
     isPublic: params.isPublic ?? false,
     forkedFrom: params.forkedFrom,
-    moderationState: params.moderationState ?? ('ACTIVE' as ModerationState),
+    moderationState: params.moderationState ?? 'ACTIVE',
     moderationReason: params.moderationReason,
   };
 }
@@ -110,19 +110,19 @@ export function createWebCollection(
 }
 
 export function addRecipe(collection: RecipeCollection, recipe: Recipe): RecipeCollection {
-  return { ...collection, recipes: [...collection.recipes, recipe] } as RecipeCollection;
+  return { ...collection, recipes: [...collection.recipes, recipe] };
 }
 
 export function removeRecipe(collection: RecipeCollection, recipeId: string): RecipeCollection {
   return {
     ...collection,
     recipes: collection.recipes.filter((r) => r.id !== recipeId),
-  } as RecipeCollection;
+  };
 }
 
 export function updateRecipe(collection: RecipeCollection, recipe: Recipe): RecipeCollection {
   return {
     ...collection,
     recipes: collection.recipes.map((r) => (r.id === recipe.id ? recipe : r)),
-  } as RecipeCollection;
+  };
 }

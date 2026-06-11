@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { canonicalUnitName, Units } from '@cookyourbooks/domain';
 import { useQueryClient } from '@tanstack/react-query';
-import { Units, canonicalUnitName } from '@cookyourbooks/domain';
+import { useState } from 'react';
+
 import { LoadingState } from '../components/LoadingState.js';
 import {
   deleteGlobalConversion,
+  type GlobalConversionRule,
   upsertGlobalConversion,
   useGlobalConversionRules,
-  type GlobalConversionRule,
 } from '../data/conversions.js';
 
 const UNIT_OPTIONS = Object.values(Units)
@@ -67,7 +68,12 @@ export function GlobalConversionsAdmin() {
     setError(null);
     const fromAmount = Number(draft.fromAmount);
     const toAmount = Number(draft.toAmount);
-    if (!Number.isFinite(fromAmount) || fromAmount <= 0 || !Number.isFinite(toAmount) || toAmount <= 0) {
+    if (
+      !Number.isFinite(fromAmount) ||
+      fromAmount <= 0 ||
+      !Number.isFinite(toAmount) ||
+      toAmount <= 0
+    ) {
       setError('Both amounts must be positive numbers.');
       return;
     }
@@ -111,8 +117,8 @@ export function GlobalConversionsAdmin() {
   return (
     <section className="space-y-4">
       <p className="text-sm text-stone-600 dark:text-stone-400">
-        Edits here propagate to every user. Densities and piece-to-gram defaults live
-        here so we can fix a wrong number without a deploy.
+        Edits here propagate to every user. Densities and piece-to-gram defaults live here so we can
+        fix a wrong number without a deploy.
       </p>
 
       <form
@@ -209,15 +215,20 @@ export function GlobalConversionsAdmin() {
       ) : (
         <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
           {[...rules]
-            .sort((a, b) =>
-              (a.ingredientName ?? '').localeCompare(b.ingredientName ?? '') ||
-              a.fromUnit.localeCompare(b.fromUnit),
+            .sort(
+              (a, b) =>
+                (a.ingredientName ?? '').localeCompare(b.ingredientName ?? '') ||
+                a.fromUnit.localeCompare(b.fromUnit),
             )
             .map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-2 p-3 text-sm">
                 <span>
                   1 <strong>{r.fromUnit}</strong>
-                  {r.ingredientName ? <> {r.ingredientName}</> : <span className="italic"> (any)</span>}
+                  {r.ingredientName ? (
+                    <> {r.ingredientName}</>
+                  ) : (
+                    <span className="italic"> (any)</span>
+                  )}
                   <span className="text-stone-500 dark:text-stone-400"> ≈ </span>
                   <strong>{r.factor}</strong> {r.toUnit}
                 </span>

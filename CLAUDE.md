@@ -57,6 +57,7 @@ cookyourbooks/
 ## Conventions
 
 - TypeScript strict mode. No `any`.
+- ESLint (typed rules via `typescript-eslint`) + Prettier, one flat config at the repo root: `pnpm lint` / `pnpm lint:fix`, `pnpm format` / `pnpm format:fix`. Warnings are a staged backlog (`no-unnecessary-condition`, `no-floating-promises`, React-Compiler hooks rules) — don't add new ones; errors fail CI. Deno surfaces (`supabase/functions/`, `scripts/`) and generated files are excluded.
 - Immutable domain objects — transformation methods return new instances.
 - Discriminated unions over class hierarchies. Tag with a `type` field.
 - Factory functions (`createRecipe()`, `createCookbook()`) over constructors for complex objects.
@@ -119,8 +120,9 @@ cache path (`~/.cache/ms-playwright/chromium-1217/`) if it exists.
 GitHub Actions workflows live in `.github/workflows/` and run on
 self-hosted runners:
 
-- `ci.yml` — every push/PR: typecheck, unit tests, web build, full
-  Playwright E2E against a freshly-started local Supabase stack. Needs a
+- `ci.yml` — every push/PR: typecheck, lint, format check, unit tests,
+  web build, full Playwright E2E against a freshly-started local Supabase
+  stack. Needs a
   Linux runner with Docker. On failure uploads the Playwright HTML
   report + raw traces as artifacts.
 - `mobile.yml` — Capacitor sync check on every push/PR that touches

@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { expect, type Page } from '@playwright/test';
-import { SUPABASE_URL, SUPABASE_SERVICE_ROLE } from './env.js';
+
+import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './env.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const FIXTURES_DIR = resolve(__dirname, '../fixtures');
@@ -147,9 +149,7 @@ export interface SeedRewriteFixtureArgs {
 }
 
 export async function seedRewriteFixture(args: SeedRewriteFixtureArgs): Promise<void> {
-  const responseJson = args.errorKind
-    ? {}
-    : { rewritten: args.rewritten ?? [] };
+  const responseJson = args.errorKind ? {} : { rewritten: args.rewritten ?? [] };
   const row = {
     recipe_id: args.recipeId,
     provider: args.provider ?? '',
@@ -201,9 +201,7 @@ export interface SeedRemixFixtureArgs {
 }
 
 export async function seedRemixFixture(args: SeedRemixFixtureArgs): Promise<void> {
-  const responseJson = args.errorKind
-    ? {}
-    : args.responseJson ?? { recipes: args.recipes ?? [] };
+  const responseJson = args.errorKind ? {} : (args.responseJson ?? { recipes: args.recipes ?? [] });
   const row = {
     recipe_id: args.recipeId,
     provider: args.provider ?? '',
@@ -365,10 +363,9 @@ export async function waitForItemIsToc(
   const deadline = Date.now() + timeoutMs;
   let last: boolean | undefined;
   while (Date.now() < deadline) {
-    const resp = await fetch(
-      `${SUPABASE_URL}/rest/v1/import_items?id=eq.${itemId}&select=is_toc`,
-      { headers: adminHeaders() },
-    );
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/import_items?id=eq.${itemId}&select=is_toc`, {
+      headers: adminHeaders(),
+    });
     if (resp.ok) {
       const rows = (await resp.json()) as { is_toc: boolean }[];
       last = rows[0]?.is_toc;
@@ -376,9 +373,7 @@ export async function waitForItemIsToc(
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error(
-    `item ${itemId} is_toc never became ${expected} (last saw ${String(last)})`,
-  );
+  throw new Error(`item ${itemId} is_toc never became ${expected} (last saw ${String(last)})`);
 }
 
 export async function waitForItemKind(
@@ -508,9 +503,7 @@ export async function uploadTestImages(page: Page, fileNames: string[]): Promise
   const accept = fileNames.some((n) => n.toLowerCase().endsWith('.pdf'))
     ? 'application/pdf'
     : 'image/*';
-  await page
-    .locator(`input[type="file"][accept="${accept}"]`)
-    .setInputFiles(buffers);
+  await page.locator(`input[type="file"][accept="${accept}"]`).setInputFiles(buffers);
 }
 
 /**
@@ -520,7 +513,9 @@ export async function uploadTestImages(page: Page, fileNames: string[]): Promise
  * /import/scan. The bytes are real PNG fixtures so the upload pipeline's
  * `prepareImage` decode succeeds.
  */
-type ShimPage = string | { name: string; kind?: 'RECIPE' | 'TOC' | 'NOTES'; joinsPrevious?: boolean };
+type ShimPage =
+  | string
+  | { name: string; kind?: 'RECIPE' | 'TOC' | 'NOTES'; joinsPrevious?: boolean };
 
 export async function installScanShim(page: Page, pages: ShimPage[]): Promise<void> {
   const items = pages.map((p) => {
@@ -551,8 +546,11 @@ export async function installScanShim(page: Page, pages: ShimPage[]): Promise<vo
         for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
         return new File([bytes], it.name, { type: it.type });
       }
-      (window as unknown as { __cybScanShim?: () => Promise<unknown[]> }).__cybScanShim = async () =>
-        items.map((it) => (it.marker ? { file: b64ToFile(it), marker: it.marker } : b64ToFile(it)));
+      (window as unknown as { __cybScanShim?: () => Promise<unknown[]> }).__cybScanShim =
+        async () =>
+          items.map((it) =>
+            it.marker ? { file: b64ToFile(it), marker: it.marker } : b64ToFile(it),
+          );
     },
     items,
   );

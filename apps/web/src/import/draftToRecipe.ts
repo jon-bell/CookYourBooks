@@ -1,11 +1,11 @@
 import {
+  type Ingredient,
+  type Instruction,
   instruction,
   isMeasured,
   measured,
-  vague,
-  type Ingredient,
-  type Instruction,
   type ParsedRecipeDraft,
+  vague,
 } from '@cookyourbooks/domain';
 
 /**
@@ -16,9 +16,10 @@ import {
  *
  * Shared by the OCR import-item save path and the video-link import flow.
  */
-export function withFreshIds(
-  draft: ParsedRecipeDraft,
-): { ingredients: Ingredient[]; instructions: Instruction[] } {
+export function withFreshIds(draft: ParsedRecipeDraft): {
+  ingredients: Ingredient[];
+  instructions: Instruction[];
+} {
   const idMap = new Map<string, string>();
   const ingredients: Ingredient[] = draft.ingredients.map((ing) => {
     const newId = crypto.randomUUID();
@@ -52,8 +53,12 @@ export function withFreshIds(
           return { ingredientId: nextId, quantity: ref.quantity };
         })
         .filter(
-          (r): r is { ingredientId: string; quantity: (typeof step.ingredientRefs)[number]['quantity'] } =>
-            r !== undefined,
+          (
+            r,
+          ): r is {
+            ingredientId: string;
+            quantity: (typeof step.ingredientRefs)[number]['quantity'];
+          } => r !== undefined,
         ),
       temperature: step.temperature,
       subInstructions: step.subInstructions,

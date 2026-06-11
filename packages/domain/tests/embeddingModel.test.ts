@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
+
+import { measured, vague } from '../src/model/ingredient.js';
+import { exact } from '../src/model/quantity.js';
+import { createRecipe } from '../src/model/recipe.js';
 import {
+  buildRecipeEmbedText,
   EMBEDDING_DIM,
   EMBEDDING_MODEL_ID,
   EMBEDDING_STORED_MODEL,
-  buildRecipeEmbedText,
   hashEmbedText,
 } from '../src/services/embeddingModel.js';
-import { createRecipe } from '../src/model/recipe.js';
-import { measured, vague } from '../src/model/ingredient.js';
-import { exact } from '../src/model/quantity.js';
 
 describe('embedding model constants', () => {
   it('matches the dimension of the chosen model', () => {

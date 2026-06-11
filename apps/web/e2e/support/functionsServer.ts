@@ -1,7 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { SUPABASE_SERVICE_ROLE } from './env.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,7 +49,9 @@ async function pingFunction(timeoutMs: number): Promise<boolean> {
 
 export async function startFunctionsServer(): Promise<void> {
   if (!existsSync(SUPABASE_BIN)) {
-    throw new Error(`Supabase CLI not found at ${SUPABASE_BIN}. Run scripts/install-supabase-cli.sh.`);
+    throw new Error(
+      `Supabase CLI not found at ${SUPABASE_BIN}. Run scripts/install-supabase-cli.sh.`,
+    );
   }
   mkdirSync(STATE_DIR, { recursive: true });
   // Mock flags for the LLM-backed functions so E2E never reaches Gemini /

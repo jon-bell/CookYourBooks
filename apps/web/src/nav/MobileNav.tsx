@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { SAFE_TOP } from '../components/mobileSafeArea.js';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
 import { ThemePicker } from '../theme/ThemePicker.js';
-import { PRIMARY_NAV, ACCOUNT_NAV, ADMIN_NAV } from './navItems.js';
-import { SAFE_TOP } from '../components/mobileSafeArea.js';
+import { ACCOUNT_NAV, ADMIN_NAV, PRIMARY_NAV } from './navItems.js';
 
 const LINK_CLASS =
   'block rounded-md px-2 py-3 text-base text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-500';
@@ -62,16 +63,21 @@ export function MobileNav() {
         onClick={() => setOpen((v) => !v)}
         className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-500"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5" aria-hidden="true">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          className="h-5 w-5"
+          aria-hidden="true"
+        >
           <path d="M4 6h16M4 12h16M4 18h16" />
         </svg>
       </button>
 
       {open && (
-        <div
-          className="fixed inset-0 z-50 bg-stone-900/40"
-          onClick={close}
-        >
+        <div className="fixed inset-0 z-50 bg-stone-900/40" onClick={close}>
           <nav
             id="mobile-nav-sheet"
             aria-label="Mobile"

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import type { ParsedRecipeDraft, Recipe } from '@cookyourbooks/domain';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+
+import { useCollectionPickerOptions, useSaveRecipe } from '../data/queries.js';
 import {
   cancelRemix,
   getUserRemixPrefs,
@@ -8,14 +10,13 @@ import {
   OcrWorkerNotConfiguredError,
   startRemix,
 } from '../import/api.js';
+import { buildRecipeFromDraft } from '../import/promoteDraft.js';
 import {
   DEFAULT_REMIX_MODEL_BY_PROVIDER,
   DEFAULT_REMIX_PROMPT,
 } from '../settings/remixSettings.js';
-import { buildRecipeFromDraft } from '../import/promoteDraft.js';
-import { useCollectionPickerOptions, useSaveRecipe } from '../data/queries.js';
-import { useRemixJob } from './useRemixJob.js';
 import { recipeToRemixInput } from './recipeToRemixInput.js';
+import { useRemixJob } from './useRemixJob.js';
 
 const inputCls =
   'w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm';
@@ -245,9 +246,11 @@ export function RemixDialog({
                   Ingredients ({workingDraft.ingredients.length})
                 </p>
                 <ul className="mt-1 list-disc pl-5 text-sm">
-                  {recipeToRemixInput(workingDraft).ingredients.slice(0, 12).map((line, i) => (
-                    <li key={i}>{line}</li>
-                  ))}
+                  {recipeToRemixInput(workingDraft)
+                    .ingredients.slice(0, 12)
+                    .map((line, i) => (
+                      <li key={i}>{line}</li>
+                    ))}
                 </ul>
               </div>
               <div>

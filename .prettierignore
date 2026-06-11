@@ -1,0 +1,19 @@
+# Build outputs / generated
+**/dist
+**/coverage
+**/playwright-report
+**/test-results
+.turbo
+pnpm-lock.yaml
+packages/db/src/database.types.ts
+# Native projects (generated/managed by Capacitor + Xcode)
+apps/mobile
+# Deno surfaces + one-off ops scripts (not part of the Node toolchain)
+supabase
+scripts
+# Vendored / local-only data
+sourdough
+ToC
+test-images
+# Docs — don't churn prose formatting
+*.md

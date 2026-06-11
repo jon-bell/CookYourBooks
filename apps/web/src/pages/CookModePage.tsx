@@ -1,9 +1,10 @@
+import { formatQuantity, isMeasured } from '@cookyourbooks/domain';
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { formatQuantity, isMeasured } from '@cookyourbooks/domain';
-import { useRecipe } from '../data/queries.js';
-import { TimerButton } from '../cook/TimerButton.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { TimerButton } from '../cook/TimerButton.js';
+import { useRecipe } from '../data/queries.js';
 
 // Fires a light haptic tap on platforms that support it. On web the
 // Capacitor plugin no-ops; on iOS/Android it triggers the native engine.
@@ -113,10 +114,7 @@ export function CookModePage() {
       <div className="rounded-xl bg-white dark:bg-stone-900 p-8 shadow-sm ring-1 ring-stone-200">
         <div className="text-6xl font-light text-stone-300">{idx + 1}</div>
         {stepIngredients.length > 0 && (
-          <ul
-            aria-label="Ingredients for this step"
-            className="mt-4 flex flex-wrap gap-2 text-sm"
-          >
+          <ul aria-label="Ingredients for this step" className="mt-4 flex flex-wrap gap-2 text-sm">
             {stepIngredients.map(({ ing, consumed }) => {
               // Prefer the step's explicit "consumed" quantity (from
               // OCR's consumedIngredients). Fall back to the
@@ -177,8 +175,7 @@ export function CookModePage() {
                       {ss.text}
                       {ss.temperature && (
                         <span className="ml-2 align-middle text-base text-amber-700 dark:text-amber-300">
-                          {ss.temperature.value}°
-                          {ss.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
+                          {ss.temperature.value}°{ss.temperature.unit === 'FAHRENHEIT' ? 'F' : 'C'}
                         </span>
                       )}
                       {ss.notes && (
@@ -216,7 +213,9 @@ export function CookModePage() {
       </div>
 
       <aside className="rounded-lg bg-white dark:bg-stone-900 p-4 ring-1 ring-stone-200">
-        <h3 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-300">Ingredients</h3>
+        <h3 className="mb-2 text-sm font-semibold text-stone-700 dark:text-stone-300">
+          Ingredients
+        </h3>
         <ul
           className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-3"
           data-testid="cook-ingredients"

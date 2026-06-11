@@ -1,5 +1,5 @@
-import { test, expect, signIn, waitForSynced } from './support/fixtures.js';
 import { createTestUser } from './support/admin.js';
+import { expect, signIn, test, waitForSynced } from './support/fixtures.js';
 import {
   acceptTosViaService,
   cleanupHouseholdFor,
@@ -37,9 +37,7 @@ async function addNote(
 }
 
 test.describe('Collection notes household sharing', () => {
-  test("a co-member sees the owner's notes read-only; a non-member cannot", async ({
-    browser,
-  }) => {
+  test("a co-member sees the owner's notes read-only; a non-member cannot", async ({ browser }) => {
     test.setTimeout(120_000);
     const owner = await createTestUser('note-owner');
     const member = await createTestUser('note-member');
@@ -52,7 +50,7 @@ test.describe('Collection notes household sharing', () => {
 
     const ctxA = await browser.newContext();
     const pageA = await ctxA.newPage();
-    let collectionId = '';
+    let collectionId: string;
     try {
       await signIn(pageA, owner);
       collectionId = await createCookbook(pageA, 'Shared Notes Cookbook');

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { createRecipe, exact, measured, vague, instruction } from '@cookyourbooks/domain';
+import { createRecipe, exact, instruction, measured, vague } from '@cookyourbooks/domain';
+import { describe, expect, it } from 'vitest';
+
 import { recipeToRemixInput } from './recipeToRemixInput.js';
 
 describe('recipeToRemixInput', () => {

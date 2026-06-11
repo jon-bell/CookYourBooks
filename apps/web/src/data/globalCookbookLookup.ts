@@ -1,5 +1,5 @@
-import { supabase } from '../supabase.js';
 import { normalizeIsbn } from '../admin/globalToc/openLibrary.js';
+import { supabase } from '../supabase.js';
 
 // Public-readable lookup for the global cookbook catalog. Mirrors the
 // admin/globalToc/api.ts reads but lives under data/ so non-admin pages
@@ -34,7 +34,7 @@ export async function listGlobalCookbooks(search?: string): Promise<GlobalCookbo
   }
   const { data, error } = await q;
   if (error) throw error;
-  return (data ?? []) as GlobalCookbookSummary[];
+  return data ?? [];
 }
 
 // Hits global_cookbooks by normalized ISBN. Returns null on no match.
@@ -62,8 +62,8 @@ export async function findCookbookByIsbn(
   if (entriesErr) throw entriesErr;
 
   return {
-    ...(cb as GlobalCookbookSummary),
-    entries: (entries ?? []) as GlobalCookbookWithEntries['entries'],
+    ...cb,
+    entries: entries ?? [],
   };
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+
 import { getUserRemixPrefs, setUserRemixPrefs } from '../import/api.js';
 import {
   DEFAULT_REMIX_MODEL_BY_PROVIDER,
@@ -33,7 +34,7 @@ export function RemixSettingsSection() {
         setPrompt(p.prompt || DEFAULT_REMIX_PROMPT);
         setLoaded(true);
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         if (!cancelled) {
           setError((e as Error).message);
           setLoaded(true);
@@ -109,8 +110,8 @@ export function RemixSettingsSection() {
           data-testid="remix-model"
         />
         <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-          Text-only is enough; remix doesn't read images. Examples:{' '}
-          <code>gemini-2.5-flash</code>, <code>gpt-4o-mini</code>.
+          Text-only is enough; remix doesn't read images. Examples: <code>gemini-2.5-flash</code>,{' '}
+          <code>gpt-4o-mini</code>.
         </p>
       </Field>
 

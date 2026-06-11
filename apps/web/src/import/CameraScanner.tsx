@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { SAFE_BOTTOM, SAFE_TOP, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
+import { DEFAULT_MARKER, type PageKind, type PageMarker, type ScannedPage } from './pageMarker.js';
 import { plannerHapticTick } from './plannerCapture.js';
-import { SAFE_TOP, SAFE_BOTTOM, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
-import { type PageMarker, type PageKind, type ScannedPage, DEFAULT_MARKER } from './pageMarker.js';
 
 const DEFAULT_MAX_SHOTS = 200;
 const DEFAULT_JPEG_QUALITY = 0.85;
@@ -38,7 +39,11 @@ function ariaForShot(index: number, m: PageMarker): string {
 function classifyError(err: unknown): Status {
   const name = (err as { name?: string })?.name ?? '';
   if (name === 'NotAllowedError' || name === 'SecurityError') return 'denied';
-  if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') {
+  if (
+    name === 'NotFoundError' ||
+    name === 'OverconstrainedError' ||
+    name === 'DevicesNotFoundError'
+  ) {
     return 'no-camera';
   }
   return 'error';
@@ -123,8 +128,9 @@ export function CameraScanner({
         streamRef.current = stream;
         const track = stream.getVideoTracks()[0];
         const caps =
-          (track as unknown as { getCapabilities?: () => { torch?: boolean } }).getCapabilities?.() ??
-          {};
+          (
+            track as unknown as { getCapabilities?: () => { torch?: boolean } }
+          ).getCapabilities?.() ?? {};
         setTorchSupported(!!caps.torch);
         const v = videoRef.current;
         if (v) {

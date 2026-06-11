@@ -1,7 +1,8 @@
 import type { Recipe } from '@cookyourbooks/domain';
+
 import type { CookingEventRecord } from '../local/repositories.js';
-import { formatEventDate, mealSlotLabel, occasionLabel } from './format.js';
 import { AdjustmentSummary } from './AdjustmentSummary.js';
+import { formatEventDate, mealSlotLabel, occasionLabel } from './format.js';
 import { CookingPhotoThumb } from './photos.js';
 import { useDeleteCook, useMarkCooked } from './queries.js';
 
@@ -59,11 +60,7 @@ export function CookEntryCard({
           {event.photoPaths.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2" data-testid="cook-photos">
               {event.photoPaths.map((p) => (
-                <CookingPhotoThumb
-                  key={p}
-                  path={p}
-                  className="h-16 w-16 rounded-md object-cover"
-                />
+                <CookingPhotoThumb key={p} path={p} className="h-16 w-16 rounded-md object-cover" />
               ))}
             </div>
           )}

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
+
+import { GenerateCoversButton } from '../components/GenerateCoversButton.js';
 import {
   DEFAULT_COVER_MODEL,
   DEFAULT_COVER_PROMPT,
   getUserCoverPrefs,
   setUserCoverPrefs,
 } from '../recipe/coverApi.js';
-import { GenerateCoversButton } from '../components/GenerateCoversButton.js';
 
 /**
  * Settings UI for Gemini recipe-cover generation. The user picks the image
@@ -32,7 +33,7 @@ export function CoverSettingsSection() {
         setPrompt(p.prompt || DEFAULT_COVER_PROMPT);
         setLoaded(true);
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         if (!cancelled) {
           setError((e as Error).message);
           setLoaded(true);
@@ -63,9 +64,9 @@ export function CoverSettingsSection() {
       <div>
         <h2 className="text-lg font-semibold">Recipe covers</h2>
         <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-          Generate a cover image for any recipe with Gemini. Use{' '}
-          <em>Generate with AI</em> on a recipe, <em>Generate covers</em> on a collection, or the
-          whole-library button below. The API key is shared with the OCR import flow above.
+          Generate a cover image for any recipe with Gemini. Use <em>Generate with AI</em> on a
+          recipe, <em>Generate covers</em> on a collection, or the whole-library button below. The
+          API key is shared with the OCR import flow above.
         </p>
       </div>
 
@@ -135,8 +136,8 @@ export function CoverSettingsSection() {
 
       <div className="border-t border-stone-200 pt-4 dark:border-stone-700">
         <p className="mb-2 text-sm text-stone-600 dark:text-stone-400">
-          Generate covers for every imported recipe in your library that doesn't have one
-          queued (not-yet-imported placeholders are skipped):
+          Generate covers for every imported recipe in your library that doesn't have one queued
+          (not-yet-imported placeholders are skipped):
         </p>
         <GenerateCoversButton scope="library" label="Generate covers for my whole library" />
       </div>

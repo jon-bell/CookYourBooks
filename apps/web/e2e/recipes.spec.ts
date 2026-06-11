@@ -1,4 +1,4 @@
-import { test, expect, waitForSynced } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import { openRecipeMoreMenu } from './support/helpers.js';
 
 async function seedCollection(page: import('@playwright/test').Page, title: string) {

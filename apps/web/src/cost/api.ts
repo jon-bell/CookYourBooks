@@ -73,7 +73,7 @@ export async function getLlmUsageSummary(
     p_group_by: opts.groupBy,
   });
   if (error) throw error;
-  return (data as LlmUsageSummaryRow[]) ?? [];
+  return data ?? [];
 }
 
 /**

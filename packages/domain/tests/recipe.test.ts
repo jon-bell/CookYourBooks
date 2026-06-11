@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { adaptRecipe, createRecipe, scaleRecipe } from '../src/model/recipe.js';
+
 import { measured, vague } from '../src/model/ingredient.js';
-import { exact, fractional } from '../src/model/quantity.js';
-import { servings } from '../src/model/servings.js';
 import { instruction } from '../src/model/instruction.js';
+import { exact, fractional } from '../src/model/quantity.js';
+import { adaptRecipe, createRecipe, scaleRecipe } from '../src/model/recipe.js';
+import { servings } from '../src/model/servings.js';
 
 describe('Recipe', () => {
   const chocChip = createRecipe({
@@ -128,9 +129,7 @@ describe('adaptRecipe', () => {
           id: 's1',
           stepNumber: 1,
           text: 'Bake.',
-          ingredientRefs: [
-            { ingredientId: 'i1', quantity: exact(500, 'gram') },
-          ],
+          ingredientRefs: [{ ingredientId: 'i1', quantity: exact(500, 'gram') }],
         }),
       ],
     });

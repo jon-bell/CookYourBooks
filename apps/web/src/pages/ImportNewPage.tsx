@@ -1,23 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.js';
+import { type BookForm, emptyBookForm } from '../books/bookForm.js';
 import { BookMetadataFields } from '../books/BookMetadataFields.js';
-import { emptyBookForm, type BookForm } from '../books/bookForm.js';
 import { buildCookbookFromForm } from '../books/buildCookbook.js';
-import { useOcrKeys } from '../import/queries.js';
-import { useSync } from '../local/SyncProvider.js';
-import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
+import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.js';
 import { getEffectiveOcrConfig } from '../import/api.js';
-import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
-import {
-  DEFAULT_FALLBACK_MODEL,
-  loadFallbackPrefs,
-} from '../settings/FallbackModelSection.js';
-import { isMultiShotAvailable } from '../import/multiShotShim.js';
-import { scanPages, isLiveViewfinderSupported } from '../import/scanPages.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { isMultiShotAvailable } from '../import/multiShotShim.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
+import { useOcrKeys } from '../import/queries.js';
+import { isLiveViewfinderSupported, scanPages } from '../import/scanPages.js';
+import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
+import { useSync } from '../local/SyncProvider.js';
+import { DEFAULT_FALLBACK_MODEL, loadFallbackPrefs } from '../settings/FallbackModelSection.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
 type Step = 'source' | 'review' | 'settings' | 'uploading';
 
@@ -45,9 +43,9 @@ export function ImportNewPage() {
   const [newBook, setNewBook] = useState<BookForm>(emptyBookForm);
   const [provider, setProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [model, setModel] = useState('');
-  const [fallbackProvider, setFallbackProvider] = useState<
-    '' | 'gemini' | 'openai-compatible'
-  >(() => loadFallbackPrefs().provider);
+  const [fallbackProvider, setFallbackProvider] = useState<'' | 'gemini' | 'openai-compatible'>(
+    () => loadFallbackPrefs().provider,
+  );
   const [fallbackModel, setFallbackModel] = useState(() => loadFallbackPrefs().model);
   // Effective OCR config: own prefs, else the household's shared config.
   // The prompt + keyOwnerId aren't edited in this form — they're snapshotted
@@ -111,9 +109,7 @@ export function ImportNewPage() {
   // Generate object URL previews, revoking the old ones whenever the
   // file list changes.
   useEffect(() => {
-    const urls = files.map((f) =>
-      f.type === 'application/pdf' ? '' : URL.createObjectURL(f),
-    );
+    const urls = files.map((f) => (f.type === 'application/pdf' ? '' : URL.createObjectURL(f)));
     setPreviews(urls);
     return () => {
       for (const u of urls) if (u) URL.revokeObjectURL(u);
@@ -196,9 +192,7 @@ export function ImportNewPage() {
           defaultModel: model.trim() || DEFAULT_MODEL_BY_PROVIDER[provider],
           defaultPrompt: ocrPrompt,
           fallbackProvider: fallbackProvider || null,
-          fallbackModel: fallbackProvider
-            ? fallbackModel.trim() || DEFAULT_FALLBACK_MODEL
-            : null,
+          fallbackModel: fallbackProvider ? fallbackModel.trim() || DEFAULT_FALLBACK_MODEL : null,
           keyOwnerId,
           sourceKind,
           files,
@@ -250,7 +244,9 @@ export function ImportNewPage() {
             <div className="h-full bg-stone-900 dark:bg-stone-100" style={{ width: `${pct}%` }} />
           </div>
           {progress?.message && (
-            <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{progress.message}</div>
+            <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+              {progress.message}
+            </div>
           )}
           {progress?.phase === 'finalizing' && syncStatus === 'syncing' && (
             <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
@@ -293,19 +289,17 @@ export function ImportNewPage() {
                 : 'border-stone-300 bg-white hover:bg-stone-50'
             }`}
           >
-            <p className="text-sm text-stone-700 dark:text-stone-300">Drag & drop images or a PDF here</p>
-            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">…or pick a source below</p>
+            <p className="text-sm text-stone-700 dark:text-stone-300">
+              Drag & drop images or a PDF here
+            </p>
+            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+              …or pick a source below
+            </p>
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <SourceButton
-              label="Choose images"
-              onClick={() => fileInputRef.current?.click()}
-            />
-            <SourceButton
-              label="Upload PDF"
-              onClick={() => pdfInputRef.current?.click()}
-            />
+            <SourceButton label="Choose images" onClick={() => fileInputRef.current?.click()} />
+            <SourceButton label="Upload PDF" onClick={() => pdfInputRef.current?.click()} />
             {(isLiveViewfinderSupported() || multiShotReady) && (
               <SourceButton label="Scan with camera" onClick={onTakePhotos} />
             )}
@@ -382,11 +376,7 @@ export function ImportNewPage() {
                 className="relative aspect-square overflow-hidden rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900"
               >
                 {previews[i] ? (
-                  <img
-                    src={previews[i]}
-                    alt={f.name}
-                    className="h-full w-full object-cover"
-                  />
+                  <img src={previews[i]} alt={f.name} className="h-full w-full object-cover" />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-xs text-stone-500 dark:text-stone-400">
                     PDF
@@ -395,9 +385,7 @@ export function ImportNewPage() {
                 <button
                   type="button"
                   aria-label={`Remove ${f.name}`}
-                  onClick={() =>
-                    setFiles((cur) => cur.filter((_, idx) => idx !== i))
-                  }
+                  onClick={() => setFiles((cur) => cur.filter((_, idx) => idx !== i))}
                   className="absolute right-1 top-1 rounded-full bg-white/90 px-1.5 text-xs leading-tight text-stone-700 dark:text-stone-300 shadow"
                 >
                   ×
@@ -501,9 +489,7 @@ export function ImportNewPage() {
               <select
                 value={fallbackProvider}
                 onChange={(e) =>
-                  setFallbackProvider(
-                    e.target.value as '' | 'gemini' | 'openai-compatible',
-                  )
+                  setFallbackProvider(e.target.value as '' | 'gemini' | 'openai-compatible')
                 }
                 className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
               >
@@ -564,7 +550,9 @@ function SourceButton({ label, onClick }: { label: string; onClick: () => void }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -584,9 +572,7 @@ function ModeOption({
   return (
     <label
       className={`flex cursor-pointer items-start gap-2 rounded-md border p-3 text-sm ${
-        checked
-          ? 'border-stone-900 bg-stone-50'
-          : 'border-stone-200 hover:border-stone-400'
+        checked ? 'border-stone-900 bg-stone-50' : 'border-stone-200 hover:border-stone-400'
       }`}
     >
       <input

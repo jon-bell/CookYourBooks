@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 
 test.describe('Recipe features: scale, convert, export, cook mode', () => {
@@ -61,15 +61,15 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
     expect(body).toContain('1. Mix everything.');
   });
 
-  test('"Export" uses the Web Share API when it is available', async ({
-    authedPage: page,
-  }) => {
+  test('"Export" uses the Web Share API when it is available', async ({ authedPage: page }) => {
     // Polyfill a minimal navigator.share so we cover the happy path of the
     // Web Share branch without relying on the browser's implementation.
     await page.addInitScript(() => {
-      (navigator as unknown as {
-        share: (d: { title?: string; text?: string }) => Promise<void>;
-      }).share = async (d) => {
+      (
+        navigator as unknown as {
+          share: (d: { title?: string; text?: string }) => Promise<void>;
+        }
+      ).share = async (d) => {
         (window as unknown as { __lastShare: unknown }).__lastShare = d;
       };
     });

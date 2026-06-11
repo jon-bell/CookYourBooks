@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+
+import { useSync } from '../local/SyncProvider.js';
 import {
   getBatchVariants,
   getItemVariantResults,
-  promoteBakeoffVariant,
-  selectBakeoffWinner,
   type ImportBatchVariantRow,
   type ImportItemVariantResultRow,
+  promoteBakeoffVariant,
+  selectBakeoffWinner,
 } from './api.js';
 import { computeDraftDiff } from './bakeoff.js';
 import { DraftPreview } from './DraftPreview.js';
-import { useSync } from '../local/SyncProvider.js';
 
 /**
  * Side-by-side variant comparison for a bakeoff import item in
@@ -46,15 +47,9 @@ export function BakeoffItemReview({
     refetchInterval: 2_000,
   });
 
-  const okResults = useMemo(
-    () => results.filter((r) => r.status === 'DONE'),
-    [results],
-  );
+  const okResults = useMemo(() => results.filter((r) => r.status === 'DONE'), [results]);
 
-  const variantById = useMemo(
-    () => new Map(variants.map((v) => [v.id, v])),
-    [variants],
-  );
+  const variantById = useMemo(() => new Map(variants.map((v) => [v.id, v])), [variants]);
 
   useEffect(() => {
     if (okResults.length >= 2) {
@@ -115,8 +110,7 @@ export function BakeoffItemReview({
   const right = okResults.find((r) => r.variant_id === rightId);
   const leftDraft = (left?.drafts?.[0] ?? undefined) as ParsedRecipeDraft | undefined;
   const rightDraft = (right?.drafts?.[0] ?? undefined) as ParsedRecipeDraft | undefined;
-  const diff =
-    leftDraft && rightDraft ? computeDraftDiff(leftDraft, rightDraft) : undefined;
+  const diff = leftDraft && rightDraft ? computeDraftDiff(leftDraft, rightDraft) : undefined;
 
   return (
     <div className="space-y-4" data-testid="bakeoff-item-review">

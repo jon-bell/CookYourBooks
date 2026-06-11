@@ -37,7 +37,7 @@ function s(arg: unknown, field: string): string {
 }
 
 function opt<T>(arg: T | undefined): T | null {
-  return arg === undefined ? (null as unknown as T) : arg;
+  return arg === undefined ? null : arg;
 }
 
 export const TOOLS: Tool[] = [
@@ -158,9 +158,7 @@ export const TOOLS: Tool[] = [
       const recipe = args.recipe;
       if (!recipe || typeof recipe !== 'object') throw new Error('recipe is required');
       const cid =
-        typeof args.collection_id === 'string' && args.collection_id
-          ? args.collection_id
-          : null;
+        typeof args.collection_id === 'string' && args.collection_id ? args.collection_id : null;
       const id = await client.call<string>('cli_import_recipe', {
         target_collection_id: cid,
         recipe,
@@ -266,6 +264,4 @@ export const TOOLS: Tool[] = [
   },
 ];
 
-export const TOOL_INDEX: Record<string, Tool> = Object.fromEntries(
-  TOOLS.map((t) => [t.name, t]),
-);
+export const TOOL_INDEX: Record<string, Tool> = Object.fromEntries(TOOLS.map((t) => [t.name, t]));

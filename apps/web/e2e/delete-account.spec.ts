@@ -1,6 +1,6 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { adminGet, createTestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, signIn, test } from './support/fixtures.js';
 import {
   acceptTosViaService,
   cleanupHouseholdFor,
@@ -16,9 +16,7 @@ import {
  * nulled) per the takedown-defense carve-out.
  */
 test.describe('Right to erasure', () => {
-  test('user can delete their account; content cascades; audit row remains', async ({
-    page,
-  }) => {
+  test('user can delete their account; content cascades; audit row remains', async ({ page }) => {
     const u = await createTestUser('erasure');
     await acceptTosViaService(u.id);
     try {
@@ -38,11 +36,7 @@ test.describe('Right to erasure', () => {
       await expect
         .poll(
           async () =>
-            (
-              await adminGet<C>(
-                `/rest/v1/recipe_collections?select=id&owner_id=eq.${u.id}`,
-              )
-            ).length,
+            (await adminGet<C>(`/rest/v1/recipe_collections?select=id&owner_id=eq.${u.id}`)).length,
           { timeout: 10_000 },
         )
         .toBeGreaterThanOrEqual(1);
@@ -60,9 +54,7 @@ test.describe('Right to erasure', () => {
       await page.waitForURL('/', { timeout: 15_000 });
 
       // Content rows are gone (FK cascade through profiles → collections).
-      const after = await adminGet<C>(
-        `/rest/v1/recipe_collections?select=id&owner_id=eq.${u.id}`,
-      );
+      const after = await adminGet<C>(`/rest/v1/recipe_collections?select=id&owner_id=eq.${u.id}`);
       expect(after.length).toBe(0);
 
       // Profile is gone too.
@@ -72,14 +64,12 @@ test.describe('Right to erasure', () => {
 
       // Audit log entry for ACCOUNT_DELETED survives with actor_id nulled.
       const audit = await listAuditLog({ action: 'ACCOUNT_DELETED' });
-      const mine = audit.find(
-        (r) => (r.metadata as { user_id?: string }).user_id === u.id,
-      );
+      const mine = audit.find((r) => (r.metadata as { user_id?: string }).user_id === u.id);
       expect(mine).toBeDefined();
       // actor_id was set when record_audit ran; the cascade nulled it.
-      const auditDetail = await adminGet<
-        Array<{ actor_id: string | null; action: string }>
-      >(`/rest/v1/audit_log?select=actor_id,action&id=eq.${mine!.id}`);
+      const auditDetail = await adminGet<Array<{ actor_id: string | null; action: string }>>(
+        `/rest/v1/audit_log?select=actor_id,action&id=eq.${mine!.id}`,
+      );
       expect(auditDetail[0]?.actor_id).toBeNull();
     } finally {
       // No-op cleanup if the test passed (user is already gone), but
@@ -185,9 +175,7 @@ test.describe('Right to erasure', () => {
 
       // Household is gone, profile is gone, collections are gone.
       type H = Array<{ id: string }>;
-      const households = await adminGet<H>(
-        `/rest/v1/households?select=id&id=eq.${householdId}`,
-      );
+      const households = await adminGet<H>(`/rest/v1/households?select=id&id=eq.${householdId}`);
       expect(households.length).toBe(0);
       const profile = await adminGet<C>(`/rest/v1/profiles?select=id&id=eq.${owner.id}`);
       expect(profile.length).toBe(0);

@@ -85,22 +85,18 @@ async function runLeaderElection(): Promise<void> {
   pendingAbort = abort;
 
   let acquired = false;
-  await navigator.locks.request(
-    LEADER_LOCK_NAME,
-    { ifAvailable: true },
-    async (lock) => {
-      if (lock) {
-        acquired = true;
-        setRole('leader');
-        await new Promise<void>((resolve) => {
-          releaseHeld = () => {
-            releaseHeld = null;
-            resolve();
-          };
-        });
-      }
-    },
-  );
+  await navigator.locks.request(LEADER_LOCK_NAME, { ifAvailable: true }, async (lock) => {
+    if (lock) {
+      acquired = true;
+      setRole('leader');
+      await new Promise<void>((resolve) => {
+        releaseHeld = () => {
+          releaseHeld = null;
+          resolve();
+        };
+      });
+    }
+  });
 
   if (acquired) {
     // Lock was released (releaseLeadership / tab closing). Re-enter
@@ -118,19 +114,15 @@ async function runLeaderElection(): Promise<void> {
   // releaseLeadership). The signal lets forceReelect() abort the wait.
   setRole('follower');
   try {
-    await navigator.locks.request(
-      LEADER_LOCK_NAME,
-      { signal: abort.signal },
-      async () => {
-        setRole('leader');
-        await new Promise<void>((resolve) => {
-          releaseHeld = () => {
-            releaseHeld = null;
-            resolve();
-          };
-        });
-      },
-    );
+    await navigator.locks.request(LEADER_LOCK_NAME, { signal: abort.signal }, async () => {
+      setRole('leader');
+      await new Promise<void>((resolve) => {
+        releaseHeld = () => {
+          releaseHeld = null;
+          resolve();
+        };
+      });
+    });
   } catch (err) {
     if (abort.signal.aborted) {
       logSync('info', 'follower wait aborted (force re-elect)');
@@ -205,8 +197,9 @@ export async function queryLeaderLockState(): Promise<{
       arr: readonly { name?: string; clientId?: string; mode?: string }[] | undefined,
     ) =>
       (arr ?? [])
-        .filter((l): l is { name: string; clientId?: string; mode?: string } =>
-          typeof l.name === 'string' && l.name === LEADER_LOCK_NAME,
+        .filter(
+          (l): l is { name: string; clientId?: string; mode?: string } =>
+            typeof l.name === 'string' && l.name === LEADER_LOCK_NAME,
         )
         .map((l) => ({ name: l.name, clientId: l.clientId, mode: l.mode }));
     return {

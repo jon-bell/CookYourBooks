@@ -79,7 +79,9 @@ export function ReasonDialog({
         className="w-full max-w-md rounded-lg bg-white dark:bg-stone-900 p-6 shadow-lg ring-1 ring-stone-200"
       >
         <h2 className="text-lg font-semibold">{title}</h2>
-        {description && <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">{description}</p>}
+        {description && (
+          <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">{description}</p>
+        )}
 
         <label className="mt-4 block">
           <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">

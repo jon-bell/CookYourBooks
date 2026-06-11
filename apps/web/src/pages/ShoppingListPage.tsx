@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
 import { buildShoppingList } from '@cookyourbooks/domain';
-import { useRecipeSearch, useRecipesByIds } from '../data/queries.js';
-import { useScheduledRecipeIds } from '../cooking/queries.js';
-import { addDaysISO, todayISO } from '../cooking/dateGrid.js';
-import { PantrySection } from './PantrySection.js';
+import { useMemo, useState } from 'react';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { addDaysISO, todayISO } from '../cooking/dateGrid.js';
+import { useScheduledRecipeIds } from '../cooking/queries.js';
+import { useRecipesByIds, useRecipeSearch } from '../data/queries.js';
+import { PantrySection } from './PantrySection.js';
 
 export function ShoppingListPage() {
   // Lightweight selector list (no full-library hydration). Only the
@@ -89,7 +90,8 @@ export function ShoppingListPage() {
             Add scheduled recipes
           </button>
           <span className="text-xs text-stone-500">
-            {scheduledIds.length} recipe{scheduledIds.length === 1 ? '' : 's'} scheduled in this range
+            {scheduledIds.length} recipe{scheduledIds.length === 1 ? '' : 's'} scheduled in this
+            range
           </span>
         </div>
       </section>
@@ -183,7 +185,9 @@ function loadChecked(): Set<string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return new Set();
-    return new Set(JSON.parse(raw));
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === 'string'));
   } catch {
     return new Set();
   }

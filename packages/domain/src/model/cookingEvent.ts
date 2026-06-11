@@ -1,6 +1,6 @@
-import type { Recipe } from './recipe.js';
 import { isMeasured } from './ingredient.js';
 import { formatQuantity } from './quantity.js';
+import type { Recipe } from './recipe.js';
 
 /**
  * A cooking event is the act of cooking a recipe, not the recipe itself.

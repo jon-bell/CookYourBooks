@@ -1,8 +1,7 @@
 import type { Ingredient } from './ingredient.js';
-import { isMeasured } from './ingredient.js';
-import { measured, vague } from './ingredient.js';
-import { scaleQuantity } from './quantity.js';
+import { isMeasured, measured, vague } from './ingredient.js';
 import type { Instruction } from './instruction.js';
+import { scaleQuantity } from './quantity.js';
 import type { Servings } from './servings.js';
 
 export interface Recipe {

@@ -1,8 +1,9 @@
+import type { SourceType } from '@cookyourbooks/domain';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { SourceType } from '@cookyourbooks/domain';
-import { useSearch } from '../search/useSearch.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { useSearch } from '../search/useSearch.js';
 
 type Filter = '' | SourceType;
 
@@ -22,7 +23,7 @@ export function SearchPage() {
 
   const filteredHits = useMemo(() => {
     if (!sourceType) return hits;
-    return hits.filter((h) => (h.sourceType as string) === sourceType);
+    return hits.filter((h) => h.sourceType === sourceType);
   }, [hits, sourceType]);
 
   const status = embedderHint(embedderStatus, mode);
@@ -50,9 +51,7 @@ export function SearchPage() {
           <option value="WEBSITE">Web</option>
         </select>
       </div>
-      {status && (
-        <div className="text-xs text-stone-500 dark:text-stone-400">{status}</div>
-      )}
+      {status && <div className="text-xs text-stone-500 dark:text-stone-400">{status}</div>}
       {q.length === 0 ? (
         <p className="text-stone-500 dark:text-stone-400">
           Type to search across every recipe in your library.
@@ -62,8 +61,7 @@ export function SearchPage() {
       ) : (
         <>
           <div className="text-sm text-stone-600 dark:text-stone-400">
-            {filteredHits.length}{' '}
-            {filteredHits.length === 1 ? 'result' : 'results'}
+            {filteredHits.length} {filteredHits.length === 1 ? 'result' : 'results'}
             {mode === 'substring' && embedderStatus === 'ready' && hits.length > 0 && (
               <span> (semantic search found nothing — showing literal matches)</span>
             )}

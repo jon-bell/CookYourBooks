@@ -59,10 +59,7 @@ async function bitmapToJpeg(
   const width = Math.round(bitmap.width * scale);
   const height = Math.round(bitmap.height * scale);
   const canvas = makeCanvas(width, height);
-  const ctx = (canvas as HTMLCanvasElement | OffscreenCanvas).getContext('2d') as
-    | CanvasRenderingContext2D
-    | OffscreenCanvasRenderingContext2D
-    | null;
+  const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not acquire 2D canvas context');
   ctx.drawImage(bitmap, 0, 0, width, height);
   const blob = await canvasToJpeg(canvas);
@@ -88,10 +85,7 @@ async function bitmapToRotatedJpeg(
   const drawW = Math.round(bitmap.width * scale);
   const drawH = Math.round(bitmap.height * scale);
   const canvas = makeCanvas(outW, outH);
-  const ctx = (canvas as HTMLCanvasElement | OffscreenCanvas).getContext('2d') as
-    | CanvasRenderingContext2D
-    | OffscreenCanvasRenderingContext2D
-    | null;
+  const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not acquire 2D canvas context');
   ctx.translate(outW / 2, outH / 2);
   ctx.rotate((turns * Math.PI) / 2);
@@ -105,10 +99,7 @@ async function bitmapToRotatedJpeg(
  * clockwise, producing a fresh full-size + thumbnail JPEG pair. Honors EXIF
  * on decode so a re-rotate composes correctly.
  */
-export async function rotateImageBlob(
-  blob: Blob,
-  quarterTurns: number,
-): Promise<PreparedPage> {
+export async function rotateImageBlob(blob: Blob, quarterTurns: number): Promise<PreparedPage> {
   const bitmap = await blobToImageBitmap(blob);
   try {
     const full = await bitmapToRotatedJpeg(bitmap, quarterTurns, PAGE_WIDTH);
@@ -148,9 +139,7 @@ export async function renderPdfToJpegs(
   // Vite resolves the worker URL at build time via the ?url query. We
   // can't import the worker statically because pdfjs-dist ships an ESM
   // worker that has to run off the main thread.
-  const workerMod = (await import(
-    /* @vite-ignore */ 'pdfjs-dist/build/pdf.worker.mjs?url'
-  )) as { default: string };
+  const workerMod = await import(/* @vite-ignore */ 'pdfjs-dist/build/pdf.worker.mjs?url');
   pdfjs.GlobalWorkerOptions.workerSrc = workerMod.default;
 
   const buf = await file.arrayBuffer();

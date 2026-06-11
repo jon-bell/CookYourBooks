@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ingredientLookupKey, type NutritionFact } from '@cookyourbooks/domain';
-import { deleteMapping, saveMapping, searchNutrition } from './api.js';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { deleteMapping, saveMapping, searchNutrition } from './api.js';
 
 /**
  * Lets the user pick the right USDA / Open Food Facts entry for an
@@ -78,8 +79,8 @@ export function IngredientMatchOverrideDialog({
         <div>
           <h2 className="text-lg font-semibold">Nutrition match: {ingredientName}</h2>
           <p className="mt-1 text-xs text-stone-600 dark:text-stone-400">
-            Pick the USDA / Open Food Facts entry that best matches your ingredient. Your
-            choice is remembered for this ingredient string across recipes.
+            Pick the USDA / Open Food Facts entry that best matches your ingredient. Your choice is
+            remembered for this ingredient string across recipes.
           </p>
         </div>
         <input
@@ -90,13 +91,9 @@ export function IngredientMatchOverrideDialog({
           className="w-full rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-1.5 text-sm"
           autoFocus
         />
-        {search.isLoading && (
-          <LoadingState surface="nutrition-override" size="inline" />
-        )}
+        {search.isLoading && <LoadingState surface="nutrition-override" size="inline" />}
         {search.error && (
-          <p className="text-sm text-red-700 dark:text-red-300">
-            {(search.error as Error).message}
-          </p>
+          <p className="text-sm text-red-700 dark:text-red-300">{search.error.message}</p>
         )}
         {search.data && (
           <ul
@@ -128,9 +125,7 @@ export function IngredientMatchOverrideDialog({
             ))}
           </ul>
         )}
-        {error && (
-          <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
-        )}
+        {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
         <div className="flex items-center justify-between pt-1">
           <button
             type="button"
@@ -167,7 +162,8 @@ function MacroPreview({ hit }: { hit: NutritionFact }) {
   if (hit.carbs_g != null) cells.push({ label: 'carbs', value: `${round1(hit.carbs_g)} g` });
   if (hit.fiber_g != null) cells.push({ label: 'fiber', value: `${round1(hit.fiber_g)} g` });
   if (hit.sugar_g != null) cells.push({ label: 'sugar', value: `${round1(hit.sugar_g)} g` });
-  if (hit.sodium_mg != null) cells.push({ label: 'sodium', value: `${Math.round(hit.sodium_mg)} mg` });
+  if (hit.sodium_mg != null)
+    cells.push({ label: 'sodium', value: `${Math.round(hit.sodium_mg)} mg` });
   if (cells.length === 0) return null;
   return (
     <div className="mt-1 text-[11px] text-stone-600 dark:text-stone-400">

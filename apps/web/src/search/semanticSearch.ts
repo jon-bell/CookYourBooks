@@ -1,6 +1,7 @@
-import { listSearchableEmbeddings, type RecipeSearchHit } from '../local/repositories.js';
 import { collectionRepo } from '../data/repos.js';
+import { listSearchableEmbeddings, type RecipeSearchHit } from '../local/repositories.js';
 import { embedText } from './embedder.js';
+// eslint-disable-next-line import/default -- Vite's `?worker` synthesizes the default export
 import SearchWorker from './searchWorker.ts?worker';
 
 /** A search result row. Same shape the literal search returns
@@ -66,10 +67,7 @@ function scoreOffMainThread(
     // The query vector is small (1.5 KB) — copy is fine. The flat
     // embeddings buffer is transferred so we don't pay the
     // structured-clone copy on the hot path.
-    getWorker().postMessage(
-      { id, queryVec, embeddings, count, dim: DIM },
-      [embeddings.buffer],
-    );
+    getWorker().postMessage({ id, queryVec, embeddings, count, dim: DIM }, [embeddings.buffer]);
   });
 }
 
@@ -80,11 +78,7 @@ function scoreOffMainThread(
  * product is the cosine similarity directly. The math runs in a Web
  * Worker so a 50k-recipe library doesn't stall the input box.
  */
-export async function searchSemantic(
-  ownerId: string,
-  q: string,
-  limit = 50,
-): Promise<SearchHit[]> {
+export async function searchSemantic(ownerId: string, q: string, limit = 50): Promise<SearchHit[]> {
   const trimmed = q.trim();
   if (!trimmed) return [];
   const [queryVec, candidates] = await Promise.all([
@@ -106,7 +100,7 @@ export async function searchSemantic(
   const scores = await scoreOffMainThread(queryVec, flat, candidates.length);
 
   type Scored = { idx: number; score: number };
-  const scored: Scored[] = new Array(scores.length);
+  const scored: Scored[] = new Array<Scored>(scores.length);
   for (let i = 0; i < scores.length; i += 1) {
     scored[i] = { idx: i, score: scores[i]! };
   }

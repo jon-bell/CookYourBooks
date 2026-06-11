@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { parseLlmJson, parseNotesJson } from './llm.js';
 import { isMeasured } from '@cookyourbooks/domain';
+import { describe, expect, it } from 'vitest';
+
+import { parseLlmJson, parseNotesJson } from './llm.js';
 
 // These tests pin the JSON-response contract. The parser is deliberately
 // lenient — it accepts both the rich prompt's lowercase-typed multi-recipe
@@ -202,7 +203,11 @@ describe('parseLlmJson', () => {
           ingredients: [
             { type: 'measured', name: 'good', quantity: { type: 'exact', value: 1, unit: 'cup' } },
             { type: 'measured' /* no name */ },
-            { type: 'measured', name: 'bad', quantity: { type: 'range', min: 5, max: 2, unit: 'cup' } },
+            {
+              type: 'measured',
+              name: 'bad',
+              quantity: { type: 'range', min: 5, max: 2, unit: 'cup' },
+            },
           ],
           instructions: [],
         },
@@ -256,7 +261,8 @@ describe('parseLlmJson', () => {
   });
 
   it('tolerates JSON wrapped in ```json … ``` fences', () => {
-    const text = '```json\n{"recipes":[{"title":"Fenced","ingredients":[],"instructions":[]}]}\n```';
+    const text =
+      '```json\n{"recipes":[{"title":"Fenced","ingredients":[],"instructions":[]}]}\n```';
     const d = parseLlmJson(text)[0]!;
     expect(d.title).toBe('Fenced');
   });

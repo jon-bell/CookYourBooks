@@ -1,7 +1,8 @@
-import { test, expect, waitForSynced } from './support/fixtures.js';
-import { adminGet } from './support/admin.js';
-import { seedOcrFixture, type FakeRecipeDraft } from './support/imports.js';
 import type { Page } from '@playwright/test';
+
+import { adminGet } from './support/admin.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
+import { type FakeRecipeDraft, seedOcrFixture } from './support/imports.js';
 
 // The video-import Edge Function runs with VIDEO_IMPORT_MOCK_MODE=1 in E2E
 // (set in functionsServer.ts), so it reads canned drafts from the shared
@@ -13,7 +14,11 @@ function recipeDraft(title: string, ingredientName: string): FakeRecipeDraft {
     title,
     servings: { amount: 4 },
     ingredients: [
-      { type: 'MEASURED', name: ingredientName, quantity: { type: 'EXACT', amount: 2, unit: 'cup' } },
+      {
+        type: 'MEASURED',
+        name: ingredientName,
+        quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
+      },
       { type: 'VAGUE', name: 'salt' },
     ],
     instructions: [
@@ -119,11 +124,8 @@ test.describe('video link import', () => {
     await expect
       .poll(
         async () =>
-          (
-            await adminGet<RecipeRow[]>(
-              `/rest/v1/recipes?select=id&collection_id=eq.${yt.id}`,
-            )
-          ).length,
+          (await adminGet<RecipeRow[]>(`/rest/v1/recipes?select=id&collection_id=eq.${yt.id}`))
+            .length,
         { timeout: 15_000 },
       )
       .toBe(2);
@@ -156,14 +158,9 @@ test.describe('video link import', () => {
     await waitForWebCollectionTitled(user.id, 'Instagram');
   });
 
-  test('lets the user pick when multiple recipes are found', async ({
-    authedPage: page,
-  }) => {
+  test('lets the user pick when multiple recipes are found', async ({ authedPage: page }) => {
     const url = 'https://www.youtube.com/watch?v=two-recipes';
-    await seedVideo(url, [
-      recipeDraft('Recipe One', 'oats'),
-      recipeDraft('Recipe Two', 'honey'),
-    ]);
+    await seedVideo(url, [recipeDraft('Recipe One', 'oats'), recipeDraft('Recipe Two', 'honey')]);
 
     await extractViaUi(page, url);
     await expect(page.getByText('Found 2 recipes', { exact: false })).toBeVisible({
@@ -230,10 +227,7 @@ test.describe('video link import', () => {
     expect(recipe.collection_id).toBe(site.id);
   });
 
-  test('rejects a non-http URL without saving anything', async ({
-    authedPage: page,
-    user,
-  }) => {
+  test('rejects a non-http URL without saving anything', async ({ authedPage: page, user }) => {
     await extractViaUi(page, 'ftp://example.com/not-a-recipe');
     await expect(page.getByText('valid http', { exact: false })).toBeVisible({ timeout: 20_000 });
     expect(await webCollections(user.id)).toHaveLength(0);

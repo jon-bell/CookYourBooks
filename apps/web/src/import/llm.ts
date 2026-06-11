@@ -2,18 +2,18 @@ import {
   canonicalUnitName,
   exact,
   fractional,
-  instruction,
-  measured,
-  range,
-  servings as makeServings,
-  vague,
   type Ingredient,
   type IngredientRef,
   type Instruction,
+  instruction,
+  measured,
   type ParsedRecipeDraft,
   type Quantity,
+  range,
   type Servings,
+  servings as makeServings,
   type Temperature,
+  vague,
 } from '@cookyourbooks/domain';
 
 // LLM API calls live in the Edge Function worker
@@ -44,6 +44,7 @@ export function parseLlmJson(text: string): ParsedRecipeDraft[] {
   } catch (err) {
     throw new Error(
       `Could not parse LLM JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
+      { cause: err },
     );
   }
 
@@ -54,8 +55,7 @@ export function parseLlmJson(text: string): ParsedRecipeDraft[] {
     const obj = raw as Record<string, unknown>;
     if (typeof obj.rawText === 'string') rawText = obj.rawText;
     if (Array.isArray(obj.recipes)) recipeObjects = obj.recipes;
-    else if (Array.isArray(obj.ingredients) || typeof obj.title === 'string')
-      recipeObjects = [obj];
+    else if (Array.isArray(obj.ingredients) || typeof obj.title === 'string') recipeObjects = [obj];
     else recipeObjects = [];
   } else if (Array.isArray(raw)) {
     recipeObjects = raw;
@@ -92,10 +92,7 @@ export function parseLlmJson(text: string): ParsedRecipeDraft[] {
   return drafts;
 }
 
-function buildDraft(
-  raw: unknown,
-  rawText: string | undefined,
-): ParsedRecipeDraft {
+function buildDraft(raw: unknown, rawText: string | undefined): ParsedRecipeDraft {
   if (!raw || typeof raw !== 'object') {
     return { ingredients: [], instructions: [], leftover: [], sourceImageText: rawText };
   }
@@ -352,18 +349,14 @@ function typeOf(raw: unknown): string {
 function toStringArray(raw: unknown): string[] | undefined {
   const arr = asArray(raw);
   if (!arr) return undefined;
-  const out = arr
-    .map((x) => (typeof x === 'string' ? x.trim() : ''))
-    .filter((x) => x.length > 0);
+  const out = arr.map((x) => (typeof x === 'string' ? x.trim() : '')).filter((x) => x.length > 0);
   return out.length > 0 ? out : undefined;
 }
 
 function toNumberArray(raw: unknown): number[] | undefined {
   const arr = asArray(raw);
   if (!arr) return undefined;
-  const out = arr
-    .map((x) => asFiniteNumber(x))
-    .filter((x): x is number => x !== undefined);
+  const out = arr.map((x) => asFiniteNumber(x)).filter((x): x is number => x !== undefined);
   return out.length > 0 ? out : undefined;
 }
 
@@ -384,6 +377,7 @@ export function parseNotesJson(text: string): ParsedNote {
   } catch (err) {
     throw new Error(
       `Could not parse Notes JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
+      { cause: err },
     );
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -401,20 +395,5 @@ export function parseNotesJson(text: string): ParsedNote {
 }
 
 function stripFences(text: string): string {
-  return text
-    .replace(/^\s*```(?:json)?\s*/i, '')
-    .replace(/\s*```\s*$/i, '');
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result ?? '');
-      const comma = result.indexOf(',');
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+  return text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '');
 }

@@ -1,8 +1,8 @@
-import type { Recipe } from './model/recipe.js';
 import type { RecipeCollection } from './model/collection.js';
-import type { CookingEvent, RecipeSnapshot } from './model/cookingEvent.js';
-import type { Tag } from './model/tag.js';
 import type { CollectionNote } from './model/collectionNote.js';
+import type { CookingEvent, RecipeSnapshot } from './model/cookingEvent.js';
+import type { Recipe } from './model/recipe.js';
+import type { Tag } from './model/tag.js';
 
 export interface RecipeRepository {
   list(): Promise<Recipe[]>;

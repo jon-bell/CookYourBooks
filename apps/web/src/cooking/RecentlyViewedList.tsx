@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
-import { useRecentlyViewed } from './queries.js';
+
 import { relativeTime } from './format.js';
+import { useRecentlyViewed } from './queries.js';
 
 export function RecentlyViewedList({ limit = 50 }: { limit?: number }) {
   const { data: entries = [], isLoading } = useRecentlyViewed(limit);
@@ -8,9 +9,7 @@ export function RecentlyViewedList({ limit = 50 }: { limit?: number }) {
 
   if (isLoading) return null;
   if (entries.length === 0) {
-    return (
-      <p className="text-sm text-stone-500">Recipes you open will show up here.</p>
-    );
+    return <p className="text-sm text-stone-500">Recipes you open will show up here.</p>;
   }
 
   return (

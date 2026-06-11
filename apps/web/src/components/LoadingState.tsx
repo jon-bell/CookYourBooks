@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from 'react';
-import { Sentry } from '../sentry.js';
-import { useSync } from '../local/SyncProvider.js';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { useSync } from '../local/SyncProvider.js';
+import { Sentry } from '../sentry.js';
 import { COOKING_FLAVOR_LINES, interleaveLines } from './loadingLines.js';
 import { useRotatingLine } from './useRotatingLine.js';
 
@@ -99,12 +100,7 @@ export function LoadingState({
   }
 
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      data-testid={`loading-${surface}`}
-      className="py-2"
-    >
+    <div role="status" aria-live="polite" data-testid={`loading-${surface}`} className="py-2">
       <p className="text-stone-500 dark:text-stone-400">Loading…</p>
       {line && (
         <p className="mt-1 text-xs italic text-stone-400 dark:text-stone-500" aria-hidden>

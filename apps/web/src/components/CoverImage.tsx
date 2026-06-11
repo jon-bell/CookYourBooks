@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../supabase.js';
+
 import { thumbPathFor } from '../recipe/coverImage.js';
+import { supabase } from '../supabase.js';
 
 export function CoverImage({
   path,
@@ -33,8 +34,7 @@ export function CoverImage({
     );
   }
 
-  const displayPath =
-    variant === 'thumb' && !thumbFailed ? thumbPathFor(path) : path;
+  const displayPath = variant === 'thumb' && !thumbFailed ? thumbPathFor(path) : path;
   const { data } = supabase.storage.from('covers').getPublicUrl(displayPath);
 
   return (
@@ -43,11 +43,7 @@ export function CoverImage({
       alt={alt}
       className={`object-cover ${className ?? ''}`}
       loading="lazy"
-      onError={
-        variant === 'thumb' && !thumbFailed
-          ? () => setThumbFailed(true)
-          : undefined
-      }
+      onError={variant === 'thumb' && !thumbFailed ? () => setThumbFailed(true) : undefined}
     />
   );
 }

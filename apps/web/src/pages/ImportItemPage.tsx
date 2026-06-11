@@ -1,50 +1,51 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   createCookbook,
   exact,
   formatQuantity,
-  isMeasured,
-  measured,
-  parseIngredientLine,
-  Units,
-  vague,
-  instruction,
   type Ingredient,
   type Instruction,
+  instruction,
+  isMeasured,
+  measured,
   type ParsedRecipeDraft,
+  parseIngredientLine,
   type Quantity,
   type RecipeCollection,
+  Units,
+  vague,
 } from '@cookyourbooks/domain';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+
+import { LoadingState } from '../components/LoadingState.js';
+import { PinchPanImage } from '../components/PinchPanImage.js';
 import {
   useCollection,
   useCollectionPickerOptions,
   useSaveCollection,
   useSaveRecipe,
 } from '../data/queries.js';
+import { kickOcr, resetImportItem, setImportItemKind, setImportItemToc } from '../import/api.js';
+import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
+import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { deleteOcrStorage } from '../import/deleteStorage.js';
+import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
+import { NotesReviewPanel } from '../import/NotesReviewPanel.js';
+import { canReOcr } from '../import/ocrStatus.js';
+import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
+import { buildRecipeFromDraft } from '../import/promoteDraft.js';
 import {
   useImportBatch,
   useImportItem,
-  useImportItems,
   useImportItemAttempts,
+  useImportItems,
   useImportTocEntries,
   useUpdateImportItem,
 } from '../import/queries.js';
-import { kickOcr, resetImportItem, setImportItemKind, setImportItemToc } from '../import/api.js';
-import { buildRecipeFromDraft } from '../import/promoteDraft.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
-import { TocReviewPanel } from '../import/TocReviewPanel.js';
-import { NotesReviewPanel } from '../import/NotesReviewPanel.js';
-import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
-import type { CollectionPickerOption } from '../local/repositories.js';
-import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
-import { canReOcr } from '../import/ocrStatus.js';
-import { useSync } from '../local/SyncProvider.js';
-import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
-import { PinchPanImage } from '../components/PinchPanImage.js';
-import { deleteOcrStorage } from '../import/deleteStorage.js';
-import { LoadingState } from '../components/LoadingState.js';
+import { TocReviewPanel } from '../import/TocReviewPanel.js';
+import type { CollectionPickerOption } from '../local/repositories.js';
+import { useSync } from '../local/SyncProvider.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -57,8 +58,7 @@ export function ImportItemPage() {
   // Eager target-cookbook fetch so the save flow can fuzzy-match the
   // draft title against existing recipes (placeholder ToC entries)
   // and update that recipe in place rather than always creating new.
-  const resolvedTargetId =
-    item?.assignedCollectionId ?? batch?.targetCollectionId ?? '';
+  const resolvedTargetId = item?.assignedCollectionId ?? batch?.targetCollectionId ?? '';
   const { data: targetCollection } = useCollection(resolvedTargetId);
   const updateItem = useUpdateImportItem();
   const { syncNow, status: syncStatus, localReady, hydrated } = useSync();
@@ -77,7 +77,13 @@ export function ImportItemPage() {
   const [actionError, setActionError] = useState<string | undefined>();
   const [togglingToc, setTogglingToc] = useState(false);
   const viewerRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const drag = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
   const pinch = useRef<{
     startDist: number;
     startMidX: number;
@@ -89,12 +95,8 @@ export function ImportItemPage() {
 
   useEffect(() => {
     if (!item) return;
-    setAssignedCollectionId(
-      item.assignedCollectionId ?? batch?.targetCollectionId ?? '',
-    );
-    setPageNumberStr(
-      item.assignedPageNumber != null ? String(item.assignedPageNumber) : '',
-    );
+    setAssignedCollectionId(item.assignedCollectionId ?? batch?.targetCollectionId ?? '');
+    setPageNumberStr(item.assignedPageNumber != null ? String(item.assignedPageNumber) : '');
   }, [item, batch?.targetCollectionId]);
 
   useEffect(() => {
@@ -135,9 +137,7 @@ export function ImportItemPage() {
     if (!item) return undefined;
     const sorted = [...batchItems].sort((a, b) => a.pageIndex - b.pageIndex);
     const idx = sorted.findIndex((i) => i.id === item.id);
-    return idx >= 0
-      ? { current: idx + 1, total: sorted.length }
-      : undefined;
+    return idx >= 0 ? { current: idx + 1, total: sorted.length } : undefined;
   }, [batchItems, item]);
 
   // Keyboard shortcuts. Skip while a text input or contenteditable is
@@ -179,10 +179,7 @@ export function ImportItemPage() {
           break;
         case '?':
           e.preventDefault();
-          showToast(
-            setToast,
-            'Shortcuts: ← / k prev · → / j next · f fullscreen · esc exit',
-          );
+          showToast(setToast, 'Shortcuts: ← / k prev · → / j next · f fullscreen · esc exit');
           break;
       }
     }
@@ -192,9 +189,7 @@ export function ImportItemPage() {
 
   const tocSuggestions = useMemo(
     () =>
-      currentDraft?.title
-        ? suggestTocMatches(currentDraft.title, tocEntries, { limit: 5 })
-        : [],
+      currentDraft?.title ? suggestTocMatches(currentDraft.title, tocEntries, { limit: 5 }) : [],
     [currentDraft?.title, tocEntries],
   );
 
@@ -349,8 +344,7 @@ export function ImportItemPage() {
     );
   }
 
-  const targetCollectionId =
-    assignedCollectionId || batch.targetCollectionId || '';
+  const targetCollectionId = assignedCollectionId || batch.targetCollectionId || '';
 
   // ToC entries belonging to *this* page (a batch may hold several ToC
   // scans). Feeds the review/approve panel below.
@@ -584,7 +578,11 @@ export function ImportItemPage() {
     <div className="space-y-4 pb-12">
       {toast && <ToastBanner message={toast} />}
       {fullscreen && imgUrl && (
-        <FullscreenImage src={imgUrl} alt={`Page ${item.pageIndex + 1}`} onClose={() => setFullscreen(false)} />
+        <FullscreenImage
+          src={imgUrl}
+          alt={`Page ${item.pageIndex + 1}`}
+          onClose={() => setFullscreen(false)}
+        />
       )}
       <NavBanner
         batchName={batch.name}
@@ -595,8 +593,10 @@ export function ImportItemPage() {
         currentPageIndex={item.pageIndex + 1}
         save={
           !item.isToc &&
-          !(batch.batchKind === 'BAKEOFF' &&
-            (item.status === 'BAKEOFF_READY' || item.status === 'BAKEOFF_PENDING'))
+          !(
+            batch.batchKind === 'BAKEOFF' &&
+            (item.status === 'BAKEOFF_READY' || item.status === 'BAKEOFF_PENDING')
+          )
             ? {
                 onSave: () => void saveAsRecipe(),
                 disabled: !currentDraft || !targetCollectionId || saveRecipe.isPending,
@@ -675,7 +675,9 @@ export function ImportItemPage() {
             >
               ⛶ Fullscreen
             </button>
-            <span className="ml-auto text-stone-500 dark:text-stone-400">Ctrl/⌘+scroll to zoom · drag to pan · f for fullscreen · ← / → to navigate</span>
+            <span className="ml-auto text-stone-500 dark:text-stone-400">
+              Ctrl/⌘+scroll to zoom · drag to pan · f for fullscreen · ← / → to navigate
+            </span>
           </div>
 
           {item.extraStoragePaths.length > 0 && (
@@ -696,7 +698,9 @@ export function ImportItemPage() {
               Attempt history ({attempts.length})
             </summary>
             <ul className="divide-y divide-stone-200 dark:divide-stone-700 px-3 pb-2 text-xs text-stone-700 dark:text-stone-300">
-              {attempts.length === 0 && <li className="py-2 text-stone-500 dark:text-stone-400">No attempts yet.</li>}
+              {attempts.length === 0 && (
+                <li className="py-2 text-stone-500 dark:text-stone-400">No attempts yet.</li>
+              )}
               {attempts.map((a) => (
                 <li key={a.id} className="space-y-0.5 py-2">
                   <div className="flex flex-wrap items-center gap-2">
@@ -705,9 +709,7 @@ export function ImportItemPage() {
                     <code className="rounded bg-stone-100 dark:bg-stone-800 px-1">{a.model}</code>
                     <span
                       className={
-                        a.errorKind && a.errorKind !== 'OK'
-                          ? 'text-red-700'
-                          : 'text-emerald-700'
+                        a.errorKind && a.errorKind !== 'OK' ? 'text-red-700' : 'text-emerald-700'
                       }
                     >
                       {a.errorKind ?? 'OK'}
@@ -719,9 +721,7 @@ export function ImportItemPage() {
                   {a.errorMessage && (
                     <div className="text-stone-600 dark:text-stone-400">{a.errorMessage}</div>
                   )}
-                  {a.rawResponsePath && (
-                    <ViewRawLink path={a.rawResponsePath} />
-                  )}
+                  {a.rawResponsePath && <ViewRawLink path={a.rawResponsePath} />}
                 </li>
               ))}
             </ul>
@@ -732,7 +732,9 @@ export function ImportItemPage() {
           <OcrStatusBanner item={item} batchItems={batchItems} />
 
           <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm">
-            <label className={`flex items-center gap-2 ${togglingToc ? 'cursor-progress opacity-70' : ''}`}>
+            <label
+              className={`flex items-center gap-2 ${togglingToc ? 'cursor-progress opacity-70' : ''}`}
+            >
               <input
                 type="checkbox"
                 checked={item.isToc}
@@ -740,18 +742,18 @@ export function ImportItemPage() {
                 onChange={() => void toggleIsToc()}
               />
               <span>This is a Table of Contents page</span>
-              {togglingToc && (
-                <Spinner className="text-stone-400" label="Re-reading page…" />
-              )}
+              {togglingToc && <Spinner className="text-stone-400" label="Re-reading page…" />}
             </label>
             <p className="mt-1 pl-6 text-xs text-stone-500 dark:text-stone-400">
-              Toggling re-runs OCR on this page with the matching prompt —
-              the table-of-contents reader or the recipe reader.
+              Toggling re-runs OCR on this page with the matching prompt — the table-of-contents
+              reader or the recipe reader.
             </p>
           </div>
 
           <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm">
-            <label className={`flex items-center gap-2 ${togglingToc ? 'cursor-progress opacity-70' : ''}`}>
+            <label
+              className={`flex items-center gap-2 ${togglingToc ? 'cursor-progress opacity-70' : ''}`}
+            >
               <input
                 type="checkbox"
                 checked={item.kind === 'NOTES'}
@@ -878,28 +880,28 @@ export function ImportItemPage() {
                 <DraftEditor draft={currentDraft} onPatch={patchDraft} />
               ) : item.status === 'OCR_FAILED' ? (
                 <p className="text-sm text-red-700 dark:text-red-300">
-                  OCR failed{item.lastError ? `: ${item.lastError}` : '.'} Use Re-OCR to try
-                  again.
+                  OCR failed{item.lastError ? `: ${item.lastError}` : '.'} Use Re-OCR to try again.
                 </p>
               ) : (
-                <p className="text-sm text-stone-600 dark:text-stone-400">No drafts yet — OCR results will appear here.</p>
+                <p className="text-sm text-stone-600 dark:text-stone-400">
+                  No drafts yet — OCR results will appear here.
+                </p>
               )}
 
               {plannedRecipe && targetCollection && (
                 <div className="rounded-md border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-2 text-xs text-indigo-900 dark:text-indigo-200">
                   <strong>Planned:</strong> this scan is reserved for{' '}
                   <span className="font-medium">{plannedRecipe.title}</span> in{' '}
-                  <em>{targetCollection.title}</em> (from the Speed Importer).
-                  Save will fill that placeholder in place.
+                  <em>{targetCollection.title}</em> (from the Speed Importer). Save will fill that
+                  placeholder in place.
                 </div>
               )}
               {!plannedRecipe && matchedExisting && targetCollection && (
                 <div className="rounded-md border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200">
                   <strong>Matches existing recipe:</strong>{' '}
                   <span className="font-medium">{matchedExisting.title}</span> in{' '}
-                  <em>{targetCollection.title}</em>. Save will update that
-                  entry in place (preserving its page order + any earlier
-                  edits).
+                  <em>{targetCollection.title}</em>. Save will update that entry in place
+                  (preserving its page order + any earlier edits).
                 </div>
               )}
 
@@ -994,7 +996,10 @@ function parseQuantityInput(input: string): Quantity | undefined | 'CLEAR' {
 /** Build the grouped unit catalog once. Used by QuantityEditor's
  *  unit dropdown so users see what we actually understand and don't
  *  guess at abbreviations. */
-const UNIT_GROUPS: ReadonlyArray<{ label: string; units: readonly { name: string; abbr: string }[] }> = (() => {
+const UNIT_GROUPS: ReadonlyArray<{
+  label: string;
+  units: readonly { name: string; abbr: string }[];
+}> = (() => {
   const groups = new Map<string, { label: string; units: { name: string; abbr: string }[] }>();
   function pushUnit(group: string, label: string, name: string, abbr: string) {
     if (!groups.has(group)) groups.set(group, { label, units: [] });
@@ -1050,7 +1055,7 @@ function QuantityEditor({
       // Honor the dropdown unit even when the user only typed a number
       // (parseQuantityInput needs SOME unit to land on EXACT; we fix
       // it up to the user's chosen unit here).
-      onChange(unit ? { ...parsed, unit } as Quantity : parsed);
+      onChange(unit ? { ...parsed, unit } : parsed);
     } else if (!unit) {
       // No unit + unparsable amount: treat as count.
       const n = Number(a);
@@ -1136,18 +1141,16 @@ function QuantityEditor({
           className="absolute left-0 top-full z-30 mt-1 w-72 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-xs leading-relaxed text-stone-700 dark:text-stone-300 shadow-md"
         >
           <strong className="block text-stone-900 dark:text-stone-100">Units</strong>
-          Pick a standard unit from the list. Amount accepts decimals
-          (<code>1.5</code>), mixed numbers (<code>1 1/2</code>), or
-          plain integers.
+          Pick a standard unit from the list. Amount accepts decimals (<code>1.5</code>), mixed
+          numbers (<code>1 1/2</code>), or plain integers.
           <br />
           <br />
-          <strong className="block text-stone-900 dark:text-stone-100">House units</strong>
-          A "house unit" is your own measure — "a dollop", "one Bell
-          mug" — defined as a conversion to a standard unit (e.g.
-          <code> 1 dollop = 1 tbsp</code>). They'll show up here once
-          you add them in <em>Settings → Conversions</em>. Until then,
-          pick the closest standard unit and you can scale later in
-          the recipe view.
+          <strong className="block text-stone-900 dark:text-stone-100">House units</strong>A "house
+          unit" is your own measure — "a dollop", "one Bell mug" — defined as a conversion to a
+          standard unit (e.g.
+          <code> 1 dollop = 1 tbsp</code>). They'll show up here once you add them in{' '}
+          <em>Settings → Conversions</em>. Until then, pick the closest standard unit and you can
+          scale later in the recipe view.
         </span>
       )}
     </span>
@@ -1249,7 +1252,10 @@ function NavBanner({
 }) {
   return (
     <div className="sticky top-0 z-20 -mx-4 flex items-center gap-3 border-b border-stone-200 dark:border-stone-700 bg-white/95 px-4 py-2 text-sm backdrop-blur">
-      <Link to={`/import/${batchId}`} className="truncate text-stone-700 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100">
+      <Link
+        to={`/import/${batchId}`}
+        className="truncate text-stone-700 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100"
+      >
         ← {batchName}
       </Link>
       {save && (
@@ -1257,11 +1263,7 @@ function NavBanner({
           type="button"
           onClick={save.onSave}
           disabled={save.disabled}
-          title={
-            save.disabled && !save.saving
-              ? 'Pick a cookbook below before saving'
-              : save.label
-          }
+          title={save.disabled && !save.saving ? 'Pick a cookbook below before saving' : save.label}
           className="ml-2 truncate rounded-md bg-emerald-700 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
         >
           {save.saving ? 'Saving…' : save.label}
@@ -1282,9 +1284,7 @@ function NavBanner({
           </span>
         )}
         <span className="px-2 text-xs text-stone-500 dark:text-stone-400">
-          {position
-            ? `${position.current} of ${position.total}`
-            : `Page ${currentPageIndex}`}
+          {position ? `${position.current} of ${position.total}` : `Page ${currentPageIndex}`}
         </span>
         {nextId ? (
           <Link
@@ -1304,15 +1304,7 @@ function NavBanner({
   );
 }
 
-function FullscreenImage({
-  src,
-  alt,
-  onClose,
-}: {
-  src: string;
-  alt: string;
-  onClose: () => void;
-}) {
+function FullscreenImage({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   return (
     <div
       role="dialog"
@@ -1373,9 +1365,10 @@ function findReviewable<T extends { id: string; status: string; pageIndex: numbe
   const sorted = [...items].sort((a, b) => a.pageIndex - b.pageIndex);
   const idx = sorted.findIndex((i) => i.id === currentId);
   if (idx < 0) return sorted[0];
-  const ring = direction === 'next'
-    ? [...sorted.slice(idx + 1), ...sorted.slice(0, idx)]
-    : [...sorted.slice(0, idx).reverse(), ...sorted.slice(idx + 1).reverse()];
+  const ring =
+    direction === 'next'
+      ? [...sorted.slice(idx + 1), ...sorted.slice(0, idx)]
+      : [...sorted.slice(0, idx).reverse(), ...sorted.slice(idx + 1).reverse()];
   return ring.find(
     (i) =>
       i.status === 'OCR_DONE' ||
@@ -1390,11 +1383,7 @@ function findReviewable<T extends { id: string; status: string; pageIndex: numbe
  * setter so the toast renders inside the page without needing a
  * separate provider.
  */
-function showToast(
-  setToast: (m: string | undefined) => void,
-  message: string,
-  ms = 3500,
-): void {
+function showToast(setToast: (m: string | undefined) => void, message: string, ms = 3500): void {
   setToast(message);
   window.setTimeout(() => setToast(undefined), ms);
 }
@@ -1549,7 +1538,9 @@ function DraftEditor({
 
       {draft.sourceImageText && (
         <details className="text-xs">
-          <summary className="cursor-pointer text-stone-500 dark:text-stone-400">Raw OCR text</summary>
+          <summary className="cursor-pointer text-stone-500 dark:text-stone-400">
+            Raw OCR text
+          </summary>
           <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-stone-50 dark:bg-stone-900 p-2 text-stone-700 dark:text-stone-300">
             {draft.sourceImageText}
           </pre>
@@ -1769,12 +1760,7 @@ function InstructionRow({
               </button>
             );
           })}
-          {unlinked.length > 0 && (
-            <AddRefMenu
-              options={unlinked}
-              onPick={(id) => toggleRef(id)}
-            />
-          )}
+          {unlinked.length > 0 && <AddRefMenu options={unlinked} onPick={(id) => toggleRef(id)} />}
         </div>
       </div>
       <button
@@ -1849,9 +1835,7 @@ function EquipmentRow({
       </h3>
       <div className="flex flex-wrap items-center gap-1.5">
         {items.length === 0 && (
-          <span className="text-xs text-stone-400">
-            (none — add what the recipe needs)
-          </span>
+          <span className="text-xs text-stone-400">(none — add what the recipe needs)</span>
         )}
         {items.map((item, i) => (
           <span
@@ -2023,7 +2007,9 @@ function Spinner({ className = '', label }: { className?: string; label: string 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-stone-700 dark:text-stone-300">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -2178,9 +2164,7 @@ function ItemDeleteStorageButton({ itemId, hasImage }: { itemId: string; hasImag
       >
         {busy ? 'Deleting image…' : 'Delete uploaded image'}
       </button>
-      {error && (
-        <span className="text-xs text-red-700 dark:text-red-300">{error}</span>
-      )}
+      {error && <span className="text-xs text-red-700 dark:text-red-300">{error}</span>}
     </>
   );
 }

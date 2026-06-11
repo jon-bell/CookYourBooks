@@ -1,12 +1,9 @@
-import { useRef, useState } from 'react';
 import type { Recipe } from '@cookyourbooks/domain';
+import { useRef, useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { OcrWorkerNotConfiguredError } from '../import/api.js';
-import {
-  generateCovers,
-  removeRecipeCover,
-  uploadRecipeCover,
-} from '../recipe/coverApi.js';
+import { generateCovers, removeRecipeCover, uploadRecipeCover } from '../recipe/coverApi.js';
 import { CoverImage } from './CoverImage.js';
 import { DropdownMenu, DropdownMenuItem } from './DropdownMenu.js';
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../supabase.js';
+
 import { prepareImage } from '../import/imageProcessing.js';
+import { supabase } from '../supabase.js';
 
 const BUCKET = 'cooking-photos';
 const SIGN_TTL_SECONDS = 60 * 60;
@@ -51,13 +52,7 @@ export async function getSignedCookingPhotoUrl(path: string): Promise<string> {
 }
 
 /** Thumbnail for a stored cooking photo (signs the path on mount). */
-export function CookingPhotoThumb({
-  path,
-  className,
-}: {
-  path: string;
-  className?: string;
-}) {
+export function CookingPhotoThumb({ path, className }: { path: string; className?: string }) {
   const [url, setUrl] = useState<string | undefined>();
   const [errored, setErrored] = useState(false);
 
@@ -83,7 +78,13 @@ export function CookingPhotoThumb({
   if (!url) return <div className={`bg-stone-100 dark:bg-stone-800 ${className ?? ''}`} />;
   return (
     <a href={url} target="_blank" rel="noreferrer">
-      <img src={url} alt="Cooking photo" loading="lazy" className={className} data-testid="cook-photo" />
+      <img
+        src={url}
+        alt="Cooking photo"
+        loading="lazy"
+        className={className}
+        data-testid="cook-photo"
+      />
     </a>
   );
 }

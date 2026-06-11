@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
 import { createRecipe } from '@cookyourbooks/domain';
+import { useEffect, useMemo, useState } from 'react';
+
 import { useCollection, useSaveRecipe } from '../data/queries.js';
-import { scoreTocMatch } from './tocMatch.js';
 import type { ImportItemStatus, ImportTocEntry } from './model.js';
+import { scoreTocMatch } from './tocMatch.js';
 
 /** One editable line in the review table. `include` gates whether the
  *  entry is turned into a placeholder recipe on approve; `existingId`
@@ -57,10 +58,7 @@ export function TocReviewPanel({
   // (Re)derive the editable table whenever the underlying entries or the
   // target cookbook change. Existing-recipe matches default the row to
   // excluded so a re-import doesn't double up placeholders.
-  const entryKey = useMemo(
-    () => entries.map((e) => e.id).join('|'),
-    [entries],
-  );
+  const entryKey = useMemo(() => entries.map((e) => e.id).join('|'), [entries]);
   useEffect(() => {
     const existingRecipes = targetCollection?.recipes ?? [];
     setRows(
@@ -131,8 +129,7 @@ export function TocReviewPanel({
   if (ocrPending) {
     return (
       <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm text-stone-600 dark:text-stone-400">
-        Reading the table of contents… entries will appear here once OCR
-        finishes.
+        Reading the table of contents… entries will appear here once OCR finishes.
       </div>
     );
   }
@@ -140,9 +137,8 @@ export function TocReviewPanel({
   if (entries.length === 0) {
     return (
       <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm text-stone-600 dark:text-stone-400">
-        No table-of-contents entries were extracted from this page. Try
-        Re-OCR, or untick "This is a Table of Contents page" if it's a
-        regular recipe.
+        No table-of-contents entries were extracted from this page. Try Re-OCR, or untick "This is a
+        Table of Contents page" if it's a regular recipe.
       </div>
     );
   }
@@ -157,10 +153,9 @@ export function TocReviewPanel({
           Review table of contents ({entries.length})
         </h2>
         <p className="text-xs text-stone-600 dark:text-stone-400">
-          Approve to create a placeholder recipe for each entry in the
-          target cookbook. Edit titles or page numbers, and untick anything
-          you don't want. Star the ones you want to capture and the Speed
-          Importer will walk you through scanning each.
+          Approve to create a placeholder recipe for each entry in the target cookbook. Edit titles
+          or page numbers, and untick anything you don't want. Star the ones you want to capture and
+          the Speed Importer will walk you through scanning each.
         </p>
       </div>
 

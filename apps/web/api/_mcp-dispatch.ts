@@ -5,7 +5,7 @@
 // Kept separate from the Vercel handler so unit tests can exercise
 // every method + tool without running a web server.
 
-import { TOOLS, TOOL_INDEX, type RpcClient } from './_mcp-tools.js';
+import { type RpcClient, TOOL_INDEX, TOOLS } from './_mcp-tools.js';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'cookyourbooks-mcp', version: '0.1.0' };
@@ -57,7 +57,7 @@ export async function dispatch(
           capabilities: { tools: { listChanged: false } },
           serverInfo: SERVER_INFO,
           instructions:
-            'Access a user\'s CookYourBooks library: read collections + recipes, search, ' +
+            "Access a user's CookYourBooks library: read collections + recipes, search, " +
             'create new recipes, and manage a persistent shopping list. All operations are ' +
             "scoped to the bearer token's owner; the server refuses cross-user access.",
         });

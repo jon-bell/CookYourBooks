@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+
 import type { ImportItem } from './model.js';
-import {
-  computeBatchQueueInfo,
-  describeOcrQueueInfo,
-  isOcrInProgress,
-} from './ocrStatus.js';
+import { computeBatchQueueInfo, describeOcrQueueInfo, isOcrInProgress } from './ocrStatus.js';
 
 export function OcrStatusBanner({
   item,
@@ -19,10 +16,7 @@ export function OcrStatusBanner({
   const active = isOcrInProgress(item.status);
   const now = useTickingNow(active);
 
-  const info = useMemo(
-    () => computeBatchQueueInfo(item, batchItems, now),
-    [item, batchItems, now],
-  );
+  const info = useMemo(() => computeBatchQueueInfo(item, batchItems, now), [item, batchItems, now]);
 
   if (!info) return null;
 

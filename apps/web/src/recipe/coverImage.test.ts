@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { coverObjectKey } from './coverImage.js';
 
 // prepareCoverImage relies on canvas / createImageBitmap, which the Node test

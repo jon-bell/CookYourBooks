@@ -9,7 +9,7 @@ export async function forkCollection(
   });
   if (error) throw error;
   if (!data) throw new Error('fork_collection did not return an id');
-  return data as string;
+  return data;
 }
 
 export interface PublicCollectionSummary {
@@ -54,7 +54,7 @@ export async function listPublicCollectionRecipeTitles(
   // PostgREST/Kong URL cap (UUIDs run ~36 chars each).
   const CHUNK = 200;
   for (let i = 0; i < collectionIds.length; i += CHUNK) {
-    const slice = collectionIds.slice(i, i + CHUNK) as string[];
+    const slice = collectionIds.slice(i, i + CHUNK);
     const { data, error } = await client
       .from('recipes')
       .select('id, title, sort_order, collection_id')

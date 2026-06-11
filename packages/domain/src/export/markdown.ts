@@ -1,6 +1,6 @@
-import type { Recipe } from '../model/recipe.js';
-import { formatQuantity } from '../model/quantity.js';
 import { isMeasured } from '../model/ingredient.js';
+import { formatQuantity } from '../model/quantity.js';
+import type { Recipe } from '../model/recipe.js';
 import { formatServings } from '../model/servings.js';
 
 export function recipeToMarkdown(recipe: Recipe): string {

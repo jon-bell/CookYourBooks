@@ -137,8 +137,7 @@ export async function seedUserLibrary(params: {
   if (!col) throw new Error('seedUserLibrary: no collection returned');
 
   // Mint UUIDs locally so we can stitch FK rows in one round-trip per table.
-  const recipes: { id: string; collection_id: string; title: string; sort_order: number }[] =
-    [];
+  const recipes: { id: string; collection_id: string; title: string; sort_order: number }[] = [];
   const ingredients: Record<string, unknown>[] = [];
   const instructions: Record<string, unknown>[] = [];
   for (let i = 0; i < params.recipeCount; i += 1) {
@@ -361,9 +360,7 @@ export async function seedPublicCollection(params: {
         const instructionId = stepIds[ref.instructionIndex];
         const ingredientId = ingIds[ref.ingredientIndex];
         if (!instructionId || !ingredientId) {
-          throw new Error(
-            `seedPublicCollection: ref index out of range for "${spec.title}"`,
-          );
+          throw new Error(`seedPublicCollection: ref index out of range for "${spec.title}"`);
         }
         refRows.push({ instruction_id: instructionId, ingredient_id: ingredientId });
       }

@@ -1,59 +1,60 @@
+import { useEffect, useRef } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { LibraryPage } from './pages/LibraryPage.js';
-import { AllRecipesPage } from './pages/AllRecipesPage.js';
-import { CollectionPage } from './pages/CollectionPage.js';
-import { RecipePage } from './pages/RecipePage.js';
-import { RecipeEditorPage } from './pages/RecipeEditorPage.js';
-import { SearchPage } from './pages/SearchPage.js';
-import { ShoppingListPage } from './pages/ShoppingListPage.js';
-import { CookingTrackerPage } from './pages/CookingTrackerPage.js';
-import { CookSessionPage } from './pages/CookSessionPage.js';
-import { RecentlyViewedPage } from './pages/RecentlyViewedPage.js';
-import { TagBrowsePage } from './pages/TagBrowsePage.js';
-import { NewCollectionPage } from './pages/NewCollectionPage.js';
-import { CookModePage } from './pages/CookModePage.js';
-import { AdminPage } from './pages/AdminPage.js';
+
+import { useAuth } from './auth/AuthProvider.js';
+import { RequireAuth } from './auth/RequireAuth.js';
+import { SignInPage } from './auth/SignInPage.js';
+import { SignUpPage } from './auth/SignUpPage.js';
+import { LoadingState } from './components/LoadingState.js';
+import { SyncBadge } from './components/SyncBadge.js';
+import { useToast } from './components/ToastProvider.js';
+import { UserMenu } from './components/UserMenu.js';
+import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
+import { HelpDialog } from './keyboard/HelpDialog.js';
+import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
+import { MobileNav } from './nav/MobileNav.js';
+import { PRIMARY_NAV } from './nav/navItems.js';
+import { ScrollTopButton } from './nav/ScrollTopButton.js';
+import { useHardwareBack } from './nav/useHardwareBack.js';
+import { useScrollRestoration } from './nav/useScrollRestoration.js';
+import { ActivityPage } from './pages/ActivityPage.js';
 import { AdminGlobalTocPage } from './pages/AdminGlobalTocPage.js';
 import { AdminNutritionPage } from './pages/AdminNutritionPage.js';
-import { DiscoverPage } from './pages/DiscoverPage.js';
-import { SharedRecipePage } from './pages/SharedRecipePage.js';
-import { LandingPage } from './pages/LandingPage.js';
-import { SettingsLlmPage } from './pages/SettingsLlmPage.js';
-import { SettingsConversionsPage } from './pages/SettingsConversionsPage.js';
-import { SettingsCliPage } from './pages/SettingsCliPage.js';
-import { SettingsDangerPage } from './pages/SettingsDangerPage.js';
-import { HouseholdPage } from './pages/HouseholdPage.js';
-import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
+import { AdminPage } from './pages/AdminPage.js';
+import { AllRecipesPage } from './pages/AllRecipesPage.js';
+import { CollectionPage } from './pages/CollectionPage.js';
+import { CookingTrackerPage } from './pages/CookingTrackerPage.js';
+import { CookModePage } from './pages/CookModePage.js';
+import { CookSessionPage } from './pages/CookSessionPage.js';
 import { CostCenterPage } from './pages/CostCenterPage.js';
-import { ActivityPage } from './pages/ActivityPage.js';
-import { LegalPage } from './pages/LegalPage.js';
-import { ImportListPage } from './pages/ImportListPage.js';
-import { ImportNewPage } from './pages/ImportNewPage.js';
+import { DiscoverPage } from './pages/DiscoverPage.js';
+import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
+import { HouseholdPage } from './pages/HouseholdPage.js';
+import { ImportBakeoffNewPage } from './pages/ImportBakeoffNewPage.js';
 import { ImportBatchPage } from './pages/ImportBatchPage.js';
 import { ImportGroupingPage } from './pages/ImportGroupingPage.js';
 import { ImportItemPage } from './pages/ImportItemPage.js';
-import { ImportBakeoffNewPage } from './pages/ImportBakeoffNewPage.js';
-import { SpeedImporterPage } from './pages/SpeedImporterPage.js';
 import { ImportLinkPage } from './pages/ImportLinkPage.js';
+import { ImportListPage } from './pages/ImportListPage.js';
+import { ImportNewPage } from './pages/ImportNewPage.js';
+import { LandingPage } from './pages/LandingPage.js';
+import { LegalPage } from './pages/LegalPage.js';
+import { LibraryPage } from './pages/LibraryPage.js';
+import { NewCollectionPage } from './pages/NewCollectionPage.js';
+import { RecentlyViewedPage } from './pages/RecentlyViewedPage.js';
+import { RecipeEditorPage } from './pages/RecipeEditorPage.js';
+import { RecipePage } from './pages/RecipePage.js';
 import { ScanPagesPage } from './pages/ScanPagesPage.js';
-import { SignInPage } from './auth/SignInPage.js';
-import { SignUpPage } from './auth/SignUpPage.js';
-import { RequireAuth } from './auth/RequireAuth.js';
-import { UserMenu } from './components/UserMenu.js';
-import { SyncBadge } from './components/SyncBadge.js';
+import { SearchPage } from './pages/SearchPage.js';
+import { SettingsCliPage } from './pages/SettingsCliPage.js';
+import { SettingsConversionsPage } from './pages/SettingsConversionsPage.js';
+import { SettingsDangerPage } from './pages/SettingsDangerPage.js';
+import { SettingsLlmPage } from './pages/SettingsLlmPage.js';
+import { SharedRecipePage } from './pages/SharedRecipePage.js';
+import { ShoppingListPage } from './pages/ShoppingListPage.js';
+import { SpeedImporterPage } from './pages/SpeedImporterPage.js';
+import { TagBrowsePage } from './pages/TagBrowsePage.js';
 import { ThemePicker } from './theme/ThemePicker.js';
-import { MobileNav } from './nav/MobileNav.js';
-import { PRIMARY_NAV } from './nav/navItems.js';
-import { useScrollRestoration } from './nav/useScrollRestoration.js';
-import { useHardwareBack } from './nav/useHardwareBack.js';
-import { ScrollTopButton } from './nav/ScrollTopButton.js';
-import { useAuth } from './auth/AuthProvider.js';
-import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
-import { HelpDialog } from './keyboard/HelpDialog.js';
-import { useEffect, useRef } from 'react';
-import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
-import { useToast } from './components/ToastProvider.js';
-import { LoadingState } from './components/LoadingState.js';
 
 export function App() {
   const { user } = useAuth();
@@ -358,10 +359,7 @@ export function App() {
               </RequireAuth>
             }
           />
-          <Route
-            path="/household/join"
-            element={<HouseholdJoinPage />}
-          />
+          <Route path="/household/join" element={<HouseholdJoinPage />} />
           <Route
             path="/cost"
             element={

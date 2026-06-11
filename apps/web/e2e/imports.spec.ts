@@ -1,6 +1,7 @@
-import { expect, test } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import {
   configureOcrKey,
+  type FakeRecipeDraft,
   listBatchItems,
   listItemAttempts,
   seedOcrFixture,
@@ -9,9 +10,7 @@ import {
   waitForBatchItemCount,
   waitForBatchStatus,
   waitForItemStatuses,
-  type FakeRecipeDraft,
 } from './support/imports.js';
-import { waitForSynced } from './support/fixtures.js';
 
 function recipeDraft(title: string, ingredient: string): FakeRecipeDraft {
   return {
@@ -39,10 +38,7 @@ async function batchIdFromUrl(page: import('@playwright/test').Page): Promise<st
   return m[1]!;
 }
 
-async function createCookbook(
-  page: import('@playwright/test').Page,
-  title: string,
-): Promise<void> {
+async function createCookbook(page: import('@playwright/test').Page, title: string): Promise<void> {
   await page.goto('/library');
   await waitForSynced(page);
   await page.getByRole('link', { name: 'New collection' }).click();
@@ -205,11 +201,7 @@ test.describe('bulk OCR imports', () => {
     });
 
     await triggerWorker(batchId);
-    await waitForItemStatuses(
-      batchId,
-      (c) => c.needsFallback === 2 && c.ocrDone === 1,
-      45_000,
-    );
+    await waitForItemStatuses(batchId, (c) => c.needsFallback === 2 && c.ocrDone === 1, 45_000);
 
     await page.reload();
     await waitForSynced(page);

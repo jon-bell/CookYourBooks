@@ -20,8 +20,7 @@ export function shareAudience(args: {
 export const SHARE_AUDIENCE_MESSAGE: Record<ShareAudience, string> = {
   public: 'Link copied — anyone with the link can view (collection is public)',
   household: 'Link copied — only your household can open this link',
-  private:
-    'Link copied — only you can open this; make the collection public to share it',
+  private: 'Link copied — only you can open this; make the collection public to share it',
 };
 
 export const SHARE_AUDIENCE_TONE: Record<ShareAudience, 'success' | 'info' | 'warn'> = {

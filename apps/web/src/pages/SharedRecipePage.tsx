@@ -1,19 +1,19 @@
+import { fetchSharedRecipe } from '@cookyourbooks/db';
+import { adaptRecipe, createPersonalCollection } from '@cookyourbooks/domain';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { adaptRecipe } from '@cookyourbooks/domain';
-import { fetchSharedRecipe } from '@cookyourbooks/db';
-import { createPersonalCollection } from '@cookyourbooks/domain';
-import { supabase } from '../supabase.js';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
-import { getRecipeSummary } from '../local/repositories.js';
-import { collectionRepo, recipeRepo } from '../data/repos.js';
 import { LoadingState } from '../components/LoadingState.js';
 import { useToast } from '../components/ToastProvider.js';
+import { collectionRepo, recipeRepo } from '../data/repos.js';
+import { getRecipeSummary } from '../local/repositories.js';
+import { useSync } from '../local/SyncProvider.js';
 import { RecipeContentGrid, RecipeHeaderMeta } from '../recipe/RecipeBody.js';
-import { useRecipeTextScale } from '../recipe/useRecipeTextScale.js';
 import { usePinchTextScale } from '../recipe/usePinchTextScale.js';
+import { useRecipeTextScale } from '../recipe/useRecipeTextScale.js';
+import { supabase } from '../supabase.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -60,8 +60,7 @@ export function SharedRecipePage() {
     enabled:
       validId &&
       !authLoading &&
-      (!user ||
-        (localProbeUsable ? localHit.isSuccess && localHit.data === null : true)),
+      (!user || (localProbeUsable ? localHit.isSuccess && localHit.data === null : true)),
     queryFn: () => fetchSharedRecipe(supabase, recipeId!),
     retry: 1,
   });
@@ -155,14 +154,12 @@ export function SharedRecipePage() {
     remote.isLoading ||
     (remote.isPending && !remote.isError)
   ) {
-    return (
-      <LoadingState surface="shared-recipe" hints={['Fetching the shared recipe…']} />
-    );
+    return <LoadingState surface="shared-recipe" hints={['Fetching the shared recipe…']} />;
   }
   if (remote.isError) {
     return (
       <p className="text-red-700 dark:text-red-300">
-        Couldn’t load this recipe: {(remote.error as Error).message}
+        Couldn’t load this recipe: {remote.error.message}
       </p>
     );
   }
@@ -181,7 +178,10 @@ export function SharedRecipePage() {
           {collection ? (
             <>
               {' '}
-              · from <span className="font-medium text-stone-900 dark:text-stone-100">{collection.title}</span>
+              · from{' '}
+              <span className="font-medium text-stone-900 dark:text-stone-100">
+                {collection.title}
+              </span>
             </>
           ) : null}
         </span>

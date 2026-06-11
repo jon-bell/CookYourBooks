@@ -1,16 +1,30 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   adaptRecipe,
   createRegistry,
+  exact,
   formatQuantity,
+  type Quantity,
   recipeToMarkdown,
   scaleRecipe,
   StandardConversions,
   Units,
-  type Quantity,
-  exact,
 } from '@cookyourbooks/domain';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+
+import { DropdownMenu, DropdownMenuItem } from '../components/DropdownMenu.js';
+import { LoadingState } from '../components/LoadingState.js';
+import { RecipeCoverImageEditor } from '../components/RecipeCoverImageEditor.js';
+import { RecipeScanDialog } from '../components/RecipeScanDialog.js';
+import { CookingHistoryPanel } from '../cooking/CookingHistoryPanel.js';
+import { CookingPanel } from '../cooking/CookingPanel.js';
+import { useRecordRecipeView } from '../cooking/queries.js';
+import { TagEditor } from '../cooking/TagEditor.js';
+import {
+  toDomainRule,
+  useGlobalConversionRules,
+  useHouseConversionRules,
+} from '../data/conversions.js';
 import {
   useAdaptations,
   useCollectionMeta,
@@ -19,17 +33,7 @@ import {
   useRecipeSummary,
   useSaveRecipe,
 } from '../data/queries.js';
-import {
-  toDomainRule,
-  useGlobalConversionRules,
-  useHouseConversionRules,
-} from '../data/conversions.js';
-import { shareRecipe } from '../share/share.js';
-import { ShareLinkButton } from '../share/ShareLinkButton.js';
-import { shareAudience } from '../share/shareAudience.js';
 import { useMyHousehold } from '../household/queries.js';
-import { useRewriteJob } from '../recipe/useRewriteJob.js';
-import { RemixDialog } from '../recipe/RemixDialog.js';
 import {
   cancelRewrite,
   getUserRewritePrefs,
@@ -37,23 +41,24 @@ import {
   OcrWorkerNotConfiguredError,
   startRewrite,
 } from '../import/api.js';
+import { useImportItemsForRecipe } from '../import/queries.js';
+import { RecipeNutritionPanel } from '../nutrition/RecipeNutritionPanel.js';
+import { RecipeContentGrid, RecipeHeaderMeta } from '../recipe/RecipeBody.js';
+import { RemixDialog } from '../recipe/RemixDialog.js';
+import { usePinchTextScale } from '../recipe/usePinchTextScale.js';
+import {
+  TEXT_SCALE_MAX,
+  TEXT_SCALE_MIN,
+  useRecipeTextScale,
+} from '../recipe/useRecipeTextScale.js';
+import { useRewriteJob } from '../recipe/useRewriteJob.js';
 import {
   DEFAULT_REWRITE_MODEL_BY_PROVIDER,
   DEFAULT_REWRITE_PROMPT,
 } from '../settings/rewriteSettings.js';
-import { useImportItemsForRecipe } from '../import/queries.js';
-import { RecipeScanDialog } from '../components/RecipeScanDialog.js';
-import { RecipeCoverImageEditor } from '../components/RecipeCoverImageEditor.js';
-import { DropdownMenu, DropdownMenuItem } from '../components/DropdownMenu.js';
-import { RecipeHeaderMeta, RecipeContentGrid } from '../recipe/RecipeBody.js';
-import { useRecipeTextScale, TEXT_SCALE_MAX, TEXT_SCALE_MIN } from '../recipe/useRecipeTextScale.js';
-import { usePinchTextScale } from '../recipe/usePinchTextScale.js';
-import { RecipeNutritionPanel } from '../nutrition/RecipeNutritionPanel.js';
-import { CookingPanel } from '../cooking/CookingPanel.js';
-import { CookingHistoryPanel } from '../cooking/CookingHistoryPanel.js';
-import { TagEditor } from '../cooking/TagEditor.js';
-import { useRecordRecipeView } from '../cooking/queries.js';
-import { LoadingState } from '../components/LoadingState.js';
+import { shareRecipe } from '../share/share.js';
+import { shareAudience } from '../share/shareAudience.js';
+import { ShareLinkButton } from '../share/ShareLinkButton.js';
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
@@ -193,9 +198,7 @@ export function RecipePage() {
 
   return (
     <div className="space-y-6 overflow-x-clip">
-      {showScan && (
-        <RecipeScanDialog items={importItems} onClose={() => setShowScan(false)} />
-      )}
+      {showScan && <RecipeScanDialog items={importItems} onClose={() => setShowScan(false)} />}
       {showRemix && (
         <RemixDialog
           recipe={recipe}
@@ -208,7 +211,10 @@ export function RecipePage() {
         />
       )}
       <div>
-        <Link to={`/collections/${collection.id}`} className="text-sm text-stone-600 dark:text-stone-400 hover:underline">
+        <Link
+          to={`/collections/${collection.id}`}
+          className="text-sm text-stone-600 dark:text-stone-400 hover:underline"
+        >
           ← {collection.title}
         </Link>
         <RecipeHeaderMeta
@@ -286,11 +292,7 @@ export function RecipePage() {
             ))}
           </select>
         </label>
-        <div
-          role="group"
-          aria-label="Text size"
-          className="flex items-center gap-1 text-sm"
-        >
+        <div role="group" aria-label="Text size" className="flex items-center gap-1 text-sm">
           <button
             type="button"
             onClick={textScale.decrease}
@@ -362,7 +364,7 @@ export function RecipePage() {
                 {!rewriteInFlight && (
                   <DropdownMenuItem
                     testId={rewriteFailed ? 'rewrite-retry' : 'improve-instructions'}
-                    title={rewriteFailed ? rewriteJob?.lastError ?? 'Rewrite failed' : undefined}
+                    title={rewriteFailed ? (rewriteJob?.lastError ?? 'Rewrite failed') : undefined}
                     onSelect={() => {
                       close();
                       void startImprove();
@@ -463,9 +465,7 @@ export function RecipePage() {
 
       {adaptations.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-lg font-semibold">
-            Adaptations ({adaptations.length})
-          </h2>
+          <h2 className="text-lg font-semibold">Adaptations ({adaptations.length})</h2>
           <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
             {adaptations.map((a) => (
               <li key={a.id}>
@@ -494,4 +494,3 @@ function quantityValue(q: Quantity): number {
       return (q.min + q.max) / 2;
   }
 }
-

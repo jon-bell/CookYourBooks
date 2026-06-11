@@ -1,6 +1,7 @@
 import { useState } from 'react';
+
 import { OcrWorkerNotConfiguredError } from '../import/api.js';
-import { generateCovers, type CoverScope } from '../recipe/coverApi.js';
+import { type CoverScope, generateCovers } from '../recipe/coverApi.js';
 
 /**
  * Enqueue Gemini cover generation for a scope (a collection or the whole

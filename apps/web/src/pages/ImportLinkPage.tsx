@@ -1,10 +1,9 @@
+import { createRecipe, type ParsedRecipeDraft } from '@cookyourbooks/domain';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { createRecipe, type ParsedRecipeDraft } from '@cookyourbooks/domain';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
-import { reportError } from '../sentry.js';
 import { collectionRepo, recipeRepo } from '../data/repos.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import {
@@ -12,6 +11,8 @@ import {
   VideoImportError,
   type VideoImportResult,
 } from '../import/videoImport.js';
+import { useSync } from '../local/SyncProvider.js';
+import { reportError } from '../sentry.js';
 
 type Phase = 'idle' | 'extracting' | 'picking' | 'saving';
 
@@ -150,9 +151,8 @@ export function ImportLinkPage() {
     <main className="mx-auto max-w-xl p-4">
       <h1 className="mb-1 text-xl font-semibold">Import from a link</h1>
       <p className="mb-4 text-sm text-stone-600 dark:text-stone-400">
-        Paste any recipe link — a YouTube, TikTok, or Instagram video, or a
-        recipe website. We'll extract the recipe and add it to a collection for
-        that site.
+        Paste any recipe link — a YouTube, TikTok, or Instagram video, or a recipe website. We'll
+        extract the recipe and add it to a collection for that site.
       </p>
 
       <form
@@ -177,8 +177,8 @@ export function ImportLinkPage() {
         {needsCaption && (
           <div className="flex flex-col gap-1">
             <label htmlFor="video-caption" className="text-xs text-stone-600 dark:text-stone-400">
-              We couldn't read this automatically (some sites block us or sit behind
-              a paywall). Paste the recipe text — ingredients and steps:
+              We couldn't read this automatically (some sites block us or sit behind a paywall).
+              Paste the recipe text — ingredients and steps:
             </label>
             <textarea
               id="video-caption"

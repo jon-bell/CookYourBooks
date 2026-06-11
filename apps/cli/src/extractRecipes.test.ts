@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { describe, expect, it } from 'vitest';
 
 // The shape-tolerant parser lives inside `index.ts` and isn't exported,
 // so we exercise it via the compiled binary. That keeps the test honest
@@ -14,7 +15,10 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIST = join(HERE, '..', 'dist', 'index.js');
 
-function runCli(args: string[], env: Record<string, string> = {}): {
+function runCli(
+  args: string[],
+  env: Record<string, string> = {},
+): {
   status: number | null;
   stdout: string;
   stderr: string;
@@ -89,10 +93,9 @@ describe('cyb cli', () => {
   });
 
   it('toc import-cookbooks without login prints a useful message', () => {
-    const result = runCli(
-      ['toc', 'import-cookbooks', '/nonexistent-dir'],
-      { XDG_CONFIG_HOME: '/tmp/cyb-missing-cfg' },
-    );
+    const result = runCli(['toc', 'import-cookbooks', '/nonexistent-dir'], {
+      XDG_CONFIG_HOME: '/tmp/cyb-missing-cfg',
+    });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/Not logged in/);
   });

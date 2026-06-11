@@ -1,5 +1,5 @@
-import { test, expect, waitForSynced } from './support/fixtures.js';
 import { adminGet } from './support/admin.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 
 test.describe('Local-first: offline writes flush on reconnect', () => {
   test('queued create survives a reconnect and lands remotely', async ({
@@ -29,10 +29,9 @@ test.describe('Local-first: offline writes flush on reconnect', () => {
     // Wait for the in-flight cycle to finish (either 'Sync error' or 'Synced
     // · N queued' — both final, non-syncing states). If we dispatch the
     // online event too early it coalesces into the still-running cycle.
-    await expect(page.locator('header button[title]')).toContainText(
-      /Sync error|queued/,
-      { timeout: 15_000 },
-    );
+    await expect(page.locator('header button[title]')).toContainText(/Sync error|queued/, {
+      timeout: 15_000,
+    });
 
     await context.unroute('**/127.0.0.1:54421/**');
     // Reconnection: the production app relies on the browser's 'online' event

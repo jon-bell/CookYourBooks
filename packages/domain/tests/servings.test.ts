@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { formatServings, servings } from '../src/model/servings.js';
 
 describe('formatServings', () => {

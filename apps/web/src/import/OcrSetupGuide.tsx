@@ -13,13 +13,12 @@ export function OcrSetupGuide() {
     >
       <h2 className="text-base font-semibold">Set up OCR to import recipes</h2>
       <p className="mt-1 text-amber-900 dark:text-amber-200">
-        Importing photos and PDFs uses a vision AI model with your own API key. It takes a minute
-        to set up — or, if you're in a household, ask the owner to share theirs.
+        Importing photos and PDFs uses a vision AI model with your own API key. It takes a minute to
+        set up — or, if you're in a household, ask the owner to share theirs.
       </p>
       <ol className="mt-3 list-decimal space-y-2 pl-5">
         <li>
-          <span className="font-medium">Get an API key.</span> For Google Gemini, create one free
-          at{' '}
+          <span className="font-medium">Get an API key.</span> For Google Gemini, create one free at{' '}
           <a
             href="https://aistudio.google.com/apikey"
             target="_blank"
@@ -31,7 +30,8 @@ export function OcrSetupGuide() {
           . Any OpenAI-compatible provider (OpenAI, Groq, Together, OpenRouter…) works too.
         </li>
         <li>
-          <span className="font-medium">Paste it into{' '}
+          <span className="font-medium">
+            Paste it into{' '}
             <Link to="/settings/llm" className="underline">
               Settings
             </Link>

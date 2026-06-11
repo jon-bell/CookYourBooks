@@ -8,7 +8,7 @@
 // Private data never reaches this function, so a fallback card is
 // emitted when the collection isn't public instead of leaking a 404.
 
-import { cleanDescription, renderOgHtml, type OgMeta } from './_og-html.js';
+import { cleanDescription, type OgMeta, renderOgHtml } from './_og-html.js';
 
 export const config = { runtime: 'edge' };
 
@@ -23,9 +23,7 @@ function env(name: string): string | undefined {
 function supabaseCreds(): { url: string; anonKey: string } | undefined {
   const url = env('SUPABASE_URL') ?? env('VITE_SUPABASE_URL');
   const anonKey =
-    env('SUPABASE_ANON_KEY') ??
-    env('SUPABASE_PUBLISHABLE_KEY') ??
-    env('VITE_SUPABASE_ANON_KEY');
+    env('SUPABASE_ANON_KEY') ?? env('SUPABASE_PUBLISHABLE_KEY') ?? env('VITE_SUPABASE_ANON_KEY');
   if (!url || !anonKey) return undefined;
   return { url, anonKey };
 }
@@ -95,17 +93,13 @@ function fallbackMeta(url: string): OgMeta {
   return {
     kind: 'site',
     title: 'CookYourBooks',
-    description:
-      'Your cookbook library, with you everywhere. Offline-first recipe manager.',
+    description: 'Your cookbook library, with you everywhere. Offline-first recipe manager.',
     url,
     subtitle: 'Free as in sourdough starter',
   };
 }
 
-function collectionMeta(
-  url: string,
-  row: PublicCollectionRow,
-): OgMeta {
+function collectionMeta(url: string, row: PublicCollectionRow): OgMeta {
   const subtitleBits: string[] = [];
   if (row.author) subtitleBits.push(`by ${row.author}`);
   if (row.source_type === 'PUBLISHED_BOOK') subtitleBits.push('Cookbook');
@@ -122,17 +116,12 @@ function collectionMeta(
   };
 }
 
-function recipeMeta(
-  url: string,
-  recipe: RecipeRow,
-  collection: PublicCollectionRow,
-): OgMeta {
+function recipeMeta(url: string, recipe: RecipeRow, collection: PublicCollectionRow): OgMeta {
   return {
     kind: 'recipe',
     title: recipe.title,
     description:
-      cleanDescription(recipe.notes) ||
-      `A recipe from "${collection.title}" on CookYourBooks.`,
+      cleanDescription(recipe.notes) || `A recipe from "${collection.title}" on CookYourBooks.`,
     url,
     subtitle: collection.title,
   };

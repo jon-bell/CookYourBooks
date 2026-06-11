@@ -1,18 +1,20 @@
-import type { ReactNode } from 'react';
 import {
   formatQuantity,
-  isMeasured,
   type Ingredient,
   type Instruction,
+  isMeasured,
   type ParsedRecipeDraft,
 } from '@cookyourbooks/domain';
-import type { DraftPreviewHighlights, DiffKind } from './bakeoff.js';
+import type { ReactNode } from 'react';
+
+import type { DiffKind, DraftPreviewHighlights } from './bakeoff.js';
 
 function highlightClass(kind: DiffKind, side: 'left' | 'right'): string {
   if (kind === 'same') return '';
   if (kind === 'change') return 'rounded-sm bg-amber-50 dark:bg-amber-950/30';
   if (kind === 'del') return side === 'left' ? 'rounded-sm bg-red-50 dark:bg-red-950/30' : '';
-  if (kind === 'add') return side === 'right' ? 'rounded-sm bg-emerald-50 dark:bg-emerald-950/30' : '';
+  if (kind === 'add')
+    return side === 'right' ? 'rounded-sm bg-emerald-50 dark:bg-emerald-950/30' : '';
   return '';
 }
 
@@ -68,11 +70,7 @@ export function DraftPreview({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
             <span className="inline-flex items-baseline gap-1">
               <span className="text-stone-400">time</span>
-              {wrapHighlight(
-                h.timeEstimate,
-                side,
-                <span>{draft.timeEstimate ?? '(time)'}</span>,
-              )}
+              {wrapHighlight(h.timeEstimate, side, <span>{draft.timeEstimate ?? '(time)'}</span>)}
             </span>
           </div>
         )}

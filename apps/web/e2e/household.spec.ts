@@ -1,6 +1,7 @@
-import { test, expect, signIn, waitForSynced } from './support/fixtures.js';
 import { createTestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, signIn, test, waitForSynced } from './support/fixtures.js';
+import { createRecipeViaUi } from './support/helpers.js';
 import {
   acceptTosViaService,
   cleanupHouseholdFor,
@@ -11,7 +12,6 @@ import {
   seedHousehold,
   seedMembership,
 } from './support/household.js';
-import { createRecipeViaUi } from './support/helpers.js';
 
 // All household tests share the same teardown pattern: tear down each
 // test user we created, plus any household state we seeded. Tests use
@@ -19,9 +19,7 @@ import { createRecipeViaUi } from './support/helpers.js';
 // fixture so we can attribute cleanup precisely.
 
 test.describe('Household sharing', () => {
-  test('owner creates household + invites a member + shares a collection', async ({
-    browser,
-  }) => {
+  test('owner creates household + invites a member + shares a collection', async ({ browser }) => {
     // Two browser contexts + full create / invite / accept / share / sync
     // round-trip blows past the default 30s.
     test.setTimeout(90_000);
@@ -38,14 +36,10 @@ test.describe('Household sharing', () => {
       // ---- Owner side: create household ----
       await signIn(pageA, owner);
       await pageA.goto('/household');
-      await expect(
-        pageA.getByRole('heading', { name: 'Household sharing' }),
-      ).toBeVisible();
+      await expect(pageA.getByRole('heading', { name: 'Household sharing' })).toBeVisible();
       await pageA.getByLabel('Household name').fill('Test Household');
       await pageA.getByRole('button', { name: 'Create household' }).click();
-      await expect(
-        pageA.getByRole('heading', { name: 'Test Household' }),
-      ).toBeVisible();
+      await expect(pageA.getByRole('heading', { name: 'Test Household' })).toBeVisible();
 
       // Generate invite
       await pageA.getByRole('button', { name: 'Create invite link' }).click();
@@ -62,7 +56,10 @@ test.describe('Household sharing', () => {
       // Library sharing is on by default for household members, so the
       // collection is shared without any per-collection action — the
       // collection page just reflects that state.
-      await pageA.getByRole('link', { name: /Family Recipes/ }).first().click();
+      await pageA
+        .getByRole('link', { name: /Family Recipes/ })
+        .first()
+        .click();
       await expect(pageA.getByTestId('household-share-status')).toContainText(
         /Shared with Test Household/,
       );
@@ -70,9 +67,7 @@ test.describe('Household sharing', () => {
       // ---- Member side: accept invite ----
       await joinHouseholdViaInvite(pageB, member, token);
       // /household page should show the member view
-      await expect(
-        pageB.getByRole('heading', { name: 'Test Household' }),
-      ).toBeVisible();
+      await expect(pageB.getByRole('heading', { name: 'Test Household' })).toBeVisible();
       // Member sees the owner row in the member list.
       await expect(pageB.getByText(/OWNER · joined/)).toBeVisible({ timeout: 10_000 });
 
@@ -99,7 +94,10 @@ test.describe('Household sharing', () => {
 
       await pageB.reload();
       await waitForSynced(pageB);
-      await pageB.getByRole('link', { name: /Family Recipes/ }).first().click();
+      await pageB
+        .getByRole('link', { name: /Family Recipes/ })
+        .first()
+        .click();
       await expect(pageB.getByText('Tuesday Tacos')).toBeVisible({ timeout: 20_000 });
     } finally {
       await cleanupHouseholdFor([owner.id, member.id]);
@@ -140,20 +138,20 @@ test.describe('Household sharing', () => {
       // We bypass the UI guard by issuing an invite via RPC (service role
       // can do this without going through the cap check at invite time —
       // the cap is enforced at *accept* time).
-      const invite = (await householdRest<{ id: string; token: string }[]>(
-        '/rest/v1/household_invites',
-        {
+      const invite = (
+        await householdRest<{ id: string; token: string }[]>('/rest/v1/household_invites', {
           method: 'POST',
           body: {
             household_id: householdId,
-            token: Array.from({ length: 48 }, () =>
-              '0123456789abcdef'[Math.floor(Math.random() * 16)],
+            token: Array.from(
+              { length: 48 },
+              () => '0123456789abcdef'[Math.floor(Math.random() * 16)],
             ).join(''),
             created_by: owner.id,
             expires_at: new Date(Date.now() + 86400_000).toISOString(),
           },
-        },
-      ))[0]!;
+        })
+      )[0]!;
 
       // Now the 7th member tries to accept — should fail with cap error.
       const userCtx = await browser.newContext();
@@ -162,9 +160,7 @@ test.describe('Household sharing', () => {
         await signIn(userPage, seventh);
         await userPage.goto(`/household/join?token=${invite.token}`);
         await userPage.getByRole('button', { name: 'Join household' }).click();
-        await expect(
-          userPage.getByText(/Household is full/),
-        ).toBeVisible({ timeout: 10_000 });
+        await expect(userPage.getByText(/Household is full/)).toBeVisible({ timeout: 10_000 });
       } finally {
         await userCtx.close();
       }
@@ -202,16 +198,12 @@ test.describe('Household sharing', () => {
       // banner check no longer races the leave round-trip at the default 5s.
       await waitForSynced(page);
       // After leaving, the page shows the no-household view.
-      await expect(
-        page.getByRole('heading', { name: 'Household sharing' }),
-      ).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Household sharing' })).toBeVisible();
       // And the cooldown banner is visible.
       await expect(page.getByText(/You recently left/)).toBeVisible();
       // Create-household button is disabled.
       await page.getByLabel('Household name').fill('Try Again');
-      await expect(
-        page.getByRole('button', { name: 'Create household' }),
-      ).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Create household' })).toBeDisabled();
     } finally {
       await cleanupHouseholdFor([owner.id, leaver.id]);
       await owner.cleanup();
@@ -240,7 +232,10 @@ test.describe('Household sharing', () => {
         ingredients: [{ kind: 'vague', name: 'flour' }],
         steps: ['Mix', 'Bake'],
       });
-      await page.getByRole('link', { name: /Will Be Shared/ }).first().click();
+      await page
+        .getByRole('link', { name: /Will Be Shared/ })
+        .first()
+        .click();
       // Library sharing is on by default, so this collection is already
       // household-shared (the public-flip cascade keys off that).
       await expect(page.getByTestId('household-share-status')).toContainText(/Shared with/);
@@ -253,13 +248,10 @@ test.describe('Household sharing', () => {
       // Wind last_share_attested_at back beyond the 5-minute cascade
       // window via service role to simulate the realistic "shared
       // hours ago, now trying to publish" case.
-      await householdRest(
-        `/rest/v1/recipe_collections?id=eq.${collectionId}`,
-        {
-          method: 'PATCH',
-          body: { last_share_attested_at: new Date(Date.now() - 3600_000).toISOString() },
-        },
-      );
+      await householdRest(`/rest/v1/recipe_collections?id=eq.${collectionId}`, {
+        method: 'PATCH',
+        body: { last_share_attested_at: new Date(Date.now() - 3600_000).toISOString() },
+      });
 
       // Attempt to flip is_public=true via service role. The trigger
       // runs regardless of auth.uid() and should reject with a clear
@@ -293,13 +285,10 @@ test.describe('Household sharing', () => {
       // it from service-role context — instead, just bump the
       // timestamp directly (mimics what the RPC would do under a real
       // session) and confirm the flip works.
-      await householdRest(
-        `/rest/v1/recipe_collections?id=eq.${collectionId}`,
-        {
-          method: 'PATCH',
-          body: { last_share_attested_at: new Date().toISOString() },
-        },
-      );
+      await householdRest(`/rest/v1/recipe_collections?id=eq.${collectionId}`, {
+        method: 'PATCH',
+        body: { last_share_attested_at: new Date().toISOString() },
+      });
       const flipOk = await fetch(
         `${SUPABASE_URL}/rest/v1/recipe_collections?id=eq.${collectionId}`,
         {
@@ -313,7 +302,7 @@ test.describe('Household sharing', () => {
         },
       );
       expect(flipOk.ok).toBe(true);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
       const _hid = householdId;
     } finally {
       await cleanupHouseholdFor([owner.id]);
@@ -358,9 +347,7 @@ test.describe('Household sharing', () => {
       expect(attest.length).toBeGreaterThanOrEqual(1);
       // Attestation text is captured in metadata.
       const sample = attest.find((r) => (r.metadata as { attestation?: string }).attestation);
-      expect(typeof (sample?.metadata as { attestation?: string }).attestation).toBe(
-        'string',
-      );
+      expect(typeof (sample?.metadata as { attestation?: string }).attestation).toBe('string');
 
       // UI-side: the audit-log section on /household should also render rows.
       await page.goto('/household');
@@ -386,9 +373,7 @@ test.describe('Household sharing', () => {
       await page.getByLabel('Household name').fill('Gated House');
       await page.getByRole('button', { name: 'Create household' }).click();
       // The DB raises TOS_NOT_ACCEPTED, the dialog opens.
-      await expect(
-        page.getByRole('dialog', { name: /Accept Terms of Service/ }),
-      ).toBeVisible();
+      await expect(page.getByRole('dialog', { name: /Accept Terms of Service/ })).toBeVisible();
       // Reject without checking the box — button stays disabled.
       await expect(page.getByTestId('tos-accept')).toBeDisabled();
       await page.getByTestId('tos-checkbox').check();
@@ -396,9 +381,7 @@ test.describe('Household sharing', () => {
       // After acceptance the dialog closes and the create-household form remains.
       // (We rely on the user re-clicking "Create household" — the gate's job
       // is to unblock, not to retry.)
-      await expect(
-        page.getByRole('dialog', { name: /Accept Terms of Service/ }),
-      ).toBeHidden();
+      await expect(page.getByRole('dialog', { name: /Accept Terms of Service/ })).toBeHidden();
     } finally {
       await cleanupHouseholdFor([user.id]);
       await user.cleanup();

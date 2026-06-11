@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
-import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
 import { getEffectiveOcrConfig } from '../import/api.js';
-import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
-import { resolveImportFallback } from '../settings/FallbackModelSection.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
-import { scanPages } from '../import/scanPages.js';
 import type { ScannedPage } from '../import/pageMarker.js';
+import { scanPages } from '../import/scanPages.js';
+import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
+import { useSync } from '../local/SyncProvider.js';
+import { resolveImportFallback } from '../settings/FallbackModelSection.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
 type Phase = 'config' | 'scanning' | 'uploading';
 
@@ -53,7 +54,7 @@ export function ScanPagesPage() {
     if (!user) return;
     setError(undefined);
     setPhase('scanning');
-    let pages: ScannedPage[] = [];
+    let pages: ScannedPage[];
     try {
       pages = await scanPages({ maxShots: 200 });
     } catch (e) {

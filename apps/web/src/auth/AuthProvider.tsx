@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
-import { supabase } from '../supabase.js';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+
 import { setSentryUser } from '../sentry.js';
+import { supabase } from '../supabase.js';
 import { claimsFromSession } from './claims.js';
 
 interface AuthState {

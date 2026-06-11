@@ -64,9 +64,9 @@ async function pickNative(): Promise<{ blob: Blob; name: string } | undefined> {
   }
 }
 
-async function captureWeb(
-  opts: { preferCamera: boolean },
-): Promise<{ blob: Blob; name: string } | undefined> {
+async function captureWeb(opts: {
+  preferCamera: boolean;
+}): Promise<{ blob: Blob; name: string } | undefined> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';

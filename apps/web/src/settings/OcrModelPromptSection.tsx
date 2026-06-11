@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { DEFAULT_MODEL_BY_PROVIDER, DEFAULT_PROMPT, type OcrProvider } from './ocrSettings.js';
+
 import { getUserOcrPrefs, setUserOcrPrefs } from '../import/api.js';
+import { DEFAULT_MODEL_BY_PROVIDER, DEFAULT_PROMPT, type OcrProvider } from './ocrSettings.js';
 
 /**
  * The default model + prompt the bulk-import worker uses, stored server-side in
@@ -31,7 +32,7 @@ export function OcrModelPromptSection() {
         setPrompt(p.prompt || DEFAULT_PROMPT);
         setLoaded(true);
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         if (!cancelled) {
           setError((e as Error).message);
           setLoaded(true);
@@ -70,8 +71,8 @@ export function OcrModelPromptSection() {
       <div>
         <h2 className="text-lg font-semibold">Default model + prompt</h2>
         <p className="mt-1 text-sm text-stone-600">
-          Used as the starting values on the New import page. You can override per-batch when
-          you start an import, or use the{' '}
+          Used as the starting values on the New import page. You can override per-batch when you
+          start an import, or use the{' '}
           <a href="/import/new/bakeoff" className="underline">
             Bakeoff
           </a>{' '}
@@ -109,9 +110,8 @@ export function OcrModelPromptSection() {
           spellCheck={false}
         />
         <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-          Must be multimodal (vision-capable). Examples:{' '}
-          <code>gemini-3.1-flash-lite</code>, <code>gpt-5.4</code>, <code>gpt-4o</code>,{' '}
-          <code>llama-3.2-90b-vision-preview</code>.
+          Must be multimodal (vision-capable). Examples: <code>gemini-3.1-flash-lite</code>,{' '}
+          <code>gpt-5.4</code>, <code>gpt-4o</code>, <code>llama-3.2-90b-vision-preview</code>.
         </p>
       </Field>
 

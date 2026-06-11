@@ -1,3 +1,17 @@
+import {
+  type CollectionRow,
+  collectionToInsert,
+  type IngredientRow,
+  ingredientToInsert,
+  type InstructionRefRow,
+  instructionRefToInsert,
+  type InstructionRow,
+  instructionToInsert,
+  type RecipeRow,
+  recipeToInsert,
+  rowsToRecipe,
+  rowToCollection,
+} from '@cookyourbooks/db';
 import type {
   CollectionNote,
   CollectionNoteRepository,
@@ -11,24 +25,11 @@ import type {
   RecipeTagRepository,
   Tag,
 } from '@cookyourbooks/domain';
-import { createWebCollection, newCookingEventId, newTagId, normalizeLabel } from '@cookyourbooks/domain';
-import {
-  rowToCollection,
-  rowsToRecipe,
-  collectionToInsert,
-  recipeToInsert,
-  ingredientToInsert,
-  instructionToInsert,
-  instructionRefToInsert,
-  type CollectionRow,
-  type IngredientRow,
-  type InstructionRefRow,
-  type InstructionRow,
-  type RecipeRow,
-} from '@cookyourbooks/db';
+import { createWebCollection, newTagId, normalizeLabel } from '@cookyourbooks/domain';
+
+import { shouldSuppressCrrTriggers } from './crrSuppression.js';
 import { getLocalDb } from './db.js';
 import { enqueue } from './outbox.js';
-import { shouldSuppressCrrTriggers } from './crrSuppression.js';
 
 // Milliseconds since epoch, good enough for a monotonic-ish write marker
 // on the local side.
@@ -159,9 +160,7 @@ function collectionToParams(row: CollectionRow): readonly unknown[] {
  * pre-filter by existing updated_at, suppress CRR triggers, multi-row
  * INSERT.
  */
-export async function upsertCollectionsBatch(
-  rows: readonly CollectionRow[],
-): Promise<void> {
+export async function upsertCollectionsBatch(rows: readonly CollectionRow[]): Promise<void> {
   if (rows.length === 0) return;
   const fresh = await filterFresherIncoming(
     'recipe_collections',
@@ -171,12 +170,7 @@ export async function upsertCollectionsBatch(
   );
   if (fresh.length === 0) return;
   await withSuppressedCrrTriggers(['recipe_collections'], fresh.length, async () => {
-    await bulkInsertOnConflictId(
-      'recipe_collections',
-      COLLECTION_COLS,
-      fresh,
-      collectionToParams,
-    );
+    await bulkInsertOnConflictId('recipe_collections', COLLECTION_COLS, fresh, collectionToParams);
   });
 }
 
@@ -210,9 +204,7 @@ export async function upsertCookingEventRow(row: CookingEventUpsertInput): Promi
   const db = await getLocalDb();
   const ts = tsToMs(row.updated_at);
   const adjustments =
-    typeof row.adjustments === 'string'
-      ? row.adjustments
-      : JSON.stringify(row.adjustments ?? []);
+    typeof row.adjustments === 'string' ? row.adjustments : JSON.stringify(row.adjustments ?? []);
   const snapshot =
     row.recipe_snapshot === null || row.recipe_snapshot === undefined
       ? null
@@ -220,9 +212,7 @@ export async function upsertCookingEventRow(row: CookingEventUpsertInput): Promi
         ? row.recipe_snapshot
         : JSON.stringify(row.recipe_snapshot);
   const photoPaths =
-    typeof row.photo_paths === 'string'
-      ? row.photo_paths
-      : JSON.stringify(row.photo_paths ?? []);
+    typeof row.photo_paths === 'string' ? row.photo_paths : JSON.stringify(row.photo_paths ?? []);
   await db.exec(
     `insert into cooking_events
        (id, owner_id, recipe_id, status, event_date, occasion_category,
@@ -634,10 +624,10 @@ export async function filterFresherIncoming<T>(
     const slice = rows.slice(i, i + CHUNK);
     const ids = slice.map(idOf);
     const placeholders = ids.map(() => '?').join(',');
-    const found = (await db.execO(
+    const found = await db.execO<{ id: string; updated_at: number }>(
       `select id, updated_at from ${table} where id in (${placeholders})`,
       ids,
-    )) as { id: string; updated_at: number }[];
+    );
     for (const r of found) existingMap.set(r.id, r.updated_at);
   }
   return rows.filter((row) => {
@@ -683,10 +673,10 @@ export async function upsertRecipesBatchInner(
     const ids = batch.map((b) => b.recipe.id);
     const existingMap = new Map<string, number>();
     const placeholders = ids.map(() => '?').join(',');
-    const rows = (await tx.execO(
+    const rows = await tx.execO<{ id: string; updated_at: number }>(
       `select id, updated_at from recipes where id in (${placeholders})`,
       ids,
-    )) as { id: string; updated_at: number }[];
+    );
     for (const r of rows) existingMap.set(r.id, r.updated_at);
 
     const fresh = batch.filter((b) => {
@@ -710,10 +700,22 @@ export async function upsertRecipesBatchInner(
       chunk,
     ]);
 
-    await bulkUpsertRecipes(tx, fresh.map((b) => b.recipe));
-    await bulkInsertIngredients(tx, fresh.flatMap((b) => b.ingredients));
-    await bulkInsertInstructions(tx, fresh.flatMap((b) => b.instructions));
-    await bulkInsertRefs(tx, fresh.flatMap((b) => b.refs));
+    await bulkUpsertRecipes(
+      tx,
+      fresh.map((b) => b.recipe),
+    );
+    await bulkInsertIngredients(
+      tx,
+      fresh.flatMap((b) => b.ingredients),
+    );
+    await bulkInsertInstructions(
+      tx,
+      fresh.flatMap((b) => b.instructions),
+    );
+    await bulkInsertRefs(
+      tx,
+      fresh.flatMap((b) => b.refs),
+    );
   });
 }
 
@@ -1024,10 +1026,7 @@ async function bulkInsertInstructions(
   }
 }
 
-async function bulkInsertRefs(
-  tx: RecipeTx,
-  refs: readonly InstructionRefRow[],
-): Promise<void> {
+async function bulkInsertRefs(tx: RecipeTx, refs: readonly InstructionRefRow[]): Promise<void> {
   if (refs.length === 0) return;
   const cols = [
     'instruction_id',
@@ -1092,18 +1091,15 @@ function toJsonText(val: unknown): string | null {
 
 export async function softDeleteCollection(id: string): Promise<void> {
   const db = await getLocalDb();
-  await db.exec(
-    `update recipe_collections set deleted = 1, updated_at = ? where id = ?`,
-    [now(), id],
-  );
+  await db.exec(`update recipe_collections set deleted = 1, updated_at = ? where id = ?`, [
+    now(),
+    id,
+  ]);
 }
 
 export async function softDeleteRecipe(id: string): Promise<void> {
   const db = await getLocalDb();
-  await db.exec(
-    `update recipes set deleted = 1, updated_at = ? where id = ?`,
-    [now(), id],
-  );
+  await db.exec(`update recipes set deleted = 1, updated_at = ? where id = ?`, [now(), id]);
 }
 
 export async function purgeCollection(id: string): Promise<void> {
@@ -1391,8 +1387,9 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     return rows.map((r) => {
       let pageNumbers: number[] = [];
       try {
-        const parsed = JSON.parse(r.page_numbers || '[]');
-        if (Array.isArray(parsed)) pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
+        const parsed: unknown = JSON.parse(r.page_numbers || '[]');
+        if (Array.isArray(parsed))
+          pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
       } catch {
         // leave empty
       }
@@ -1415,21 +1412,21 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     // Includes household-shared collections from other members; pullAll
     // only places visible-to-me collections in local SQLite so a simple
     // OR is sufficient.
-    const colRows = (await db.execO<CollectionRow>(
+    const colRows = await db.execO<CollectionRow>(
       `select * from recipe_collections
        where (owner_id = ? or shared_with_household_id is not null) and deleted = 0
        order by coalesce(updated_at, 0) desc`,
       [this.ownerId],
-    )) as CollectionRow[];
+    );
     return Promise.all(colRows.map((row) => hydrateCollection(row)));
   }
 
   async get(id: string): Promise<RecipeCollection | undefined> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CollectionRow>(
+    const rows = await db.execO<CollectionRow>(
       `select * from recipe_collections where id = ? and deleted = 0`,
       [id],
-    )) as CollectionRow[];
+    );
     const row = rows[0];
     if (!row) return undefined;
     return hydrateCollection(row);
@@ -1449,10 +1446,10 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
    */
   async getMeta(id: string): Promise<RecipeCollection | undefined> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CollectionRow>(
+    const rows = await db.execO<CollectionRow>(
       `select * from recipe_collections where id = ? and deleted = 0`,
       [id],
-    )) as CollectionRow[];
+    );
     const row = rows[0];
     if (!row) return undefined;
     return rowToCollection(row, []);
@@ -1467,9 +1464,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
    * visible order unchanged. Placeholder semantics downstream are
    * `ingredientCount === 0 && instructionCount === 0`.
    */
-  async listCollectionRecipeSummaries(
-    collectionId: string,
-  ): Promise<CollectionRecipeSummary[]> {
+  async listCollectionRecipeSummaries(collectionId: string): Promise<CollectionRecipeSummary[]> {
     const db = await getLocalDb();
     const rows = (await db.execO<{
       id: string;
@@ -1510,7 +1505,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     return rows.map((r) => {
       let pageNumbers: number[] = [];
       try {
-        const parsed = JSON.parse(r.page_numbers || '[]');
+        const parsed: unknown = JSON.parse(r.page_numbers || '[]');
         if (Array.isArray(parsed)) {
           pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
         }
@@ -1683,20 +1678,19 @@ export class LocalRecipeRepository implements RecipeRepository {
 
   async list(): Promise<Recipe[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<RecipeRow>(
+    const rows = await db.execO<RecipeRow>(
       `select * from recipes where collection_id = ? and deleted = 0
        order by sort_order asc`,
       [this.collectionId],
-    )) as RecipeRow[];
+    );
     return hydrateRecipeRowsForCollection(this.collectionId, rows);
   }
 
   async get(id: string): Promise<Recipe | undefined> {
     const db = await getLocalDb();
-    const rows = (await db.execO<RecipeRow>(
-      `select * from recipes where id = ? and deleted = 0`,
-      [id],
-    )) as RecipeRow[];
+    const rows = await db.execO<RecipeRow>(`select * from recipes where id = ? and deleted = 0`, [
+      id,
+    ]);
     const row = rows[0];
     if (!row) return undefined;
     return hydrateRecipe(row);
@@ -1813,8 +1807,7 @@ function rowToCookingEventRecord(row: CookingEventLocalRow): CookingEventRecord 
     recipeId: row.recipe_id,
     status: row.status === 'COOKED' ? 'COOKED' : 'PLANNED',
     eventDate: row.event_date,
-    occasionCategory:
-      (row.occasion_category as CookingEvent['occasionCategory']) ?? undefined,
+    occasionCategory: (row.occasion_category as CookingEvent['occasionCategory']) ?? undefined,
     mealSlot: (row.meal_slot as CookingEvent['mealSlot']) ?? undefined,
     occasionNote: row.occasion_note ?? undefined,
     notes: row.notes ?? undefined,
@@ -1841,10 +1834,12 @@ export class LocalCookingEventRepository implements CookingEventRepository {
    *  recipe title + collection id joined for linking/display. */
   async listCalendarEntries(fromISO: string, toISO: string): Promise<CalendarEntry[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CookingEventLocalRow & {
-      recipe_title: string | null;
-      collection_id: string | null;
-    }>(
+    const rows = (await db.execO<
+      CookingEventLocalRow & {
+        recipe_title: string | null;
+        collection_id: string | null;
+      }
+    >(
       `select ce.*, r.title as recipe_title, r.collection_id as collection_id
          from cooking_events ce
          left join recipes r on r.id = ce.recipe_id and r.deleted = 0
@@ -1853,10 +1848,12 @@ export class LocalCookingEventRepository implements CookingEventRepository {
           and ce.event_date >= ? and ce.event_date <= ?
         order by ce.event_date asc, ce.updated_at asc`,
       [this.ownerId, fromISO, toISO],
-    )) as Array<CookingEventLocalRow & {
-      recipe_title: string | null;
-      collection_id: string | null;
-    }>;
+    )) as Array<
+      CookingEventLocalRow & {
+        recipe_title: string | null;
+        collection_id: string | null;
+      }
+    >;
     return rows.map((row) => ({
       ...rowToCookingEventRecord(row),
       recipeTitle: row.recipe_title ?? null,
@@ -1899,36 +1896,36 @@ export class LocalCookingEventRepository implements CookingEventRepository {
   /** Past + upcoming events for one recipe (own + household-shared), newest first. */
   async listForRecipe(recipeId: string): Promise<CookingEventRecord[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CookingEventLocalRow>(
+    const rows = await db.execO<CookingEventLocalRow>(
       `select * from cooking_events
         where recipe_id = ? and deleted = 0
           and (owner_id = ? or shared_with_household_id is not null)
         order by event_date desc, updated_at desc`,
       [recipeId, this.ownerId],
-    )) as CookingEventLocalRow[];
+    );
     return rows.map(rowToCookingEventRecord);
   }
 
   /** All events (own + household-shared) whose eventDate is in [fromISO, toISO]. */
   async listInDateRange(fromISO: string, toISO: string): Promise<CookingEventRecord[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CookingEventLocalRow>(
+    const rows = await db.execO<CookingEventLocalRow>(
       `select * from cooking_events
         where deleted = 0
           and (owner_id = ? or shared_with_household_id is not null)
           and event_date >= ? and event_date <= ?
         order by event_date asc, updated_at asc`,
       [this.ownerId, fromISO, toISO],
-    )) as CookingEventLocalRow[];
+    );
     return rows.map(rowToCookingEventRecord);
   }
 
   async get(id: string): Promise<CookingEventRecord | undefined> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CookingEventLocalRow>(
+    const rows = await db.execO<CookingEventLocalRow>(
       `select * from cooking_events where id = ? and deleted = 0`,
       [id],
-    )) as CookingEventLocalRow[];
+    );
     const row = rows[0];
     return row ? rowToCookingEventRecord(row) : undefined;
   }
@@ -1990,13 +1987,13 @@ export class LocalRecipeTagRepository implements RecipeTagRepository {
 
   async listForRecipe(recipeId: string): Promise<Tag[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<RecipeTagLocalRow>(
+    const rows = await db.execO<RecipeTagLocalRow>(
       `select * from recipe_tags
         where recipe_id = ? and deleted = 0
           and (owner_id = ? or shared_with_household_id is not null)
         order by label asc`,
       [recipeId, this.ownerId],
-    )) as RecipeTagLocalRow[];
+    );
     return rows.map((r) => ({ id: r.id, recipeId: r.recipe_id, label: r.label }));
   }
 
@@ -2087,7 +2084,7 @@ export interface CollectionNoteRecord extends CollectionNote {
 function rowToCollectionNoteRecord(row: CollectionNoteLocalRow): CollectionNoteRecord {
   let pageNumbers: number[] | undefined;
   try {
-    const parsed = JSON.parse(row.page_numbers || '[]');
+    const parsed: unknown = JSON.parse(row.page_numbers || '[]');
     if (Array.isArray(parsed)) {
       const nums = parsed.filter((x): x is number => typeof x === 'number');
       if (nums.length > 0) pageNumbers = nums;
@@ -2115,26 +2112,26 @@ export class LocalCollectionNoteRepository implements CollectionNoteRepository {
    *  pull marks co-member rows with shared_with_household_id). */
   async listForCollection(collectionId: string): Promise<CollectionNoteRecord[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CollectionNoteLocalRow>(
+    const rows = await db.execO<CollectionNoteLocalRow>(
       `select * from collection_notes
         where collection_id = ? and deleted = 0
           and (owner_id = ? or shared_with_household_id is not null)
         order by sort_order asc, updated_at asc`,
       [collectionId, this.ownerId],
-    )) as CollectionNoteLocalRow[];
+    );
     return rows.map(rowToCollectionNoteRecord);
   }
 
   /** The note filed from a given import page, if any (for the review surface). */
   async getByImportItemId(importItemId: string): Promise<CollectionNoteRecord | undefined> {
     const db = await getLocalDb();
-    const rows = (await db.execO<CollectionNoteLocalRow>(
+    const rows = await db.execO<CollectionNoteLocalRow>(
       `select * from collection_notes
         where import_item_id = ? and deleted = 0
           and (owner_id = ? or shared_with_household_id is not null)
         limit 1`,
       [importItemId, this.ownerId],
-    )) as CollectionNoteLocalRow[];
+    );
     return rows[0] ? rowToCollectionNoteRecord(rows[0]) : undefined;
   }
 
@@ -2150,13 +2147,18 @@ export class LocalCollectionNoteRepository implements CollectionNoteRepository {
     }>(
       `select import_item_id, source_image_text, page_numbers from collection_notes where id = ?`,
       [note.id],
-    )) as { import_item_id: string | null; source_image_text: string | null; page_numbers: string }[];
+    )) as {
+      import_item_id: string | null;
+      source_image_text: string | null;
+      page_numbers: string;
+    }[];
     const prev = prevRows[0];
     let pageNumbers: number[] = note.pageNumbers ? [...note.pageNumbers] : [];
     if (!note.pageNumbers && prev) {
       try {
-        const parsed = JSON.parse(prev.page_numbers || '[]');
-        if (Array.isArray(parsed)) pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
+        const parsed: unknown = JSON.parse(prev.page_numbers || '[]');
+        if (Array.isArray(parsed))
+          pageNumbers = parsed.filter((x): x is number => typeof x === 'number');
       } catch {
         // keep []
       }
@@ -2201,10 +2203,11 @@ export interface RecentlyViewedEntry {
 export class LocalRecipeViewRepository {
   async recordView(recipeId: string, source?: string): Promise<void> {
     const db = await getLocalDb();
-    await db.exec(
-      `insert into recipe_views (recipe_id, viewed_at, source) values (?,?,?)`,
-      [recipeId, now(), source ?? null],
-    );
+    await db.exec(`insert into recipe_views (recipe_id, viewed_at, source) values (?,?,?)`, [
+      recipeId,
+      now(),
+      source ?? null,
+    ]);
   }
 
   /** Distinct recipes by most-recent view, newest first. Only surfaces
@@ -2258,12 +2261,12 @@ async function hydrateCollection(row: CollectionRow): Promise<RecipeCollection> 
   // explicit user reordering still wins. Empty rows usually come from
   // OCR imports that haven't been reviewed yet — keeping them at the
   // bottom of the cookbook keeps the browse view feeling populated.
-  const recipeRows = (await db.execO<RecipeRow>(
+  const recipeRows = await db.execO<RecipeRow>(
     `select * from recipes
        where collection_id = ? and deleted = 0
        order by has_content desc, sort_order asc`,
     [row.id],
-  )) as RecipeRow[];
+  );
   const recipes = await hydrateRecipeRowsForCollection(row.id, recipeRows);
   return rowToCollection(row, recipes);
 }
@@ -2348,9 +2351,10 @@ async function hydrateRecipeRowsForCollection(
 async function hydrateRecipe(row: RecipeRow): Promise<Recipe> {
   const db = await getLocalDb();
   const [ingredients, instructions, refs] = await Promise.all([
-    db.execO<IngredientRow>(`select * from ingredients where recipe_id = ? order by sort_order asc`, [
-      row.id,
-    ]),
+    db.execO<IngredientRow>(
+      `select * from ingredients where recipe_id = ? order by sort_order asc`,
+      [row.id],
+    ),
     db.execO<InstructionRow>(
       `select * from instructions where recipe_id = ? order by step_number asc`,
       [row.id],
@@ -2363,12 +2367,7 @@ async function hydrateRecipe(row: RecipeRow): Promise<Recipe> {
       [row.id],
     ),
   ]);
-  return rowsToRecipe(
-    row,
-    ingredients as IngredientRow[],
-    instructions as InstructionRow[],
-    refs as InstructionRefRow[],
-  );
+  return rowsToRecipe(row, ingredients, instructions, refs);
 }
 
 async function saveLocalRecipe(
@@ -2391,8 +2390,8 @@ async function saveLocalRecipe(
     return { ...ins, id: ins.id! } as InstructionRow;
   });
   const refRows: InstructionRefRow[] = recipe.instructions.flatMap((s) =>
-    s.ingredientRefs.map((r) =>
-      instructionRefToInsert(s.id, r.ingredientId, r.quantity) as InstructionRefRow,
+    s.ingredientRefs.map(
+      (r) => instructionRefToInsert(s.id, r.ingredientId, r.quantity) as InstructionRefRow,
     ),
   );
   await upsertRecipeRow(recipeRow, ingRows, stepRows, refRows);
@@ -2508,11 +2507,11 @@ export async function getRecipesByIds(ids: readonly string[]): Promise<Recipe[]>
   if (ids.length === 0) return [];
   const db = await getLocalDb();
   const ph = ids.map(() => '?').join(',');
-  const args = ids as readonly string[] as string[];
-  const recipeRows = (await db.execO<RecipeRow>(
+  const args = ids as string[];
+  const recipeRows = await db.execO<RecipeRow>(
     `select * from recipes where id in (${ph}) and deleted = 0`,
     args,
-  )) as RecipeRow[];
+  );
   if (recipeRows.length === 0) return [];
   const inIds = `recipe_id in (${ph})`;
   const [ingredients, instructions, refs] = await Promise.all([
@@ -2619,13 +2618,7 @@ export async function upsertLocalEmbedding(row: LocalEmbeddingRow): Promise<void
        model=excluded.model,
        updated_at=excluded.updated_at
      where excluded.updated_at >= recipe_embeddings.updated_at`,
-    [
-      row.recipeId,
-      packEmbedding(row.embedding),
-      row.textHash,
-      row.model,
-      row.updatedAtMs,
-    ],
+    [row.recipeId, packEmbedding(row.embedding), row.textHash, row.model, row.updatedAtMs],
   );
 }
 
@@ -2687,9 +2680,7 @@ export async function deleteLocalEmbedding(recipeId: string): Promise<void> {
  * Look up the cached row for a recipe. Returns undefined when the
  * worker / save path hasn't computed one yet.
  */
-export async function getLocalEmbedding(
-  recipeId: string,
-): Promise<LocalEmbeddingRow | undefined> {
+export async function getLocalEmbedding(recipeId: string): Promise<LocalEmbeddingRow | undefined> {
   const db = await getLocalDb();
   const rows = (await db.execO<{
     recipe_id: string;
@@ -2738,9 +2729,7 @@ export interface SearchableEmbedding {
   embedding: Float32Array;
 }
 
-export async function listSearchableEmbeddings(
-  ownerId: string,
-): Promise<SearchableEmbedding[]> {
+export async function listSearchableEmbeddings(ownerId: string): Promise<SearchableEmbedding[]> {
   const db = await getLocalDb();
   // Own recipes + household-shared ones. Co-members' embeddings are pulled
   // into the local mirror by pullHouseholdSharedContent (the recipe_embeddings

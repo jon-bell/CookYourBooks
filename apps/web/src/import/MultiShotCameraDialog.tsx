@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SAFE_TOP, SAFE_BOTTOM, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
+
+import { SAFE_BOTTOM, SAFE_TOP, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
 
 export type MultiShotCameraDialogProps = {
   maxShots: number;
@@ -92,10 +93,7 @@ export function MultiShotCameraDialog({
   const startLongPress = (id: string) => {
     clearTimeout(longPressTimer.current);
     longPressTimer.current = setTimeout(() => {
-      const action = window.prompt(
-        'Retake (r) or delete (d) this photo? Enter r or d:',
-        'r',
-      );
+      const action = window.prompt('Retake (r) or delete (d) this photo? Enter r or d:', 'r');
       if (action === 'r') {
         setRetakeId(id);
       } else if (action === 'd') {
@@ -135,9 +133,7 @@ export function MultiShotCameraDialog({
       // dvh + full width pins to the visible viewport; see CameraScanner.
       className="fixed left-0 top-0 z-50 flex h-[100dvh] w-screen flex-col bg-stone-950 text-white"
     >
-      <header
-        className={`flex items-center justify-between py-3 text-sm ${SAFE_TOP} ${SAFE_X}`}
-      >
+      <header className={`flex items-center justify-between py-3 text-sm ${SAFE_TOP} ${SAFE_X}`}>
         <button
           type="button"
           onClick={cancel}
