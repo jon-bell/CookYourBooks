@@ -406,6 +406,12 @@ verify_jwt = false
 [functions.isbn-scan]
 verify_jwt = false
 
+# pdf-import is called from the browser (PDF shared into the app → pages OCR'd
+# into one recipe) and does its own JWT validation in requireAuth(). verify_jwt
+# off so the CORS preflight reaches the function — same rationale as above.
+[functions.pdf-import]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427

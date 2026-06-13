@@ -53,7 +53,15 @@ class ShareViewController: UIViewController {
         Task {
             await withTaskGroup(of: ShareItem?.self) { group in
                 for (index, attachment) in attachments.enumerated() {
-                    if attachment.hasItemConformingToTypeIdentifier(kUTTypeURL as String) {
+                    // A PDF (e.g. a recipe printed to PDF from Safari) may arrive
+                    // as a file URL (caught by the public.url branch below) OR as
+                    // raw com.adobe.pdf data — check it first so the data case
+                    // isn't dropped on the floor. handleTypePdf copies/writes the
+                    // file into the app group; the web layer reads the bytes via
+                    // the CybFile plugin.
+                    if attachment.hasItemConformingToTypeIdentifier("com.adobe.pdf") {
+                        group.addTask { await self.handleTypePdf(attachment) }
+                    } else if attachment.hasItemConformingToTypeIdentifier(kUTTypeURL as String) {
                         group.addTask { await self.handleTypeUrl(attachment) }
                     } else if attachment.hasItemConformingToTypeIdentifier(kUTTypeText as String) {
                         group.addTask { await self.handleTypeText(attachment) }
@@ -118,6 +126,50 @@ class ShareViewController: UIViewController {
         openURL(finalUrl) { [weak self] in
             // Tear the extension down only AFTER the open has been dispatched.
             self?.complete()
+        }
+    }
+
+    // Copy/write a shared PDF into the app group so the host app can read it.
+    // Accepts both the file-URL representation and raw com.adobe.pdf bytes.
+    fileprivate func handleTypePdf(_ attachment: NSItemProvider) async -> ShareItem? {
+        guard let results = try? await attachment.loadItem(
+            forTypeIdentifier: "com.adobe.pdf", options: nil
+        ) else {
+            NSLog("[CYB-Share] handleTypePdf: loadItem failed")
+            return nil
+        }
+        let shareItem = ShareItem()
+        shareItem.type = "application/pdf"
+        if let url = results as? URL {
+            shareItem.title = url.lastPathComponent
+            shareItem.url = createSharedFileUrl(url)
+            return shareItem
+        }
+        if let data = results as? Data {
+            shareItem.title = "shared.pdf"
+            shareItem.url = writeSharedData(data, ext: "pdf")
+            return shareItem
+        }
+        NSLog("[CYB-Share] handleTypePdf: unexpected item type \(type(of: results))")
+        return nil
+    }
+
+    // Persist raw bytes into the app group container, returning the file URL.
+    fileprivate func writeSharedData(_ data: Data, ext: String) -> String {
+        let fileManager = FileManager.default
+        guard let containerUrl = fileManager.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.app.cookyourbooks"
+        ) else {
+            NSLog("[CYB-Share] writeSharedData: no app group container")
+            return ""
+        }
+        let destinationUrl = containerUrl.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        do {
+            try data.write(to: destinationUrl)
+            return destinationUrl.absoluteString
+        } catch {
+            NSLog("[CYB-Share] writeSharedData: \(error.localizedDescription)")
+            return ""
         }
     }
 

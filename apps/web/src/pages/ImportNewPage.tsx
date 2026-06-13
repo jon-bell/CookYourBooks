@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.js';
 import { BookMetadataFields } from '../books/BookMetadataFields.js';
@@ -18,6 +18,7 @@ import { isMultiShotAvailable } from '../import/multiShotShim.js';
 import { scanPages, isLiveViewfinderSupported } from '../import/scanPages.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
+import { readSharedFile } from '../import/sharedFile.js';
 
 type Step = 'source' | 'review' | 'settings' | 'uploading';
 
@@ -25,6 +26,10 @@ export function ImportNewPage() {
   const { user } = useAuth();
   const { syncNow, status: syncStatus } = useSync();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  // Share entry: an image shared from another app lands here as `?file=<file://…>`
+  // (the app group path). Read it once and seed the batch like any picked image.
+  const sharedFileRan = useRef(false);
   const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
   const { data: ocrKeys = [] } = useOcrKeys();
   const saveCollection = useSaveCollection();
@@ -107,6 +112,25 @@ export function ImportNewPage() {
   useEffect(() => {
     void (async () => setMultiShotReady(await isMultiShotAvailable()))();
   }, []);
+
+  // Pull in a shared image (iOS share → /import/new?file=…). Reads the bytes
+  // out of the app group container and seeds the batch, jumping to review.
+  useEffect(() => {
+    const fileUrl = params.get('file');
+    if (!fileUrl || sharedFileRan.current) return;
+    sharedFileRan.current = true;
+    void (async () => {
+      try {
+        const file = await readSharedFile(fileUrl);
+        // Inline the seed (rather than addFiles) so this effect depends only on
+        // stable setters — keeps react-hooks/exhaustive-deps quiet.
+        setFiles((cur) => [...cur, file]);
+        setStep('review');
+      } catch {
+        setError("Couldn't read the shared image. Open the app and share again.");
+      }
+    })();
+  }, [params]);
 
   // Generate object URL previews, revoking the old ones whenever the
   // file list changes.

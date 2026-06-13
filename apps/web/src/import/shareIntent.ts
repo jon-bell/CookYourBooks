@@ -25,7 +25,7 @@
 
 import { Sentry } from '../sentry.js';
 import type { VideoPlatform } from './videoPlatform.js';
-import { urlFromIntent } from './shareUrlParse.js';
+import { parseShareIntent, type SharedFileKind } from './shareUrlParse.js';
 
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
@@ -62,6 +62,9 @@ function breadcrumb(message: string, data?: Record<string, unknown>): void {
 export type ShareIntentOutcome =
   // platform 'website' is any non-social http(s) recipe link.
   | { kind: 'import'; url: string; platform: VideoPlatform | 'website'; source: string }
+  // A shared file (PDF / image) sitting in the app group container. `fileUrl`
+  // is a `file://` path; the bytes are read on demand via `import/sharedFile.ts`.
+  | { kind: 'import_file'; fileUrl: string; fileKind: SharedFileKind; name: string | null; source: string }
   | { kind: 'no_url'; source: string };
 
 /**
@@ -85,17 +88,29 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
   });
 
   const dispatch = (payload: unknown, source: string): void => {
-    const { url, platform } = urlFromIntent(payload);
+    const parsed = parseShareIntent(payload);
     breadcrumb(`${source}: payload received`, {
-      hasUrl: !!url,
-      platform,
+      kind: parsed.kind,
+      platform: parsed.kind === 'url' ? parsed.platform : undefined,
+      fileKind: parsed.kind === 'file' ? parsed.fileKind : undefined,
       rawPayloadKeys:
         payload && typeof payload === 'object' ? Object.keys(payload as object) : [],
     });
-    if (url) {
+    if (parsed.kind === 'url') {
       // Social platform when detected, otherwise a generic recipe website —
       // both import through the same link flow.
-      onShare({ kind: 'import', url, platform: platform ?? 'website', source });
+      onShare({ kind: 'import', url: parsed.url, platform: parsed.platform ?? 'website', source });
+      return;
+    }
+    if (parsed.kind === 'file') {
+      // PDF / image attachment — the page reads the bytes from the app group.
+      onShare({
+        kind: 'import_file',
+        fileUrl: parsed.fileUrl,
+        fileKind: parsed.fileKind,
+        name: parsed.name,
+        source,
+      });
       return;
     }
     if (payload && typeof payload === 'object') {
@@ -105,10 +120,22 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
       const obj = payload as Record<string, unknown>;
       const isEmptyStore = obj.url === '' && obj.title === '' && obj.type === '';
       if (!isEmptyStore) {
+        const trunc = (v: unknown): string | null =>
+          typeof v === 'string' ? v.slice(0, 500) : null;
         Sentry.captureMessage('share-intent: payload had no extractable URL', {
           level: 'warning',
           tags: { source, share_intent: 'no_url' },
-          extra: { payload_keys: Object.keys(obj) },
+          // Capture the actual field values (not just keys) so we can finally
+          // see what hosts that don't include a parseable link — notably the
+          // NYT Cooking in-app share — actually send. Recipe links/titles are
+          // non-PII; truncated defensively.
+          extra: {
+            payload_keys: Object.keys(obj),
+            raw_url: trunc(obj.url),
+            raw_title: trunc(obj.title),
+            raw_description: trunc(obj.description),
+            raw_type: trunc(obj.type),
+          },
         });
         onShare({ kind: 'no_url', source });
       }
