@@ -23,6 +23,7 @@
     "@capacitor/ios": "^6.2.0",
     "@capacitor/share": "^6.0.3",
     "@sentry/capacitor": "^4.0.0",
+    "capacitor-native-pull-to-refresh": "^0.3.0",
     "send-intent": "^6.0.3"
   },
   "devDependencies": {

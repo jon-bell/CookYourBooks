@@ -29,6 +29,27 @@ export function buildCoverPrompt(template: string, input: CoverPromptInput): str
     .replaceAll('<INSTRUCTIONS>', instructions || 'n/a');
 }
 
+// Collection cover: Gemini invents a cookbook cover from the collection title
+// and its table of contents (recipe titles). Portrait 2:3 to match the
+// collection-cover display aspect. No text — title overlay (if wanted) is the
+// client-side collage path's job; image models render text poorly.
+export function buildCollectionCoverPrompt(title: string, recipeTitles: string[]): string {
+  const toc = recipeTitles
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .slice(0, 30)
+    .join(', ');
+  return (
+    `A beautiful cookbook cover for a recipe collection titled "${title || 'Recipes'}", ` +
+    `composed as a 2:3 portrait (vertical) image that fills the entire frame. ` +
+    (toc ? `The collection includes recipes such as: ${toc}. ` : '') +
+    `Create an appetizing, cohesive food-photography or illustrated cover that reflects ` +
+    `the style and cuisine of these recipes. Photographic or illustrated image only — ` +
+    `do not render any text, words, letters, numbers, labels, captions, or watermarks ` +
+    `anywhere on the image.`
+  );
+}
+
 interface GeminiImagePart {
   inlineData?: { mimeType?: string; data?: string };
   inline_data?: { mime_type?: string; data?: string };

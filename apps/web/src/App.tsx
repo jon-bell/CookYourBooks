@@ -53,6 +53,7 @@ import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
 import { useEffect, useRef } from 'react';
 import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
+import { usePullToRefresh } from './native/usePullToRefresh.js';
 import { useToast } from './components/ToastProvider.js';
 import { LoadingState } from './components/LoadingState.js';
 
@@ -62,6 +63,8 @@ export function App() {
   // Back returns to where you were; Android hardware back navigates the SPA.
   useScrollRestoration();
   useHardwareBack();
+  // Native iOS pull-to-refresh → syncNow (no-op off-device).
+  usePullToRefresh();
   return (
     <div className="min-h-full flex flex-col">
       <ShareIntentListener />
@@ -73,7 +76,11 @@ export function App() {
       </a>
       <header className="border-b border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-5xl py-3 flex flex-wrap items-center gap-x-6 gap-y-2 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
-          <Link to="/" className="text-lg font-semibold tracking-tight">
+          <Link
+            to="/"
+            onClick={() => window.scrollTo({ top: 0 })}
+            className="text-lg font-semibold tracking-tight"
+          >
             CookYourBooks
           </Link>
           <nav
@@ -109,7 +116,7 @@ export function App() {
           </div>
         </div>
       </header>
-      <main id="main" className="flex-1 mx-auto w-full max-w-5xl px-4 py-6">
+      <main id="main" className="flex-1 mx-auto w-full max-w-5xl overflow-x-clip px-4 py-6">
         <Routes>
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-up" element={<SignUpPage />} />
