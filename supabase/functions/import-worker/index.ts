@@ -34,7 +34,7 @@ import {
   hashEmbedText,
   type EmbedRecipeInput,
 } from './embed.ts';
-import { buildCoverPrompt, generateCover } from './cover.ts';
+import { buildCollectionCoverPrompt, buildCoverPrompt, generateCover } from './cover.ts';
 import {
   COVER_CACHE_CONTROL,
   coverObjectKey,
@@ -353,6 +353,8 @@ Deno.serve(async (req) => {
     // Drain pending recipe cover-image jobs. Same one-claim-per-invocation
     // discipline; the cover_kick + cron tick pick up any tail.
     const coverSummary = await runCoverLoop(workerId, wLog);
+    // Drain pending collection cover jobs (Gemini cookbook covers).
+    const collectionCoverSummary = await runCollectionCoverLoop(workerId, wLog);
     wLog.info('invocation end', {
       ...summary,
       bakeoff_processed: bakeoffSummary.processed,
@@ -367,6 +369,8 @@ Deno.serve(async (req) => {
       embed_failed: embedSummary.failed,
       cover_processed: coverSummary.processed,
       cover_failed: coverSummary.failed,
+      collection_cover_processed: collectionCoverSummary.processed,
+      collection_cover_failed: collectionCoverSummary.failed,
     });
 
     if (summary.remaining > 0) {
@@ -2523,6 +2527,261 @@ async function coverFail(
     p_error: message,
     p_next_state: nextState,
   });
+}
+
+// ---------- collection cover-image generation loop ----------
+//
+// Drains collection_cover_jobs: Gemini invents a cookbook cover from the
+// collection title + its table of contents. Same key-resolution / metering /
+// upload posture as the recipe cover loop; the image lands in the collection
+// owner's covers/{owner}/collections path and is stamped onto
+// recipe_collections.cover_image_path via collection_cover_complete.
+
+interface CollectionCoverJob {
+  id: string;
+  collection_id: string;
+  owner_id: string;
+  requested_by: string;
+  attempts: number;
+}
+
+async function runCollectionCoverLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  const { data, error } = await supabase.rpc('collection_cover_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+  });
+  if (error) {
+    log.error('collection_cover_claim_next failed', { code: error.code, message: error.message });
+    return { processed, failed };
+  }
+  const jobs = (data ?? []) as CollectionCoverJob[];
+  if (jobs.length === 0) return { processed, failed };
+  log.info('claimed collection cover jobs', { count: jobs.length });
+
+  for (const job of jobs) {
+    const outcome = await processCollectionCoverJob(
+      job,
+      workerId,
+      log.child({ item: shortId(job.id) }),
+    );
+    if (outcome === 'DONE') processed++;
+    else failed++;
+  }
+  return { processed, failed };
+}
+
+async function recordCollectionCoverUsage(e: {
+  ownerId: string;
+  keyOwnerId: string | null;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  costUsdMicros: number;
+  latencyMs: number;
+  errorKind: string;
+  collectionId: string;
+}): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('misc_llm_usage_record', {
+      p_event: {
+        owner_id: e.ownerId,
+        key_owner_id: e.keyOwnerId,
+        feature: 'cover_image',
+        provider: 'gemini',
+        model: e.model,
+        prompt_tokens: e.promptTokens,
+        completion_tokens: e.completionTokens,
+        cost_usd_micros: e.costUsdMicros,
+        latency_ms: e.latencyMs,
+        error_kind: e.errorKind,
+        produced_ref: e.collectionId,
+        produced_kind: 'COLLECTION_ID',
+      },
+    });
+    if (error) {
+      logLine('warn', 'misc_llm_usage_record (collection cover) failed', {}, { error: error.message });
+    }
+  } catch (err) {
+    logLine('warn', 'misc_llm_usage_record (collection cover) threw', {}, { error: String(err) });
+  }
+}
+
+async function collectionCoverFail(
+  job: CollectionCoverJob,
+  workerId: string,
+  message: string,
+  nextState: 'PENDING' | 'FAILED',
+): Promise<void> {
+  await supabase.rpc('collection_cover_fail', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_error: message,
+    p_next_state: nextState,
+  });
+}
+
+async function processCollectionCoverJob(
+  job: CollectionCoverJob,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  const next = (): 'PENDING' | 'FAILED' =>
+    job.attempts < MAX_COVER_RETRIES ? 'PENDING' : 'FAILED';
+  log.info('collection cover start', { collection: shortId(job.collection_id), attempts: job.attempts });
+
+  // Resolve the INITIATOR's Gemini key (own, or borrowed household key).
+  const { data: keyData, error: keyErr } = await supabase.rpc('ocr_resolve_effective_key', {
+    p_owner_id: job.requested_by,
+    p_provider: 'gemini',
+  });
+  if (keyErr) {
+    await collectionCoverFail(job, workerId, `key lookup: ${keyErr.message}`, next());
+    return 'FAILED';
+  }
+  const keyRow = Array.isArray(keyData)
+    ? (keyData[0] as { api_key?: string; key_owner_id?: string } | undefined)
+    : undefined;
+  if (!keyRow?.api_key) {
+    await collectionCoverFail(job, workerId, 'No Gemini API key configured for the requester.', 'FAILED');
+    return 'FAILED';
+  }
+  const keyOwnerId = keyRow.key_owner_id ?? null;
+
+  // Initiator's model pref (the per-recipe prompt template doesn't apply — the
+  // collection prompt is built from the title + ToC).
+  const { data: prefRow } = await supabase
+    .from('user_cover_prefs')
+    .select('model')
+    .eq('owner_id', job.requested_by)
+    .maybeSingle();
+  const model = (prefRow as { model?: string } | null)?.model || DEFAULT_COVER_MODEL;
+
+  // Load the collection + its recipe titles (table of contents) for the prompt.
+  const { data: colRow, error: cErr } = await supabase
+    .from('recipe_collections')
+    .select('id, title, cover_image_path')
+    .eq('id', job.collection_id)
+    .maybeSingle();
+  if (cErr) {
+    await collectionCoverFail(job, workerId, `load collection: ${cErr.message}`, next());
+    return 'FAILED';
+  }
+  if (!colRow) {
+    await collectionCoverFail(job, workerId, 'collection missing', 'FAILED');
+    return 'FAILED';
+  }
+  const collection = colRow as { id: string; title: string; cover_image_path: string | null };
+
+  const { data: titleRows } = await supabase
+    .from('recipes')
+    .select('title, sort_order')
+    .eq('collection_id', job.collection_id)
+    .order('sort_order', { ascending: true })
+    .limit(60);
+  const recipeTitles = ((titleRows ?? []) as { title: string }[]).map((r) => r.title);
+
+  const prompt = buildCollectionCoverPrompt(collection.title, recipeTitles);
+
+  let gen;
+  try {
+    gen = await generateCover({ apiKey: keyRow.api_key, model, prompt });
+  } catch (err) {
+    const e = err as { kind?: string; message?: string };
+    const msg = e.message ?? String(err);
+    await recordCollectionCoverUsage({
+      ownerId: job.requested_by,
+      keyOwnerId,
+      model,
+      promptTokens: 0,
+      completionTokens: 0,
+      costUsdMicros: 0,
+      latencyMs: 0,
+      errorKind: e.kind ?? 'CALL_FAILED',
+      collectionId: job.collection_id,
+    });
+    const nextState = e.kind === 'NO_KEY' || e.kind === 'NO_IMAGE' ? 'FAILED' : next();
+    await collectionCoverFail(job, workerId, msg, nextState);
+    return 'FAILED';
+  }
+
+  const enc = await reencodeCover(gen.bytes, gen.mimeType);
+  const path = await coverObjectKey(
+    `${job.owner_id}/collections`,
+    job.collection_id,
+    enc.bytes,
+    enc.ext,
+  );
+  const { error: upErr } = await supabase.storage
+    .from('covers')
+    .upload(path, new Blob([enc.bytes as unknown as BlobPart], { type: enc.contentType }), {
+      upsert: true,
+      contentType: enc.contentType,
+      cacheControl: COVER_CACHE_CONTROL,
+    });
+  if (upErr) {
+    await recordCollectionCoverUsage({
+      ownerId: job.requested_by,
+      keyOwnerId,
+      model,
+      promptTokens: gen.promptTokens,
+      completionTokens: gen.completionTokens,
+      costUsdMicros: costUsdMicros('gemini', model, gen.promptTokens, gen.completionTokens),
+      latencyMs: gen.latencyMs,
+      errorKind: 'UPLOAD_FAILED',
+      collectionId: job.collection_id,
+    });
+    await collectionCoverFail(job, workerId, `upload: ${upErr.message}`, next());
+    return 'FAILED';
+  }
+
+  // Best-effort thumbnail.
+  try {
+    const thumb = await reencodeThumb(enc.bytes, enc.contentType);
+    await supabase.storage
+      .from('covers')
+      .upload(thumbPathFor(path), new Blob([thumb.bytes as unknown as BlobPart], { type: thumb.contentType }), {
+        upsert: true,
+        contentType: thumb.contentType,
+        cacheControl: COVER_CACHE_CONTROL,
+      });
+  } catch (e) {
+    log.warn('collection cover thumb upload failed (non-fatal)', { error: String(e) });
+  }
+
+  const { data: ok, error: completeErr } = await supabase.rpc('collection_cover_complete', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_cover_path: path,
+  });
+  if (completeErr || ok === false) {
+    log.error('collection_cover_complete rpc', { code: completeErr?.code, message: completeErr?.message });
+  }
+
+  if (collection.cover_image_path && collection.cover_image_path !== path) {
+    await supabase.storage
+      .from('covers')
+      .remove([collection.cover_image_path, thumbPathFor(collection.cover_image_path)]);
+  }
+
+  await recordCollectionCoverUsage({
+    ownerId: job.requested_by,
+    keyOwnerId,
+    model,
+    promptTokens: gen.promptTokens,
+    completionTokens: gen.completionTokens,
+    costUsdMicros: costUsdMicros('gemini', model, gen.promptTokens, gen.completionTokens),
+    latencyMs: gen.latencyMs,
+    errorKind: 'OK',
+    collectionId: job.collection_id,
+  });
+  log.info('collection cover done', { collection: shortId(job.collection_id), path });
+  return 'DONE';
 }
 
 function decodeServerVector(v: number[] | string | null): Float32Array | null {

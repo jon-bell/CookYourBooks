@@ -18,14 +18,14 @@ export function SearchPage() {
     return () => clearTimeout(id);
   }, [raw]);
 
-  const { hits, isLoading, mode, embedderStatus } = useSearch(q);
+  const { hits, isLoading, mode, embedderStatus, embeddedCount } = useSearch(q);
 
   const filteredHits = useMemo(() => {
     if (!sourceType) return hits;
     return hits.filter((h) => (h.sourceType as string) === sourceType);
   }, [hits, sourceType]);
 
-  const status = embedderHint(embedderStatus, mode);
+  const status = embedderHint(embedderStatus, mode, embeddedCount);
 
   return (
     <div className="space-y-5">
@@ -35,7 +35,7 @@ export function SearchPage() {
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           placeholder="Search by recipe, ingredient, or idea (e.g. 'salad dressing')…"
-          className="flex-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2"
+          className="min-w-0 flex-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2"
           autoFocus
         />
         <select
@@ -107,12 +107,26 @@ export function SearchPage() {
 function embedderHint(
   status: 'idle' | 'loading' | 'ready' | 'unavailable',
   mode: 'semantic' | 'substring' | 'empty',
+  embeddedCount: number,
 ): string | null {
   if (status === 'loading') {
     return 'Preparing semantic search (first time only, ~30 MB download)…';
   }
   if (status === 'unavailable' && mode !== 'empty') {
-    return 'Semantic search unavailable — falling back to literal matches.';
+    return 'Semantic search unavailable on this device — showing literal matches.';
+  }
+  // Semantic actually ran — never claim we fell back. (Keyed on the real mode,
+  // not embeddedCount, whose async count query can lag the first results.)
+  if (mode === 'semantic') {
+    return embeddedCount > 0
+      ? `Semantic search across ${embeddedCount} embedded ${embeddedCount === 1 ? 'recipe' : 'recipes'}.`
+      : 'Semantic search active.';
+  }
+  // Embedder is ready but we fell back to literal with an empty local vector
+  // cache: the embed queue hasn't drained to this device yet. Distinct cause
+  // from a failed model load.
+  if (status === 'ready' && mode === 'substring' && embeddedCount === 0) {
+    return 'No recipes embedded on this device yet — showing literal matches while semantic search warms up.';
   }
   return null;
 }

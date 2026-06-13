@@ -66,6 +66,9 @@ importers:
       '@sentry/capacitor':
         specifier: ^4.0.0
         version: 4.0.0(@capacitor/core@6.2.1)(@sentry/react@10.43.0(react@19.2.5))
+      capacitor-native-pull-to-refresh:
+        specifier: ^0.3.0
+        version: 0.3.0(@capacitor/core@6.2.1)
       send-intent:
         specifier: ^6.0.3
         version: 6.0.3(@capacitor/core@6.2.1)
@@ -133,6 +136,9 @@ importers:
       '@vlcn.io/crsqlite-wasm':
         specifier: ^0.16.0
         version: 0.16.0
+      capacitor-native-pull-to-refresh:
+        specifier: ^0.3.0
+        version: 0.3.0(@capacitor/core@6.2.1)
       pdfjs-dist:
         specifier: ^4.10.38
         version: 4.10.38
@@ -1952,6 +1958,11 @@ packages:
 
   caniuse-lite@1.0.30001788:
     resolution: {integrity: sha512-6q8HFp+lOQtcf7wBK+uEenxymVWkGKkjFpCvw5W25cmMwEDU45p1xQFBQv8JDlMMry7eNxyBaR+qxgmTUZkIRQ==}
+
+  capacitor-native-pull-to-refresh@0.3.0:
+    resolution: {integrity: sha512-R+PhYOUVU6Ouz4f9HYfapNB+m1cn7w6sfGMKM3SldEL7vI76bplsOEURdZhKXfgALfPsfDV3p2wZmEsRrTB6Ng==}
+    peerDependencies:
+      '@capacitor/core': ^5.0.0
 
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
@@ -5570,6 +5581,10 @@ snapshots:
   camelize@1.0.1: {}
 
   caniuse-lite@1.0.30001788: {}
+
+  capacitor-native-pull-to-refresh@0.3.0(@capacitor/core@6.2.1):
+    dependencies:
+      '@capacitor/core': 6.2.1
 
   chai@5.3.3:
     dependencies:

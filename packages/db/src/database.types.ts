@@ -286,6 +286,84 @@ export type Database = {
           },
         ]
       }
+      collection_cover_jobs: {
+        Row: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          collection_id: string
+          created_at: string
+          id: string
+          last_error: string | null
+          owner_id: string
+          requested_by: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          collection_id: string
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id: string
+          requested_by: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          claim_expires_at?: string
+          claim_token?: string | null
+          collection_id?: string
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          owner_id?: string
+          requested_by?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "collection_cover_jobs_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "admin_global_toc_import_candidates"
+            referencedColumns: ["collection_id"]
+          },
+          {
+            foreignKeyName: "collection_cover_jobs_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "public_collections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_cover_jobs_collection_id_fkey"
+            columns: ["collection_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_collections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_cover_jobs_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "collection_cover_jobs_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       collection_notes: {
         Row: {
           body: string
@@ -3078,6 +3156,49 @@ export type Database = {
         Returns: Json
       }
       cli_verify_token: { Args: { raw_token: string }; Returns: string }
+      collection_cover_claim_next: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          claim_expires_at: string
+          claim_token: string | null
+          collection_id: string
+          created_at: string
+          id: string
+          last_error: string | null
+          owner_id: string
+          requested_by: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "collection_cover_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      collection_cover_complete: {
+        Args: { p_claim_token: string; p_cover_path: string; p_job_id: string }
+        Returns: boolean
+      }
+      collection_cover_enqueue: {
+        Args: { p_collection_id: string }
+        Returns: number
+      }
+      collection_cover_fail: {
+        Args: {
+          p_claim_token: string
+          p_error: string
+          p_job_id: string
+          p_next_state: string
+        }
+        Returns: boolean
+      }
       cover_cancel: { Args: { p_job_id: string }; Returns: boolean }
       cover_claim_next: {
         Args: {

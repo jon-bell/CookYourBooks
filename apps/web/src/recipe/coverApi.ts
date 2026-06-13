@@ -46,6 +46,20 @@ export async function generateCovers(scope: CoverScope, targetId?: string): Prom
   return queued;
 }
 
+/**
+ * Enqueue a single *collection*-level cover job (Gemini invents a cookbook
+ * cover from the collection title + its table of contents) and kick the worker.
+ * Distinct from `cover_jobs_enqueue('collection', …)`, which generates one cover
+ * per recipe. The new cover streams back via the normal collection sync.
+ */
+export async function enqueueCollectionCover(collectionId: string): Promise<void> {
+  const { error } = await supabase.rpc('collection_cover_enqueue', {
+    p_collection_id: collectionId,
+  });
+  if (error) throw error;
+  await kickCoverWorker();
+}
+
 export interface CoverJobProgress {
   pending: number;
   claimed: number;
