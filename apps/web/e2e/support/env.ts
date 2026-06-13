@@ -69,6 +69,16 @@ const resolved =
     ? { apiUrl: envUrl, anonKey: envAnon, serviceRoleKey: envServiceRole }
     : readFromSupabaseCli();
 
+// Publish the resolved creds back into the environment so that worker processes
+// (spawned by Playwright AFTER globalSetup loads this module in the main
+// process) take the env fast-path above instead of each shelling out to
+// `supabase status`. With many workers those concurrent CLI calls race — one
+// reliably fails under load — and they slow worker startup. `||=` keeps any
+// explicit operator/CI override intact.
+process.env.TEST_SUPABASE_URL ||= resolved.apiUrl;
+process.env.TEST_SUPABASE_ANON_KEY ||= resolved.anonKey;
+process.env.TEST_SUPABASE_SERVICE_ROLE ||= resolved.serviceRoleKey;
+
 export const SUPABASE_URL = resolved.apiUrl;
 export const SUPABASE_ANON_KEY = resolved.anonKey;
 export const SUPABASE_SERVICE_ROLE = resolved.serviceRoleKey;
