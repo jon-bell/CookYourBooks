@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { urlFromIntent } from './shareUrlParse.js';
+import { parseShareIntent, urlFromIntent } from './shareUrlParse.js';
 
 // Build the cookyourbooks:// deep link the native share extension opens
 // (params percent-encoded), mirroring ShareViewController.sendData().
-function deepLink(parts: { url?: string; title?: string; description?: string }): string {
+function deepLink(parts: {
+  url?: string;
+  title?: string;
+  description?: string;
+  type?: string;
+}): string {
   const enc = (s: string) => encodeURIComponent(s);
   const q = [
     `title=${enc(parts.title ?? '')}`,
     `description=${enc(parts.description ?? '')}`,
-    `type=${enc('text/plain')}`,
+    `type=${enc(parts.type ?? 'text/plain')}`,
     `url=${enc(parts.url ?? '')}`,
   ].join('&');
   return `cookyourbooks://?${q}`;
@@ -75,11 +80,84 @@ describe('urlFromIntent', () => {
     });
   });
 
+  it('recovers a link from the description when url and title are empty', () => {
+    // Deep-dive: some hosts put the link in the third field. The parser now
+    // scans description too (previously only url + title were checked).
+    const payload = {
+      url: deepLink({ description: 'see https://www.kingarthurbaking.com/recipes/x' }),
+    };
+    expect(urlFromIntent(payload)).toEqual({
+      url: 'https://www.kingarthurbaking.com/recipes/x',
+      platform: null,
+    });
+  });
+
   it('returns no url when nothing parseable is present', () => {
     expect(urlFromIntent({ url: deepLink({ title: 'just some text, no link' }) })).toEqual({
       url: null,
       platform: null,
     });
     expect(urlFromIntent({})).toEqual({ url: null, platform: null });
+  });
+});
+
+describe('parseShareIntent — file attachments', () => {
+  const pdfUrl = 'file:///private/var/.../group.app.cookyourbooks/abc_recipe.pdf';
+
+  it('recognizes a PDF file share via the embedded deep link (type=application/pdf)', () => {
+    const payload = {
+      url: deepLink({ title: 'recipe.pdf', type: 'application/pdf', url: pdfUrl }),
+    };
+    expect(parseShareIntent(payload)).toEqual({
+      kind: 'file',
+      fileUrl: pdfUrl,
+      fileKind: 'pdf',
+      name: 'recipe.pdf',
+    });
+  });
+
+  it('recognizes a PDF file share in the top-level SendIntent shape', () => {
+    const payload = { url: pdfUrl, title: 'recipe.pdf', description: '', type: 'application/pdf' };
+    expect(parseShareIntent(payload)).toEqual({
+      kind: 'file',
+      fileUrl: pdfUrl,
+      fileKind: 'pdf',
+      name: 'recipe.pdf',
+    });
+  });
+
+  it('recognizes an image file share (type=image/*)', () => {
+    const imgUrl = 'file:///private/var/.../group.app.cookyourbooks/screenshot_0.png';
+    const payload = { url: imgUrl, title: 'screenshot_0', description: '', type: 'image/png' };
+    expect(parseShareIntent(payload)).toEqual({
+      kind: 'file',
+      fileUrl: imgUrl,
+      fileKind: 'image',
+      name: 'screenshot_0',
+    });
+  });
+
+  it('falls back to the file extension when type is missing', () => {
+    const payload = { url: pdfUrl, title: '', description: '', type: '' };
+    expect(parseShareIntent(payload)).toMatchObject({ kind: 'file', fileKind: 'pdf' });
+  });
+
+  it('still classifies a plain http(s) link as a url share (not a file)', () => {
+    const payload = { url: deepLink({ url: 'https://www.seriouseats.com/pancakes' }) };
+    expect(parseShareIntent(payload)).toEqual({
+      kind: 'url',
+      url: 'https://www.seriouseats.com/pancakes',
+      platform: null,
+    });
+  });
+
+  it('reports none for an unsupported file type', () => {
+    const payload = {
+      url: 'file:///private/var/.../group.app.cookyourbooks/notes.txt',
+      title: 'notes.txt',
+      description: '',
+      type: 'text/plain',
+    };
+    expect(parseShareIntent(payload)).toEqual({ kind: 'none' });
   });
 });

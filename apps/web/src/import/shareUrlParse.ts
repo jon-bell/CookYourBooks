@@ -9,6 +9,21 @@ export interface ParsedIntent {
   platform: VideoPlatform | null;
 }
 
+/** A file shared from another app (e.g. a recipe printed to PDF, or a
+ *  screenshot). The native share extension copies the file into the app group
+ *  container and hands us a `file://` path + a `type` mime; the bytes are read
+ *  on demand in the web layer via `import/sharedFile.ts`. */
+export type SharedFileKind = 'pdf' | 'image';
+
+/** Discriminated outcome of parsing a raw share payload.
+ *  - `url`  — an http(s) recipe link (social platform or generic site).
+ *  - `file` — a `file://` attachment (PDF / image) in the app group.
+ *  - `none` — nothing usable; the caller surfaces actionable feedback. */
+export type ParsedShare =
+  | { kind: 'url'; url: string; platform: VideoPlatform | null }
+  | { kind: 'file'; fileUrl: string; fileKind: SharedFileKind; name: string | null }
+  | { kind: 'none' };
+
 /** Yield the candidate as-is, then progressively percent-decoded forms.
  *  The as-is form is tried first, so a URL that *legitimately* contains
  *  percent-escapes (e.g. `…/a%20b`) matches immediately and is never
@@ -46,44 +61,98 @@ export function classify(candidate: string): ParsedIntent | null {
   return null;
 }
 
-/**
- * Pull a usable URL out of a `SendIntent` / `appUrlOpen` payload, plus
- * whether it's from a supported video platform (null = generic website).
+/** The four share fields, normalized out of either payload shape.
  *
  * Two payload shapes:
- *   - `appUrlOpen`: `{ url: 'cookyourbooks://?url=…&title=…&description=…' }`
+ *   - `appUrlOpen`: `{ url: 'cookyourbooks://?url=…&title=…&description=…&type=…' }`
  *     — the share params are embedded in the deep link's query string.
- *   - `SendIntent`: `{ url, title, type, … }` — share params are top-level.
+ *   - `SendIntent`: `{ url, title, description, type, … }` — params are top-level.
  *
- * The native share extension only fills `url` for a `public.url` attachment;
- * when a host app shares a link as plain text it lands in `title` (or
- * `description`) with `url` empty — so we scan all three in both shapes.
+ * For the embedded shape we read via `searchParams`, which decodes one layer of
+ * percent-encoding (a `file://` path with `%20` for a space lands correctly,
+ * and a double-encoded http link drops to a single layer for `classify` to
+ * finish). The `type` field is what distinguishes a file attachment from a
+ * plain link share — it was previously ignored entirely. */
+interface ShareFields {
+  url: string;
+  title: string;
+  description: string;
+  type: string;
+}
+
+function normalize(payload: object): ShareFields {
+  const obj = payload as Record<string, unknown>;
+  const rawUrl = typeof obj.url === 'string' ? obj.url : '';
+  if (/^cookyourbooks:/i.test(rawUrl)) {
+    try {
+      const p = new URL(rawUrl).searchParams;
+      return {
+        url: p.get('url') ?? '',
+        title: p.get('title') ?? '',
+        description: p.get('description') ?? '',
+        type: p.get('type') ?? '',
+      };
+    } catch {
+      /* fall through to the top-level read */
+    }
+  }
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  return {
+    url: rawUrl,
+    title: str(obj.title),
+    description: str(obj.description),
+    type: str(obj.type),
+  };
+}
+
+/** Classify a file attachment by its mime `type`, falling back to sniffing the
+ *  extension off the `file://` path for hosts that hand over a bare type. */
+function fileKindFor(type: string, url: string): SharedFileKind | null {
+  const t = type.toLowerCase();
+  if (t.startsWith('application/pdf')) return 'pdf';
+  if (t.startsWith('image/')) return 'image';
+  if (/^file:\/\//i.test(url)) {
+    if (/\.pdf(\?|$)/i.test(url)) return 'pdf';
+    if (/\.(png|jpe?g|heic|heif|webp|gif)(\?|$)/i.test(url)) return 'image';
+  }
+  return null;
+}
+
+/**
+ * Parse a raw `SendIntent` / `appUrlOpen` payload into a discriminated outcome.
+ * File attachments are recognized first (via the `type` mime); otherwise we
+ * scan `url`, then `title`, then `description` for an http(s) recipe link. The
+ * native share extension only fills `url` for a `public.url` attachment; when a
+ * host shares a link as plain text it lands in `title` (or `description`) with
+ * `url` empty — so all three are scanned.
+ */
+export function parseShareIntent(payload: unknown): ParsedShare {
+  if (!payload || typeof payload !== 'object') return { kind: 'none' };
+  const { url, title, description, type } = normalize(payload);
+
+  // File attachment — discriminated by the mime type, requires a file:// path
+  // we can later read from the app group container.
+  if (/^file:\/\//i.test(url)) {
+    const fileKind = fileKindFor(type, url);
+    if (fileKind) return { kind: 'file', fileUrl: url, fileKind, name: title || null };
+  }
+
+  // Plain recipe link — scan the three text fields in priority order.
+  for (const candidate of [url, title, description]) {
+    if (!candidate) continue;
+    const c = classify(candidate);
+    if (c?.url) return { kind: 'url', url: c.url, platform: c.platform };
+  }
+  return { kind: 'none' };
+}
+
+/**
+ * Back-compat thin wrapper around {@link parseShareIntent} returning just the
+ * link outcome (file shares report `null`). Retained for existing callers/tests.
  */
 export function urlFromIntent(payload: unknown): ParsedIntent {
-  if (!payload || typeof payload !== 'object') return { url: null, platform: null };
-  const obj = payload as Record<string, unknown>;
-  const raw = typeof obj.url === 'string' ? obj.url : undefined;
-  if (raw) {
-    if (/^cookyourbooks:/i.test(raw)) {
-      try {
-        const params = new URL(raw).searchParams;
-        for (const key of ['url', 'title', 'description']) {
-          const embedded = params.get(key);
-          if (embedded) {
-            const c = classify(embedded);
-            if (c) return c;
-          }
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-    const c = classify(raw);
-    if (c) return c;
-  }
-  if (typeof obj.title === 'string') {
-    const c = classify(obj.title);
-    if (c) return c;
-  }
-  return { url: null, platform: null };
+  const parsed = parseShareIntent(payload);
+  return parsed.kind === 'url'
+    ? { url: parsed.url, platform: parsed.platform }
+    : { url: null, platform: null };
 }

@@ -35,6 +35,7 @@ import { ImportItemPage } from './pages/ImportItemPage.js';
 import { ImportBakeoffNewPage } from './pages/ImportBakeoffNewPage.js';
 import { SpeedImporterPage } from './pages/SpeedImporterPage.js';
 import { ImportLinkPage } from './pages/ImportLinkPage.js';
+import { ImportPdfPage } from './pages/ImportPdfPage.js';
 import { ScanPagesPage } from './pages/ScanPagesPage.js';
 import { SignInPage } from './auth/SignInPage.js';
 import { SignUpPage } from './auth/SignUpPage.js';
@@ -286,6 +287,14 @@ export function App() {
             }
           />
           <Route
+            path="/import/pdf"
+            element={
+              <RequireAuth>
+                <ImportPdfPage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/import/scan"
             element={
               <RequireAuth>
@@ -428,6 +437,13 @@ export function App() {
   );
 }
 
+// Route a shared file (PDF / image) to the right import flow. PDFs go to the
+// streamlined one-recipe PDF importer; images seed the photo batch flow.
+function fileRoute(fileUrl: string, fileKind: 'pdf' | 'image'): string {
+  const base = fileKind === 'pdf' ? '/import/pdf' : '/import/new';
+  return `${base}?file=${encodeURIComponent(fileUrl)}`;
+}
+
 // Bridges the mobile share target into the router: when another app shares
 // a supported video link to us, route to the import-from-link flow with the
 // URL prefilled (it auto-extracts). Inert on the web — initShareIntent only
@@ -450,19 +466,34 @@ function ShareIntentListener() {
   }, [user]);
 
   // If the user signs in after being bounced from a share, finish the
-  // import flow by consuming the URL we stashed in sessionStorage.
+  // import flow by consuming what we stashed in sessionStorage — either a
+  // pasted/shared URL or a shared file (PDF / image) in the app group.
   useEffect(() => {
     if (!user) return;
     let pending: string | null = null;
+    let pendingFile: string | null = null;
     try {
       pending = sessionStorage.getItem('cookyourbooks.pendingShare');
       if (pending) sessionStorage.removeItem('cookyourbooks.pendingShare');
+      pendingFile = sessionStorage.getItem('cookyourbooks.pendingShareFile');
+      if (pendingFile) sessionStorage.removeItem('cookyourbooks.pendingShareFile');
     } catch {
       /* private mode — nothing to do */
     }
     if (pending) {
       showToast('Resuming import after sign-in…', 'success');
       navigate(`/import/link?url=${encodeURIComponent(pending)}`);
+    } else if (pendingFile) {
+      try {
+        const { fileUrl, fileKind } = JSON.parse(pendingFile) as {
+          fileUrl: string;
+          fileKind: 'pdf' | 'image';
+        };
+        showToast('Resuming import after sign-in…', 'success');
+        navigate(fileRoute(fileUrl, fileKind));
+      } catch {
+        /* malformed stash — ignore */
+      }
     }
   }, [user, navigate, showToast]);
 
@@ -494,11 +525,33 @@ function ShareIntentListener() {
         navigate(`/import/link?url=${encodeURIComponent(outcome.url)}`);
         return;
       }
-      // no_url — the share extension ran but we couldn't find a URL.
+      if (outcome.kind === 'import_file') {
+        if (!userRef.current) {
+          try {
+            sessionStorage.setItem(
+              'cookyourbooks.pendingShareFile',
+              JSON.stringify({ fileUrl: outcome.fileUrl, fileKind: outcome.fileKind }),
+            );
+          } catch {
+            /* private mode or quota — non-fatal */
+          }
+          showToast('Sign in to finish importing this recipe.', 'info');
+          navigate('/sign-in');
+          return;
+        }
+        showToast(
+          outcome.fileKind === 'pdf' ? 'Importing PDF recipe…' : 'Importing shared photo…',
+          'success',
+        );
+        navigate(fileRoute(outcome.fileUrl, outcome.fileKind));
+        return;
+      }
+      // no_url — the share extension ran but we couldn't find a URL. Point the
+      // user at the reliable workaround for paywalled sites (print → PDF).
       showToast(
-        "Couldn't read a link from that share. Try sharing the URL directly.",
+        "Couldn't read a recipe from that share. For paywalled sites, print the page to PDF and share the PDF.",
         'warn',
-        5000,
+        6000,
       );
     });
   }, [navigate, showToast]);
