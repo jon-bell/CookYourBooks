@@ -190,11 +190,11 @@ jobs:
         # 20260703000000 + support/workerOwner), so the suite is parallel-safe.
         # Locally it's green at 8 workers in ~3.5 min, but the ephemeral CI runner
         # is much slower, and 8 simultaneous sign-ins + realtime subscriptions in
-        # the first wave overwhelm it. 4 workers halves the contention and still
-        # cuts wall-clock roughly in half vs the old serial run. `timeout
-        # --foreground` sends SIGTERM first so Playwright can flush its report.
+        # the first wave overwhelm it. 4 was stable; trying 6 for more savings —
+        # drop back to 4 if the ephemeral runner flakes. `timeout --foreground`
+        # sends SIGTERM first so Playwright can flush its report.
         env:
-          E2E_WORKERS: '4'
+          E2E_WORKERS: '6'
           E2E_FULLY_PARALLEL: '1'
         run: |
           timeout --foreground --signal=TERM --kill-after=30s 1200 \
