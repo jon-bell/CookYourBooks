@@ -111,11 +111,11 @@ export function ImportLinkPage() {
         if (e instanceof VideoImportError && e.code === 'NO_GEMINI_KEY') {
           setError(
             <>
-              Video import needs a Gemini API key.{' '}
-              <Link to="/settings/llm" className="underline">
-                Open settings
+              Importing isn't set up yet.{' '}
+              <Link to="/import/setup" className="underline">
+                Set up importing
               </Link>{' '}
-              to add one.
+              to get started.
             </>,
           );
           setPhase('idle');

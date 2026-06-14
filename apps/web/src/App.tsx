@@ -29,6 +29,7 @@ import { ActivityPage } from './pages/ActivityPage.js';
 import { LegalPage } from './pages/LegalPage.js';
 import { ImportListPage } from './pages/ImportListPage.js';
 import { ImportNewPage } from './pages/ImportNewPage.js';
+import { OcrOnboardingWizard } from './import/OcrOnboardingWizard.js';
 import { ImportBatchPage } from './pages/ImportBatchPage.js';
 import { ImportGroupingPage } from './pages/ImportGroupingPage.js';
 import { ImportItemPage } from './pages/ImportItemPage.js';
@@ -250,6 +251,14 @@ export function App() {
             element={
               <RequireAuth>
                 <ImportListPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/setup"
+            element={
+              <RequireAuth>
+                <OcrOnboardingWizard />
               </RequireAuth>
             }
           />

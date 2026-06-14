@@ -108,11 +108,11 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
       if (resolvedHasKey === false) {
         setError(
           <>
-            OCR not configured.{' '}
-            <Link to="/settings/llm" className="underline">
-              Open settings
+            Importing isn't set up yet.{' '}
+            <Link to="/import/setup" className="underline">
+              Set up importing
             </Link>{' '}
-            to add an API key.
+            to get started.
           </>,
         );
         return;
