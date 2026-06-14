@@ -131,14 +131,16 @@ export async function fetchEmbedJob(recipeId: string): Promise<EmbedJobRow | nul
  */
 export async function waitForEmbedding(
   recipeId: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; ownerId?: string | null } = {},
 ): Promise<ServerEmbedding> {
   const timeout = opts.timeoutMs ?? 60_000;
   let last: ServerEmbedding | null = null;
   await expect
     .poll(
       async () => {
-        await triggerWorker(null).catch(() => {
+        // `ownerId` scopes the drain to the recipe's owner in multi-user specs;
+        // single-user specs omit it and fall back to the fixture's test user.
+        await triggerWorker(null, opts.ownerId).catch(() => {
           // transient: a single failed kick shouldn't abort the poll
         });
         last = await fetchServerEmbedding(recipeId);

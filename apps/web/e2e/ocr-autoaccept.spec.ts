@@ -2,8 +2,8 @@ import { test, expect } from './support/fixtures.js';
 import { waitForSynced } from './support/fixtures.js';
 import {
   configureOcrKey,
+  pumpItemStatuses,
   seedOcrFixture,
-  triggerWorker,
   uploadTestImages,
   waitForBatchItemCount,
   waitForItemStatuses,
@@ -84,7 +84,10 @@ async function setupBatch(
   const items = await waitForBatchItemCount(batchId, 2);
   await seedOcrFixture({ storagePath: items[0]!.storage_path, kind: 'recipe', draft: highConfidenceDraft(highTitle) });
   await seedOcrFixture({ storagePath: items[1]!.storage_path, kind: 'recipe', draft: lowConfidenceDraft(lowTitle) });
-  await triggerWorker(batchId);
+  // Drain both pages to OCR_DONE robustly (re-kick until done) so the board's
+  // reactive auto-accept actually has rows to act on — a single kick can race
+  // the queue under parallelism and claim 0.
+  await pumpItemStatuses(batchId, (c) => c.ocrDone + c.reviewed >= 2, 30_000);
   return batchId;
 }
 
@@ -160,10 +163,9 @@ test.describe('OCR auto-accept', () => {
 
     const items = await waitForBatchItemCount(batchId, 1);
     await seedOcrFixture({ storagePath: items[0]!.storage_path, kind: 'recipe', draft: highConfidenceDraft('Should Wait') });
-    await triggerWorker(batchId);
 
     // Even though it clears the bar, it stays in review — no banner, no promote.
-    await waitForItemStatuses(batchId, (c) => c.ocrDone === 1, 30_000);
+    await pumpItemStatuses(batchId, (c) => c.ocrDone === 1, 30_000);
     await expect(page.getByText(/auto-accepted/)).toHaveCount(0);
   });
 });

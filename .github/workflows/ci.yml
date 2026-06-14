@@ -186,18 +186,20 @@ jobs:
           probe "storage"       "$api_url/storage/v1/bucket"                            200
 
       - name: Run Playwright E2E
-        # Hard 20-minute wrapper so a total hang still produces logs and
-        # artifacts inside the 45-minute job budget. `timeout --foreground`
-        # sends SIGTERM first and lets Playwright flush its HTML report
-        # before exit. The serial suite runs ~13 min locally; this leaves
-        # headroom on slower runners until the planned test-hygiene pass
-        # (shard/parallelize) brings it back down.
+        # The worker job queue is owner-scoped per test (migration
+        # 20260703000000 + support/workerOwner), so the suite is parallel-safe:
+        # run at 8 workers, which drops wall-clock from ~13 min (workers=1) to
+        # ~3-4 min. `timeout --foreground` sends SIGTERM first so Playwright can
+        # flush its HTML report before exit.
+        env:
+          E2E_WORKERS: '8'
+          E2E_FULLY_PARALLEL: '1'
         run: |
-          timeout --foreground --signal=TERM --kill-after=30s 1200 \
+          timeout --foreground --signal=TERM --kill-after=30s 900 \
             pnpm --filter @cookyourbooks/web exec playwright test --reporter=line
         # Surface a timeout separately from test failure so the failure
         # triage step picks the right path below.
-        timeout-minutes: 23
+        timeout-minutes: 18
 
       - name: Upload Playwright HTML report on failure
         if: failure()

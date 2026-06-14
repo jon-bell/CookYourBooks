@@ -2961,6 +2961,7 @@ export type Database = {
         Args: {
           p_lease_seconds?: number
           p_limit?: number
+          p_only_owner?: string
           p_worker_id: string
         }
         Returns: {
@@ -3083,6 +3084,7 @@ export type Database = {
         Args: {
           p_lease_seconds?: number
           p_limit?: number
+          p_only_owner?: string
           p_worker_id: string
         }
         Returns: {
@@ -3135,6 +3137,7 @@ export type Database = {
         Args: {
           p_lease_seconds?: number
           p_limit?: number
+          p_only_owner?: string
           p_worker_id: string
         }
         Returns: {
@@ -3248,6 +3251,7 @@ export type Database = {
           p_batch_id?: string
           p_lease_seconds?: number
           p_limit?: number
+          p_only_owner?: string
           p_worker_id: string
         }
         Returns: {
@@ -3351,6 +3355,7 @@ export type Database = {
         Args: {
           p_lease_seconds?: number
           p_limit?: number
+          p_only_owner?: string
           p_worker_id: string
         }
         Returns: {
@@ -3498,6 +3503,7 @@ export type Database = {
         Args: {
           p_lease_seconds?: number
           p_limit?: number
+          p_only_owner?: string
           p_worker_id: string
         }
         Returns: {
@@ -3588,6 +3594,7 @@ export type Database = {
         Args: {
           p_lease_seconds?: number
           p_limit?: number
+          p_only_owner?: string
           p_worker_id: string
         }
         Returns: {

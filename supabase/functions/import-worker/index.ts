@@ -320,7 +320,12 @@ Deno.serve(async (req) => {
       });
       return json({ error: 'unauthorized' }, 401);
     }
-    let body: { batch_id?: string | null; embed?: boolean; cover?: boolean } = {};
+    let body: {
+      batch_id?: string | null;
+      embed?: boolean;
+      cover?: boolean;
+      only_owner?: string | null;
+    } = {};
     try {
       const text = await req.text();
       if (text.length > 0) body = JSON.parse(text);
@@ -328,31 +333,35 @@ Deno.serve(async (req) => {
       return json({ error: 'invalid JSON body' }, 400);
     }
     const batchId = body.batch_id ?? null;
+    // Test-only: scope EVERY claim loop to one owner so e2e worker-backed specs
+    // can run in parallel without draining each other's jobs. NULL in prod
+    // (pg_net / cron never set it) → global drain, unchanged behaviour.
+    const onlyOwner = body.only_owner ?? null;
 
     const workerId = `edge:${crypto.randomUUID()}`;
     const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
     wLog.info('invocation start');
     await ensurePricing(wLog);
-    const summary = await runLoop(workerId, batchId, wLog);
+    const summary = await runLoop(workerId, batchId, wLog, onlyOwner);
     // Drain any pending bakeoff variants in the same invocation. Variants
     // are per-user, so we don't filter by batch — the page that just
     // started the bakeoff kicks us, and we pull anything queued.
-    const bakeoffSummary = await runBakeoffLoop(workerId, wLog);
+    const bakeoffSummary = await runBakeoffLoop(workerId, wLog, onlyOwner);
     // Drain pending instruction-rewrite jobs too. Same loop discipline:
     // claim once per invocation, the next user kick or cron tick picks
     // up the slack if anything is still queued.
-    const rewriteSummary = await runRewriteLoop(workerId, wLog);
+    const rewriteSummary = await runRewriteLoop(workerId, wLog, onlyOwner);
     // Drain pending recipe-remix jobs. Same one-claim-per-invocation
     // discipline; the remix_kick + cron tick pick up any tail.
-    const remixSummary = await runRemixLoop(workerId, wLog);
-    const importVariantSummary = await runImportVariantLoop(workerId, wLog);
+    const remixSummary = await runRemixLoop(workerId, wLog, onlyOwner);
+    const importVariantSummary = await runImportVariantLoop(workerId, wLog, onlyOwner);
     // Drain pending recipe embedding jobs. Same shape as rewrite — a
     // single claim per invocation; the cron tick + save-side kicks
     // pick up any tail.
-    const embedSummary = await runEmbedLoop(workerId, wLog);
+    const embedSummary = await runEmbedLoop(workerId, wLog, onlyOwner);
     // Drain pending recipe cover-image jobs. Same one-claim-per-invocation
     // discipline; the cover_kick + cron tick pick up any tail.
-    const coverSummary = await runCoverLoop(workerId, wLog);
+    const coverSummary = await runCoverLoop(workerId, wLog, onlyOwner);
     wLog.info('invocation end', {
       ...summary,
       bakeoff_processed: bakeoffSummary.processed,
@@ -402,6 +411,7 @@ async function runLoop(
   workerId: string,
   batchId: string | null,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<LoopSummary> {
   const startedAt = Date.now();
   let processed = 0;
@@ -411,7 +421,7 @@ async function runLoop(
   ocrRateLimitObserved = false;
 
   while (Date.now() - startedAt < LOOP_BUDGET_MS) {
-    const items = await claimBatch(workerId, batchId, log);
+    const items = await claimBatch(workerId, batchId, log, onlyOwner);
     if (items.length === 0) {
       emptyTicks++;
       log.info('empty claim', { empty_ticks: emptyTicks });
@@ -467,12 +477,14 @@ async function claimBatch(
   workerId: string,
   batchId: string | null,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<ImportItem[]> {
   const { data, error } = await supabase.rpc('import_claim_next', {
     p_worker_id: workerId,
     p_batch_id: batchId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('import_claim_next failed', { code: error.code, message: error.message });
@@ -947,13 +959,14 @@ async function parseAndComplete(
 async function runBakeoffLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
   // One claim pass per invocation; the page polls bakeoff_variants and
   // can kick the worker again if a variant lingers. Keeping this simple
   // avoids fighting with the import loop for parallelism budget.
-  const variants = await claimBakeoffBatch(workerId, log);
+  const variants = await claimBakeoffBatch(workerId, log, onlyOwner);
   if (variants.length === 0) return { processed, failed };
   log.info('claimed variants', { count: variants.length });
 
@@ -975,11 +988,13 @@ async function runBakeoffLoop(
 async function claimBakeoffBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<BakeoffVariant[]> {
   const { data, error } = await supabase.rpc('bakeoff_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('bakeoff_claim_next failed', { code: error.code, message: error.message });
@@ -1259,10 +1274,11 @@ async function processRewriteVariant(
 async function runRewriteLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
-  const jobs = await claimRewriteBatch(workerId, log);
+  const jobs = await claimRewriteBatch(workerId, log, onlyOwner);
   if (jobs.length === 0) return { processed, failed };
   log.info('claimed rewrite jobs', { count: jobs.length });
 
@@ -1282,11 +1298,13 @@ async function runRewriteLoop(
 async function claimRewriteBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<RewriteJob[]> {
   const { data, error } = await supabase.rpc('rewrite_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('rewrite_claim_next failed', { code: error.code, message: error.message });
@@ -1590,10 +1608,11 @@ async function runOrMockRewrite(p: {
 async function runRemixLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
-  const jobs = await claimRemixBatch(workerId, log);
+  const jobs = await claimRemixBatch(workerId, log, onlyOwner);
   if (jobs.length === 0) return { processed, failed };
   log.info('claimed remix jobs', { count: jobs.length });
 
@@ -1613,11 +1632,13 @@ async function runRemixLoop(
 async function claimRemixBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<RemixJob[]> {
   const { data, error } = await supabase.rpc('remix_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('remix_claim_next failed', { code: error.code, message: error.message });
@@ -1863,10 +1884,11 @@ async function runOrMockRemix(p: {
 async function runImportVariantLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
-  const results = await claimImportVariantBatch(workerId, log);
+  const results = await claimImportVariantBatch(workerId, log, onlyOwner);
   if (results.length === 0) return { processed, failed };
   log.info('claimed import variant results', { count: results.length });
 
@@ -1888,11 +1910,13 @@ async function runImportVariantLoop(
 async function claimImportVariantBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<ImportVariantResult[]> {
   const { data, error } = await supabase.rpc('import_variant_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('import_variant_claim_next failed', { code: error.code, message: error.message });
@@ -2061,6 +2085,7 @@ const MAX_EMBED_RETRIES = 3;
 async function runEmbedLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
@@ -2068,6 +2093,7 @@ async function runEmbedLoop(
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('embed_claim_next failed', { code: error.code, message: error.message });
@@ -2276,6 +2302,7 @@ const DEFAULT_COVER_PROMPT =
 async function runCoverLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
@@ -2283,6 +2310,7 @@ async function runCoverLoop(
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('cover_claim_next failed', { code: error.code, message: error.message });

@@ -114,7 +114,10 @@ test.describe('Semantic search (household)', () => {
         description: 'Classic Italian comfort dish.',
         ingredients: ['ground beef', 'tomato', 'onion'],
       });
-      await waitForEmbedding(shared.recipeId, { timeoutMs: 80_000 });
+      // Scope the worker drain to A (the recipe owner) — the fixture's `user`
+      // here is the VIEWER (B), so the module default would target the wrong
+      // owner and never drain A's embed job.
+      await waitForEmbedding(shared.recipeId, { timeoutMs: 80_000, ownerId: owner.id });
 
       // `user` (B) joins A's household, THEN signs in fresh so the access
       // token carries household_id=H — the claim the household pull + RLS need.

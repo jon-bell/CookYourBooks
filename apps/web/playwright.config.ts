@@ -66,10 +66,8 @@ export default defineConfig({
       testIgnore: /mobile\..*spec\.ts/,
     },
     {
-      // iPhone-17-sized layer (402×874). Under workers:1 the projects run
-      // sequentially, so this appends the mobile spec(s) rather than
-      // re-running the whole suite at a second viewport. The viewport
-      // itself comes from the one shared constant in support/viewport.ts.
+      // iPhone-17-sized layer (402×874). The viewport comes from the one
+      // shared constant in support/viewport.ts.
       name: 'mobile',
       testMatch: /mobile\..*spec\.ts/,
       use: { ...devices['Desktop Chrome'], ...IPHONE_17_USE },
