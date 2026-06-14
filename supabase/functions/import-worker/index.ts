@@ -2830,8 +2830,13 @@ async function runOrMock(p: {
     : [
         { path: p.item.storage_path, provider: p.provider, model: p.model },
         { path: p.item.storage_path, provider: p.provider, model: '' },
-        { path: '*', provider: p.provider, model: '' },
+        // Any EXACT-path fixture must outrank the `*` wildcard — a test seeding a
+        // per-path row (often with provider='' default) would otherwise be
+        // shadowed by a `('*', provider, '')` fixture LEAKED by another spec
+        // (ocr-multi / ocr-import seed wildcards that persist in the table),
+        // which is what made these OCR specs order-dependent / un-parallelizable.
         { path: p.item.storage_path, provider: '', model: '' },
+        { path: '*', provider: p.provider, model: '' },
       ];
   for (const probe of probes) {
     const { data, error } = await supabase
