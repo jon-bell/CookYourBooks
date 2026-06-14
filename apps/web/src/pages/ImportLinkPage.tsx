@@ -6,6 +6,8 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
 import { reportError } from '../sentry.js';
 import { collectionRepo, recipeRepo } from '../data/repos.js';
+import { useCollectionPickerOptions } from '../data/queries.js';
+import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import {
   extractRecipeFromVideo,
@@ -34,11 +36,15 @@ export function ImportLinkPage() {
   const [needsCaption, setNeedsCaption] = useState(false);
   const [caption, setCaption] = useState('');
   const [result, setResult] = useState<VideoImportResult | undefined>();
+  // '' = file under the auto-detected platform collection (created on demand);
+  // any other value = an existing collection the user re-attributed to.
+  const [destId, setDestId] = useState('');
+  const { data: pickerOptions = [] } = useCollectionPickerOptions();
   // Guard so the deep-link auto-extract fires at most once.
   const autoRan = useRef(false);
 
   const saveDraft = useCallback(
-    async (draft: ParsedRecipeDraft, res: VideoImportResult) => {
+    async (draft: ParsedRecipeDraft, res: VideoImportResult, targetCollectionId: string) => {
       if (!user) return;
       setPhase('saving');
       setError(undefined);
@@ -56,9 +62,9 @@ export function ImportLinkPage() {
           sourceUrl: res.sourceUrl,
         });
         const collections = collectionRepo(user.id);
-        const collectionId = await collections.findOrCreateWebCollectionByPlatform(
-          res.platformTitle,
-        );
+        const collectionId =
+          targetCollectionId ||
+          (await collections.findOrCreateWebCollectionByPlatform(res.platformTitle));
         await recipeRepo(collectionId).save(recipe);
         qc.invalidateQueries({ queryKey: ['collections', user.id] });
         qc.invalidateQueries({ queryKey: ['library-summaries', user.id] });
@@ -74,6 +80,14 @@ export function ImportLinkPage() {
     [user, qc, syncNow, navigate],
   );
 
+  // Default the destination to an existing per-platform website collection when
+  // one already exists, so re-importing from the same source coalesces.
+  const defaultDestFor = useCallback(
+    (platformTitle: string) =>
+      pickerOptions.find((o) => o.sourceType === 'WEBSITE' && o.title === platformTitle)?.id ?? '',
+    [pickerOptions],
+  );
+
   const run = useCallback(
     async (targetUrl: string, withCaption?: string) => {
       const trimmed = targetUrl.trim();
@@ -84,12 +98,10 @@ export function ImportLinkPage() {
         const res = await extractRecipeFromVideo(trimmed, { caption: withCaption });
         setResult(res);
         setNeedsCaption(false);
-        // One draft → save straight away; otherwise let the user pick.
-        if (res.drafts.length === 1) {
-          await saveDraft(res.drafts[0]!, res);
-        } else {
-          setPhase('picking');
-        }
+        // Stop at the picking step so the user can confirm — or re-attribute —
+        // the destination collection before the recipe is saved.
+        setDestId(defaultDestFor(res.platformTitle));
+        setPhase('picking');
       } catch (e) {
         if (e instanceof VideoImportError && e.code === 'NEEDS_CAPTION') {
           setNeedsCaption(true);
@@ -131,7 +143,7 @@ export function ImportLinkPage() {
         setPhase('idle');
       }
     },
-    [saveDraft],
+    [defaultDestFor],
   );
 
   // Deep-link / share-target entry: ?url= auto-extracts once.
@@ -211,26 +223,53 @@ export function ImportLinkPage() {
       {error && <p className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
 
       {phase === 'picking' && result && (
-        <div className="mt-4">
-          <h2 className="mb-2 text-base font-semibold">
-            Found {result.drafts.length} recipes — pick one to save
-          </h2>
-          <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded border border-stone-200 dark:border-stone-700">
-            {result.drafts.map((d, i) => (
-              <li key={i}>
-                <button
-                  type="button"
-                  onClick={() => void saveDraft(d, result)}
-                  className="block w-full px-3 py-2 text-left hover:bg-stone-50 dark:hover:bg-stone-900"
-                >
-                  <div className="font-medium">{d.title ?? `Recipe ${i + 1}`}</div>
-                  <div className="text-xs text-stone-500 dark:text-stone-400">
-                    {d.ingredients.length} ingredients · {d.instructions.length} steps
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium">Save to collection</label>
+            <CookbookCombobox
+              options={pickerOptions}
+              value={destId}
+              onChange={setDestId}
+              unassignedLabel={`New: ${result.platformTitle}`}
+            />
+            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+              Defaults to a new “{result.platformTitle}” collection — pick an
+              existing one to file it there instead.
+            </p>
+          </div>
+
+          {result.drafts.length === 1 ? (
+            <button
+              type="button"
+              data-testid="video-import-save"
+              onClick={() => void saveDraft(result.drafts[0]!, result, destId)}
+              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
+            >
+              Save recipe
+            </button>
+          ) : (
+            <>
+              <h2 className="text-base font-semibold">
+                Found {result.drafts.length} recipes — pick one to save
+              </h2>
+              <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded border border-stone-200 dark:border-stone-700">
+                {result.drafts.map((d, i) => (
+                  <li key={i}>
+                    <button
+                      type="button"
+                      onClick={() => void saveDraft(d, result, destId)}
+                      className="block w-full px-3 py-2 text-left hover:bg-stone-50 dark:hover:bg-stone-900"
+                    >
+                      <div className="font-medium">{d.title ?? `Recipe ${i + 1}`}</div>
+                      <div className="text-xs text-stone-500 dark:text-stone-400">
+                        {d.ingredients.length} ingredients · {d.instructions.length} steps
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
     </main>

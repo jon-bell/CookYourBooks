@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../auth/AuthProvider.js';
+import { countSearchableEmbeddings } from '../local/repositories.js';
 import {
   getEmbedderStatus,
   preloadEmbedder,
@@ -16,6 +17,25 @@ export interface UseSearchResult {
    *  cooperate, otherwise the substring fallback. */
   mode: 'semantic' | 'substring' | 'empty';
   embedderStatus: EmbedderStatus;
+  /** How many recipe vectors are mirrored locally and visible to this user.
+   *  0 means the local cache is cold (embed queue undrained) — distinct from
+   *  the embedder model failing to load. Surfaced in the page diagnostics. */
+  embeddedCount: number;
+}
+
+/** Power-user diagnostic mirror, reusing the existing sync debug flag. */
+function searchDebug(payload: Record<string, unknown>): void {
+  try {
+    if (
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem('cookyourbooks.sync.consoleMirror') === '1'
+    ) {
+      // eslint-disable-next-line no-console
+      console.debug('[search]', payload);
+    }
+  } catch {
+    // localStorage can throw in locked-down webviews; diagnostics are best-effort.
+  }
 }
 
 function useEmbedderStatus(enabled: boolean): EmbedderStatus {
@@ -51,6 +71,16 @@ export function useSearch(q: string): UseSearchResult {
 
   const useSemantic = enabled && embedderStatus === 'ready';
 
+  // Count of locally-mirrored vectors, independent of the query text — lets the
+  // page tell "model didn't load" apart from "cache is cold". Cheap COUNT(*),
+  // refreshed lazily.
+  const { data: embeddedCount = 0 } = useQuery<number>({
+    queryKey: ['search-embedded-count', ownerId],
+    enabled: !!ownerId,
+    queryFn: () => (ownerId ? countSearchableEmbeddings(ownerId) : Promise.resolve(0)),
+    staleTime: 30_000,
+  });
+
   const { data, isLoading } = useQuery<{ hits: SearchHit[]; mode: 'semantic' | 'substring' }>({
     queryKey: ['search', ownerId, trimmed, useSemantic ? 'sem' : 'sub'],
     enabled,
@@ -58,20 +88,25 @@ export function useSearch(q: string): UseSearchResult {
       if (!ownerId || !trimmed) return { hits: [], mode: 'substring' as const };
       if (useSemantic) {
         const semantic = await searchSemantic(ownerId, trimmed);
-        if (semantic.length > 0) return { hits: semantic, mode: 'semantic' as const };
+        if (semantic.length > 0) {
+          searchDebug({ q: trimmed, mode: 'semantic', embedderStatus, embeddedCount, hits: semantic.length });
+          return { hits: semantic, mode: 'semantic' as const };
+        }
         // Cold cache: no vectors have been pulled / computed yet. Fall
         // through to substring so the user gets *something* useful while
         // the worker drains — and report the mode we ACTUALLY used so the
         // UI can tell the user it's showing literal matches.
+        searchDebug({ q: trimmed, mode: 'substring', reason: 'semantic-empty', embedderStatus, embeddedCount });
         return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
       }
+      searchDebug({ q: trimmed, mode: 'substring', reason: 'embedder-not-ready', embedderStatus, embeddedCount });
       return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
     },
     staleTime: 60_000,
   });
 
   if (!enabled) {
-    return { hits: [], isLoading: false, mode: 'empty', embedderStatus };
+    return { hits: [], isLoading: false, mode: 'empty', embedderStatus, embeddedCount };
   }
   return {
     hits: data?.hits ?? [],
@@ -81,5 +116,6 @@ export function useSearch(q: string): UseSearchResult {
     // intended mode.
     mode: data?.mode ?? (useSemantic ? 'semantic' : 'substring'),
     embedderStatus,
+    embeddedCount,
   };
 }

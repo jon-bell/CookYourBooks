@@ -10,6 +10,7 @@ import {
   useToggleRecipeStar,
 } from '../data/queries.js';
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
+import { CollectionCoverDialog } from '../books/CollectionCoverDialog.js';
 import { EditBookDetailsDialog } from '../books/EditBookDetailsDialog.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
 import { GenerateCoversButton } from '../components/GenerateCoversButton.js';
@@ -35,6 +36,7 @@ export function CollectionPage() {
   const toggleStar = useToggleRecipeStar(collectionId ?? '');
   const [showPublishWarning, setShowPublishWarning] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
+  const [generatingCover, setGeneratingCover] = useState(false);
   const [hasOpenSession, setHasOpenSession] = useState(false);
 
   // Cheap one-shot probe so the CTA can say "resume" when applicable.
@@ -125,7 +127,29 @@ export function CollectionPage() {
         </div>
       )}
 
-      <CoverImageEditor collection={c} onChange={onCoverChange} />
+      <div className="flex flex-wrap items-end gap-3">
+        <CoverImageEditor collection={c} onChange={onCoverChange} />
+        <button
+          type="button"
+          onClick={() => setGeneratingCover(true)}
+          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+        >
+          Generate collection cover
+        </button>
+      </div>
+
+      {user && (
+        <CollectionCoverDialog
+          open={generatingCover}
+          onClose={() => setGeneratingCover(false)}
+          userId={user.id}
+          collectionId={c.id}
+          collectionTitle={c.title}
+          previousCoverPath={c.coverImagePath}
+          recipes={recipes}
+          onCoverSaved={onCoverChange}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <Link

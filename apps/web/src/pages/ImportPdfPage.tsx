@@ -6,6 +6,8 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
 import { reportError } from '../sentry.js';
 import { collectionRepo, recipeRepo } from '../data/repos.js';
+import { useCollectionPickerOptions } from '../data/queries.js';
+import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import { renderPdfToJpegs } from '../import/imageProcessing.js';
 import { extractSourceUrlFromPdf } from '../import/pdfSourceUrl.js';
@@ -13,6 +15,12 @@ import { readSharedFile } from '../import/sharedFile.js';
 import { extractRecipeFromPdf, PdfImportError, type PdfImportResult } from '../import/pdfImport.js';
 
 type Phase = 'idle' | 'reading' | 'extracting' | 'saving';
+
+/** Parsed-but-not-yet-saved import, held while the user confirms a destination. */
+interface Pending {
+  draft: ParsedRecipeDraft;
+  res: PdfImportResult;
+}
 
 /**
  * Import a recipe from a PDF — the landing for the iOS "share a PDF" flow
@@ -31,11 +39,17 @@ export function ImportPdfPage() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<React.ReactNode | undefined>();
   const [status, setStatus] = useState<string>('');
+  // Parsed recipe awaiting a destination choice (the re-attribution step).
+  const [pending, setPending] = useState<Pending | null>(null);
+  // '' = file under the auto-detected platform collection (created on demand);
+  // any other value = an existing collection the user re-attributed to.
+  const [destId, setDestId] = useState('');
+  const { data: pickerOptions = [] } = useCollectionPickerOptions();
   // Guard so the deep-link auto-run fires at most once.
   const autoRan = useRef(false);
 
   const saveDraft = useCallback(
-    async (draft: ParsedRecipeDraft, res: PdfImportResult) => {
+    async (draft: ParsedRecipeDraft, res: PdfImportResult, targetCollectionId: string) => {
       if (!user) return;
       setPhase('saving');
       setStatus('Saving recipe…');
@@ -52,7 +66,11 @@ export function ImportPdfPage() {
         sourceUrl: res.sourceUrl ?? undefined,
       });
       const collections = collectionRepo(user.id);
-      const collectionId = await collections.findOrCreateWebCollectionByPlatform(res.platformTitle);
+      // Re-attributed to an existing collection, or (default) the auto-detected
+      // per-platform website collection, created on demand.
+      const collectionId =
+        targetCollectionId ||
+        (await collections.findOrCreateWebCollectionByPlatform(res.platformTitle));
       await recipeRepo(collectionId).save(recipe);
       qc.invalidateQueries({ queryKey: ['collections', user.id] });
       qc.invalidateQueries({ queryKey: ['library-summaries', user.id] });
@@ -86,14 +104,22 @@ export function ImportPdfPage() {
           pages.map((p) => p.fullJpeg),
           { sourceUrl },
         );
-        // Whole PDF → one recipe: save the first (and usually only) draft.
+        // Whole PDF → one recipe: hold the first (and usually only) draft and
+        // let the user confirm/re-attribute the destination collection.
         const draft = res.drafts[0];
         if (!draft) {
           setError('No recipe found in that PDF.');
           setPhase('idle');
           return;
         }
-        await saveDraft(draft, res);
+        // Default to an existing per-platform website collection when one is
+        // already there, so re-importing from the same source coalesces.
+        const existing = pickerOptions.find(
+          (o) => o.sourceType === 'WEBSITE' && o.title === res.platformTitle,
+        );
+        setDestId(existing?.id ?? '');
+        setPending({ draft, res });
+        setPhase('idle');
       } catch (e) {
         if (e instanceof PdfImportError && e.code === 'NO_GEMINI_KEY') {
           setError(
@@ -118,7 +144,7 @@ export function ImportPdfPage() {
         setPhase('idle');
       }
     },
-    [saveDraft],
+    [pickerOptions],
   );
 
   // Deep-link / share entry: ?file=<file://…> reads the shared PDF and runs once.
@@ -150,7 +176,7 @@ export function ImportPdfPage() {
         recipe and link back to the original page.
       </p>
 
-      {!params.get('file') && (
+      {!params.get('file') && !pending && (
         <label className="flex flex-col gap-2">
           <span className="text-sm">Choose a PDF</span>
           <input
@@ -171,6 +197,50 @@ export function ImportPdfPage() {
         <p className="mt-4 text-sm text-stone-600 dark:text-stone-400" role="status">
           {status || 'Working…'}
         </p>
+      )}
+
+      {pending && !busy && (
+        <div className="mt-4 space-y-3 rounded-lg border border-stone-200 dark:border-stone-700 p-4">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+              Recipe
+            </div>
+            <div className="font-medium">{pending.draft.title?.trim() || 'Untitled'}</div>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium">Save to collection</label>
+            <CookbookCombobox
+              options={pickerOptions}
+              value={destId}
+              onChange={setDestId}
+              unassignedLabel={`New: ${pending.res.platformTitle}`}
+            />
+            <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+              Defaults to a new “{pending.res.platformTitle}” collection — pick an
+              existing one to file it there instead.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              data-testid="pdf-import-save"
+              onClick={() => void saveDraft(pending.draft, pending.res, destId)}
+              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
+            >
+              Save recipe
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPending(null);
+                setDestId('');
+              }}
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
 
       {error && <p className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p>}

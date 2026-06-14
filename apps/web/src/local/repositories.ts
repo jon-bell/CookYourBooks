@@ -2785,6 +2785,26 @@ export async function listSearchableEmbeddings(
   }));
 }
 
+/**
+ * Cheap count of the locally-mirrored embeddings the semantic search can see
+ * (own + household-shared, same visibility as `listSearchableEmbeddings`). Used
+ * by the search page diagnostics to tell apart "the embedder failed to load"
+ * from "no vectors have been pulled/computed locally yet" — the two reasons
+ * semantic search silently degrades to literal matches.
+ */
+export async function countSearchableEmbeddings(ownerId: string): Promise<number> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ n: number }>(
+    `select count(*) as n
+       from recipe_embeddings e
+       join recipes r on r.id = e.recipe_id and r.deleted = 0
+       join recipe_collections c on c.id = r.collection_id and c.deleted = 0
+              and (c.owner_id = ? or c.shared_with_household_id is not null)`,
+    [ownerId],
+  )) as { n: number }[];
+  return rows[0]?.n ?? 0;
+}
+
 // Literal/offline fallback search now lives in the LocalRecipeCollectionRepository
 // (`searchRecipes`), which also covers household-shared recipes and "not
 // imported" placeholders. The semantic path falls back to it via

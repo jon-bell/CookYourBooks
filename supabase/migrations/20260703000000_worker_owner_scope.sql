@@ -130,9 +130,43 @@ $$;
 revoke all on function public.cover_claim_next(text, int, int, uuid) from public, authenticated, anon;
 grant execute on function public.cover_claim_next(text, int, int, uuid) to service_role;
 
--- NOTE: collection_cover_claim_next gets the same p_only_owner treatment, but it
--- lives on the collection-cover feature branch; fold that in when the branches
--- merge so its worker loop is owner-scoped too.
+-- ---------- collection_cover_claim_next ----------
+drop function if exists public.collection_cover_claim_next(text, int, int);
+create function public.collection_cover_claim_next(
+  p_worker_id text,
+  p_lease_seconds int default 300,
+  p_limit int default 8,
+  p_only_owner uuid default null
+) returns setof public.collection_cover_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.collection_cover_jobs
+    set status = 'PENDING', claim_token = null
+    where status = 'CLAIMED' and claim_expires_at < now();
+
+  return query
+    update public.collection_cover_jobs
+      set status = 'CLAIMED',
+          claim_token = p_worker_id,
+          claim_expires_at = now() + make_interval(secs => p_lease_seconds),
+          attempts = attempts + 1,
+          updated_at = now()
+      where id in (
+        select id from public.collection_cover_jobs
+          where status = 'PENDING'
+            and (p_only_owner is null or owner_id = p_only_owner)
+          order by created_at asc
+          limit p_limit
+          for update skip locked
+      )
+      returning *;
+end;
+$$;
+revoke all on function public.collection_cover_claim_next(text, int, int, uuid) from public, authenticated, anon;
+grant execute on function public.collection_cover_claim_next(text, int, int, uuid) to service_role;
 
 -- ---------- remix_claim_next ----------
 drop function if exists public.remix_claim_next(text, int, int);

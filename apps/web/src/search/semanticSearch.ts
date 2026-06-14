@@ -83,7 +83,7 @@ function scoreOffMainThread(
 export async function searchSemantic(
   ownerId: string,
   q: string,
-  limit = 50,
+  limit = 200,
 ): Promise<SearchHit[]> {
   const trimmed = q.trim();
   if (!trimmed) return [];
