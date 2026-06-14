@@ -412,6 +412,12 @@ verify_jwt = false
 [functions.pdf-import]
 verify_jwt = false
 
+# ocr-key-test validates a freshly-pasted OCR key (onboarding wizard) before it's
+# stored. Called from the browser; does its own JWT validation in requireAuth().
+# verify_jwt off so the CORS preflight reaches the function — same as above.
+[functions.ocr-key-test]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427

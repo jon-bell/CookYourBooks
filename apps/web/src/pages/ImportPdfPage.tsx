@@ -124,11 +124,11 @@ export function ImportPdfPage() {
         if (e instanceof PdfImportError && e.code === 'NO_GEMINI_KEY') {
           setError(
             <>
-              PDF import needs a Gemini API key.{' '}
-              <Link to="/settings/llm" className="underline">
-                Open settings
+              Importing isn't set up yet.{' '}
+              <Link to="/import/setup" className="underline">
+                Set up importing
               </Link>{' '}
-              to add one.
+              to get started.
             </>,
           );
           setPhase('idle');

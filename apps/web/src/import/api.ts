@@ -33,6 +33,50 @@ export async function deleteOcrKey(provider: OcrProvider): Promise<void> {
   if (error) throw error;
 }
 
+export interface OcrKeyTestResult {
+  ok: boolean;
+  /** Plain-language bucket the wizard maps to a friendly message. */
+  reason?: 'auth' | 'network' | 'other';
+  message?: string;
+}
+
+declare global {
+  interface Window {
+    /** E2E hook: short-circuits the `ocr-key-test` edge call. Mirrors
+     *  `window.__cybOcrShim` — returns the canned validation result. */
+    __cybOcrKeyTestShim?: (
+      provider: OcrProvider,
+      rawKey: string,
+      baseUrl?: string,
+    ) => Promise<OcrKeyTestResult>;
+  }
+}
+
+/**
+ * Validates a freshly-typed OCR key with a live, zero-token provider call
+ * (via the `ocr-key-test` edge function) *before* it's stored in Vault, so the
+ * onboarding wizard can catch a typo'd / wrong key immediately. The key is sent
+ * in the request and never persisted by this call.
+ */
+export async function validateOcrKey(
+  provider: OcrProvider,
+  rawKey: string,
+  baseUrl?: string,
+): Promise<OcrKeyTestResult> {
+  if (typeof window !== 'undefined' && window.__cybOcrKeyTestShim) {
+    return window.__cybOcrKeyTestShim(provider, rawKey, baseUrl);
+  }
+  const { data, error } = await supabase.functions.invoke('ocr-key-test', {
+    body: { provider, apiKey: rawKey, baseUrl },
+  });
+  if (error) {
+    // Transport / function-level failure (not a provider rejection) — treat as
+    // a network problem so the wizard tells the user to check their connection.
+    return { ok: false, reason: 'network', message: error.message };
+  }
+  return data as OcrKeyTestResult;
+}
+
 export async function resetImportItem(itemId: string): Promise<void> {
   const { error } = await supabase.rpc('import_reset_item', { p_item_id: itemId });
   if (error) throw error;
