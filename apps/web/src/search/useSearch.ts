@@ -8,7 +8,7 @@ import {
   subscribeEmbedderStatus,
   type EmbedderStatus,
 } from './embedder.js';
-import { searchSemantic, searchSubstring, type SearchHit } from './semanticSearch.js';
+import { searchHybrid, searchSubstring, type SearchHit } from './semanticSearch.js';
 
 export interface UseSearchResult {
   hits: SearchHit[];
@@ -87,10 +87,15 @@ export function useSearch(q: string): UseSearchResult {
     queryFn: async () => {
       if (!ownerId || !trimmed) return { hits: [], mode: 'substring' as const };
       if (useSemantic) {
-        const semantic = await searchSemantic(ownerId, trimmed);
-        if (semantic.length > 0) {
-          searchDebug({ q: trimmed, mode: 'semantic', embedderStatus, embeddedCount, hits: semantic.length });
-          return { hits: semantic, mode: 'semantic' as const };
+        // Hybrid: literal exact-term matches first, then semantic extras.
+        // A one-word query like "salad" must surface every actual salad
+        // ahead of merely-related soups/dressings that pure semantic
+        // interleaves (gte-small's cosine band is too compressed to
+        // separate them — see semanticSearch.ts).
+        const hybrid = await searchHybrid(ownerId, trimmed);
+        if (hybrid.length > 0) {
+          searchDebug({ q: trimmed, mode: 'semantic', embedderStatus, embeddedCount, hits: hybrid.length });
+          return { hits: hybrid, mode: 'semantic' as const };
         }
         // Cold cache: no vectors have been pulled / computed yet. Fall
         // through to substring so the user gets *something* useful while
