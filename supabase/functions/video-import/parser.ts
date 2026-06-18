@@ -203,34 +203,70 @@ export function canonicalUnitName(token: string | null | undefined): string {
 const PARSE_FAILED = Symbol('PARSE_FAILED');
 
 /**
- * Strict JSON.parse first. If that fails with a bad-escape error
- * (Gemini occasionally emits invalid escapes like `\T` inside string
- * values), re-try after escaping any backslash not already followed by
- * one of the valid JSON escape characters. If that also fails, return
- * the sentinel so callers can produce their own error.
- *
- * Also tolerates a stray trailing comma before `}` or `]` which Gemini
- * has been seen emitting under load.
+ * Walk `text` and return the first complete, balanced JSON value
+ * (`{...}` or `[...]`) as a substring, ignoring brackets inside string
+ * literals. Used to discard junk Gemini sometimes appends after the JSON
+ * — most often a stray doubled closing brace (`...}\n}`), but also
+ * trailing prose. Returns undefined when no balanced value is found.
+ */
+function extractFirstJsonValue(text: string): string | undefined {
+  const start = text.search(/[{[]/);
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Strict JSON.parse first. On failure, try a series of conservative
+ * repairs and return the first that parses:
+ *   1. the first balanced JSON value — drops trailing junk such as a
+ *      doubled `}` or appended prose Gemini emits under load
+ *   2. backslash-escape repair (Gemini occasionally emits invalid escapes
+ *      like `\T`) plus collapsing of stray trailing commas before `}`/`]`
+ *   3. (1) and (2) combined
+ * Returns the PARSE_FAILED sentinel if nothing parses. Mirrors llm.ts's
+ * tolerantJsonParse — keep in sync.
  */
 function tolerantJsonParse(text: string): unknown {
   try {
     return JSON.parse(text);
-  } catch (err) {
-    const message = (err as Error).message;
-    if (!/bad escaped character|unexpected token/i.test(message)) {
-      return PARSE_FAILED;
+  } catch {
+    // fall through to repair attempts
+  }
+  const escapeRepair = (s: string): string =>
+    s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\').replace(/,(\s*[}\]])/g, '$1');
+  const extracted = extractFirstJsonValue(text);
+  const candidates: (string | undefined)[] = [
+    extracted,
+    escapeRepair(text),
+    extracted ? escapeRepair(extracted) : undefined,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === text) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // try the next candidate
     }
   }
-  // Repair pass: double any backslash that isn't followed by a valid
-  // JSON escape character, then collapse trailing commas.
-  const repaired = text
-    .replace(/\\(?!["\\/bfnrtu])/g, '\\\\')
-    .replace(/,(\s*[}\]])/g, '$1');
-  try {
-    return JSON.parse(repaired);
-  } catch {
-    return PARSE_FAILED;
-  }
+  return PARSE_FAILED;
 }
 
 export function parseLlmJson(text: string): ParsedRecipeDraft[] {
