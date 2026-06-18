@@ -186,14 +186,27 @@ function recordTransfer(
   if (events.length === 0) return;
   // The new RPC isn't in the checked-in generated DB types yet (regenerated
   // out of band), so call it through a structural cast rather than the typed
-  // overload — same approach as datausage/api.ts.
-  const rpc = supabase.rpc as unknown as (
-    fn: string,
-    args: Record<string, unknown>,
-  ) => PromiseLike<{ error: { message: string } | null }>;
-  void rpc('record_sync_transfer', { p_cycle_id: cycleId, p_events: events }).then(({ error }) => {
-    if (error) logSync('warn', 'record_sync_transfer failed', { error: error.message });
-  });
+  // overload — same approach as datausage/api.ts. Call it as a *member* of
+  // `supabase` (not via a detached `const rpc = supabase.rpc`) so the method
+  // keeps its `this` binding — supabase-js's rpc() reads `this.rest` and a
+  // detached call throws "Cannot read properties of undefined (reading
+  // 'rest')" synchronously, which — fired from cycle()'s finally — would
+  // reject the whole sync cycle. This insert is best-effort and must never
+  // surface as a sync error, so swallow both sync throws and async rejections.
+  try {
+    void supabase
+      .rpc('record_sync_transfer' as never, { p_cycle_id: cycleId, p_events: events } as never)
+      .then(
+        ({ error }) => {
+          if (error) logSync('warn', 'record_sync_transfer failed', { error: error.message });
+        },
+        (err: unknown) => {
+          logSync('warn', 'record_sync_transfer threw', { error: stringifyError(err) });
+        },
+      );
+  } catch (err) {
+    logSync('warn', 'record_sync_transfer threw', { error: stringifyError(err) });
+  }
 }
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {

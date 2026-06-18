@@ -212,8 +212,14 @@ async function handle(req: Request): Promise<Response> {
     };
   }
 
+  // Use application/octet-stream (not application/msgpack): supabase-js's
+  // functions.invoke only treats octet-stream as binary (→ Blob). Any other
+  // unrecognized content-type falls through to response.text(), which
+  // UTF-8-decodes the MessagePack bytes into a lossy string — the client then
+  // can't decode it and falls back to the keyset path. The body is the same
+  // MessagePack either way; only the label decides how the client parses it.
   return new Response(encode(envelope), {
     status: 200,
-    headers: { 'Content-Type': 'application/msgpack', ...CORS_HEADERS },
+    headers: { 'Content-Type': 'application/octet-stream', ...CORS_HEADERS },
   });
 }

@@ -79,21 +79,35 @@ test.describe('Sync performance', () => {
     const log = (await page.evaluate(() => window.__cybSyncLog?.() ?? [])) as SyncLogEntry[];
     const cycleStart = log.find((e) => e.message === 'cycle: start');
     const cycleIdle = log.find((e) => e.message.startsWith('cycle: idle'));
+    // A fresh full pull takes the snapshot fast path
+    // ("pull via snapshot: N recipes, M ingredients in Xms"); only if the
+    // library-snapshot Edge Function is unavailable does it fall back to the
+    // legacy keyset path ("pull recipes: N rows in Xms"). Accept whichever
+    // ran and read the recipe count + phase timing from it — the perf budget
+    // guards the pull regardless of which path served it.
+    const pullSnapshot = log.find((e) => e.message.startsWith('pull via snapshot:'));
     const pullRecipes = log.find((e) => e.message.startsWith('pull recipes:'));
     const pullComplete = log.find((e) => e.message.startsWith('pull complete'));
 
     expect(cycleStart, 'cycle: start should have logged').toBeTruthy();
     expect(cycleIdle, 'cycle: idle should have logged').toBeTruthy();
-    expect(pullRecipes, 'pull recipes: should have logged').toBeTruthy();
+    expect(
+      pullSnapshot ?? pullRecipes,
+      'a recipe pull (snapshot or keyset) should have logged',
+    ).toBeTruthy();
     expect(pullComplete, 'pull complete should have logged').toBeTruthy();
 
-    // Parse "pull recipes: 50 rows in Xms"
-    const pullMatch = /pull recipes: (\d+) rows in (\d+)ms/.exec(pullRecipes!.message);
-    expect(pullMatch, `expected timing in: ${pullRecipes!.message}`).toBeTruthy();
+    // Parse "pull via snapshot: 50 recipes, … in Xms" or, on fallback,
+    // "pull recipes: 50 rows in Xms" — both expose count then phase ms.
+    const pullMatch = pullSnapshot
+      ? /pull via snapshot: (\d+) recipes,.* in (\d+)ms/.exec(pullSnapshot.message)
+      : /pull recipes: (\d+) rows in (\d+)ms/.exec(pullRecipes!.message);
+    const pullSource = (pullSnapshot ?? pullRecipes)!.message;
+    expect(pullMatch, `expected timing in: ${pullSource}`).toBeTruthy();
     const pulledCount = Number(pullMatch![1]);
     const pullMs = Number(pullMatch![2]);
     expect(pulledCount, 'pull should land all seeded recipes').toBe(RECIPE_COUNT);
-    expect(pullMs, `pull recipes phase under ${PULL_BUDGET_MS}ms`).toBeLessThan(PULL_BUDGET_MS);
+    expect(pullMs, `recipe pull phase under ${PULL_BUDGET_MS}ms`).toBeLessThan(PULL_BUDGET_MS);
 
     const cycleMatch = /cycle: idle \(took (\d+)ms\)/.exec(cycleIdle!.message);
     expect(cycleMatch, `expected cycle timing in: ${cycleIdle!.message}`).toBeTruthy();
