@@ -3,6 +3,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/AuthProvider.js';
 import { supabase } from '../supabase.js';
 import { beginDbStatsWindow, getLocalDb, readDbStats } from './db.js';
+import {
+  beginMeterWindow,
+  endMeterWindow,
+  meterPhase,
+  readMeter,
+  type MeterSnapshot,
+} from './transferMeter.js';
 import { countPending } from './outbox.js';
 import { startBackfills } from './backfill.js';
 import { captureSyncDiagnostics } from './syncDiag.js';
@@ -16,12 +23,7 @@ import {
 } from './sync.js';
 import { logSync } from './syncLog.js';
 import { reportError, Sentry } from '../sentry.js';
-import {
-  ensureLeaderElection,
-  getTabRole,
-  subscribeTabRole,
-  type TabRole,
-} from './tabLeader.js';
+import { ensureLeaderElection, getTabRole, subscribeTabRole, type TabRole } from './tabLeader.js';
 
 function stringifyError(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -134,7 +136,7 @@ type SpanLike = { setAttributes?: (attrs: Record<string, number | string>) => vo
 // Sentry (durations + DB-lock contention + device context). Cheap + sync.
 function annotateCycleSpan(
   span: SpanLike,
-  m: { cycleStart: number; pushMs: number; pullMs: number; outcome: string },
+  m: { cycleStart: number; pushMs: number; pullMs: number; outcome: string; meter: MeterSnapshot },
 ): void {
   const stats = readDbStats();
   const deviceMemory = (navigator as unknown as { deviceMemory?: number }).deviceMemory ?? 0;
@@ -149,7 +151,62 @@ function annotateCycleSpan(
     'sync.db_max_op_ms': stats.maxRunMs,
     'sync.db_slowest': stats.slowestLabel,
     'sync.device_memory_gb': deviceMemory,
+    'sync.bytes_pulled': m.meter.totalDown,
+    'sync.bytes_pushed': m.meter.totalUp,
+    'sync.requests': m.meter.totalRequests,
   });
+}
+
+/**
+ * Persist a compact per-cycle data-transfer summary into
+ * `sync_transfer_events` (one row per metered phase) for the /data-usage
+ * page. Fire-and-forget + best-effort: a failed insert must never surface
+ * as a sync error, and it runs after the meter window closes so it doesn't
+ * measure itself.
+ */
+function recordTransfer(
+  cycleId: string,
+  meter: MeterSnapshot,
+  pushMs: number,
+  pullMs: number,
+): void {
+  const events = Object.entries(meter.phases)
+    .filter(([, p]) => p.requests > 0)
+    .map(([phase, p]) => {
+      const direction = phase === 'push' ? 'push' : 'pull';
+      return {
+        direction,
+        phase,
+        rows: p.rows,
+        bytes: direction === 'push' ? p.bytesUp : p.bytesDown,
+        requests: p.requests,
+        duration_ms: phase === 'push' ? pushMs : phase === 'pull' ? pullMs : 0,
+      };
+    });
+  if (events.length === 0) return;
+  // The new RPC isn't in the checked-in generated DB types yet (regenerated
+  // out of band), so call it through a structural cast rather than the typed
+  // overload — same approach as datausage/api.ts. Call it as a *member* of
+  // `supabase` (not via a detached `const rpc = supabase.rpc`) so the method
+  // keeps its `this` binding — supabase-js's rpc() reads `this.rest` and a
+  // detached call throws "Cannot read properties of undefined (reading
+  // 'rest')" synchronously, which — fired from cycle()'s finally — would
+  // reject the whole sync cycle. This insert is best-effort and must never
+  // surface as a sync error, so swallow both sync throws and async rejections.
+  try {
+    void supabase
+      .rpc('record_sync_transfer' as never, { p_cycle_id: cycleId, p_events: events } as never)
+      .then(
+        ({ error }) => {
+          if (error) logSync('warn', 'record_sync_transfer failed', { error: error.message });
+        },
+        (err: unknown) => {
+          logSync('warn', 'record_sync_transfer threw', { error: stringifyError(err) });
+        },
+      );
+  } catch (err) {
+    logSync('warn', 'record_sync_transfer threw', { error: stringifyError(err) });
+  }
 }
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
@@ -218,9 +275,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       { name: 'sync.cycle', op: 'sync', forceTransaction: true },
       async (span: SpanLike) => {
         const cycleStart = Date.now();
+        const cycleId = crypto.randomUUID();
         // Reset the DB-op aggregator so the span reports contention during
         // exactly this cycle (incl. UI queries competing on the connection).
         beginDbStatsWindow();
+        // Open the data-transfer meter so the instrumented fetch attributes
+        // every request this cycle makes (see transferMeter.ts).
+        beginMeterWindow();
         let pushMs = 0;
         let pullMs = 0;
         logSync('info', 'cycle: start');
@@ -236,13 +297,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           // our back (which would race a later cycle and trip
           // duplicate-key / FK violations on recipe pushes).
           logSync('info', 'cycle: invoking pushOutbox');
+          meterPhase('push');
           const pushStart = Date.now();
           const pushRes = await Sentry.startSpan({ name: 'sync.push', op: 'sync.push' }, () =>
-            withTimeout(
-              pushOutbox(supabase, ownerId, ac.signal),
-              CYCLE_TIMEOUT_MS,
-              'push',
-              () => ac.abort(),
+            withTimeout(pushOutbox(supabase, ownerId, ac.signal), CYCLE_TIMEOUT_MS, 'push', () =>
+              ac.abort(),
             ),
           );
           pushMs = Date.now() - pushStart;
@@ -257,7 +316,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
                 // for imports / conversion_rules / rewrite_jobs to finish.
                 // Skip the 'collections' key from each invalidate (it's
                 // expensive — see scheduleInvalidate predicate).
-                onPhaseComplete: () => scheduleInvalidate(),
+                onPhaseComplete: (phase) => {
+                  scheduleInvalidate();
+                  // Progressive first-load: unblock the UI gate as soon as
+                  // recipe cards land (snapshot 'recipe_metadata' stage, or
+                  // the legacy 'recipes' phase), rather than waiting for the
+                  // whole cycle. Bodies / tail topics stream in behind it.
+                  if (phase === 'recipe_metadata' || phase === 'recipes') {
+                    setHydrated(true);
+                  }
+                },
               }),
               CYCLE_TIMEOUT_MS,
               'pull',
@@ -274,7 +342,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           });
           setLastSyncedAt(Date.now());
           setSettled('idle');
-          annotateCycleSpan(span, { cycleStart, pushMs, pullMs, outcome: 'ok' });
+          annotateCycleSpan(span, {
+            cycleStart,
+            pushMs,
+            pullMs,
+            outcome: 'ok',
+            meter: readMeter(),
+          });
           logSync('info', `cycle: idle (took ${Date.now() - cycleStart}ms)`);
         } catch (err) {
           // Some thrown values (notably PostgrestError-shaped objects)
@@ -294,7 +368,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           // sync stalls — e.g. a pull statement timing out — are visible.
           reportError(err, { operation: 'sync_cycle' });
           const outcome = /timed out/.test(msg) ? 'timeout' : 'error';
-          annotateCycleSpan(span, { cycleStart, pushMs, pullMs, outcome });
+          annotateCycleSpan(span, { cycleStart, pushMs, pullMs, outcome, meter: readMeter() });
           // Auto-capture a trimmed diagnostic (throttled) so a wedged device
           // surfaces without the user manually uploading logs.
           void captureSyncDiagnostics({
@@ -304,6 +378,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             outcome,
           });
         } finally {
+          // Close the meter BEFORE recording so the metrics insert isn't
+          // counted as cycle traffic, then persist a compact per-cycle
+          // summary for /data-usage (best-effort, fire-and-forget).
+          endMeterWindow();
+          recordTransfer(cycleId, readMeter(), pushMs, pullMs);
           if (currentAbort.current === ac) currentAbort.current = null;
           await refreshPendingCount();
           scheduleInvalidate();
@@ -470,10 +549,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       currentAbort.current?.abort();
       inFlight.current = null;
       logSync('error', 'watchdog: cycle stalled, aborting + clearing inFlight');
-      setSettled(
-        'error',
-        'Sync stalled — click "Syncing…" or refresh to retry.',
-      );
+      setSettled('error', 'Sync stalled — click "Syncing…" or refresh to retry.');
     }, WATCHDOG_INTERVAL_MS);
     return () => clearInterval(tick);
   }, [status]);
