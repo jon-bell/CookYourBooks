@@ -25,6 +25,7 @@ import { SettingsDangerPage } from './pages/SettingsDangerPage.js';
 import { HouseholdPage } from './pages/HouseholdPage.js';
 import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
 import { CostCenterPage } from './pages/CostCenterPage.js';
+import { DataUsagePage } from './pages/DataUsagePage.js';
 import { ActivityPage } from './pages/ActivityPage.js';
 import { LegalPage } from './pages/LegalPage.js';
 import { ImportListPage } from './pages/ImportListPage.js';
@@ -392,6 +393,14 @@ export function App() {
             element={
               <RequireAuth>
                 <CostCenterPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/data-usage"
+            element={
+              <RequireAuth>
+                <DataUsagePage />
               </RequireAuth>
             }
           />

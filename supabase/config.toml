@@ -418,6 +418,15 @@ verify_jwt = false
 [functions.ocr-key-test]
 verify_jwt = false
 
+# library-snapshot is the first-load accelerator: it returns the caller's
+# library as columnar MessagePack so the browser's full pull is two compact
+# requests instead of dozens of select('*') pages. Called from the browser
+# and does its own JWT validation in requireAuth(), running every read under
+# the caller's JWT so RLS enforces own/household visibility — verify_jwt off
+# so the CORS preflight reaches the function (same rationale as above).
+[functions.library-snapshot]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54427
