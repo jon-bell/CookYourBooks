@@ -44,16 +44,26 @@ async function fetchLatestJob(recipeId: string): Promise<RewriteJobSummary | nul
 /**
  * Reactive view of the latest rewrite_jobs row for a given recipe.
  *
- * Reads once on mount, then polls (1s) ONLY while a job is in flight
- * (PENDING/CLAIMED) — i.e. the user kicked off a rewrite and is waiting on
- * the result. In the steady state (no job, or a terminal one) there is no
- * poll at all: the old unconditional 1s timer fired on every open recipe page
- * forever, and hundreds of those reads piled up behind a wedged pull on the
- * single cr-sqlite connection. `startImprove` calls `refresh()` after
- * enqueuing, which flips `job` to PENDING and starts the poll; it stops as
- * soon as the job reaches DONE/FAILED. Returns `undefined` while loading.
+ * Reads once on mount, then polls (1s) ONLY while `active` (the caller is
+ * waiting on a job it just kicked off) OR a job is already in flight
+ * (PENDING/CLAIMED). In the steady state there is no poll at all: the old
+ * unconditional 1s timer fired on every open recipe page forever, and hundreds
+ * of those reads piled up behind a wedged pull on the single cr-sqlite
+ * connection.
+ *
+ * Why `active` and not just the observed status: `startRewrite` is an RPC that
+ * creates the job server-side; the local PENDING row only appears a sync
+ * round-trip later. So right after the user clicks, the local read still
+ * returns null/the prior terminal job — there's nothing "in flight" to gate
+ * on yet. The caller passes `active = true` while it's waiting (keyed to the
+ * job it started), which bridges that gap; once the job lands and resolves,
+ * the caller flips `active` off and polling stops. Returns `undefined` while
+ * loading.
  */
-export function useRewriteJob(recipeId: string | undefined): {
+export function useRewriteJob(
+  recipeId: string | undefined,
+  active = false,
+): {
   job: RewriteJobSummary | null | undefined;
   refresh: () => Promise<void>;
 } {
@@ -89,10 +99,11 @@ export function useRewriteJob(recipeId: string | undefined): {
     };
   }, [ready, recipeId]);
 
-  // Poll only while the job is actually running.
+  // Poll while the caller is waiting on a just-started job (`active`) or a job
+  // is already running.
   const inFlight = job?.status === 'PENDING' || job?.status === 'CLAIMED';
   useEffect(() => {
-    if (!ready || !recipeId || !inFlight) return;
+    if (!ready || !recipeId || (!active && !inFlight)) return;
     let cancelled = false;
     const interval = setInterval(() => {
       if (!cancelled) void refresh();
@@ -101,7 +112,7 @@ export function useRewriteJob(recipeId: string | undefined): {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [ready, recipeId, inFlight, refresh]);
+  }, [ready, recipeId, active, inFlight, refresh]);
 
   return { job, refresh };
 }
