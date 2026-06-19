@@ -25,6 +25,7 @@ import {
   upsertRecipeRowsOnly,
   recipeBatchRowCount,
   PULL_CRR_TABLES,
+  PULL_CRR_BODY_TABLES,
   withSuppressedCrrTriggers,
   filterFresherIncoming,
   bulkInsertOnConflictId,
@@ -721,12 +722,16 @@ async function pullFullSnapshot(
   }));
   // One suppression boundary across the whole drain (crsql_commit_alter is
   // O(table size)); checkpoint-chunked like the keyset path. The recipe rows
-  // were already written by upsertRecipeRowsOnly; re-writing them here is one
-  // extra bulk statement and lets us reuse the tested batch path.
-  await withSuppressedCrrTriggers(PULL_CRR_TABLES, recipeBatchRowCount(batch), async () => {
+  // were already written (and CRR-altered) by upsertRecipeRowsOnly in the meta
+  // stage, so this stage attaches children only — `recipes` is excluded from
+  // both the batch write (writeRecipeRows: false) and the boundary
+  // (PULL_CRR_BODY_TABLES), so it's never commit_alter'd a second time.
+  await withSuppressedCrrTriggers(PULL_CRR_BODY_TABLES, recipeBatchRowCount(batch), async () => {
     for (let i = 0; i < batch.length; i += RECIPE_CHECKPOINT_CHUNK) {
       if (signal?.aborted) break;
-      await upsertRecipesBatchInner(batch.slice(i, i + RECIPE_CHECKPOINT_CHUNK), signal);
+      await upsertRecipesBatchInner(batch.slice(i, i + RECIPE_CHECKPOINT_CHUNK), signal, {
+        writeRecipeRows: false,
+      });
     }
   });
   if (fireCallbacks) callbacks?.onPhaseComplete?.('recipes');

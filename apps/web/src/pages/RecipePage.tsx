@@ -90,7 +90,14 @@ export function RecipePage() {
   const [rewriteError, setRewriteError] = useState<string | undefined>();
   const [showScan, setShowScan] = useState(false);
   const [showRemix, setShowRemix] = useState(false);
-  const { job: rewriteJob, refresh: refreshRewriteJob } = useRewriteJob(recipeId);
+  // The rewrite job the user just started and is waiting on. Drives the hook's
+  // poll across the gap before the local row syncs down (rewrite_start is an
+  // RPC); cleared once that job reaches a terminal state.
+  const [pendingRewriteJobId, setPendingRewriteJobId] = useState<string | null>(null);
+  const { job: rewriteJob, refresh: refreshRewriteJob } = useRewriteJob(
+    recipeId,
+    pendingRewriteJobId !== null,
+  );
   // While the local-DB query is still loading, fall back to the
   // start-state to keep the toolbar from flickering.
   const rewriteInFlight = rewriteJob?.status === 'PENDING' || rewriteJob?.status === 'CLAIMED';
@@ -107,12 +114,14 @@ export function RecipePage() {
     try {
       const prefs = await getUserRewritePrefs().catch(() => null);
       const provider = prefs?.provider ?? 'gemini';
-      await startRewrite({
+      const jobId = await startRewrite({
         recipeId: recipe.id,
         provider,
         model: prefs?.model || DEFAULT_REWRITE_MODEL_BY_PROVIDER[provider],
         prompt: prefs?.prompt || DEFAULT_REWRITE_PROMPT,
       });
+      // Wait on this job until it resolves (see pendingRewriteJobId).
+      setPendingRewriteJobId(jobId);
       // Best-effort kick — the cron tick also drains the queue within 30s.
       try {
         await kickRewrite(recipe.id);
@@ -132,12 +141,25 @@ export function RecipePage() {
   async function cancelImprove() {
     if (!rewriteJob) return;
     try {
+      // Keep polling until the CANCELLED (terminal) state lands locally.
+      setPendingRewriteJobId(rewriteJob.id);
       await cancelRewrite(rewriteJob.id);
       await refreshRewriteJob();
     } catch (err) {
       setRewriteError((err as Error).message);
     }
   }
+
+  // Stop polling once the job we're waiting on reaches a terminal state.
+  useEffect(() => {
+    if (
+      pendingRewriteJobId &&
+      rewriteJob?.id === pendingRewriteJobId &&
+      (rewriteJob.status === 'DONE' || rewriteJob.status === 'FAILED')
+    ) {
+      setPendingRewriteJobId(null);
+    }
+  }, [rewriteJob, pendingRewriteJobId]);
 
   const { data: houseRules = [] } = useHouseConversionRules();
   const { data: globalRules = [] } = useGlobalConversionRules();
