@@ -44,10 +44,14 @@ async function fetchLatestJob(recipeId: string): Promise<RewriteJobSummary | nul
 /**
  * Reactive view of the latest rewrite_jobs row for a given recipe.
  *
- * Polls cheaply (1s) since rewrite_jobs is sync'd via the realtime
- * subscription anyway — the poll exists only so the UI advances when
- * the local DB writes don't fire a global update (eg the user opened
- * the recipe page mid-job). Returns `undefined` while loading.
+ * Reads once on mount, then polls (1s) ONLY while a job is in flight
+ * (PENDING/CLAIMED) — i.e. the user kicked off a rewrite and is waiting on
+ * the result. In the steady state (no job, or a terminal one) there is no
+ * poll at all: the old unconditional 1s timer fired on every open recipe page
+ * forever, and hundreds of those reads piled up behind a wedged pull on the
+ * single cr-sqlite connection. `startImprove` calls `refresh()` after
+ * enqueuing, which flips `job` to PENDING and starts the poll; it stops as
+ * soon as the job reaches DONE/FAILED. Returns `undefined` while loading.
  */
 export function useRewriteJob(recipeId: string | undefined): {
   job: RewriteJobSummary | null | undefined;
@@ -69,13 +73,27 @@ export function useRewriteJob(recipeId: string | undefined): {
     }
   }, [recipeId]);
 
+  // One read on mount / recipe change to establish initial state.
   useEffect(() => {
-    if (!ready || !recipeId) return;
+    if (!ready || !recipeId) {
+      setJob(recipeId ? undefined : null);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const initial = await fetchLatestJob(recipeId);
       if (!cancelled) setJob(initial);
     })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, recipeId]);
+
+  // Poll only while the job is actually running.
+  const inFlight = job?.status === 'PENDING' || job?.status === 'CLAIMED';
+  useEffect(() => {
+    if (!ready || !recipeId || !inFlight) return;
+    let cancelled = false;
     const interval = setInterval(() => {
       if (!cancelled) void refresh();
     }, 1000);
@@ -83,7 +101,7 @@ export function useRewriteJob(recipeId: string | undefined): {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [ready, recipeId, refresh]);
+  }, [ready, recipeId, inFlight, refresh]);
 
   return { job, refresh };
 }
