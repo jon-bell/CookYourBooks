@@ -227,18 +227,40 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const pullPending = useRef(false);
   const pullDebounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const invalidateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const searchInvalidateTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Wall-clock when status was most recently set to 'syncing'. Used by
   // the watchdog to detect a wedged state where the IIFE never reaches
   // its own finally (network hang, supabase-js auth queue stuck, etc).
   const syncingStartedAt = useRef<number | null>(null);
 
+  // Keys deliberately excluded from the general per-cycle invalidate:
+  //  - `collections`: full hydration is very expensive (every recipe in every
+  //    collection); SQLite is already updated, so refetch picker/import keys only.
+  //  - `search` / `search-embedded-count`: the semantic-search hooks. Their query
+  //    functions load the ENTIRE recipe_embeddings table out of SQLite (a multi-
+  //    second scan that unpacks every vector) — running that on the single
+  //    serialized cr-sqlite connection every sync cycle serializes all the cheap
+  //    sync reads behind it and wedges the whole engine (12–46s pulls, see the
+  //    `db lock: still waiting` storm). They're driven by user input + a generous
+  //    staleTime instead, and are refreshed explicitly via `scheduleSearchInvalidate`
+  //    only when a recipe/embedding phase actually pulled rows.
+  const SYNC_INVALIDATE_EXCLUDE = new Set(['collections', 'search', 'search-embedded-count']);
+
   function scheduleInvalidate() {
     clearTimeout(invalidateTimer.current);
     invalidateTimer.current = setTimeout(() => {
-      // Full `collections` hydration is very expensive (every recipe in every
-      // collection). Pull already updated SQLite; refetch picker/import keys only.
       void qc.invalidateQueries({
-        predicate: (query) => query.queryKey[0] !== 'collections',
+        predicate: (query) => !SYNC_INVALIDATE_EXCLUDE.has(query.queryKey[0] as string),
+      });
+    }, INVALIDATE_DEBOUNCE_MS);
+  }
+
+  function scheduleSearchInvalidate() {
+    clearTimeout(searchInvalidateTimer.current);
+    searchInvalidateTimer.current = setTimeout(() => {
+      void qc.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === 'search' || query.queryKey[0] === 'search-embedded-count',
       });
     }, INVALIDATE_DEBOUNCE_MS);
   }
@@ -286,6 +308,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         beginMeterWindow();
         let pushMs = 0;
         let pullMs = 0;
+        // Did this cycle actually change local state? Steady-state cycles
+        // (realtime pokes, focus re-pulls) routinely pull 0 rows; invalidating
+        // React Query then just re-runs every active query for nothing — and on
+        // the single cr-sqlite connection that re-runs the multi-second
+        // semantic-search embedding scan, wedging the engine. Only invalidate
+        // when something landed.
+        let anyChange = false;
         logSync('info', 'cycle: start');
         setSyncing();
         setLastError(null);
@@ -307,10 +336,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             ),
           );
           pushMs = Date.now() - pushStart;
+          if (pushRes.ok > 0) anyChange = true;
           logSync('info', 'cycle: pushOutbox returned', pushRes);
           logSync('info', 'cycle: invoking pullAll');
           const pullStart = Date.now();
-          await Sentry.startSpan({ name: 'sync.pull', op: 'sync.pull' }, () =>
+          const pullRes = await Sentry.startSpan({ name: 'sync.pull', op: 'sync.pull' }, () =>
             withTimeout(
               pullAll(supabase, ownerId, ac.signal, {
                 // Invalidate React Query incrementally so the library card
@@ -318,14 +348,28 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
                 // for imports / conversion_rules / rewrite_jobs to finish.
                 // Skip the 'collections' key from each invalidate (it's
                 // expensive — see scheduleInvalidate predicate).
-                onPhaseComplete: (phase) => {
-                  scheduleInvalidate();
+                onPhaseComplete: (phase, rows) => {
                   // Progressive first-load: unblock the UI gate as soon as
                   // recipe cards land (snapshot 'recipe_metadata' stage, or
                   // the legacy 'recipes' phase), rather than waiting for the
-                  // whole cycle. Bodies / tail topics stream in behind it.
+                  // whole cycle. Fires even on a 0-row phase (e.g. an
+                  // already-hydrated or empty library) so the grid renders.
                   if (phase === 'recipe_metadata' || phase === 'recipes') {
                     setHydrated(true);
+                  }
+                  // No-op phase → nothing landed → no invalidation needed.
+                  if (rows === 0) return;
+                  anyChange = true;
+                  scheduleInvalidate();
+                  // The search/embedding queries are excluded from the general
+                  // invalidate (too expensive to re-run per cycle); refresh them
+                  // only when recipe or embedding data actually changed.
+                  if (
+                    phase === 'recipe_metadata' ||
+                    phase === 'recipes' ||
+                    phase === 'recipe_embeddings'
+                  ) {
+                    scheduleSearchInvalidate();
                   }
                 },
               }),
@@ -335,6 +379,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             ),
           );
           pullMs = Date.now() - pullStart;
+          // Household-shared content is pulled inside pullAll but doesn't route
+          // through onPhaseComplete, so fold its change signal in here. Covers
+          // co-members' recipe/embedding edits too (not just collections), so
+          // the search index refreshes when shared content changes.
+          if (pullRes.householdChanges > 0) {
+            anyChange = true;
+            scheduleSearchInvalidate();
+          }
           logSync('info', 'cycle: pullAll returned');
           // Fire-and-forget: reference data doesn't gate the UI, and
           // failures shouldn't show up as a sync error to the user.
@@ -387,7 +439,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           recordTransfer(cycleId, readMeter(), pushMs, pullMs);
           if (currentAbort.current === ac) currentAbort.current = null;
           await refreshPendingCount();
-          scheduleInvalidate();
+          // Only refresh React Query when the cycle actually changed local
+          // state (push applied rows, a pull phase landed rows, or household
+          // content arrived). A 0-row steady-state cycle invalidates nothing,
+          // so active queries — including the expensive search scan — don't
+          // re-run on the serialized connection for no reason.
+          if (anyChange) scheduleInvalidate();
         }
       },
     );
@@ -527,6 +584,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   useEffect(
     () => () => {
       clearTimeout(invalidateTimer.current);
+      clearTimeout(searchInvalidateTimer.current);
       clearTimeout(pullDebounceTimer.current);
     },
     [],
