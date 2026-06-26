@@ -205,12 +205,13 @@ function tsForFilter(ts: string): string {
   return ts.replace('+00:00', 'Z');
 }
 
-/** Keyset WHERE ordered by (updated_at, <idCol>): rows strictly after the
- *  cursor. The tiebreaker column is `id` for recipes, `recipe_id` for the
- *  recipe_embeddings pulls. */
-function updatedKeysetOr(cur: RecipeCursor, idCol: string): string {
+/** Keyset WHERE ordered by (<tsCol>, <idCol>): rows strictly after the cursor.
+ *  The tiebreaker column is `id` for most tables, `recipe_id` for the
+ *  recipe_embeddings pulls; the timestamp column is `updated_at` except for the
+ *  append-only import_item_attempts pull, which orders by `started_at`. */
+function updatedKeysetOr(cur: RecipeCursor, idCol: string, tsCol = 'updated_at'): string {
   const ts = tsForFilter(cur.ts);
-  return `updated_at.gt.${ts},and(updated_at.eq.${ts},${idCol}.gt.${cur.id})`;
+  return `${tsCol}.gt.${ts},and(${tsCol}.eq.${ts},${idCol}.gt.${cur.id})`;
 }
 
 /** Keyset WHERE for the incremental recipes pull (tiebreaker `id`). */
@@ -225,10 +226,11 @@ function recipeKeysetOr(cur: RecipeCursor): string {
  * rather than re-selected. Stops when a short page arrives. `idOf` extracts the
  * tiebreaker value from a row (defaults to `id`; embeddings pass `recipe_id`).
  */
-async function fetchAllByUpdatedKeyset<T extends { updated_at: string }>(
+async function fetchAllByUpdatedKeyset<T>(
   build: (cur: RecipeCursor) => PromiseLike<PageResult>,
   start: RecipeCursor,
   idOf: (row: T) => string = (row) => (row as unknown as { id: string }).id,
+  tsOf: (row: T) => string = (row) => (row as unknown as { updated_at: string }).updated_at,
 ): Promise<T[]> {
   const out: T[] = [];
   let cur = start;
@@ -239,7 +241,7 @@ async function fetchAllByUpdatedKeyset<T extends { updated_at: string }>(
     out.push(...rows);
     if (rows.length < PAGE_SIZE) break;
     const last = rows[rows.length - 1]!;
-    cur = { ts: last.updated_at, id: idOf(last) };
+    cur = { ts: tsOf(last), id: idOf(last) };
   }
   return out;
 }
@@ -2025,18 +2027,15 @@ async function dropLocallyDeleted<T>(
 
 async function pullConversionRules(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `conversion_rules:${ownerId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<ConversionRuleRow>((from, to) =>
-    client
-      .from('conversion_rules')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', since)
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<ConversionRuleRow>((cur) => {
+    let q = client.from('conversion_rules').select('*').eq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await dropLocallyDeleted(
       'conversion_rule_delete',
@@ -2059,29 +2058,25 @@ async function pullConversionRules(client: CookbooksClient, ownerId: string): Pr
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  // Advance the keyset cursor only after the write so a failed write resumes
+  // from the same point. Keyset rows are strictly past the cursor, so the count
+  // is the genuine change count (no boundary re-fetch).
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 async function pullRewriteJobs(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `rewrite_jobs:${ownerId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<RewriteJobRow>((from, to) =>
-    client
-      .from('rewrite_jobs')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', since)
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<RewriteJobRow>((cur) => {
+    let q = client.from('rewrite_jobs').select('*').eq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await filterFresherIncoming(
       'rewrite_jobs',
@@ -2095,31 +2090,27 @@ async function pullRewriteJobs(client: CookbooksClient, ownerId: string): Promis
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 async function pullRemixJobs(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `remix_jobs:${ownerId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<RemixJobRow>((from, to) =>
-    client
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<RemixJobRow>((cur) => {
+    let q = client
       .from('remix_jobs')
       // input_recipe_json / household_id come back too but aren't mirrored
       // locally — REMIX_JOB_COLS + remixJobToParams pick only what we store.
       .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', since)
+      .eq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await filterFresherIncoming(
       'remix_jobs',
@@ -2133,13 +2124,9 @@ async function pullRemixJobs(client: CookbooksClient, ownerId: string): Promise<
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 // ---------- pull: recipe embeddings ----------
@@ -2266,18 +2253,15 @@ async function applyPulledEmbeddings(rows: RecipeEmbeddingRow[]): Promise<void> 
 
 async function pullCookingEvents(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `cooking_events:${ownerId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<CookingEventRow>((from, to) =>
-    client
-      .from('cooking_events')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', since)
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<CookingEventRow>((cur) => {
+    let q = client.from('cooking_events').select('*').eq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await dropLocallyDeleted(
       'cooking_event_delete',
@@ -2297,29 +2281,22 @@ async function pullCookingEvents(client: CookbooksClient, ownerId: string): Prom
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 async function pullRecipeTags(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `recipe_tags:${ownerId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<RecipeTagRow>((from, to) =>
-    client
-      .from('recipe_tags')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', since)
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<RecipeTagRow>((cur) => {
+    let q = client.from('recipe_tags').select('*').eq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await dropLocallyDeleted(
       'recipe_tag_delete',
@@ -2339,13 +2316,9 @@ async function pullRecipeTags(client: CookbooksClient, ownerId: string): Promise
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 // Co-members' cooking events / tags — filtered by household_id = our
@@ -2358,19 +2331,19 @@ async function pullHouseholdCookingEvents(
   householdId: string,
 ): Promise<number> {
   const topic = `household_cooking_events:${ownerId}:${householdId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<CookingEventRow>((from, to) =>
-    client
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<CookingEventRow>((cur) => {
+    let q = client
       .from('cooking_events')
       .select('*')
       .eq('household_id', householdId)
-      .neq('owner_id', ownerId)
-      .gte('updated_at', since)
+      .neq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await filterFresherIncoming(
       'cooking_events',
@@ -2386,13 +2359,9 @@ async function pullHouseholdCookingEvents(
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 async function pullHouseholdRecipeTags(
@@ -2401,19 +2370,19 @@ async function pullHouseholdRecipeTags(
   householdId: string,
 ): Promise<number> {
   const topic = `household_recipe_tags:${ownerId}:${householdId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<RecipeTagRow>((from, to) =>
-    client
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<RecipeTagRow>((cur) => {
+    let q = client
       .from('recipe_tags')
       .select('*')
       .eq('household_id', householdId)
-      .neq('owner_id', ownerId)
-      .gte('updated_at', since)
+      .neq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await filterFresherIncoming(
       'recipe_tags',
@@ -2429,29 +2398,22 @@ async function pullHouseholdRecipeTags(
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 async function pullCollectionNotes(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `collection_notes:${ownerId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<CollectionNoteRow>((from, to) =>
-    client
-      .from('collection_notes')
-      .select('*')
-      .eq('owner_id', ownerId)
-      .gte('updated_at', since)
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<CollectionNoteRow>((cur) => {
+    let q = client.from('collection_notes').select('*').eq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await dropLocallyDeleted(
       'collection_note_delete',
@@ -2471,13 +2433,9 @@ async function pullCollectionNotes(client: CookbooksClient, ownerId: string): Pr
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 async function pullHouseholdCollectionNotes(
@@ -2486,19 +2444,19 @@ async function pullHouseholdCollectionNotes(
   householdId: string,
 ): Promise<number> {
   const topic = `household_collection_notes:${ownerId}:${householdId}`;
-  const prevMs = await getWatermark(topic);
-  const since = new Date(prevMs).toISOString();
-  const rows = await fetchAllPages<CollectionNoteRow>((from, to) =>
-    client
+  const start = await getRecipeCursor(topic);
+  const rows = await fetchAllByUpdatedKeyset<CollectionNoteRow>((cur) => {
+    let q = client
       .from('collection_notes')
       .select('*')
       .eq('household_id', householdId)
-      .neq('owner_id', ownerId)
-      .gte('updated_at', since)
+      .neq('owner_id', ownerId);
+    if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+    return q
       .order('updated_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(from, to),
-  );
+      .limit(PAGE_SIZE);
+  }, start);
   if (rows.length > 0) {
     const fresh = await filterFresherIncoming(
       'collection_notes',
@@ -2514,13 +2472,9 @@ async function pullHouseholdCollectionNotes(
       );
     }
   }
-  let max = await getWatermark(topic);
-  for (const row of rows) max = Math.max(max, toMs(row.updated_at));
-  if (max > 0) await bumpWatermark(topic, max);
-  // Report rows genuinely newer than the prior watermark, not the fetched
-  // count — `gte` always re-fetches the boundary row, which must not register
-  // as a change (see countNewerThan).
-  return countNewerThan(rows, prevMs, (r) => r.updated_at);
+  const next = maxCursor(rows, start);
+  if (next.ts !== '') await setRecipeCursor(topic, next);
+  return rows.length;
 }
 
 // ---------- pull: bulk OCR imports ----------
@@ -2540,53 +2494,52 @@ async function pullImports(client: CookbooksClient, ownerId: string): Promise<Im
   const itemTopic = `import_items:${ownerId}`;
   const attemptTopic = `import_item_attempts:${ownerId}`;
   const tocTopic = `import_toc_entries:${ownerId}`;
-  const [batchSinceMs, itemSinceMs, attemptSinceMs, tocSinceMs] = await Promise.all([
-    getWatermark(batchTopic),
-    getWatermark(itemTopic),
-    getWatermark(attemptTopic),
-    getWatermark(tocTopic),
+  const [batchStart, itemStart, attemptStart, tocStart] = await Promise.all([
+    getRecipeCursor(batchTopic),
+    getRecipeCursor(itemTopic),
+    getRecipeCursor(attemptTopic),
+    getRecipeCursor(tocTopic),
   ]);
   const [batches, items, attempts, tocs] = await Promise.all([
-    fetchAllPages<ImportBatchRow>((from, to) =>
-      client
-        .from('import_batches')
-        .select('*')
-        .eq('owner_id', ownerId)
-        .gte('updated_at', new Date(batchSinceMs).toISOString())
+    fetchAllByUpdatedKeyset<ImportBatchRow>((cur) => {
+      let q = client.from('import_batches').select('*').eq('owner_id', ownerId);
+      if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+      return q
         .order('updated_at', { ascending: true })
         .order('id', { ascending: true })
-        .range(from, to),
-    ),
-    fetchAllPages<ImportItemRow>((from, to) =>
-      client
-        .from('import_items')
-        .select('*')
-        .eq('owner_id', ownerId)
-        .gte('updated_at', new Date(itemSinceMs).toISOString())
+        .limit(PAGE_SIZE);
+    }, batchStart),
+    fetchAllByUpdatedKeyset<ImportItemRow>((cur) => {
+      let q = client.from('import_items').select('*').eq('owner_id', ownerId);
+      if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+      return q
         .order('updated_at', { ascending: true })
         .order('id', { ascending: true })
-        .range(from, to),
+        .limit(PAGE_SIZE);
+    }, itemStart),
+    // Append-only; keysets on (started_at, id) since attempt rows carry no
+    // updated_at.
+    fetchAllByUpdatedKeyset<ImportItemAttemptRow>(
+      (cur) => {
+        let q = client.from('import_item_attempts').select('*').eq('owner_id', ownerId);
+        if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id', 'started_at'));
+        return q
+          .order('started_at', { ascending: true })
+          .order('id', { ascending: true })
+          .limit(PAGE_SIZE);
+      },
+      attemptStart,
+      (r) => r.id,
+      (r) => r.started_at,
     ),
-    fetchAllPages<ImportItemAttemptRow>((from, to) =>
-      client
-        .from('import_item_attempts')
-        .select('*')
-        .eq('owner_id', ownerId)
-        .gte('started_at', new Date(attemptSinceMs).toISOString())
-        .order('started_at', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to),
-    ),
-    fetchAllPages<ImportTocEntryRow>((from, to) =>
-      client
-        .from('import_toc_entries')
-        .select('*')
-        .eq('owner_id', ownerId)
-        .gte('updated_at', new Date(tocSinceMs).toISOString())
+    fetchAllByUpdatedKeyset<ImportTocEntryRow>((cur) => {
+      let q = client.from('import_toc_entries').select('*').eq('owner_id', ownerId);
+      if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
+      return q
         .order('updated_at', { ascending: true })
         .order('id', { ascending: true })
-        .range(from, to),
-    ),
+        .limit(PAGE_SIZE);
+    }, tocStart),
   ]);
 
   // One trigger-suspension covers all four tables. Bulk INSERTs run
@@ -2646,34 +2599,32 @@ async function pullImports(client: CookbooksClient, ownerId: string): Promise<Im
     },
   );
 
-  // Bump watermarks (in parallel — independent rows in sync_state).
-  let maxBatchTs = batchSinceMs;
-  for (const r of batches) maxBatchTs = Math.max(maxBatchTs, toMs(r.updated_at));
-  let maxItemTs = itemSinceMs;
-  for (const r of items) maxItemTs = Math.max(maxItemTs, toMs(r.updated_at));
-  let maxAttemptTs = attemptSinceMs;
-  for (const r of attempts) maxAttemptTs = Math.max(maxAttemptTs, toMs(r.started_at));
-  let maxTocTs = tocSinceMs;
-  for (const r of tocs) maxTocTs = Math.max(maxTocTs, toMs(r.updated_at));
+  // Advance the keyset cursors (in parallel — independent sync_state rows),
+  // only after the write above so a failed write resumes from the same point.
+  // import_toc_entries keysets past the whole shared-`updated_at` TOC block via
+  // the id tiebreaker, so it's no longer re-fetched every cycle. Attempts map
+  // their started_at into the cursor's ts slot.
+  const batchNext = maxCursor(batches, batchStart);
+  const itemNext = maxCursor(items, itemStart);
+  const attemptNext = maxCursor(
+    attempts.map((r) => ({ updated_at: r.started_at, id: r.id })),
+    attemptStart,
+  );
+  const tocNext = maxCursor(tocs, tocStart);
   await Promise.all([
-    maxBatchTs > 0 ? bumpWatermark(batchTopic, maxBatchTs) : Promise.resolve(),
-    maxItemTs > 0 ? bumpWatermark(itemTopic, maxItemTs) : Promise.resolve(),
-    maxAttemptTs > 0 ? bumpWatermark(attemptTopic, maxAttemptTs) : Promise.resolve(),
-    maxTocTs > 0 ? bumpWatermark(tocTopic, maxTocTs) : Promise.resolve(),
+    batchNext.ts !== '' ? setRecipeCursor(batchTopic, batchNext) : Promise.resolve(),
+    itemNext.ts !== '' ? setRecipeCursor(itemTopic, itemNext) : Promise.resolve(),
+    attemptNext.ts !== '' ? setRecipeCursor(attemptTopic, attemptNext) : Promise.resolve(),
+    tocNext.ts !== '' ? setRecipeCursor(tocTopic, tocNext) : Promise.resolve(),
   ]);
 
-  // Report rows genuinely newer than each prior watermark, not fetched counts.
-  // `gte` always re-fetches the boundary rows; for import_toc_entries that's the
-  // whole 100+-row TOC of the latest batch (they share one bulk-insert
-  // `updated_at`, so the ms watermark can't advance past them — the same
-  // shared-timestamp block the recipe keyset cursor was built to handle). They
-  // must not register as a per-cycle change. (The re-fetch itself still happens;
-  // eliminating it needs a keyset cursor for these topics — see countNewerThan.)
+  // Keyset rows are strictly past each cursor, so the fetched count is the
+  // genuine change count (no boundary re-fetch).
   return {
-    batches: countNewerThan(batches, batchSinceMs, (r) => r.updated_at),
-    items: countNewerThan(items, itemSinceMs, (r) => r.updated_at),
-    attempts: countNewerThan(attempts, attemptSinceMs, (r) => r.started_at),
-    tocEntries: countNewerThan(tocs, tocSinceMs, (r) => r.updated_at),
+    batches: batches.length,
+    items: items.length,
+    attempts: attempts.length,
+    tocEntries: tocs.length,
   };
 }
 
