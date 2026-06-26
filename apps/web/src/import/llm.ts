@@ -42,10 +42,13 @@ export function parseLlmJson(text: string): ParsedRecipeDraft[] {
   try {
     raw = JSON.parse(cleaned);
   } catch (err) {
-    throw new Error(
-      `Could not parse LLM JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
-      { cause: err },
-    );
+    raw = tolerantJsonParse(cleaned);
+    if (raw === PARSE_FAILED) {
+      throw new Error(
+        `Could not parse LLM JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
+        { cause: err },
+      );
+    }
   }
 
   // Top-level shape detection.
@@ -375,10 +378,13 @@ export function parseNotesJson(text: string): ParsedNote {
   try {
     raw = JSON.parse(cleaned);
   } catch (err) {
-    throw new Error(
-      `Could not parse Notes JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
-      { cause: err },
-    );
+    raw = tolerantJsonParse(cleaned);
+    if (raw === PARSE_FAILED) {
+      throw new Error(
+        `Could not parse Notes JSON: ${(err as Error).message}. Got: ${text.slice(0, 200)}`,
+        { cause: err },
+      );
+    }
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`Notes JSON must be an object. Got: ${text.slice(0, 200)}`);
@@ -392,6 +398,76 @@ export function parseNotesJson(text: string): ParsedNote {
   const body = pick(obj.body) ?? pick(obj.text);
   if (!body) throw new Error('Notes JSON missing body.');
   return { title: pick(obj.title) ?? 'Note', body };
+}
+
+const PARSE_FAILED = Symbol('PARSE_FAILED');
+
+/**
+ * Walk `text` and return the first complete, balanced JSON value
+ * (`{...}` or `[...]`) as a substring, ignoring brackets inside string
+ * literals. Used to discard junk Gemini sometimes appends after the JSON
+ * — most often a stray doubled closing brace (`...}\n}`), but also
+ * trailing prose. Returns undefined when no balanced value is found.
+ */
+function extractFirstJsonValue(text: string): string | undefined {
+  const start = text.search(/[{[]/);
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Strict JSON.parse first. On failure, try a series of conservative
+ * repairs and return the first that parses:
+ *   1. the first balanced JSON value — drops trailing junk such as a
+ *      doubled `}` or appended prose Gemini emits under load
+ *   2. backslash-escape repair (Gemini occasionally emits invalid escapes
+ *      like `\T`) plus collapsing of stray trailing commas before `}`/`]`
+ *   3. (1) and (2) combined
+ * Returns the PARSE_FAILED sentinel if nothing parses. Mirrors the
+ * worker's tolerantJsonParse in each Edge Function's parser.ts — keep in
+ * sync.
+ */
+function tolerantJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // fall through to repair attempts
+  }
+  const escapeRepair = (s: string): string =>
+    s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\').replace(/,(\s*[}\]])/g, '$1');
+  const extracted = extractFirstJsonValue(text);
+  const candidates: (string | undefined)[] = [
+    extracted,
+    escapeRepair(text),
+    extracted ? escapeRepair(extracted) : undefined,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === text) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // try the next candidate
+    }
+  }
+  return PARSE_FAILED;
 }
 
 function stripFences(text: string): string {

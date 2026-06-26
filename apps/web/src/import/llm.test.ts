@@ -266,6 +266,28 @@ describe('parseLlmJson', () => {
     const d = parseLlmJson(text)[0]!;
     expect(d.title).toBe('Fenced');
   });
+
+  it('recovers from a stray doubled closing brace Gemini appends', () => {
+    // Gemini under load sometimes emits a valid object followed by an
+    // extra `}` (`...rawText": "..."}\n}`), which trips strict JSON.parse.
+    const text =
+      '{"recipes":[{"title":"Cod Almondine","ingredients":[{"type":"vague","name":"Kosher salt","description":"to taste"}],"instructions":[]}],"rawText":"166 Nothing Matters... but Delicious"}\n}';
+    const d = parseLlmJson(text)[0]!;
+    expect(d.title).toBe('Cod Almondine');
+    expect(d.ingredients).toHaveLength(1);
+    expect(d.sourceImageText).toContain('Nothing Matters');
+  });
+
+  it('recovers from trailing junk and still drops bad sub-entries to leftover', () => {
+    // Doubled-brace recovery should compose with the existing per-entry
+    // tolerance: the malformed ingredient lands in leftover, not a throw.
+    const text =
+      '{"recipes":[{"title":"Braised Chicken","ingredients":[{"type":"measured","name":"flour"},{"name":42}],"instructions":[]}]}\n}';
+    const d = parseLlmJson(text)[0]!;
+    expect(d.title).toBe('Braised Chicken');
+    expect(d.ingredients).toHaveLength(1);
+    expect(d.leftover.length).toBeGreaterThan(0);
+  });
 });
 
 describe('parseNotesJson', () => {
@@ -301,5 +323,11 @@ describe('parseNotesJson', () => {
 
   it('throws when the payload is an array, not an object', () => {
     expect(() => parseNotesJson('[{"body":"x"}]')).toThrow();
+  });
+
+  it('recovers from a stray doubled closing brace', () => {
+    const note = parseNotesJson('{"title":"Foreword","body":"Cooking is joy."}\n}');
+    expect(note.title).toBe('Foreword');
+    expect(note.body).toBe('Cooking is joy.');
   });
 });

@@ -90,12 +90,12 @@ test.describe('OCR import from photo', () => {
     await expect(page.getByRole('button', { name: 'powdered sugar', exact: true })).toBeVisible();
   });
 
-  test('import button directs to Settings when no OCR key is configured', async ({
+  test('import button directs to the setup wizard when no OCR key is configured', async ({
     authedPage: page,
   }) => {
     // Don't configure any OCR key. The page's listOcrKeys call returns
-    // empty and the click surfaces the inline "OCR not configured"
-    // error.
+    // empty and the click surfaces the inline "isn't set up yet" error
+    // that routes into the onboarding wizard.
     await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Needs Setup');
@@ -111,10 +111,10 @@ test.describe('OCR import from photo', () => {
       buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     });
 
-    await expect(page.getByText(/OCR not configured/)).toBeVisible();
-    await page.getByRole('link', { name: /Open settings/ }).click();
-    await page.waitForURL(/\/settings\/llm$/);
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByText(/Importing isn't set up yet/)).toBeVisible();
+    await page.getByRole('link', { name: /Set up importing/ }).click();
+    await page.waitForURL(/\/import\/setup$/);
+    await expect(page.getByTestId('ocr-wizard')).toBeVisible();
   });
 
   test('Settings form persists default model + prompt server-side', async ({

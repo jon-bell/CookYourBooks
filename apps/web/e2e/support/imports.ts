@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, type Page } from '@playwright/test';
 
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './env.js';
+import { getWorkerOwner } from './workerOwner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const FIXTURES_DIR = resolve(__dirname, '../fixtures');
@@ -490,6 +491,33 @@ export async function waitForItemStatuses(
 }
 
 /**
+ * Like {@link waitForItemStatuses} but RE-KICKS the (owner+batch-scoped) worker
+ * on every poll. A single `triggerWorker` can claim 0 items if the queue is
+ * raced (a concurrent test, or the page's own ocr_kick, drains first), which
+ * left OCR specs un-parallelizable. Kicking each poll makes the drain robust
+ * regardless of who fires first. Use this for FINAL-state drains; keep
+ * `waitForItemStatuses` (no kick) for INTERMEDIATE-state assertions that must
+ * observe a transient state before it's drained further.
+ */
+export async function pumpItemStatuses(
+  batchId: string,
+  predicate: (counts: ItemStatusCounts) => boolean,
+  timeoutMs = 45_000,
+): Promise<ItemStatusCounts> {
+  const deadline = Date.now() + timeoutMs;
+  let last: ItemStatusCounts | undefined;
+  while (Date.now() < deadline) {
+    await triggerWorker(batchId).catch(() => {
+      // a single failed kick shouldn't abort the drain
+    });
+    last = await fetchStatusCounts(batchId);
+    if (predicate(last)) return last;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`pumpItemStatuses timeout. Last: ${JSON.stringify(last)}`);
+}
+
+/**
  * Drive the file input on /import/new. The actual `<input type=file>` is
  * hidden behind a "Choose images" button — we set files directly on the
  * input rather than clicking through the chooser dialog.
@@ -556,19 +584,26 @@ export async function installScanShim(page: Page, pages: ShimPage[]): Promise<vo
   );
 }
 
-export async function triggerWorker(batchId?: string | null): Promise<{
+export async function triggerWorker(
+  batchId?: string | null,
+  ownerId?: string | null,
+): Promise<{
   processed: number;
   failed: number;
   parked: number;
   remaining: number;
 }> {
+  // Default the owner scope to the current test's user (set by the `user`
+  // fixture) so concurrent specs don't drain each other's jobs. Multi-user
+  // specs pass an explicit ownerId (or null to drain globally).
+  const onlyOwner = ownerId !== undefined ? ownerId : getWorkerOwner();
   const resp = await fetch(`${FUNCTIONS_URL}/import-worker`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
     },
-    body: JSON.stringify({ batch_id: batchId ?? null }),
+    body: JSON.stringify({ batch_id: batchId ?? null, only_owner: onlyOwner }),
   });
   if (!resp.ok) {
     throw new Error(`triggerWorker failed: ${resp.status} ${await resp.text()}`);
@@ -588,9 +623,9 @@ export async function triggerWorker(batchId?: string | null): Promise<{
  * env doesn't have the worker vault secret, and the outbox push that
  * makes the row visible server-side is asynchronous.
  */
-export async function pumpWorker(maxAttempts = 30): Promise<void> {
+export async function pumpWorker(maxAttempts = 30, ownerId?: string | null): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
-    const r = await triggerWorker();
+    const r = await triggerWorker(null, ownerId);
     if (r.processed > 0 || r.failed > 0 || r.parked > 0) return;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }

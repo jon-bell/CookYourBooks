@@ -9,9 +9,11 @@ import { LoadingState } from './components/LoadingState.js';
 import { SyncBadge } from './components/SyncBadge.js';
 import { useToast } from './components/ToastProvider.js';
 import { UserMenu } from './components/UserMenu.js';
+import { OcrOnboardingWizard } from './import/OcrOnboardingWizard.js';
 import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
+import { usePullToRefresh } from './native/usePullToRefresh.js';
 import { MobileNav } from './nav/MobileNav.js';
 import { PRIMARY_NAV } from './nav/navItems.js';
 import { ScrollTopButton } from './nav/ScrollTopButton.js';
@@ -27,6 +29,7 @@ import { CookingTrackerPage } from './pages/CookingTrackerPage.js';
 import { CookModePage } from './pages/CookModePage.js';
 import { CookSessionPage } from './pages/CookSessionPage.js';
 import { CostCenterPage } from './pages/CostCenterPage.js';
+import { DataUsagePage } from './pages/DataUsagePage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
 import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
 import { HouseholdPage } from './pages/HouseholdPage.js';
@@ -37,6 +40,7 @@ import { ImportItemPage } from './pages/ImportItemPage.js';
 import { ImportLinkPage } from './pages/ImportLinkPage.js';
 import { ImportListPage } from './pages/ImportListPage.js';
 import { ImportNewPage } from './pages/ImportNewPage.js';
+import { ImportPdfPage } from './pages/ImportPdfPage.js';
 import { LandingPage } from './pages/LandingPage.js';
 import { LegalPage } from './pages/LegalPage.js';
 import { LibraryPage } from './pages/LibraryPage.js';
@@ -62,6 +66,8 @@ export function App() {
   // Back returns to where you were; Android hardware back navigates the SPA.
   useScrollRestoration();
   useHardwareBack();
+  // Native iOS pull-to-refresh → syncNow (no-op off-device).
+  usePullToRefresh();
   return (
     <div className="min-h-full flex flex-col">
       <ShareIntentListener />
@@ -73,7 +79,11 @@ export function App() {
       </a>
       <header className="border-b border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 pt-[env(safe-area-inset-top)]">
         <div className="mx-auto max-w-5xl py-3 flex flex-wrap items-center gap-x-6 gap-y-2 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
-          <Link to="/" className="text-lg font-semibold tracking-tight">
+          <Link
+            to="/"
+            onClick={() => window.scrollTo({ top: 0 })}
+            className="text-lg font-semibold tracking-tight"
+          >
             CookYourBooks
           </Link>
           <nav
@@ -109,7 +119,7 @@ export function App() {
           </div>
         </div>
       </header>
-      <main id="main" className="flex-1 mx-auto w-full max-w-5xl px-4 py-6">
+      <main id="main" className="flex-1 mx-auto w-full max-w-5xl overflow-x-clip px-4 py-6">
         <Routes>
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-up" element={<SignUpPage />} />
@@ -247,6 +257,14 @@ export function App() {
             }
           />
           <Route
+            path="/import/setup"
+            element={
+              <RequireAuth>
+                <OcrOnboardingWizard />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/import/new"
             element={
               <RequireAuth>
@@ -283,6 +301,14 @@ export function App() {
             element={
               <RequireAuth>
                 <ImportLinkPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/import/pdf"
+            element={
+              <RequireAuth>
+                <ImportPdfPage />
               </RequireAuth>
             }
           />
@@ -369,6 +395,14 @@ export function App() {
             }
           />
           <Route
+            path="/data-usage"
+            element={
+              <RequireAuth>
+                <DataUsagePage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/activity"
             element={
               <RequireAuth>
@@ -426,6 +460,13 @@ export function App() {
   );
 }
 
+// Route a shared file (PDF / image) to the right import flow. PDFs go to the
+// streamlined one-recipe PDF importer; images seed the photo batch flow.
+function fileRoute(fileUrl: string, fileKind: 'pdf' | 'image'): string {
+  const base = fileKind === 'pdf' ? '/import/pdf' : '/import/new';
+  return `${base}?file=${encodeURIComponent(fileUrl)}`;
+}
+
 // Bridges the mobile share target into the router: when another app shares
 // a supported video link to us, route to the import-from-link flow with the
 // URL prefilled (it auto-extracts). Inert on the web — initShareIntent only
@@ -448,19 +489,34 @@ function ShareIntentListener() {
   }, [user]);
 
   // If the user signs in after being bounced from a share, finish the
-  // import flow by consuming the URL we stashed in sessionStorage.
+  // import flow by consuming what we stashed in sessionStorage — either a
+  // pasted/shared URL or a shared file (PDF / image) in the app group.
   useEffect(() => {
     if (!user) return;
     let pending: string | null = null;
+    let pendingFile: string | null = null;
     try {
       pending = sessionStorage.getItem('cookyourbooks.pendingShare');
       if (pending) sessionStorage.removeItem('cookyourbooks.pendingShare');
+      pendingFile = sessionStorage.getItem('cookyourbooks.pendingShareFile');
+      if (pendingFile) sessionStorage.removeItem('cookyourbooks.pendingShareFile');
     } catch {
       /* private mode — nothing to do */
     }
     if (pending) {
       showToast('Resuming import after sign-in…', 'success');
       navigate(`/import/link?url=${encodeURIComponent(pending)}`);
+    } else if (pendingFile) {
+      try {
+        const { fileUrl, fileKind } = JSON.parse(pendingFile) as {
+          fileUrl: string;
+          fileKind: 'pdf' | 'image';
+        };
+        showToast('Resuming import after sign-in…', 'success');
+        navigate(fileRoute(fileUrl, fileKind));
+      } catch {
+        /* malformed stash — ignore */
+      }
     }
   }, [user, navigate, showToast]);
 
@@ -492,11 +548,33 @@ function ShareIntentListener() {
         navigate(`/import/link?url=${encodeURIComponent(outcome.url)}`);
         return;
       }
-      // no_url — the share extension ran but we couldn't find a URL.
+      if (outcome.kind === 'import_file') {
+        if (!userRef.current) {
+          try {
+            sessionStorage.setItem(
+              'cookyourbooks.pendingShareFile',
+              JSON.stringify({ fileUrl: outcome.fileUrl, fileKind: outcome.fileKind }),
+            );
+          } catch {
+            /* private mode or quota — non-fatal */
+          }
+          showToast('Sign in to finish importing this recipe.', 'info');
+          navigate('/sign-in');
+          return;
+        }
+        showToast(
+          outcome.fileKind === 'pdf' ? 'Importing PDF recipe…' : 'Importing shared photo…',
+          'success',
+        );
+        navigate(fileRoute(outcome.fileUrl, outcome.fileKind));
+        return;
+      }
+      // no_url — the share extension ran but we couldn't find a URL. Point the
+      // user at the reliable workaround for paywalled sites (print → PDF).
       showToast(
-        "Couldn't read a link from that share. Try sharing the URL directly.",
+        "Couldn't read a recipe from that share. For paywalled sites, print the page to PDF and share the PDF.",
         'warn',
-        5000,
+        6000,
       );
     });
   }, [navigate, showToast]);

@@ -34,7 +34,7 @@ import {
   hashEmbedText,
   type EmbedRecipeInput,
 } from './embed.ts';
-import { buildCoverPrompt, generateCover } from './cover.ts';
+import { buildCollectionCoverPrompt, buildCoverPrompt, generateCover } from './cover.ts';
 import {
   COVER_CACHE_CONTROL,
   coverObjectKey,
@@ -320,7 +320,12 @@ Deno.serve(async (req) => {
       });
       return json({ error: 'unauthorized' }, 401);
     }
-    let body: { batch_id?: string | null; embed?: boolean; cover?: boolean } = {};
+    let body: {
+      batch_id?: string | null;
+      embed?: boolean;
+      cover?: boolean;
+      only_owner?: string | null;
+    } = {};
     try {
       const text = await req.text();
       if (text.length > 0) body = JSON.parse(text);
@@ -328,31 +333,37 @@ Deno.serve(async (req) => {
       return json({ error: 'invalid JSON body' }, 400);
     }
     const batchId = body.batch_id ?? null;
+    // Test-only: scope EVERY claim loop to one owner so e2e worker-backed specs
+    // can run in parallel without draining each other's jobs. NULL in prod
+    // (pg_net / cron never set it) → global drain, unchanged behaviour.
+    const onlyOwner = body.only_owner ?? null;
 
     const workerId = `edge:${crypto.randomUUID()}`;
     const wLog = makeLog({ worker: shortId(workerId), batch: batchId ? shortId(batchId) : undefined });
     wLog.info('invocation start');
     await ensurePricing(wLog);
-    const summary = await runLoop(workerId, batchId, wLog);
+    const summary = await runLoop(workerId, batchId, wLog, onlyOwner);
     // Drain any pending bakeoff variants in the same invocation. Variants
     // are per-user, so we don't filter by batch — the page that just
     // started the bakeoff kicks us, and we pull anything queued.
-    const bakeoffSummary = await runBakeoffLoop(workerId, wLog);
+    const bakeoffSummary = await runBakeoffLoop(workerId, wLog, onlyOwner);
     // Drain pending instruction-rewrite jobs too. Same loop discipline:
     // claim once per invocation, the next user kick or cron tick picks
     // up the slack if anything is still queued.
-    const rewriteSummary = await runRewriteLoop(workerId, wLog);
+    const rewriteSummary = await runRewriteLoop(workerId, wLog, onlyOwner);
     // Drain pending recipe-remix jobs. Same one-claim-per-invocation
     // discipline; the remix_kick + cron tick pick up any tail.
-    const remixSummary = await runRemixLoop(workerId, wLog);
-    const importVariantSummary = await runImportVariantLoop(workerId, wLog);
+    const remixSummary = await runRemixLoop(workerId, wLog, onlyOwner);
+    const importVariantSummary = await runImportVariantLoop(workerId, wLog, onlyOwner);
     // Drain pending recipe embedding jobs. Same shape as rewrite — a
     // single claim per invocation; the cron tick + save-side kicks
     // pick up any tail.
-    const embedSummary = await runEmbedLoop(workerId, wLog);
+    const embedSummary = await runEmbedLoop(workerId, wLog, onlyOwner);
     // Drain pending recipe cover-image jobs. Same one-claim-per-invocation
     // discipline; the cover_kick + cron tick pick up any tail.
-    const coverSummary = await runCoverLoop(workerId, wLog);
+    const coverSummary = await runCoverLoop(workerId, wLog, onlyOwner);
+    // Drain pending collection cover jobs (Gemini cookbook covers).
+    const collectionCoverSummary = await runCollectionCoverLoop(workerId, wLog, onlyOwner);
     wLog.info('invocation end', {
       ...summary,
       bakeoff_processed: bakeoffSummary.processed,
@@ -367,6 +378,8 @@ Deno.serve(async (req) => {
       embed_failed: embedSummary.failed,
       cover_processed: coverSummary.processed,
       cover_failed: coverSummary.failed,
+      collection_cover_processed: collectionCoverSummary.processed,
+      collection_cover_failed: collectionCoverSummary.failed,
     });
 
     if (summary.remaining > 0) {
@@ -402,6 +415,7 @@ async function runLoop(
   workerId: string,
   batchId: string | null,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<LoopSummary> {
   const startedAt = Date.now();
   let processed = 0;
@@ -411,7 +425,7 @@ async function runLoop(
   ocrRateLimitObserved = false;
 
   while (Date.now() - startedAt < LOOP_BUDGET_MS) {
-    const items = await claimBatch(workerId, batchId, log);
+    const items = await claimBatch(workerId, batchId, log, onlyOwner);
     if (items.length === 0) {
       emptyTicks++;
       log.info('empty claim', { empty_ticks: emptyTicks });
@@ -467,12 +481,14 @@ async function claimBatch(
   workerId: string,
   batchId: string | null,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<ImportItem[]> {
   const { data, error } = await supabase.rpc('import_claim_next', {
     p_worker_id: workerId,
     p_batch_id: batchId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('import_claim_next failed', { code: error.code, message: error.message });
@@ -947,13 +963,14 @@ async function parseAndComplete(
 async function runBakeoffLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
   // One claim pass per invocation; the page polls bakeoff_variants and
   // can kick the worker again if a variant lingers. Keeping this simple
   // avoids fighting with the import loop for parallelism budget.
-  const variants = await claimBakeoffBatch(workerId, log);
+  const variants = await claimBakeoffBatch(workerId, log, onlyOwner);
   if (variants.length === 0) return { processed, failed };
   log.info('claimed variants', { count: variants.length });
 
@@ -975,11 +992,13 @@ async function runBakeoffLoop(
 async function claimBakeoffBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<BakeoffVariant[]> {
   const { data, error } = await supabase.rpc('bakeoff_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('bakeoff_claim_next failed', { code: error.code, message: error.message });
@@ -1259,10 +1278,11 @@ async function processRewriteVariant(
 async function runRewriteLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
-  const jobs = await claimRewriteBatch(workerId, log);
+  const jobs = await claimRewriteBatch(workerId, log, onlyOwner);
   if (jobs.length === 0) return { processed, failed };
   log.info('claimed rewrite jobs', { count: jobs.length });
 
@@ -1282,11 +1302,13 @@ async function runRewriteLoop(
 async function claimRewriteBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<RewriteJob[]> {
   const { data, error } = await supabase.rpc('rewrite_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('rewrite_claim_next failed', { code: error.code, message: error.message });
@@ -1590,10 +1612,11 @@ async function runOrMockRewrite(p: {
 async function runRemixLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
-  const jobs = await claimRemixBatch(workerId, log);
+  const jobs = await claimRemixBatch(workerId, log, onlyOwner);
   if (jobs.length === 0) return { processed, failed };
   log.info('claimed remix jobs', { count: jobs.length });
 
@@ -1613,11 +1636,13 @@ async function runRemixLoop(
 async function claimRemixBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<RemixJob[]> {
   const { data, error } = await supabase.rpc('remix_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('remix_claim_next failed', { code: error.code, message: error.message });
@@ -1863,10 +1888,11 @@ async function runOrMockRemix(p: {
 async function runImportVariantLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
-  const results = await claimImportVariantBatch(workerId, log);
+  const results = await claimImportVariantBatch(workerId, log, onlyOwner);
   if (results.length === 0) return { processed, failed };
   log.info('claimed import variant results', { count: results.length });
 
@@ -1888,11 +1914,13 @@ async function runImportVariantLoop(
 async function claimImportVariantBatch(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<ImportVariantResult[]> {
   const { data, error } = await supabase.rpc('import_variant_claim_next', {
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('import_variant_claim_next failed', { code: error.code, message: error.message });
@@ -2061,6 +2089,7 @@ const MAX_EMBED_RETRIES = 3;
 async function runEmbedLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
@@ -2068,6 +2097,7 @@ async function runEmbedLoop(
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('embed_claim_next failed', { code: error.code, message: error.message });
@@ -2276,6 +2306,7 @@ const DEFAULT_COVER_PROMPT =
 async function runCoverLoop(
   workerId: string,
   log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
@@ -2283,6 +2314,7 @@ async function runCoverLoop(
     p_worker_id: workerId,
     p_lease_seconds: LEASE_SECONDS,
     p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
   });
   if (error) {
     log.error('cover_claim_next failed', { code: error.code, message: error.message });
@@ -2523,6 +2555,263 @@ async function coverFail(
     p_error: message,
     p_next_state: nextState,
   });
+}
+
+// ---------- collection cover-image generation loop ----------
+//
+// Drains collection_cover_jobs: Gemini invents a cookbook cover from the
+// collection title + its table of contents. Same key-resolution / metering /
+// upload posture as the recipe cover loop; the image lands in the collection
+// owner's covers/{owner}/collections path and is stamped onto
+// recipe_collections.cover_image_path via collection_cover_complete.
+
+interface CollectionCoverJob {
+  id: string;
+  collection_id: string;
+  owner_id: string;
+  requested_by: string;
+  attempts: number;
+}
+
+async function runCollectionCoverLoop(
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+  onlyOwner: string | null,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+  const { data, error } = await supabase.rpc('collection_cover_claim_next', {
+    p_worker_id: workerId,
+    p_lease_seconds: LEASE_SECONDS,
+    p_limit: CLAIM_BATCH,
+    p_only_owner: onlyOwner,
+  });
+  if (error) {
+    log.error('collection_cover_claim_next failed', { code: error.code, message: error.message });
+    return { processed, failed };
+  }
+  const jobs = (data ?? []) as CollectionCoverJob[];
+  if (jobs.length === 0) return { processed, failed };
+  log.info('claimed collection cover jobs', { count: jobs.length });
+
+  for (const job of jobs) {
+    const outcome = await processCollectionCoverJob(
+      job,
+      workerId,
+      log.child({ item: shortId(job.id) }),
+    );
+    if (outcome === 'DONE') processed++;
+    else failed++;
+  }
+  return { processed, failed };
+}
+
+async function recordCollectionCoverUsage(e: {
+  ownerId: string;
+  keyOwnerId: string | null;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  costUsdMicros: number;
+  latencyMs: number;
+  errorKind: string;
+  collectionId: string;
+}): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('misc_llm_usage_record', {
+      p_event: {
+        owner_id: e.ownerId,
+        key_owner_id: e.keyOwnerId,
+        feature: 'cover_image',
+        provider: 'gemini',
+        model: e.model,
+        prompt_tokens: e.promptTokens,
+        completion_tokens: e.completionTokens,
+        cost_usd_micros: e.costUsdMicros,
+        latency_ms: e.latencyMs,
+        error_kind: e.errorKind,
+        produced_ref: e.collectionId,
+        produced_kind: 'COLLECTION_ID',
+      },
+    });
+    if (error) {
+      logLine('warn', 'misc_llm_usage_record (collection cover) failed', {}, { error: error.message });
+    }
+  } catch (err) {
+    logLine('warn', 'misc_llm_usage_record (collection cover) threw', {}, { error: String(err) });
+  }
+}
+
+async function collectionCoverFail(
+  job: CollectionCoverJob,
+  workerId: string,
+  message: string,
+  nextState: 'PENDING' | 'FAILED',
+): Promise<void> {
+  await supabase.rpc('collection_cover_fail', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_error: message,
+    p_next_state: nextState,
+  });
+}
+
+async function processCollectionCoverJob(
+  job: CollectionCoverJob,
+  workerId: string,
+  log: ReturnType<typeof makeLog>,
+): Promise<'DONE' | 'FAILED'> {
+  const next = (): 'PENDING' | 'FAILED' =>
+    job.attempts < MAX_COVER_RETRIES ? 'PENDING' : 'FAILED';
+  log.info('collection cover start', { collection: shortId(job.collection_id), attempts: job.attempts });
+
+  // Resolve the INITIATOR's Gemini key (own, or borrowed household key).
+  const { data: keyData, error: keyErr } = await supabase.rpc('ocr_resolve_effective_key', {
+    p_owner_id: job.requested_by,
+    p_provider: 'gemini',
+  });
+  if (keyErr) {
+    await collectionCoverFail(job, workerId, `key lookup: ${keyErr.message}`, next());
+    return 'FAILED';
+  }
+  const keyRow = Array.isArray(keyData)
+    ? (keyData[0] as { api_key?: string; key_owner_id?: string } | undefined)
+    : undefined;
+  if (!keyRow?.api_key) {
+    await collectionCoverFail(job, workerId, 'No Gemini API key configured for the requester.', 'FAILED');
+    return 'FAILED';
+  }
+  const keyOwnerId = keyRow.key_owner_id ?? null;
+
+  // Initiator's model pref (the per-recipe prompt template doesn't apply — the
+  // collection prompt is built from the title + ToC).
+  const { data: prefRow } = await supabase
+    .from('user_cover_prefs')
+    .select('model')
+    .eq('owner_id', job.requested_by)
+    .maybeSingle();
+  const model = (prefRow as { model?: string } | null)?.model || DEFAULT_COVER_MODEL;
+
+  // Load the collection + its recipe titles (table of contents) for the prompt.
+  const { data: colRow, error: cErr } = await supabase
+    .from('recipe_collections')
+    .select('id, title, cover_image_path')
+    .eq('id', job.collection_id)
+    .maybeSingle();
+  if (cErr) {
+    await collectionCoverFail(job, workerId, `load collection: ${cErr.message}`, next());
+    return 'FAILED';
+  }
+  if (!colRow) {
+    await collectionCoverFail(job, workerId, 'collection missing', 'FAILED');
+    return 'FAILED';
+  }
+  const collection = colRow as { id: string; title: string; cover_image_path: string | null };
+
+  const { data: titleRows } = await supabase
+    .from('recipes')
+    .select('title, sort_order')
+    .eq('collection_id', job.collection_id)
+    .order('sort_order', { ascending: true })
+    .limit(60);
+  const recipeTitles = ((titleRows ?? []) as { title: string }[]).map((r) => r.title);
+
+  const prompt = buildCollectionCoverPrompt(collection.title, recipeTitles);
+
+  let gen;
+  try {
+    gen = await generateCover({ apiKey: keyRow.api_key, model, prompt });
+  } catch (err) {
+    const e = err as { kind?: string; message?: string };
+    const msg = e.message ?? String(err);
+    await recordCollectionCoverUsage({
+      ownerId: job.requested_by,
+      keyOwnerId,
+      model,
+      promptTokens: 0,
+      completionTokens: 0,
+      costUsdMicros: 0,
+      latencyMs: 0,
+      errorKind: e.kind ?? 'CALL_FAILED',
+      collectionId: job.collection_id,
+    });
+    const nextState = e.kind === 'NO_KEY' || e.kind === 'NO_IMAGE' ? 'FAILED' : next();
+    await collectionCoverFail(job, workerId, msg, nextState);
+    return 'FAILED';
+  }
+
+  const enc = await reencodeCover(gen.bytes, gen.mimeType);
+  const path = await coverObjectKey(
+    `${job.owner_id}/collections`,
+    job.collection_id,
+    enc.bytes,
+    enc.ext,
+  );
+  const { error: upErr } = await supabase.storage
+    .from('covers')
+    .upload(path, new Blob([enc.bytes as unknown as BlobPart], { type: enc.contentType }), {
+      upsert: true,
+      contentType: enc.contentType,
+      cacheControl: COVER_CACHE_CONTROL,
+    });
+  if (upErr) {
+    await recordCollectionCoverUsage({
+      ownerId: job.requested_by,
+      keyOwnerId,
+      model,
+      promptTokens: gen.promptTokens,
+      completionTokens: gen.completionTokens,
+      costUsdMicros: costUsdMicros('gemini', model, gen.promptTokens, gen.completionTokens),
+      latencyMs: gen.latencyMs,
+      errorKind: 'UPLOAD_FAILED',
+      collectionId: job.collection_id,
+    });
+    await collectionCoverFail(job, workerId, `upload: ${upErr.message}`, next());
+    return 'FAILED';
+  }
+
+  // Best-effort thumbnail.
+  try {
+    const thumb = await reencodeThumb(enc.bytes, enc.contentType);
+    await supabase.storage
+      .from('covers')
+      .upload(thumbPathFor(path), new Blob([thumb.bytes as unknown as BlobPart], { type: thumb.contentType }), {
+        upsert: true,
+        contentType: thumb.contentType,
+        cacheControl: COVER_CACHE_CONTROL,
+      });
+  } catch (e) {
+    log.warn('collection cover thumb upload failed (non-fatal)', { error: String(e) });
+  }
+
+  const { data: ok, error: completeErr } = await supabase.rpc('collection_cover_complete', {
+    p_job_id: job.id,
+    p_claim_token: workerId,
+    p_cover_path: path,
+  });
+  if (completeErr || ok === false) {
+    log.error('collection_cover_complete rpc', { code: completeErr?.code, message: completeErr?.message });
+  }
+
+  if (collection.cover_image_path && collection.cover_image_path !== path) {
+    await supabase.storage
+      .from('covers')
+      .remove([collection.cover_image_path, thumbPathFor(collection.cover_image_path)]);
+  }
+
+  await recordCollectionCoverUsage({
+    ownerId: job.requested_by,
+    keyOwnerId,
+    model,
+    promptTokens: gen.promptTokens,
+    completionTokens: gen.completionTokens,
+    costUsdMicros: costUsdMicros('gemini', model, gen.promptTokens, gen.completionTokens),
+    latencyMs: gen.latencyMs,
+    errorKind: 'OK',
+    collectionId: job.collection_id,
+  });
+  log.info('collection cover done', { collection: shortId(job.collection_id), path });
+  return 'DONE';
 }
 
 function decodeServerVector(v: number[] | string | null): Float32Array | null {
@@ -2802,8 +3091,13 @@ async function runOrMock(p: {
     : [
         { path: p.item.storage_path, provider: p.provider, model: p.model },
         { path: p.item.storage_path, provider: p.provider, model: '' },
-        { path: '*', provider: p.provider, model: '' },
+        // Any EXACT-path fixture must outrank the `*` wildcard — a test seeding a
+        // per-path row (often with provider='' default) would otherwise be
+        // shadowed by a `('*', provider, '')` fixture LEAKED by another spec
+        // (ocr-multi / ocr-import seed wildcards that persist in the table),
+        // which is what made these OCR specs order-dependent / un-parallelizable.
         { path: p.item.storage_path, provider: '', model: '' },
+        { path: '*', provider: p.provider, model: '' },
       ];
   for (const probe of probes) {
     const { data, error } = await supabase

@@ -44,6 +44,13 @@ async function extractViaUi(page: Page, url: string) {
   await page.getByRole('button', { name: 'Extract recipe' }).click();
 }
 
+// Single-draft imports now pause on a destination step (so the user can
+// re-attribute to an existing collection) before saving. Default destination is
+// the auto-detected platform collection, so confirming is one click.
+async function confirmSave(page: Page) {
+  await page.getByTestId('video-import-save').click();
+}
+
 interface CollectionRow {
   id: string;
   title: string;
@@ -94,7 +101,8 @@ test.describe('video link import', () => {
 
     await extractViaUi(page, url);
 
-    // Single draft → auto-saves and lands on the recipe page.
+    // Single draft → destination step → confirm default → recipe page.
+    await confirmSave(page);
     await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
@@ -114,9 +122,11 @@ test.describe('video link import', () => {
     await seedVideo(b, recipeDraft('Second Bake', 'sugar'));
 
     await extractViaUi(page, a);
+    await confirmSave(page);
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
     await extractViaUi(page, b);
+    await confirmSave(page);
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
@@ -136,6 +146,7 @@ test.describe('video link import', () => {
     await seedVideo(url, recipeDraft('Viral Pasta', 'spaghetti'));
 
     await extractViaUi(page, url);
+    await confirmSave(page);
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
@@ -153,6 +164,7 @@ test.describe('video link import', () => {
     await captionBox.fill('Brownies: 1 cup cocoa, bake 25 min.');
     await page.getByRole('button', { name: 'Extract recipe' }).click();
 
+    await confirmSave(page);
     await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
     await waitForWebCollectionTitled(user.id, 'Instagram');
@@ -186,6 +198,7 @@ test.describe('video link import', () => {
     await seedVideo(url, recipeDraft('JSON-LD Pancakes', 'flour'));
 
     await extractViaUi(page, url);
+    await confirmSave(page);
     await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
@@ -219,6 +232,7 @@ test.describe('video link import', () => {
     await captionBox.fill('Pesto: 2 cups basil, blend with oil.');
     await page.getByRole('button', { name: 'Extract recipe' }).click();
 
+    await confirmSave(page);
     await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
@@ -241,6 +255,8 @@ test.describe('video link import', () => {
     await seedVideo(url, recipeDraft('Shared Stew', 'carrot'));
 
     await page.goto(`/import/link?url=${encodeURIComponent(url)}`);
+    // Deep-link auto-extracts, then waits on the destination step.
+    await confirmSave(page);
     await page.waitForURL(/\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
     await waitForSynced(page);
 
@@ -248,5 +264,35 @@ test.describe('video link import', () => {
     const recipe = await waitForRecipe('Shared Stew');
     expect(recipe.source_url).toBe(url);
     expect(recipe.collection_id).toBe(yt.id);
+  });
+
+  test('re-attributes a single import to an existing collection', async ({
+    authedPage: page,
+    user,
+  }) => {
+    // First import creates the per-domain collection.
+    const first = 'https://www.example-recipes.com/first';
+    await seedVideo(first, recipeDraft('First From Site', 'flour'));
+    await extractViaUi(page, first);
+    await confirmSave(page);
+    await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
+    await waitForSynced(page);
+    const site = await waitForWebCollectionTitled(user.id, 'example-recipes.com');
+
+    // A second import from a *different* platform; re-attribute it into the
+    // existing example-recipes.com collection via the destination picker.
+    const second = 'https://www.youtube.com/watch?v=reattribute-me';
+    await seedVideo(second, recipeDraft('Re-attributed Recipe', 'sugar'));
+    await extractViaUi(page, second);
+    await page.getByRole('button', { name: /New: YouTube/ }).click();
+    await page.getByRole('option', { name: 'example-recipes.com', exact: false }).click();
+    await confirmSave(page);
+    await page.waitForURL(/\/recipes\/[0-9a-f-]+$/, { timeout: 20_000 });
+    await waitForSynced(page);
+
+    const recipe = await waitForRecipe('Re-attributed Recipe');
+    expect(recipe.collection_id).toBe(site.id);
+    // No YouTube collection was created — the import was re-homed.
+    expect((await webCollections(user.id)).filter((c) => c.title === 'YouTube')).toHaveLength(0);
   });
 });

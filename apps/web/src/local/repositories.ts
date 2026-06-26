@@ -27,8 +27,8 @@ import type {
 } from '@cookyourbooks/domain';
 import { createWebCollection, newTagId, normalizeLabel } from '@cookyourbooks/domain';
 
-import { shouldSuppressCrrTriggers } from './crrSuppression.js';
-import { getLocalDb } from './db.js';
+import { CRR_SUPPRESS_MIN_ROWS, shouldSuppressCrrTriggers } from './crrSuppression.js';
+import { getLocalDb, type LocalDb } from './db.js';
 import { enqueue } from './outbox.js';
 
 // Milliseconds since epoch, good enough for a monotonic-ish write marker
@@ -552,6 +552,37 @@ export const PULL_CRR_TABLES = [
 ] as const;
 
 /**
+ * The CRR child tables only — `recipes` excluded. The library-snapshot full
+ * pull writes recipe rows in its `meta` stage (one commit_alter on `recipes`)
+ * and then attaches children in its `bodies` stage. If the bodies stage
+ * re-upserted the recipe rows under {@link PULL_CRR_TABLES} it would pay a
+ * *second* O(table-size) commit_alter on `recipes` for no benefit — the rows
+ * are already current. The bodies stage instead writes children only, under
+ * this boundary, so `recipes` is altered exactly once per full pull.
+ */
+export const PULL_CRR_BODY_TABLES = [
+  'instruction_ingredient_refs',
+  'instructions',
+  'ingredients',
+] as const;
+
+/**
+ * Largest current row count among `tables`. commit_alter scans the whole
+ * table, so its cost is dominated by the biggest one (ingredients, in the
+ * recipe family). count(*) walks the rowid b-tree — a few ms even at 160k
+ * rows, and only ever run once we're already above the row floor, so it's
+ * negligible against the commit_alter it's deciding whether to pay.
+ */
+async function maxCrrTableRows(db: LocalDb, tables: readonly string[]): Promise<number> {
+  let max = 0;
+  for (const t of tables) {
+    const rows = await db.execA<[number]>(`select count(*) from ${t}`);
+    max = Math.max(max, Number(rows[0]?.[0] ?? 0));
+  }
+  return max;
+}
+
+/**
  * Run `fn` with cr-sqlite's per-row change-tracking triggers suspended
  * on `tables`. cr-sqlite's crsql_begin_alter / crsql_commit_alter pair
  * drops the row triggers for the duration and recreates them on
@@ -559,13 +590,15 @@ export const PULL_CRR_TABLES = [
  * rows are server-canonical and don't need to be re-propagated as
  * outbound CRDT changes.
  *
- * `rowCount` is the number of rows `fn` is about to write. Below
- * {@link CRR_SUPPRESS_MIN_ROWS} we skip the begin/commit_alter dance and
- * just run `fn` with triggers live — paying a handful of cheap per-row
- * trigger fires instead of one table-sized commit_alter (see
- * {@link shouldSuppressCrrTriggers}). Pass the total row count across all
- * `tables` (e.g. recipes + ingredients + instructions + refs), since
- * that's what the trigger cost tracks.
+ * `rowCount` is the number of rows `fn` is about to write. The decision to
+ * suppress is *size-relative* (see {@link shouldSuppressCrrTriggers}):
+ * commit_alter is O(table size), so we only pay it when `rowCount` is a big
+ * enough fraction of the largest target table to amortise a full-table scan.
+ * Below {@link CRR_SUPPRESS_MIN_ROWS} we short-circuit without even probing
+ * the table sizes — tiny batches (realtime echoes) always run with triggers
+ * live. Pass the total row count across all `tables` (e.g. recipes +
+ * ingredients + instructions + refs), since that's what the trigger cost
+ * tracks.
  *
  * Must run at the top level (not inside a SAVEPOINT / db.tx callback) so
  * the triggers re-attach cleanly even on caller failure.
@@ -575,10 +608,19 @@ export async function withSuppressedCrrTriggers<T>(
   rowCount: number,
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (!shouldSuppressCrrTriggers(rowCount)) {
+  // Cheap floor first: tiny batches never suppress, and we avoid the
+  // count() probe entirely on the hot incremental/echo path.
+  if (rowCount < CRR_SUPPRESS_MIN_ROWS) {
     return await fn();
   }
   const db = await getLocalDb();
+  // commit_alter rebuilds the whole CRDT clock, so its cost tracks the
+  // LARGEST target table, not the batch. Probe current sizes and only
+  // suppress when the batch is a big enough fraction to be worth it.
+  const maxTableRows = await maxCrrTableRows(db, tables);
+  if (!shouldSuppressCrrTriggers(rowCount, maxTableRows)) {
+    return await fn();
+  }
   const altered: string[] = [];
   try {
     for (const t of tables) {
@@ -665,9 +707,15 @@ export function recipeBatchRowCount(batch: ReadonlyArray<RecipeBatchEntry>): num
 export async function upsertRecipesBatchInner(
   batch: ReadonlyArray<RecipeBatchEntry>,
   signal?: AbortSignal,
+  opts?: { writeRecipeRows?: boolean },
 ): Promise<void> {
   if (batch.length === 0) return;
   if (signal?.aborted) return;
+  // The snapshot bodies stage passes `false`: recipe rows were already written
+  // by the meta stage, so we replace their children but leave `recipes`
+  // untouched (and out of the caller's suppression boundary), dodging a second
+  // full-table commit_alter on `recipes`.
+  const writeRecipeRows = opts?.writeRecipeRows ?? true;
   const db = await getLocalDb();
   await db.tx(async (tx) => {
     const ids = batch.map((b) => b.recipe.id);
@@ -700,10 +748,12 @@ export async function upsertRecipesBatchInner(
       chunk,
     ]);
 
-    await bulkUpsertRecipes(
-      tx,
-      fresh.map((b) => b.recipe),
-    );
+    if (writeRecipeRows) {
+      await bulkUpsertRecipes(
+        tx,
+        fresh.map((b) => b.recipe),
+      );
+    }
     await bulkInsertIngredients(
       tx,
       fresh.flatMap((b) => b.ingredients),
@@ -716,6 +766,48 @@ export async function upsertRecipesBatchInner(
       tx,
       fresh.flatMap((b) => b.refs),
     );
+  });
+}
+
+/**
+ * Upsert ONLY the `recipes` rows of a batch — no child delete/insert.
+ *
+ * The library-snapshot full-pull lands in two stages: the `meta` stage
+ * writes recipe cards so the grid renders immediately, then the `bodies`
+ * stage fills in ingredients / instructions / refs. Routing the meta
+ * stage through {@link upsertRecipesBatchInner} would delete each recipe's
+ * children (it replaces them), which is wrong here — the children just
+ * haven't arrived yet. This writes the recipe rows alone (a single bulk
+ * statement), leaving any children untouched; the bodies stage then calls
+ * {@link upsertRecipesBatchInner} to attach them. Keeps the same
+ * "refuse to regress a fresher local row" guard as the full path.
+ */
+export async function upsertRecipeRowsOnly(
+  rows: readonly RecipeRow[],
+  signal?: AbortSignal,
+): Promise<void> {
+  if (rows.length === 0 || signal?.aborted) return;
+  await withSuppressedCrrTriggers(['recipes'], rows.length, async () => {
+    const db = await getLocalDb();
+    await db.tx(async (tx) => {
+      const ids = rows.map((r) => r.id);
+      const existingMap = new Map<string, number>();
+      const CHUNK = 500;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const slice = ids.slice(i, i + CHUNK);
+        const ph = slice.map(() => '?').join(',');
+        const found = await tx.execO<{ id: string; updated_at: number }>(
+          `select id, updated_at from recipes where id in (${ph})`,
+          slice,
+        );
+        for (const r of found) existingMap.set(r.id, r.updated_at);
+      }
+      const fresh = rows.filter((r) => {
+        const local = existingMap.get(r.id);
+        return !local || local <= tsToMs(r.updated_at);
+      });
+      await bulkUpsertRecipes(tx, fresh);
+    });
   });
 }
 
@@ -2772,6 +2864,26 @@ export async function listSearchableEmbeddings(ownerId: string): Promise<Searcha
     isPlaceholder: !r.has_content,
     embedding: unpackEmbedding(r.embedding),
   }));
+}
+
+/**
+ * Cheap count of the locally-mirrored embeddings the semantic search can see
+ * (own + household-shared, same visibility as `listSearchableEmbeddings`). Used
+ * by the search page diagnostics to tell apart "the embedder failed to load"
+ * from "no vectors have been pulled/computed locally yet" — the two reasons
+ * semantic search silently degrades to literal matches.
+ */
+export async function countSearchableEmbeddings(ownerId: string): Promise<number> {
+  const db = await getLocalDb();
+  const rows = (await db.execO<{ n: number }>(
+    `select count(*) as n
+       from recipe_embeddings e
+       join recipes r on r.id = e.recipe_id and r.deleted = 0
+       join recipe_collections c on c.id = r.collection_id and c.deleted = 0
+              and (c.owner_id = ? or c.shared_with_household_id is not null)`,
+    [ownerId],
+  )) as { n: number }[];
+  return rows[0]?.n ?? 0;
 }
 
 // Literal/offline fallback search now lives in the LocalRecipeCollectionRepository

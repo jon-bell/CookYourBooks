@@ -23,6 +23,10 @@ interface Props {
   /** When provided, matched recipe in the picked cookbook (so the user
    *  understands the save will UPDATE an existing recipe). */
   matchedExistingTitle?: string;
+  /** Label for the empty / value==='' choice. Defaults to '(unassigned)';
+   *  the import re-attribution flow overrides it to e.g. "New: NYT Cooking"
+   *  so the default destination reads as "file under a fresh collection". */
+  unassignedLabel?: string;
 }
 
 /**
@@ -38,6 +42,7 @@ export function CookbookCombobox({
   onCreateNew,
   loading = false,
   matchedExistingTitle,
+  unassignedLabel = '(unassigned)',
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -112,7 +117,7 @@ export function CookbookCombobox({
     if (open) inputRef.current?.focus();
   }, [open]);
 
-  const summaryLabel = selected ? selected.title : '(unassigned)';
+  const summaryLabel = selected ? selected.title : unassignedLabel;
 
   return (
     <div ref={containerRef} className="relative">
@@ -183,7 +188,9 @@ export function CookbookCombobox({
                     activeIdx === unassignedIdx ? 'bg-stone-100' : 'hover:bg-stone-50'
                   }`}
                 >
-                  <span className="italic text-stone-500 dark:text-stone-400">(unassigned)</span>
+                  <span className="italic text-stone-500 dark:text-stone-400">
+                    {unassignedLabel}
+                  </span>
                   {value === '' && <span className="text-xs text-stone-400">current</span>}
                 </button>
               </li>

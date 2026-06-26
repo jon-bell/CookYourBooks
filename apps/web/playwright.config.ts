@@ -25,14 +25,17 @@ export default defineConfig({
   // a single realtime channel per-user, which causes flakes. Since each
   // test is already fast (well under a second of Supabase I/O), serializing
   // on one worker is both stable and nearly as quick.
-  fullyParallel: false,
-  workers: 1,
-  // Retries help against genuine flake (realtime propagation timing,
-  // worker queue races, slow self-hosted runner I/O, etc.) but mask
-  // real bugs if left on in dev. Three retries in CI buys headroom
-  // against multi-stage flakes (realtime + worker tick + UI render)
-  // without changing local-dev behaviour.
-  retries: process.env.CI ? 3 : 0,
+  //
+  // The defaults below are the known-stable config; all three are
+  // env-overridable so CI (or a tuning run) can dial up concurrency without a
+  // code change:
+  //   E2E_WORKERS=4          — worker count (file-level parallelism)
+  //   E2E_FULLY_PARALLEL=1   — also parallelize tests *within* a file
+  //   E2E_RETRIES=0          — measure true flake (no retry masking)
+  fullyParallel: process.env.E2E_FULLY_PARALLEL === '1',
+  workers: Number(process.env.E2E_WORKERS) || 1,
+  retries:
+    process.env.E2E_RETRIES != null ? Number(process.env.E2E_RETRIES) : process.env.CI ? 3 : 0,
   // Stop the whole run after 5 failures so a systemic CI breakage fails
   // fast and leaves its artifacts behind, rather than timing out the
   // job after every single test has been retried twice.
@@ -61,10 +64,8 @@ export default defineConfig({
       testIgnore: /mobile\..*spec\.ts/,
     },
     {
-      // iPhone-17-sized layer (402×874). Under workers:1 the projects run
-      // sequentially, so this appends the mobile spec(s) rather than
-      // re-running the whole suite at a second viewport. The viewport
-      // itself comes from the one shared constant in support/viewport.ts.
+      // iPhone-17-sized layer (402×874). The viewport comes from the one
+      // shared constant in support/viewport.ts.
       name: 'mobile',
       testMatch: /mobile\..*spec\.ts/,
       use: { ...devices['Desktop Chrome'], ...IPHONE_17_USE },

@@ -66,11 +66,17 @@ async function fetchLatestJob(recipeId: string): Promise<RemixJobSummary | null>
  * useRewriteJob, but additionally exposes the produced draft (result_json)
  * so the dialog can promote it once DONE.
  *
- * Polls cheaply (1s) since remix_jobs syncs via the realtime subscription
- * anyway — the poll exists only so the UI advances when the local DB writes
- * don't fire a global update. Returns `undefined` while loading.
+ * Reads once on mount, then polls (1s) ONLY while `active` (the caller is
+ * waiting on a remix it just started) OR a job is already in flight
+ * (PENDING/CLAIMED). No poll runs in the steady state. `active` bridges the
+ * gap between the user clicking and the local PENDING row syncing down (the
+ * job is created by an RPC, so it isn't observable locally at click time) —
+ * see useRewriteJob for the full rationale. Returns `undefined` while loading.
  */
-export function useRemixJob(recipeId: string | undefined): {
+export function useRemixJob(
+  recipeId: string | undefined,
+  active = false,
+): {
   job: RemixJobSummary | null | undefined;
   refresh: () => Promise<void>;
 } {
@@ -90,13 +96,28 @@ export function useRemixJob(recipeId: string | undefined): {
     }
   }, [recipeId]);
 
+  // One read on mount / recipe change to establish initial state.
   useEffect(() => {
-    if (!ready || !recipeId) return;
+    if (!ready || !recipeId) {
+      setJob(recipeId ? undefined : null);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const initial = await fetchLatestJob(recipeId);
       if (!cancelled) setJob(initial);
     })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, recipeId]);
+
+  // Poll while the caller is waiting on a just-started job (`active`) or a job
+  // is already running.
+  const inFlight = job?.status === 'PENDING' || job?.status === 'CLAIMED';
+  useEffect(() => {
+    if (!ready || !recipeId || (!active && !inFlight)) return;
+    let cancelled = false;
     const interval = setInterval(() => {
       if (!cancelled) void refresh();
     }, 1000);
@@ -104,7 +125,7 @@ export function useRemixJob(recipeId: string | undefined): {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [ready, recipeId, refresh]);
+  }, [ready, recipeId, active, inFlight, refresh]);
 
   return { job, refresh };
 }

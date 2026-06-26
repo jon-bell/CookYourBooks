@@ -62,7 +62,11 @@ export function RemixDialog({
   const [pendingJobId, setPendingJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
 
-  const { job, refresh } = useRemixJob(recipe.id);
+  // Poll while a turn is in flight (pendingJobId set on run, cleared by the
+  // consume effect on terminal). Bridges the gap before the local PENDING row
+  // syncs down — the job is created by an RPC, so it isn't readable locally at
+  // click time.
+  const { job, refresh } = useRemixJob(recipe.id, pendingJobId !== null);
 
   // Owned collections only (the import picker is owner-scoped) — used to
   // decide where the saved copy lands. Own recipe → same collection;

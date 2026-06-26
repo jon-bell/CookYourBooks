@@ -4,6 +4,7 @@ import {
   type FakeRecipeDraft,
   listBatchItems,
   listItemAttempts,
+  pumpItemStatuses,
   seedOcrFixture,
   triggerWorker,
   uploadTestImages,
@@ -90,9 +91,9 @@ test.describe('bulk OCR imports', () => {
       });
     }
 
-    const summary = await triggerWorker(batchId);
-    expect(summary.processed + summary.remaining).toBeGreaterThanOrEqual(5);
-    await waitForItemStatuses(batchId, (c) => c.ocrDone === 5, 45_000);
+    // Drain OCR robustly — re-kick until all 5 reach OCR_DONE. A single kick can
+    // race the queue (the page's own ocr_kick or a concurrent test) and claim 0.
+    await pumpItemStatuses(batchId, (c) => c.ocrDone === 5, 45_000);
     await waitForBatchStatus(page, batchId, { done: 5, failed: 0, parked: 0 });
 
     await expect(page.getByText(/Needs review/).first()).toBeVisible({ timeout: 15_000 });
@@ -142,8 +143,7 @@ test.describe('bulk OCR imports', () => {
       });
     }
 
-    await triggerWorker(batchId);
-    await waitForItemStatuses(batchId, (c) => c.ocrDone === 3, 45_000);
+    await pumpItemStatuses(batchId, (c) => c.ocrDone === 3, 45_000);
     await waitForBatchStatus(page, batchId, { done: 3, failed: 0, parked: 0 });
   });
 

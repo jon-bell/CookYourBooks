@@ -1,6 +1,7 @@
 import { expect, type Page, test as base } from '@playwright/test';
 
 import { createTestUser, type TestUser } from './admin.js';
+import { setWorkerOwner } from './workerOwner.js';
 
 /**
  * Sign in via the UI. Uses the real form so session storage, auth state,
@@ -41,7 +42,11 @@ export const test = base.extend<Fixtures>({
   user: async ({}, use, testInfo) => {
     const tag = testInfo.title.replace(/[^a-z0-9]+/gi, '').slice(0, 16) || 'test';
     const u = await createTestUser(tag.toLowerCase());
+    // Scope this test's worker pumps to its own user so it never drains another
+    // (concurrent) test's jobs. Multi-user specs override per call.
+    setWorkerOwner(u.id);
     await use(u);
+    setWorkerOwner(null);
     await u.cleanup();
   },
   authedPage: async ({ page, user }, use) => {
