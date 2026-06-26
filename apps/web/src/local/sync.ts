@@ -105,6 +105,28 @@ function toMs(ts: string | number | null | undefined): number {
   return Number.isFinite(p) ? p : 0;
 }
 
+/**
+ * Count rows whose `updated_at` is strictly newer than `sinceMs` — i.e.
+ * genuinely new since the last watermark.
+ *
+ * The legacy `gte('updated_at', watermark)` tail pulls always re-fetch the
+ * single boundary row (its `updated_at` equals the stored watermark), and the
+ * conservative `filterFresherIncoming` (`local <= incoming`, which guards
+ * against ms-truncation collisions) re-applies it. Returning that re-fetch as a
+ * pulled-row count made every steady-state cycle look like a change, defeating
+ * the no-op invalidation gate in SyncProvider. Counting only rows strictly past
+ * the prior watermark separates a real change from the boundary re-pull without
+ * touching the (deliberately conservative) write path. Backed by `toMs`, so it
+ * compares ms-to-ms against the watermark.
+ */
+function countNewerThan<T>(
+  rows: readonly T[],
+  sinceMs: number,
+  tsOf: (r: T) => string | number,
+): number {
+  return rows.reduce((n, r) => (toMs(tsOf(r)) > sinceMs ? n + 1 : n), 0);
+}
+
 // ---------- composite keyset cursor (recipes topics) ----------
 //
 // The incremental recipes pull keysets on (updated_at, id) rather than a bare
@@ -363,8 +385,11 @@ export interface PullResult {
   cookingEvents: number;
   recipeTags: number;
   collectionNotes: number;
-  /** Collections + their children pulled because they're shared into the user's household. */
-  householdSharedCollections: number;
+  /** Total household-shared rows that actually changed this pull (collections +
+   *  recipes + cooking events + tags + notes + embeddings), excluding the
+   *  boundary rows `gte` re-fetches each cycle. >0 means "co-member content
+   *  changed" — the caller's invalidation signal. */
+  householdChanges: number;
   /** The user's active household id at pull time (null if none). */
   householdId: string | null;
 }
@@ -604,6 +629,12 @@ export interface PullCallbacks {
       | 'cooking_events'
       | 'recipe_tags'
       | 'collection_notes',
+    /** How many rows this phase actually wrote to local SQLite. The consumer
+     *  uses it to skip React-Query invalidation on no-op pulls (the common
+     *  steady-state case) — which otherwise re-runs every active query,
+     *  including the full-library semantic-search embedding scan, on the
+     *  single serialized cr-sqlite connection every cycle. */
+    rows: number,
   ) => void;
 }
 
@@ -688,7 +719,7 @@ async function pullFullSnapshot(
   // from the rows (no server/client cursor-format coupling).
   const finalCursor = maxCursor(recipeRows, { ts: '', id: '' });
   if (finalCursor.ts !== '') await setRecipeCursor(topics.recipeTopic, finalCursor);
-  if (fireCallbacks) callbacks?.onPhaseComplete?.('recipe_metadata');
+  if (fireCallbacks) callbacks?.onPhaseComplete?.('recipe_metadata', recipeRows.length);
 
   // ----- bodies stage: children -----
   meterPhase('snapshot_bodies');
@@ -736,7 +767,7 @@ async function pullFullSnapshot(
       });
     }
   });
-  if (fireCallbacks) callbacks?.onPhaseComplete?.('recipes');
+  if (fireCallbacks) callbacks?.onPhaseComplete?.('recipes', batch.length);
 
   return {
     collections: collections.length,
@@ -826,7 +857,8 @@ export async function pullAll(
 
   if (!snapshotDone) {
     meterPhase('collections');
-    const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
+    const collectionsPrevMs = await getWatermark(collectionTopic);
+    const collectionsSince = new Date(collectionsPrevMs).toISOString();
     const collectionsPhase = Date.now();
     const collections = await fetchAllPages<CollectionRow>((from, to) =>
       client
@@ -849,8 +881,11 @@ export async function pullAll(
     }
     if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
     meterRows(collections.length);
-    collectionsCount = collections.length;
-    callbacks?.onPhaseComplete?.('collections');
+    // Newer-than-watermark count, not the fetched count: the `gte` query always
+    // re-fetches the boundary collection, which must not register as a change
+    // and re-invalidate every cycle (see countNewerThan).
+    collectionsCount = countNewerThan(collections, collectionsPrevMs, (r) => r.updated_at);
+    callbacks?.onPhaseComplete?.('collections', collectionsCount);
 
     checkAbort('recipes');
     meterPhase('recipes');
@@ -1027,7 +1062,7 @@ export async function pullAll(
     );
     meterRows(recipesFetched.length);
     recipesCount = recipesFetched.length;
-    callbacks?.onPhaseComplete?.('recipes');
+    callbacks?.onPhaseComplete?.('recipes', recipesFetched.length);
   }
 
   // Tail topics (imports, conversion_rules, rewrite_jobs, embeddings)
@@ -1058,42 +1093,42 @@ export async function pullAll(
   ] = await Promise.all([
     pullImports(client, ownerId).then((c) => {
       logSync('info', `pull imports done in ${Date.now() - importPhase}ms`, { ...c });
-      callbacks?.onPhaseComplete?.('imports');
+      callbacks?.onPhaseComplete?.('imports', c.batches + c.items + c.attempts + c.tocEntries);
       return c;
     }),
     pullConversionRules(client, ownerId).then((n) => {
       logSync('info', `pull conversion_rules: ${n} rows in ${Date.now() - convPhase}ms`);
-      callbacks?.onPhaseComplete?.('conversion_rules');
+      callbacks?.onPhaseComplete?.('conversion_rules', n);
       return n;
     }),
     pullRewriteJobs(client, ownerId).then((n) => {
       logSync('info', `pull rewrite_jobs: ${n} rows in ${Date.now() - rewritePhase}ms`);
-      callbacks?.onPhaseComplete?.('rewrite_jobs');
+      callbacks?.onPhaseComplete?.('rewrite_jobs', n);
       return n;
     }),
     pullRemixJobs(client, ownerId).then((n) => {
       logSync('info', `pull remix_jobs: ${n} rows in ${Date.now() - remixPhase}ms`);
-      callbacks?.onPhaseComplete?.('remix_jobs');
+      callbacks?.onPhaseComplete?.('remix_jobs', n);
       return n;
     }),
     pullRecipeEmbeddings(client, ownerId).then((n) => {
       logSync('info', `pull recipe_embeddings: ${n} rows in ${Date.now() - embedPhase}ms`);
-      callbacks?.onPhaseComplete?.('recipe_embeddings');
+      callbacks?.onPhaseComplete?.('recipe_embeddings', n);
       return n;
     }),
     pullCookingEvents(client, ownerId).then((n) => {
       logSync('info', `pull cooking_events: ${n} rows in ${Date.now() - cookingPhase}ms`);
-      callbacks?.onPhaseComplete?.('cooking_events');
+      callbacks?.onPhaseComplete?.('cooking_events', n);
       return n;
     }),
     pullRecipeTags(client, ownerId).then((n) => {
       logSync('info', `pull recipe_tags: ${n} rows in ${Date.now() - tagsPhase}ms`);
-      callbacks?.onPhaseComplete?.('recipe_tags');
+      callbacks?.onPhaseComplete?.('recipe_tags', n);
       return n;
     }),
     pullCollectionNotes(client, ownerId).then((n) => {
       logSync('info', `pull collection_notes: ${n} rows in ${Date.now() - notesPhase}ms`);
-      callbacks?.onPhaseComplete?.('collection_notes');
+      callbacks?.onPhaseComplete?.('collection_notes', n);
       return n;
     }),
   ]);
@@ -1106,12 +1141,12 @@ export async function pullAll(
   checkAbort('household');
   const householdPhase = Date.now();
   const householdId = await getCurrentHouseholdId(client);
-  const householdSharedCollections = householdId
+  const householdChanges = householdId
     ? await pullHouseholdSharedContent(client, ownerId, householdId, signal)
     : 0;
   logSync(
     'info',
-    `pull household-shared: ${householdSharedCollections} collections in ${Date.now() - householdPhase}ms`,
+    `pull household-shared: ${householdChanges} changed rows in ${Date.now() - householdPhase}ms`,
     { householdId },
   );
 
@@ -1133,7 +1168,7 @@ export async function pullAll(
     cookingEvents: cookingEventsPulled,
     recipeTags: recipeTagsPulled,
     collectionNotes: collectionNotesPulled,
-    householdSharedCollections,
+    householdChanges,
     householdId,
   };
 }
@@ -1171,6 +1206,7 @@ async function pullHouseholdSharedContent(
   const fullPull = recipeCursor.id === '';
 
   let collectionCount = 0;
+  let householdRecipesChanged = 0;
   let snapshotDone = false;
 
   // Full pull of co-members' shared content via the columnar snapshot
@@ -1189,6 +1225,7 @@ async function pullHouseholdSharedContent(
         undefined,
       );
       collectionCount = snap.collections;
+      householdRecipesChanged = snap.recipes;
       snapshotDone = true;
     } catch (err) {
       logSync('warn', 'household snapshot failed; falling back to keyset path', {
@@ -1199,7 +1236,8 @@ async function pullHouseholdSharedContent(
 
   if (!snapshotDone) {
     meterPhase('household');
-    const collectionsSince = new Date(await getWatermark(collectionTopic)).toISOString();
+    const collectionsPrevMs = await getWatermark(collectionTopic);
+    const collectionsSince = new Date(collectionsPrevMs).toISOString();
     const collections = await fetchAllPages<CollectionRow>((from, to) =>
       client
         .from('recipe_collections')
@@ -1222,7 +1260,11 @@ async function pullHouseholdSharedContent(
       maxCollectionTs = Math.max(maxCollectionTs, toMs(row.updated_at));
     }
     if (maxCollectionTs > 0) await bumpWatermark(collectionTopic, maxCollectionTs);
-    collectionCount = collections.length;
+    // Newer-than-watermark count, not fetched: the `gte` boundary collection is
+    // re-fetched every cycle and must not register as a household change (see
+    // countNewerThan). Note this is the collection count only; the recipe/child
+    // pulls below are keyset-based and counted as side effects.
+    collectionCount = countNewerThan(collections, collectionsPrevMs, (r) => r.updated_at);
     // Filter on the denormalized household_id (+ owner_id <> me) — indexed and
     // join-free, like the owned path's owner_id filter. Same two pull shapes as
     // the owned path: full keyset-by-id, then incremental keyset-by-(updated_at,
@@ -1253,6 +1295,9 @@ async function pullHouseholdSharedContent(
           recipeCursor,
         );
 
+    // Keyset pull → these are genuinely new since the cursor (no boundary
+    // re-fetch), so the raw count is the change count.
+    householdRecipesChanged = recipes.length;
     if (recipes.length > 0) {
       // Same join-free child pulls as the owned path: full by household_id,
       // incremental by the changed recipe / instruction ids.
@@ -1366,18 +1411,32 @@ async function pullHouseholdSharedContent(
 
   // Co-members' cooking activity + tags. RLS narrows `owner_id <> me` to
   // library-sharing co-members; each row is tagged locally with
-  // shared_with_household_id so the repository surfaces it. Side effects —
-  // the caller only logs the collection count.
-  await pullHouseholdCookingEvents(client, ownerId, householdId);
-  await pullHouseholdRecipeTags(client, ownerId, householdId);
-  await pullHouseholdCollectionNotes(client, ownerId, householdId);
-  // Co-members' recipe vectors, so household-shared recipes are semantically
-  // searchable (not just literal-fallback). Tagged into the local mirror by
-  // recipe_id; the collection's shared_with_household_id marker is what
-  // listSearchableEmbeddings joins on to surface them.
-  await pullHouseholdEmbeddings(client, ownerId, householdId);
+  // shared_with_household_id so the repository surfaces it. Each returns its
+  // genuinely-changed-row count so a co-member's recipe/event/tag/note edit
+  // still drives a UI invalidation (the caller gates invalidation on the total
+  // — a recipe-only change wouldn't bump the collection count).
+  const [eventsChanged, tagsChanged, notesChanged, embeddingsChanged] = [
+    await pullHouseholdCookingEvents(client, ownerId, householdId),
+    await pullHouseholdRecipeTags(client, ownerId, householdId),
+    await pullHouseholdCollectionNotes(client, ownerId, householdId),
+    // Co-members' recipe vectors, so household-shared recipes are semantically
+    // searchable (not just literal-fallback). Tagged into the local mirror by
+    // recipe_id; the collection's shared_with_household_id marker is what
+    // listSearchableEmbeddings joins on to surface them.
+    await pullHouseholdEmbeddings(client, ownerId, householdId),
+  ];
 
-  return collectionCount;
+  // Total household rows that actually changed this pull (collections counted
+  // above as newer-than-watermark; recipes via the keyset pull are genuinely
+  // new). The caller treats >0 as "household content changed" for invalidation.
+  return (
+    collectionCount +
+    householdRecipesChanged +
+    eventsChanged +
+    tagsChanged +
+    notesChanged +
+    embeddingsChanged
+  );
 }
 
 // ---------- nutrition essentials (USDA Foundation + SR Legacy) ----------
@@ -1966,7 +2025,8 @@ async function dropLocallyDeleted<T>(
 
 async function pullConversionRules(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `conversion_rules:${ownerId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<ConversionRuleRow>((from, to) =>
     client
       .from('conversion_rules')
@@ -2002,12 +2062,16 @@ async function pullConversionRules(client: CookbooksClient, ownerId: string): Pr
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 async function pullRewriteJobs(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `rewrite_jobs:${ownerId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<RewriteJobRow>((from, to) =>
     client
       .from('rewrite_jobs')
@@ -2034,12 +2098,16 @@ async function pullRewriteJobs(client: CookbooksClient, ownerId: string): Promis
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 async function pullRemixJobs(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `remix_jobs:${ownerId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<RemixJobRow>((from, to) =>
     client
       .from('remix_jobs')
@@ -2068,7 +2136,10 @@ async function pullRemixJobs(client: CookbooksClient, ownerId: string): Promise<
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 // ---------- pull: recipe embeddings ----------
@@ -2195,7 +2266,8 @@ async function applyPulledEmbeddings(rows: RecipeEmbeddingRow[]): Promise<void> 
 
 async function pullCookingEvents(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `cooking_events:${ownerId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<CookingEventRow>((from, to) =>
     client
       .from('cooking_events')
@@ -2228,12 +2300,16 @@ async function pullCookingEvents(client: CookbooksClient, ownerId: string): Prom
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 async function pullRecipeTags(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `recipe_tags:${ownerId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<RecipeTagRow>((from, to) =>
     client
       .from('recipe_tags')
@@ -2266,7 +2342,10 @@ async function pullRecipeTags(client: CookbooksClient, ownerId: string): Promise
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 // Co-members' cooking events / tags — filtered by household_id = our
@@ -2279,7 +2358,8 @@ async function pullHouseholdCookingEvents(
   householdId: string,
 ): Promise<number> {
   const topic = `household_cooking_events:${ownerId}:${householdId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<CookingEventRow>((from, to) =>
     client
       .from('cooking_events')
@@ -2309,7 +2389,10 @@ async function pullHouseholdCookingEvents(
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 async function pullHouseholdRecipeTags(
@@ -2318,7 +2401,8 @@ async function pullHouseholdRecipeTags(
   householdId: string,
 ): Promise<number> {
   const topic = `household_recipe_tags:${ownerId}:${householdId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<RecipeTagRow>((from, to) =>
     client
       .from('recipe_tags')
@@ -2348,12 +2432,16 @@ async function pullHouseholdRecipeTags(
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 async function pullCollectionNotes(client: CookbooksClient, ownerId: string): Promise<number> {
   const topic = `collection_notes:${ownerId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<CollectionNoteRow>((from, to) =>
     client
       .from('collection_notes')
@@ -2386,7 +2474,10 @@ async function pullCollectionNotes(client: CookbooksClient, ownerId: string): Pr
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 async function pullHouseholdCollectionNotes(
@@ -2395,7 +2486,8 @@ async function pullHouseholdCollectionNotes(
   householdId: string,
 ): Promise<number> {
   const topic = `household_collection_notes:${ownerId}:${householdId}`;
-  const since = new Date(await getWatermark(topic)).toISOString();
+  const prevMs = await getWatermark(topic);
+  const since = new Date(prevMs).toISOString();
   const rows = await fetchAllPages<CollectionNoteRow>((from, to) =>
     client
       .from('collection_notes')
@@ -2425,7 +2517,10 @@ async function pullHouseholdCollectionNotes(
   let max = await getWatermark(topic);
   for (const row of rows) max = Math.max(max, toMs(row.updated_at));
   if (max > 0) await bumpWatermark(topic, max);
-  return rows.length;
+  // Report rows genuinely newer than the prior watermark, not the fetched
+  // count — `gte` always re-fetches the boundary row, which must not register
+  // as a change (see countNewerThan).
+  return countNewerThan(rows, prevMs, (r) => r.updated_at);
 }
 
 // ---------- pull: bulk OCR imports ----------
@@ -2567,11 +2662,18 @@ async function pullImports(client: CookbooksClient, ownerId: string): Promise<Im
     maxTocTs > 0 ? bumpWatermark(tocTopic, maxTocTs) : Promise.resolve(),
   ]);
 
+  // Report rows genuinely newer than each prior watermark, not fetched counts.
+  // `gte` always re-fetches the boundary rows; for import_toc_entries that's the
+  // whole 100+-row TOC of the latest batch (they share one bulk-insert
+  // `updated_at`, so the ms watermark can't advance past them — the same
+  // shared-timestamp block the recipe keyset cursor was built to handle). They
+  // must not register as a per-cycle change. (The re-fetch itself still happens;
+  // eliminating it needs a keyset cursor for these topics — see countNewerThan.)
   return {
-    batches: batches.length,
-    items: items.length,
-    attempts: attempts.length,
-    tocEntries: tocs.length,
+    batches: countNewerThan(batches, batchSinceMs, (r) => r.updated_at),
+    items: countNewerThan(items, itemSinceMs, (r) => r.updated_at),
+    attempts: countNewerThan(attempts, attemptSinceMs, (r) => r.started_at),
+    tocEntries: countNewerThan(tocs, tocSinceMs, (r) => r.updated_at),
   };
 }
 
