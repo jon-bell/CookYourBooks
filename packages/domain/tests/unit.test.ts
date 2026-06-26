@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { canonicalUnitName, findUnit, Units } from '../src/model/unit.js';
 
 describe('Units', () => {

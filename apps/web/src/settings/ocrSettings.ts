@@ -26,7 +26,6 @@ export interface OcrSettings {
 
 const KEY = 'cookyourbooks.ocr.v1';
 
-
 export const DEFAULT_PROMPT = `Extract recipe information from this image and return it as valid JSON (no markdown, no code blocks).
 
 The image may contain one or more recipes. Extract all recipes you can identify.

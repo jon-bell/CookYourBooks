@@ -9,8 +9,8 @@
 //
 // Pure compositing only — no network beyond fetching the public cover URLs.
 
-import { supabase } from '../supabase.js';
 import { COVER_QUALITY } from '../recipe/coverImage.js';
+import { supabase } from '../supabase.js';
 
 /** 2:3 portrait — matches the collection-cover display aspect. Longest edge
  *  stays under COVER_MAX_EDGE (1280) so it round-trips through prepareCoverImage
@@ -47,9 +47,7 @@ async function encode(
 }
 
 /** Top-left coordinates + size for each cell, given how many covers we tile. */
-export function collageCells(
-  count: number,
-): Array<{ x: number; y: number; w: number; h: number }> {
+export function collageCells(count: number): Array<{ x: number; y: number; w: number; h: number }> {
   if (count >= 4) {
     const cw = COVER_W / 2;
     const ch = COVER_H / 2;
@@ -166,7 +164,7 @@ export async function buildCollectionCoverCollage(opts: CollageOptions): Promise
   if (paths.length === 0) throw new Error('No recipe covers selected for the collage.');
 
   const canvas = makeCanvas(COVER_W, COVER_H);
-  const ctx = canvas.getContext('2d') as Ctx2D | null;
+  const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not acquire 2D canvas context');
 
   // Neutral backdrop shows through if a cover fails to load.

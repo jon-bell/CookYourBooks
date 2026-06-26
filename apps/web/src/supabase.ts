@@ -1,5 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
 import type { Database } from '@cookyourbooks/db';
+import { createClient } from '@supabase/supabase-js';
+
 import { isMetering, recordTransfer } from './local/transferMeter.js';
 
 const url = import.meta.env.VITE_SUPABASE_URL;

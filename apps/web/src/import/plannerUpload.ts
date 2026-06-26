@@ -8,26 +8,19 @@
 // `assigned_recipe_id`, and hands the result to the existing
 // `import_finalize_grouping` RPC so the worker takes over.
 
-import { supabase } from '../supabase.js';
-import { kickOcr, finalizeGrouping } from './api.js';
 import { getLocalDb } from '../local/db.js';
+import { resolveImportFallback } from '../settings/FallbackModelSection.js';
+import { DEFAULT_MODEL_BY_PROVIDER, loadOcrSettings } from '../settings/ocrSettings.js';
+import { supabase } from '../supabase.js';
+import { finalizeGrouping, kickOcr } from './api.js';
+import { prepareImage } from './imageProcessing.js';
 import {
   findOpenPlannerSession,
   insertLocalPlannerBatch,
   insertLocalPlannerItem,
   LocalImportItemRepository,
 } from './localRepos.js';
-import { prepareImage } from './imageProcessing.js';
-import { resolveImportFallback } from '../settings/FallbackModelSection.js';
-import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  loadOcrSettings,
-} from '../settings/ocrSettings.js';
-import type {
-  ImportBatch,
-  ImportItem,
-  OcrProvider,
-} from './model.js';
+import type { ImportBatch, ImportItem, OcrProvider } from './model.js';
 
 async function uploadBlob(path: string, blob: Blob): Promise<void> {
   const { error } = await supabase.storage.from('imports').upload(path, blob, {
@@ -50,9 +43,7 @@ interface OcrDefaults {
  * user about provider/model — keeping settings off the critical path
  * is part of "extremely performant".
  */
-function resolveOcrDefaults(
-  registeredProviders: readonly string[],
-): OcrDefaults {
+function resolveOcrDefaults(registeredProviders: readonly string[]): OcrDefaults {
   const saved = loadOcrSettings();
   if (saved) {
     return { provider: saved.provider, model: saved.model };
@@ -202,10 +193,7 @@ export async function addPlannedShot(
  * remove actions. The Storage object is left in place (cheap, and the
  * worker never sees DISCARDED rows so they don't drive cost).
  */
-export async function discardPlannedShot(
-  ownerId: string,
-  itemId: string,
-): Promise<void> {
+export async function discardPlannedShot(ownerId: string, itemId: string): Promise<void> {
   await new LocalImportItemRepository(ownerId).update(itemId, {
     status: 'DISCARDED',
   });

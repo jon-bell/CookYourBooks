@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+
 import { CoverImage } from '../components/CoverImage.js';
+import { enqueueCollectionCover } from '../recipe/coverApi.js';
 import { uploadCollectionCover } from './cover.js';
 import { buildCollectionCoverCollage } from './coverCollage.js';
-import { enqueueCollectionCover } from '../recipe/coverApi.js';
 
 interface RecipeCoverChoice {
   id: string;
@@ -42,7 +43,10 @@ export function CollectionCoverDialog({
   onCoverSaved,
 }: Props) {
   const withCovers = useMemo(
-    () => recipes.filter((r): r is RecipeCoverChoice & { coverImagePath: string } => !!r.coverImagePath),
+    () =>
+      recipes.filter(
+        (r): r is RecipeCoverChoice & { coverImagePath: string } => !!r.coverImagePath,
+      ),
     [recipes],
   );
 
@@ -145,7 +149,10 @@ export function CollectionCoverDialog({
           Generate a cover for “{collectionTitle}”
         </h2>
 
-        <div role="tablist" className="inline-flex self-start overflow-hidden rounded-md border border-stone-300 dark:border-stone-600 text-sm">
+        <div
+          role="tablist"
+          className="inline-flex self-start overflow-hidden rounded-md border border-stone-300 dark:border-stone-600 text-sm"
+        >
           {(['collage', 'ai'] as const).map((m) => (
             <button
               key={m}
@@ -168,8 +175,8 @@ export function CollectionCoverDialog({
           <div className="flex min-h-0 flex-col gap-3 overflow-y-auto">
             {withCovers.length === 0 ? (
               <p className="text-sm text-stone-600 dark:text-stone-400">
-                None of this collection's recipes have a cover image yet. Generate
-                some recipe covers first, or use “AI from contents”.
+                None of this collection's recipes have a cover image yet. Generate some recipe
+                covers first, or use “AI from contents”.
               </p>
             ) : (
               <>
@@ -250,15 +257,14 @@ export function CollectionCoverDialog({
             {aiQueued ? (
               <p className="rounded-md border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-emerald-900 dark:text-emerald-200">
                 Generating a cover from “{collectionTitle}” and its {recipes.length}{' '}
-                {recipes.length === 1 ? 'recipe' : 'recipes'}. It'll appear on the
-                collection shortly.
+                {recipes.length === 1 ? 'recipe' : 'recipes'}. It'll appear on the collection
+                shortly.
               </p>
             ) : (
               <p className="text-stone-600 dark:text-stone-400">
-                Gemini will design a cookbook cover from the collection title and its
-                table of contents ({recipes.length}{' '}
-                {recipes.length === 1 ? 'recipe' : 'recipes'}). This uses your
-                configured LLM key and appears under the LLM Cost Center.
+                Gemini will design a cookbook cover from the collection title and its table of
+                contents ({recipes.length} {recipes.length === 1 ? 'recipe' : 'recipes'}). This uses
+                your configured LLM key and appears under the LLM Cost Center.
               </p>
             )}
           </div>

@@ -1,4 +1,9 @@
-import { detectVideoPlatform, firstHttpUrl, firstVideoUrl, type VideoPlatform } from './videoPlatform.js';
+import {
+  detectVideoPlatform,
+  firstHttpUrl,
+  firstVideoUrl,
+  type VideoPlatform,
+} from './videoPlatform.js';
 
 // Pure parsing for share-intent payloads — split out of shareIntent.ts so it
 // can be unit-tested without pulling in the native/Sentry bridge.

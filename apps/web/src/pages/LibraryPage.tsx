@@ -1,12 +1,13 @@
 import { useDeferredValue, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useLibrarySummaries } from '../data/queries.js';
-import { useSync } from '../local/SyncProvider.js';
-import type { LibraryCollectionSummary } from '../local/repositories.js';
+
 import { CoverImage } from '../components/CoverImage.js';
 import { EmptyMadeHint } from '../components/EmptyMadeHint.js';
-import { usePersistedState } from '../components/usePersistedState.js';
 import { LoadingState } from '../components/LoadingState.js';
+import { usePersistedState } from '../components/usePersistedState.js';
+import { useLibrarySummaries } from '../data/queries.js';
+import type { LibraryCollectionSummary } from '../local/repositories.js';
+import { useSync } from '../local/SyncProvider.js';
 
 /** `recent` is the query's native order (filled first, then updated_at). */
 type LibrarySortMode = 'recent' | 'name' | 'made';
@@ -69,7 +70,7 @@ export function LibraryPage() {
     collections.length === 0 && (!hydrated || status === 'syncing' || status === 'initializing');
 
   if (!localReady || waitingForData) return <LoadingState surface="library" />;
-  if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
+  if (error) return <p className="text-red-700 dark:text-red-300">{error.message}</p>;
 
   return (
     <div className="space-y-6">
@@ -128,29 +129,37 @@ export function LibraryPage() {
           ) : (
             <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {sorted.map((c) => {
-            const isPlaceholder = c.filledRecipeCount === 0 && c.recipeCount > 0;
-            return (
-              <li
-                key={c.id}
-                className={`overflow-hidden rounded-lg border bg-white dark:bg-stone-900 hover:border-stone-400 ${
-                  isPlaceholder
-                    ? 'border-stone-200 dark:border-stone-800 opacity-60 hover:opacity-100'
-                    : 'border-stone-200 dark:border-stone-700'
-                }`}
-              >
-                <Link to={`/collections/${c.id}`} className="block">
-                  <CoverImage path={c.coverImagePath ?? undefined} className="aspect-[3/2] w-full" variant="thumb" />
-                  <div className="p-4">
-                    <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-                      {collectionSubtitle(c)}
-                    </div>
-                    <div className="mt-1 text-lg font-medium">{c.title}</div>
-                    <div className="mt-2 text-sm text-stone-600 dark:text-stone-400">
-                      {recipeCountLabel(c)}
-                      {c.isPublic && <span className="ml-2 text-emerald-700 dark:text-emerald-300">· Public</span>}
-                    </div>
-                  </div>
-                </Link>
+                const isPlaceholder = c.filledRecipeCount === 0 && c.recipeCount > 0;
+                return (
+                  <li
+                    key={c.id}
+                    className={`overflow-hidden rounded-lg border bg-white dark:bg-stone-900 hover:border-stone-400 ${
+                      isPlaceholder
+                        ? 'border-stone-200 dark:border-stone-800 opacity-60 hover:opacity-100'
+                        : 'border-stone-200 dark:border-stone-700'
+                    }`}
+                  >
+                    <Link to={`/collections/${c.id}`} className="block">
+                      <CoverImage
+                        path={c.coverImagePath ?? undefined}
+                        className="aspect-[3/2] w-full"
+                        variant="thumb"
+                      />
+                      <div className="p-4">
+                        <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
+                          {collectionSubtitle(c)}
+                        </div>
+                        <div className="mt-1 text-lg font-medium">{c.title}</div>
+                        <div className="mt-2 text-sm text-stone-600 dark:text-stone-400">
+                          {recipeCountLabel(c)}
+                          {c.isPublic && (
+                            <span className="ml-2 text-emerald-700 dark:text-emerald-300">
+                              · Public
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </Link>
                   </li>
                 );
               })}

@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+
 import { waitForSynced } from './fixtures.js';
 
 /** Open the recipe page's "⋯ More" actions menu (Improve / Adapt / Remix /

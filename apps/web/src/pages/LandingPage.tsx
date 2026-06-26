@@ -42,8 +42,8 @@ export function LandingPage() {
           provider once under Settings.
         </Feature>
         <Feature title="Offline-first, across devices">
-          Every reading and write hits a local SQLite store first. Supabase Realtime pushes
-          changes between your browser and your phone; offline edits flush when you reconnect.
+          Every reading and write hits a local SQLite store first. Supabase Realtime pushes changes
+          between your browser and your phone; offline edits flush when you reconnect.
         </Feature>
         <Feature title="Scale, convert, shop">
           Side-by-side scaling, ingredient-aware unit conversion with your own overrides, and a
@@ -54,8 +54,8 @@ export function LandingPage() {
           Perfect for a messy phone on the counter.
         </Feature>
         <Feature title="Shareable collections">
-          Mark a collection public and anyone can discover and fork it — a one-click copy into
-          their own private library.
+          Mark a collection public and anyone can discover and fork it — a one-click copy into their
+          own private library.
         </Feature>
         <Feature title="Open & exportable">
           Your data is your data. Export a recipe to Markdown, share it via your phone's share
@@ -69,14 +69,14 @@ export function LandingPage() {
         </h2>
         <div className="mt-3 space-y-3 text-stone-700 dark:text-stone-300">
           <p>
-            CookYourBooks is open source under the AGPL. Fork it, feed it, pass it on. The
-            recipe for the app itself is right there in the jar — take a scoop, add your own
-            flour, bake something new. If you run a modified copy for others, share what you
-            changed so the next cook can keep it alive.
+            CookYourBooks is open source under the AGPL. Fork it, feed it, pass it on. The recipe
+            for the app itself is right there in the jar — take a scoop, add your own flour, bake
+            something new. If you run a modified copy for others, share what you changed so the next
+            cook can keep it alive.
           </p>
           <p className="text-sm text-stone-600 dark:text-stone-400">
-            Self-host it against your own Supabase project, read the code before you trust it
-            with your grandmother's brisket, or send a patch when something bugs you.
+            Self-host it against your own Supabase project, read the code before you trust it with
+            your grandmother's brisket, or send a patch when something bugs you.
           </p>
         </div>
         <div className="mt-4 flex flex-wrap gap-3">

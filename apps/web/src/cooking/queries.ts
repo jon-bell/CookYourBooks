@@ -1,23 +1,24 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   logCook,
-  planCook,
-  snapshotOfRecipe,
   type MealSlot,
   type OccasionCategory,
+  planCook,
   type Recipe,
   type RecipeAdjustment,
+  snapshotOfRecipe,
 } from '@cookyourbooks/domain';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
+import { cookingEventRepo, recipeTagRepo, recipeViewRepo } from '../data/repos.js';
 import {
-  searchRecipesByTags,
   type CalendarEntry,
   type CookingEventRecord,
   type RecentlyViewedEntry,
   type RecipeSearchHit,
+  searchRecipesByTags,
 } from '../local/repositories.js';
-import { cookingEventRepo, recipeTagRepo, recipeViewRepo } from '../data/repos.js';
+import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { deleteCookingPhotos } from './photos.js';
 
 // ---------- reads ----------

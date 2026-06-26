@@ -44,7 +44,11 @@ async function encode(
     return canvas.convertToBlob({ type, quality });
   }
   return new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))), type, quality),
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))),
+      type,
+      quality,
+    ),
   );
 }
 
@@ -92,10 +96,7 @@ export async function prepareCoverImage(
       const width = Math.max(1, Math.round(bitmap.width * scale));
       const height = Math.max(1, Math.round(bitmap.height * scale));
       const canvas = makeCanvas(width, height);
-      const ctx = canvas.getContext('2d') as
-        | CanvasRenderingContext2D
-        | OffscreenCanvasRenderingContext2D
-        | null;
+      const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Could not acquire 2D canvas context');
       ctx.drawImage(bitmap, 0, 0, width, height);
 

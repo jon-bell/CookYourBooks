@@ -1,11 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { instruction, measured } from '@cookyourbooks/domain';
-import {
-  computeDraftDiff,
-  diffListHighlights,
-  formatBakeoffStatus,
-} from './bakeoff.js';
 import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
+import { instruction, measured } from '@cookyourbooks/domain';
+import { describe, expect, it } from 'vitest';
+
+import { computeDraftDiff, diffListHighlights, formatBakeoffStatus } from './bakeoff.js';
 
 describe('formatBakeoffStatus', () => {
   it('maps internal statuses to import-style labels', () => {
@@ -19,14 +16,19 @@ describe('computeDraftDiff', () => {
   it('highlights changed ingredients on each side', () => {
     const left: ParsedRecipeDraft = {
       title: 'Cookies',
-      ingredients: [measured({ name: 'flour', quantity: { type: 'EXACT', amount: 2, unit: 'cup' } })],
+      ingredients: [
+        measured({ name: 'flour', quantity: { type: 'EXACT', amount: 2, unit: 'cup' } }),
+      ],
       instructions: [instruction({ stepNumber: 1, text: 'Mix.' })],
       leftover: [],
     };
     const right: ParsedRecipeDraft = {
       title: 'Cookies (revised)',
       ingredients: [
-        measured({ name: 'all-purpose flour', quantity: { type: 'EXACT', amount: 2, unit: 'cup' } }),
+        measured({
+          name: 'all-purpose flour',
+          quantity: { type: 'EXACT', amount: 2, unit: 'cup' },
+        }),
       ],
       instructions: [instruction({ stepNumber: 1, text: 'Cream butter and sugar.' })],
       leftover: [],

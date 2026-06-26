@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
-import { useIsAdmin } from '../moderation/useIsAdmin.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { useIsAdmin } from '../moderation/useIsAdmin.js';
 
 /**
  * Gates an admin-only route. We render an explicit "restricted" message
@@ -17,10 +18,12 @@ export function RequireAdmin({ children }: { children: React.ReactNode }) {
       <div className="space-y-3">
         <h1 className="text-2xl font-semibold">Admin</h1>
         <p className="text-stone-600">
-          This surface is restricted to administrators. If you think you should have access,
-          ask another admin to grant it.
+          This surface is restricted to administrators. If you think you should have access, ask
+          another admin to grant it.
         </p>
-        <p className="text-xs text-stone-500">Path: <code>{location.pathname}</code></p>
+        <p className="text-xs text-stone-500">
+          Path: <code>{location.pathname}</code>
+        </p>
       </div>
     );
   }
@@ -47,12 +50,11 @@ function AdminTabLink({ to, children }: { to: string; children: React.ReactNode 
   //                                  sibling tab's prefix (`/import`).
   //   /admin/global-toc/import     → exact only.
   const path = location.pathname;
-  let active = false;
+  let active: boolean;
   if (to === '/admin') {
     active = path === '/admin';
   } else if (to === '/admin/global-toc') {
-    active =
-      (path === to || path.startsWith(`${to}/`)) && path !== '/admin/global-toc/import';
+    active = (path === to || path.startsWith(`${to}/`)) && path !== '/admin/global-toc/import';
   } else {
     active = path === to;
   }

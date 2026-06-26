@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import * as api from './api.js';
 
@@ -8,7 +9,14 @@ import * as api from './api.js';
 export function useLlmUsage(range: api.UsageRange & { limit?: number }) {
   const { user } = useAuth();
   return useQuery({
-    queryKey: ['llm-usage', 'list', user?.id, range.from ?? null, range.to ?? null, range.limit ?? null],
+    queryKey: [
+      'llm-usage',
+      'list',
+      user?.id,
+      range.from ?? null,
+      range.to ?? null,
+      range.limit ?? null,
+    ],
     queryFn: () => api.listLlmUsage(range),
     enabled: !!user,
   });

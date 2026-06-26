@@ -4,8 +4,9 @@ import {
   hashEmbedText,
   type Recipe,
 } from '@cookyourbooks/domain';
-import { getLocalEmbedding, upsertLocalEmbedding } from '../local/repositories.js';
+
 import { enqueue } from '../local/outbox.js';
+import { getLocalEmbedding, upsertLocalEmbedding } from '../local/repositories.js';
 import { embedText, getEmbedderStatus, preloadEmbedder } from './embedder.js';
 
 /**

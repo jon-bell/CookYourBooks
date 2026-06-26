@@ -1,5 +1,6 @@
 import type React from 'react';
 import { Link, useParams } from 'react-router-dom';
+
 import { DOCS, LEGAL_LAST_UPDATED, type LegalDoc } from '../legal/content.js';
 
 function isLegalSlug(s: string): s is LegalDoc['slug'] {
@@ -45,7 +46,10 @@ export function LegalPage() {
     return (
       <p className="text-stone-600 dark:text-stone-400">
         No such legal document.{' '}
-        <Link to="/legal" className="underline">Index</Link>.
+        <Link to="/legal" className="underline">
+          Index
+        </Link>
+        .
       </p>
     );
   }
@@ -56,7 +60,9 @@ export function LegalPage() {
     >
       <MarkdownView body={found.body} />
       <footer className="not-prose mt-8 pt-4 border-t border-stone-200 dark:border-stone-700 text-sm">
-        <Link to="/legal" className="underline">All legal documents</Link>
+        <Link to="/legal" className="underline">
+          All legal documents
+        </Link>
       </footer>
     </article>
   );
@@ -72,11 +78,7 @@ export function LegalPage() {
 
 function MarkdownView({ body }: { body: string }) {
   const blocks = body.split(/\n{2,}/);
-  return (
-    <>
-      {blocks.map((block, i) => renderBlock(block.trim(), i))}
-    </>
-  );
+  return <>{blocks.map((block, i) => renderBlock(block.trim(), i))}</>;
 }
 
 /**
@@ -88,7 +90,12 @@ function MarkdownView({ body }: { body: string }) {
 export function splitListItems(block: string): string[] {
   return block
     .split(/\n(?=\s*(?:\d+\.|-)\s)/)
-    .map((item) => item.replace(/^(?:\d+\.|-)\s+/, '').replace(/\n\s+/g, ' ').trim())
+    .map((item) =>
+      item
+        .replace(/^(?:\d+\.|-)\s+/, '')
+        .replace(/\n\s+/g, ' ')
+        .trim(),
+    )
     .filter(Boolean);
 }
 
@@ -111,7 +118,12 @@ function renderBlock(block: string, key: number): React.ReactElement | null {
   }
   if (/^\|.*\|$/.test(block.split('\n')[0] ?? '')) {
     const lines = block.split('\n');
-    const rows = lines.map((r) => r.split('|').slice(1, -1).map((c) => c.trim()));
+    const rows = lines.map((r) =>
+      r
+        .split('|')
+        .slice(1, -1)
+        .map((c) => c.trim()),
+    );
     if (rows.length < 2) return <p key={key}>{inline(block)}</p>;
     const hasDivider = rows[1]?.every((c) => /^-+$/.test(c));
     const bodyRows = rows.filter((row) => !row.every((c) => /^-+$/.test(c)));
@@ -188,7 +200,7 @@ function inline(text: string): React.ReactElement[] {
       while ((m = local.exec(piece))) {
         if (m.index > last) next.push(piece.slice(last, m.index));
         next.push(build(m));
-        last = m.index + m[0]!.length;
+        last = m.index + m[0].length;
       }
       if (last < piece.length) next.push(piece.slice(last));
     }
@@ -202,7 +214,5 @@ function inline(text: string): React.ReactElement[] {
   ));
   passReplace(/\*\*([^*]+)\*\*/g, (m) => <strong key={`b-${m.index}`}>{m[1]}</strong>);
   passReplace(/`([^`]+)`/g, (m) => <code key={`c-${m.index}`}>{m[1]}</code>);
-  return out.map((piece, i) =>
-    typeof piece === 'string' ? <span key={i}>{piece}</span> : piece,
-  );
+  return out.map((piece, i) => (typeof piece === 'string' ? <span key={i}>{piece}</span> : piece));
 }

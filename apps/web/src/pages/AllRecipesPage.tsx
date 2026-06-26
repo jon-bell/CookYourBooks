@@ -1,12 +1,13 @@
 import { useDeferredValue, useMemo, useState } from 'react';
-import { useGalleryRecipes } from '../data/queries.js';
-import { useSync } from '../local/SyncProvider.js';
+
+import { EmptyMadeHint } from '../components/EmptyMadeHint.js';
+import { LoadingState } from '../components/LoadingState.js';
 import { RecipeGalleryGrid } from '../components/RecipeGalleryGrid.js';
 import { sortByLastMade } from '../components/SortableRecipeList.js';
-import { EmptyMadeHint } from '../components/EmptyMadeHint.js';
 import { usePersistedState } from '../components/usePersistedState.js';
-import { LoadingState } from '../components/LoadingState.js';
 import { useLastMadeByRecipe } from '../cooking/queries.js';
+import { useGalleryRecipes } from '../data/queries.js';
+import { useSync } from '../local/SyncProvider.js';
 
 /** `views` is the query's native order (view count, then last viewed). */
 type GallerySortMode = 'views' | 'name' | 'made';
@@ -66,7 +67,7 @@ export function AllRecipesPage() {
     recipes.length === 0 && (!hydrated || status === 'syncing' || status === 'initializing');
 
   if (!localReady || waitingForData) return <LoadingState surface="all-recipes" />;
-  if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
+  if (error) return <p className="text-red-700 dark:text-red-300">{error.message}</p>;
 
   const countLabel = `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}`;
 

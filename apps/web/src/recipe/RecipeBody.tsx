@@ -1,6 +1,13 @@
+import {
+  formatQuantity,
+  formatServings,
+  isMeasured,
+  type Quantity,
+  type Recipe,
+} from '@cookyourbooks/domain';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { formatQuantity, formatServings, isMeasured, type Quantity, type Recipe } from '@cookyourbooks/domain';
+
 import { CoverImage } from '../components/CoverImage.js';
 
 /** The slice of collection metadata the presentational recipe body needs —
@@ -110,7 +117,8 @@ export function RecipeHeaderMeta({
         <figure className="mt-4 border-l-2 border-stone-300 dark:border-stone-600 pl-3">
           {!isAdaptation && collection?.sourceType === 'PUBLISHED_BOOK' && (
             <figcaption className="text-[11px] font-medium uppercase tracking-wide text-stone-500 dark:text-stone-400">
-              Headnote{collection.author ? ` from ${collection.author}` : ' from the original recipe'}
+              Headnote
+              {collection.author ? ` from ${collection.author}` : ' from the original recipe'}
             </figcaption>
           )}
           {!isAdaptation && collection?.sourceType === 'WEBSITE' && (
@@ -166,19 +174,21 @@ export function RecipeContentGrid({
               <li key={ing.id} className="break-words text-sm">
                 {isMeasured(ing) ? (
                   <>
-                    <span className="font-medium">
-                      {displayQuantity(ing.quantity, ing.name)}
-                    </span>{' '}
+                    <span className="font-medium">{displayQuantity(ing.quantity, ing.name)}</span>{' '}
                     {ing.name}
                     {ing.preparation && (
-                      <span className="text-stone-500 dark:text-stone-400">, {ing.preparation}</span>
+                      <span className="text-stone-500 dark:text-stone-400">
+                        , {ing.preparation}
+                      </span>
                     )}
                   </>
                 ) : (
                   <>
                     {ing.name}
                     {ing.preparation && (
-                      <span className="text-stone-500 dark:text-stone-400">, {ing.preparation}</span>
+                      <span className="text-stone-500 dark:text-stone-400">
+                        , {ing.preparation}
+                      </span>
                     )}
                   </>
                 )}
@@ -231,7 +241,9 @@ export function RecipeContentGrid({
                     </details>
                   )}
                   {step.notes && (
-                    <p className="mt-1 text-xs italic text-stone-500 dark:text-stone-400">{step.notes}</p>
+                    <p className="mt-1 text-xs italic text-stone-500 dark:text-stone-400">
+                      {step.notes}
+                    </p>
                   )}
                 </div>
               </li>
@@ -243,7 +255,9 @@ export function RecipeContentGrid({
       {recipe.notes && (
         <section className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/40 p-4">
           <h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">Notes</h2>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-stone-700 dark:text-stone-300">{recipe.notes}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-stone-700 dark:text-stone-300">
+            {recipe.notes}
+          </p>
         </section>
       )}
     </div>

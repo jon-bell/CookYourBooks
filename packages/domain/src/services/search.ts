@@ -1,5 +1,5 @@
-import type { Recipe } from '../model/recipe.js';
 import type { RecipeCollection } from '../model/collection.js';
+import type { Recipe } from '../model/recipe.js';
 
 export function searchRecipes(recipes: readonly Recipe[], query: string): Recipe[] {
   const q = query.trim().toLowerCase();

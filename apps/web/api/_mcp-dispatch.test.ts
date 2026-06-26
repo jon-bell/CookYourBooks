@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { dispatch, MCP_META } from './_mcp-dispatch.js';
 import type { RpcClient } from './_mcp-tools.js';
 
@@ -23,10 +24,7 @@ function fakeClient(
 describe('MCP dispatch', () => {
   it('initialize returns protocolVersion + tools capability', async () => {
     const { client } = fakeClient();
-    const out = await dispatch(
-      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
-      client,
-    );
+    const out = await dispatch({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }, client);
     expect(out).not.toBeNull();
     expect(out!.result).toMatchObject({
       protocolVersion: MCP_META.PROTOCOL_VERSION,
@@ -37,30 +35,20 @@ describe('MCP dispatch', () => {
 
   it('notifications/initialized is accepted with no response body', async () => {
     const { client } = fakeClient();
-    const out = await dispatch(
-      { jsonrpc: '2.0', method: 'notifications/initialized' },
-      client,
-    );
+    const out = await dispatch({ jsonrpc: '2.0', method: 'notifications/initialized' }, client);
     expect(out).toBeNull();
   });
 
   it('unknown method returns a JSON-RPC -32601 error', async () => {
     const { client } = fakeClient();
-    const out = await dispatch(
-      { jsonrpc: '2.0', id: 9, method: 'nonsense' },
-      client,
-    );
+    const out = await dispatch({ jsonrpc: '2.0', id: 9, method: 'nonsense' }, client);
     expect(out!.error?.code).toBe(-32601);
   });
 
   it('tools/list advertises every tool with an inputSchema', async () => {
     const { client } = fakeClient();
-    const out = await dispatch(
-      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
-      client,
-    );
-    const tools = (out!.result as { tools: Array<{ name: string; inputSchema: unknown }> })
-      .tools;
+    const out = await dispatch({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, client);
+    const tools = (out!.result as { tools: Array<{ name: string; inputSchema: unknown }> }).tools;
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [

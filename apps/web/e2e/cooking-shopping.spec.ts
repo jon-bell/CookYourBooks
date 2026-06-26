@@ -1,6 +1,6 @@
-import { test, expect } from './support/fixtures.js';
-import { createRecipeViaUi } from './support/helpers.js';
 import { addDaysISO, todayISO } from '../src/cooking/dateGrid.js';
+import { expect, test } from './support/fixtures.js';
+import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Shop for scheduled cooks', () => {
   test('adds recipes scheduled in a date range to the shopping list', async ({

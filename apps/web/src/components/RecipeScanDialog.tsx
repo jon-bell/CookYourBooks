@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+
 import { getSignedImportUrl } from '../import/ImportThumb.js';
-import { PinchPanImage } from './PinchPanImage.js';
 import type { ImportItem } from '../import/model.js';
+import { PinchPanImage } from './PinchPanImage.js';
 
 /**
  * Lightbox view of the original scanned page(s) that produced a
@@ -27,9 +28,7 @@ export function RecipeScanDialog({
     const out: { path: string; item: ImportItem; index: number }[] = [];
     for (const it of items) {
       out.push({ path: it.storagePath, item: it, index: 0 });
-      it.extraStoragePaths.forEach((p, i) =>
-        out.push({ path: p, item: it, index: i + 1 }),
-      );
+      it.extraStoragePaths.forEach((p, i) => out.push({ path: p, item: it, index: i + 1 }));
     }
     return out;
   }, [items]);
@@ -62,10 +61,7 @@ export function RecipeScanDialog({
           Close (esc)
         </button>
       </header>
-      <div
-        className="flex-1 overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="flex-1 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto flex max-w-4xl flex-col gap-6 p-4">
           {pages.map((p) => (
             <ScanPage key={`${p.item.id}:${p.index}`} pagePath={p.path} item={p.item} />

@@ -1,17 +1,15 @@
 import {
   formatQuantity,
-  isMeasured,
   type Ingredient,
   type Instruction,
+  isMeasured,
   type ParsedRecipeDraft,
 } from '@cookyourbooks/domain';
+
 import type { BakeoffVariantRow } from './api.js';
 
 /** Human-readable bakeoff variant status (mirrors import queue labels). */
-export function formatBakeoffStatus(
-  status: BakeoffVariantRow['status'],
-  running: boolean,
-): string {
+export function formatBakeoffStatus(status: BakeoffVariantRow['status'], running: boolean): string {
   const labels: Record<BakeoffVariantRow['status'], string> = {
     PENDING: 'Queued',
     CLAIMED: 'Processing',
@@ -36,8 +34,7 @@ export function summarizeDraftForDiff(draft: ParsedRecipeDraft): string {
     lines.push(`Pages: ${draft.pageNumbers.join(', ')}`);
   if (draft.servings) {
     const s = draft.servings;
-    const range =
-      s.amountMax !== undefined ? `${s.amount}–${s.amountMax}` : `${s.amount}`;
+    const range = s.amountMax !== undefined ? `${s.amount}–${s.amountMax}` : `${s.amount}`;
     lines.push(`Yield: ${range} ${s.description ?? 'servings'}`);
   }
   if (draft.timeEstimate) lines.push(`Time: ${draft.timeEstimate}`);
@@ -94,7 +91,8 @@ export function summarizeRewriteForDiff(payload: unknown): string {
     }
     steps.forEach((s, i) => {
       const text = typeof s.text === 'string' ? s.text : '(no text)';
-      const dur = typeof s.durationSec === 'number' && s.durationSec > 0 ? ` [${s.durationSec}s]` : '';
+      const dur =
+        typeof s.durationSec === 'number' && s.durationSec > 0 ? ` [${s.durationSec}s]` : '';
       lines.push(`  ${i + 1}. ${text}${dur}`);
     });
     lines.push('');
@@ -128,7 +126,10 @@ function instructionLine(step: Instruction): string {
   return step.text;
 }
 
-function scalarDiff(a: string | undefined, b: string | undefined): {
+function scalarDiff(
+  a: string | undefined,
+  b: string | undefined,
+): {
   left: DiffKind;
   right: DiffKind;
 } {
@@ -205,7 +206,7 @@ export function diffLines(a: string, b: string): DiffLine[] {
   const bLines = b.split('\n');
   const m = aLines.length;
   const n = bLines.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
   for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {
       if (aLines[i] === bLines[j]) dp[i]![j] = dp[i + 1]![j + 1]! + 1;

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+
 import { deleteOcrStorage } from '../import/deleteStorage.js';
 import { useSync } from '../local/SyncProvider.js';
 
@@ -37,8 +38,8 @@ export function OcrStorageSection() {
     <section data-testid="ocr-storage" className="mt-6 space-y-2">
       <h2 className="text-lg font-semibold">OCR uploaded images</h2>
       <p className="text-sm text-stone-700 dark:text-stone-300">
-        Delete every source image you've uploaded for OCR import — recipes already
-        promoted into your library will stay, only the source pictures go away.
+        Delete every source image you've uploaded for OCR import — recipes already promoted into
+        your library will stay, only the source pictures go away.
       </p>
       <button
         type="button"
@@ -72,9 +73,9 @@ export function OcrStorageSection() {
           >
             <h3 className="text-lg font-semibold">Delete every uploaded OCR image?</h3>
             <p className="text-sm text-stone-700 dark:text-stone-300">
-              This removes the bucket objects for <em>every</em> import batch you've
-              created. The OCR'd drafts and any recipes you've promoted will stay. Recipes
-              that still display an attached source image will lose that image.
+              This removes the bucket objects for <em>every</em> import batch you've created. The
+              OCR'd drafts and any recipes you've promoted will stay. Recipes that still display an
+              attached source image will lose that image.
             </p>
             {error && (
               <div

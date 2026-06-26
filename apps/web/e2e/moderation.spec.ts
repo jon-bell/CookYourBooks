@@ -1,5 +1,5 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { adminGet, createTestUser, seedPublicCollection } from './support/admin.js';
+import { expect, signIn, test } from './support/fixtures.js';
 
 test.describe('Moderation: user reports and admin takedowns', () => {
   test('a regular user can report a public collection', async ({ page }) => {
@@ -14,9 +14,7 @@ test.describe('Moderation: user reports and admin takedowns', () => {
       await page.getByPlaceholder(/Search titles/).fill('Reportable Collection');
       await expect(page.getByText('Reportable Collection')).toBeVisible({ timeout: 10_000 });
 
-      await page
-        .getByRole('button', { name: /Report Reportable Collection/ })
-        .click();
+      await page.getByRole('button', { name: /Report Reportable Collection/ }).click();
       await expect(page.getByRole('dialog', { name: /Report content/ })).toBeVisible();
 
       await page.getByLabel('Reason').selectOption('SPAM');
@@ -80,9 +78,7 @@ test.describe('Moderation: user reports and admin takedowns', () => {
       // success state and we're in it.
       await page.getByRole('button', { name: 'Close' }).click();
       await page.getByRole('button', { name: 'Sign out' }).click();
-      await expect(
-        page.locator('header').getByRole('link', { name: 'Sign in' }),
-      ).toBeVisible();
+      await expect(page.locator('header').getByRole('link', { name: 'Sign in' })).toBeVisible();
 
       // Step 2: admin signs in, opens the queue, and takes the collection down.
       await signIn(page, admin);
@@ -177,9 +173,7 @@ test.describe('Moderation: user reports and admin takedowns', () => {
       // "This account is disabled" message — we assert on that rather than
       // try to coax the trigger error through the sync engine's UI path.
       await page.getByRole('button', { name: 'Sign out' }).click();
-      await expect(
-        page.locator('header').getByRole('link', { name: 'Sign in' }),
-      ).toBeVisible();
+      await expect(page.locator('header').getByRole('link', { name: 'Sign in' })).toBeVisible();
       await signIn(page, victim);
 
       await page.goto('/library');

@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Search', () => {
@@ -53,9 +53,7 @@ test.describe('Search', () => {
     await expect(page.getByText('Fruit Salad')).toHaveCount(0);
   });
 
-  test('empty query shows hint; unknown query shows zero results', async ({
-    authedPage: page,
-  }) => {
+  test('empty query shows hint; unknown query shows zero results', async ({ authedPage: page }) => {
     await openSearch(page);
     // Empty input renders the "type to search" hint, not a counter.
     await expect(page.getByText(/Type to search/)).toBeVisible();

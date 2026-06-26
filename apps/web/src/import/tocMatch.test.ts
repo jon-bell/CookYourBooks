@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { scoreTocMatch, suggestTocMatches } from './tocMatch.js';
-import type { ImportTocEntry } from './model.js';
 
-function entry(
-  title: string,
-  pageNumber: number | null = null,
-  id = title,
-): ImportTocEntry {
+import type { ImportTocEntry } from './model.js';
+import { scoreTocMatch, suggestTocMatches } from './tocMatch.js';
+
+function entry(title: string, pageNumber: number | null = null, id = title): ImportTocEntry {
   return {
     id,
     batchId: 'b',

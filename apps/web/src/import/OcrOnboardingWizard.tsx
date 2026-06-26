@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+
 import { getEffectiveOcrConfig, setOcrKey, validateOcrKey } from './api.js';
 
 /**
@@ -23,7 +24,7 @@ function friendlyError(reason: string | undefined): string {
     return "That key didn't work. Make sure you copied the whole thing — it should start with “AIza”.";
   if (reason === 'network')
     return "Couldn't reach Google. Check your internet connection and try again.";
-  return "Something went wrong checking that key. Double-check it and try again.";
+  return 'Something went wrong checking that key. Double-check it and try again.';
 }
 
 export function OcrOnboardingWizard() {

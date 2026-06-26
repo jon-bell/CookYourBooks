@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseRecipeText } from '../src/services/parseRecipeText.js';
+
 import { isMeasured } from '../src/model/ingredient.js';
+import { parseRecipeText } from '../src/services/parseRecipeText.js';
 
 describe('parseRecipeText', () => {
   it('extracts title, servings, ingredients, and instructions from a well-formed recipe', () => {

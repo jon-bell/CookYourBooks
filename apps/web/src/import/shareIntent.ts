@@ -24,13 +24,29 @@
 // real diagnostic signal when "share opens app but nothing happens."
 
 import { Sentry } from '../sentry.js';
-import type { VideoPlatform } from './videoPlatform.js';
 import { parseShareIntent, type SharedFileKind } from './shareUrlParse.js';
+import type { VideoPlatform } from './videoPlatform.js';
+
+interface SendIntentPlugin {
+  checkSendIntentReceived(): Promise<unknown>;
+}
+
+interface AppPlugin {
+  addListener(
+    event: string,
+    handler: (data: unknown) => void,
+  ): Promise<{ remove?: () => void }> | { remove?: () => void };
+}
+
+interface CapacitorPlugins {
+  SendIntent?: SendIntentPlugin;
+  App?: AppPlugin;
+  [key: string]: unknown;
+}
 
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
-  // deno-lint-ignore no-explicit-any
-  Plugins?: Record<string, any>;
+  Plugins?: CapacitorPlugins;
 }
 
 function capacitor(): CapacitorGlobal | undefined {
@@ -64,7 +80,13 @@ export type ShareIntentOutcome =
   | { kind: 'import'; url: string; platform: VideoPlatform | 'website'; source: string }
   // A shared file (PDF / image) sitting in the app group container. `fileUrl`
   // is a `file://` path; the bytes are read on demand via `import/sharedFile.ts`.
-  | { kind: 'import_file'; fileUrl: string; fileKind: SharedFileKind; name: string | null; source: string }
+  | {
+      kind: 'import_file';
+      fileUrl: string;
+      fileKind: SharedFileKind;
+      name: string | null;
+      source: string;
+    }
   | { kind: 'no_url'; source: string };
 
 /**
@@ -93,8 +115,7 @@ export function initShareIntent(onShare: (outcome: ShareIntentOutcome) => void):
       kind: parsed.kind,
       platform: parsed.kind === 'url' ? parsed.platform : undefined,
       fileKind: parsed.kind === 'file' ? parsed.fileKind : undefined,
-      rawPayloadKeys:
-        payload && typeof payload === 'object' ? Object.keys(payload as object) : [],
+      rawPayloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
     });
     if (parsed.kind === 'url') {
       // Social platform when detected, otherwise a generic recipe website —

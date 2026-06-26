@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '../supabase.js';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { supabase } from '../supabase.js';
 
 /**
  * Returns `true` if the current user is in the `admins` table.

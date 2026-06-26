@@ -1,5 +1,5 @@
-import { SettingsLayout } from '../settings/SettingsTabs.js';
 import { ConversionsSection } from '../settings/ConversionsSection.js';
+import { SettingsLayout } from '../settings/SettingsTabs.js';
 
 /**
  * Conversions settings: the user's personal (HOUSE) unit-conversion rules,

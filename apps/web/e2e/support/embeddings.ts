@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
-import { SUPABASE_URL, SUPABASE_SERVICE_ROLE, SUPABASE_ANON_KEY } from './env.js';
+
+import { SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './env.js';
 import { triggerWorker } from './imports.js';
 
 // Helpers for the semantic-search e2e (edge-embed.spec.ts + semantic.spec.ts).
@@ -99,7 +100,11 @@ export async function fetchServerEmbedding(recipeId: string): Promise<ServerEmbe
     { headers: adminHeaders },
   );
   if (!resp.ok) throw new Error(`fetchServerEmbedding: ${resp.status} ${await resp.text()}`);
-  const rows = (await resp.json()) as { embedding: number[] | string; model: string; text_hash: string }[];
+  const rows = (await resp.json()) as {
+    embedding: number[] | string;
+    model: string;
+    text_hash: string;
+  }[];
   const row = rows[0];
   if (!row) return null;
   return { embedding: decodeVector(row.embedding), model: row.model, textHash: row.text_hash };

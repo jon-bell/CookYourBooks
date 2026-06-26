@@ -1,10 +1,11 @@
 import { useState } from 'react';
+
 import {
   DEFAULT_VARIANTS,
   loadBakeoffVariants,
+  type LocalBakeoffVariant,
   newVariant,
   saveBakeoffVariants,
-  type LocalBakeoffVariant,
 } from '../settings/bakeoffSettings.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import type { OcrProvider } from './model.js';

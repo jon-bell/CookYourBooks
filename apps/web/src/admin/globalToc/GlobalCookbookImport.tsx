@@ -1,12 +1,9 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { CoverImage } from '../../components/CoverImage.js';
-import {
-  adminImportCollection,
-  listImportCandidates,
-  type ImportCandidate,
-} from './api.js';
+import { adminImportCollection, type ImportCandidate, listImportCandidates } from './api.js';
 
 /**
  * Admin "Import from user library" page.
@@ -60,9 +57,7 @@ export function GlobalCookbookImport() {
   // Merge live query data with locally-imported snapshots so just-
   // imported rows stay rendered even after a sync-induced refetch.
   const merged = useMemo(() => {
-    const byId = new Map<string, ImportCandidate>(
-      (data ?? []).map((c) => [c.collection_id, c]),
-    );
+    const byId = new Map<string, ImportCandidate>((data ?? []).map((c) => [c.collection_id, c]));
     for (const [id, snap] of Object.entries(importedSnapshots)) {
       if (!byId.has(id)) byId.set(id, snap);
     }
@@ -150,14 +145,14 @@ export function GlobalCookbookImport() {
     <div className="space-y-4">
       <div className="space-y-1">
         <p className="text-sm text-stone-600 dark:text-stone-400">
-          User cookbooks with an ISBN that aren't yet in the global catalog. Tick the rows you
-          want and click <em>Import selected</em>. Each row's metadata (title / author /
-          publisher / cover) and its recipe titles get copied into the catalog.
+          User cookbooks with an ISBN that aren't yet in the global catalog. Tick the rows you want
+          and click <em>Import selected</em>. Each row's metadata (title / author / publisher /
+          cover) and its recipe titles get copied into the catalog.
         </p>
       </div>
 
       {isLoading && <p className="text-stone-500">Looking for candidates…</p>}
-      {error && <p className="text-red-700">{(error as Error).message}</p>}
+      {error && <p className="text-red-700">{error.message}</p>}
 
       {data && merged.length === 0 && (
         <p className="rounded-md border border-stone-200 bg-stone-50 dark:bg-stone-900 p-4 text-stone-600 dark:text-stone-400">
@@ -282,8 +277,7 @@ function CandidateRow({
         <div className="text-xs text-stone-500">
           <code className="font-mono">{candidate.isbn ?? '—'}</code>
           {' · '}
-          {candidate.recipe_count}{' '}
-          {candidate.recipe_count === 1 ? 'recipe' : 'recipes'}
+          {candidate.recipe_count} {candidate.recipe_count === 1 ? 'recipe' : 'recipes'}
           {' · '}
           owner: {candidate.owner_name ?? candidate.owner_id.slice(0, 8)}
         </div>

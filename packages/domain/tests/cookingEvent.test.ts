@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
+
 import {
   logCook,
   markCooked,
   planCook,
-  snapshotOfRecipe,
   type RecipeAdjustment,
+  snapshotOfRecipe,
 } from '../src/model/cookingEvent.js';
-import { createRecipe } from '../src/model/recipe.js';
 import { measured, vague } from '../src/model/ingredient.js';
 import { instruction } from '../src/model/instruction.js';
 import { exact } from '../src/model/quantity.js';
+import { createRecipe } from '../src/model/recipe.js';
 
 function sampleRecipe() {
   return createRecipe({

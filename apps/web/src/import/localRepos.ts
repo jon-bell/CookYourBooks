@@ -1,4 +1,5 @@
 import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
+
 import { getLocalDb } from '../local/db.js';
 import { enqueue } from '../local/outbox.js';
 import type {
@@ -97,8 +98,7 @@ function rowToBatch(row: ImportBatchSqlRow): ImportBatch {
     sourceKind: row.source_kind === 'PDF' ? 'PDF' : 'IMAGES',
     targetCollectionId: row.target_collection_id,
     defaultModel: row.default_model,
-    defaultProvider:
-      row.default_provider === 'openai-compatible' ? 'openai-compatible' : 'gemini',
+    defaultProvider: row.default_provider === 'openai-compatible' ? 'openai-compatible' : 'gemini',
     fallbackModel: row.fallback_model,
     fallbackProvider:
       row.fallback_provider === 'openai-compatible'
@@ -168,7 +168,7 @@ function rowToItem(row: ImportItemSqlRow): ImportItem {
     isToc: row.is_toc === 1,
     // is_toc wins so an existing ToC row (kind defaulted to 'RECIPE' before the
     // server backfill lands) still reads as TOC; otherwise trust `kind`.
-    kind: row.is_toc === 1 ? 'TOC' : ((row.kind as PageKind) || 'RECIPE'),
+    kind: row.is_toc === 1 ? 'TOC' : (row.kind as PageKind) || 'RECIPE',
     status: row.status as ImportItemStatus,
     claimExpiresAt: row.claim_expires_at,
     attempts: row.attempts,
@@ -223,21 +223,21 @@ export class LocalImportBatchRepository {
 
   async list(): Promise<ImportBatch[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<ImportBatchSqlRow>(
+    const rows = await db.execO<ImportBatchSqlRow>(
       `select * from import_batches
        where owner_id = ? and deleted = 0
        order by updated_at desc`,
       [this.ownerId],
-    )) as ImportBatchSqlRow[];
+    );
     return rows.map(rowToBatch);
   }
 
   async get(id: string): Promise<ImportBatch | undefined> {
     const db = await getLocalDb();
-    const rows = (await db.execO<ImportBatchSqlRow>(
+    const rows = await db.execO<ImportBatchSqlRow>(
       `select * from import_batches where id = ? and deleted = 0`,
       [id],
-    )) as ImportBatchSqlRow[];
+    );
     const row = rows[0];
     return row ? rowToBatch(row) : undefined;
   }
@@ -293,21 +293,21 @@ export class LocalImportItemRepository {
 
   async listByBatch(batchId: string): Promise<ImportItem[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<ImportItemSqlRow>(
+    const rows = await db.execO<ImportItemSqlRow>(
       `select * from import_items
        where batch_id = ? and owner_id = ? and deleted = 0
        order by page_index asc`,
       [batchId, this.ownerId],
-    )) as ImportItemSqlRow[];
+    );
     return rows.map(rowToItem);
   }
 
   async get(id: string): Promise<ImportItem | undefined> {
     const db = await getLocalDb();
-    const rows = (await db.execO<ImportItemSqlRow>(
+    const rows = await db.execO<ImportItemSqlRow>(
       `select * from import_items where id = ? and deleted = 0`,
       [id],
-    )) as ImportItemSqlRow[];
+    );
     const row = rows[0];
     return row ? rowToItem(row) : undefined;
   }
@@ -324,34 +324,34 @@ export class LocalImportItemRepository {
   async listByCreatedRecipeId(recipeId: string): Promise<ImportItem[]> {
     const db = await getLocalDb();
     const needle = `%"${recipeId}"%`;
-    const rows = (await db.execO<ImportItemSqlRow>(
+    const rows = await db.execO<ImportItemSqlRow>(
       `select * from import_items
        where owner_id = ?
          and deleted = 0
          and created_recipe_ids like ?
        order by page_index asc`,
       [this.ownerId, needle],
-    )) as ImportItemSqlRow[];
+    );
     return rows.map(rowToItem);
   }
 
   async listAttempts(itemId: string): Promise<ImportItemAttempt[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<ImportItemAttemptSqlRow>(
+    const rows = await db.execO<ImportItemAttemptSqlRow>(
       `select * from import_item_attempts where item_id = ?
        order by attempt_no asc`,
       [itemId],
-    )) as ImportItemAttemptSqlRow[];
+    );
     return rows.map(rowToAttempt);
   }
 
   async listTocEntries(batchId: string): Promise<ImportTocEntry[]> {
     const db = await getLocalDb();
-    const rows = (await db.execO<ImportTocEntrySqlRow>(
+    const rows = await db.execO<ImportTocEntrySqlRow>(
       `select * from import_toc_entries where batch_id = ?
        order by page_number asc, title asc`,
       [batchId],
-    )) as ImportTocEntrySqlRow[];
+    );
     return rows.map(rowToToc);
   }
 
@@ -459,7 +459,7 @@ export async function findOpenPlannerSession(
   collectionId: string,
 ): Promise<ImportBatch | undefined> {
   const db = await getLocalDb();
-  const rows = (await db.execO<ImportBatchSqlRow>(
+  const rows = await db.execO<ImportBatchSqlRow>(
     `select b.*
        from import_batches b
       where b.owner_id = ?
@@ -476,7 +476,7 @@ export async function findOpenPlannerSession(
       order by b.updated_at desc
       limit 1`,
     [ownerId, collectionId],
-  )) as ImportBatchSqlRow[];
+  );
   const row = rows[0];
   return row ? rowToBatch(row) : undefined;
 }

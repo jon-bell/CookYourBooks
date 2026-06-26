@@ -1,6 +1,6 @@
-import { servings, type Servings } from '../model/servings.js';
 import type { Ingredient } from '../model/ingredient.js';
-import { instruction, type Instruction } from '../model/instruction.js';
+import { type Instruction, instruction } from '../model/instruction.js';
+import { type Servings, servings } from '../model/servings.js';
 import { parseIngredientLine } from './parseIngredient.js';
 
 export interface ParsedRecipeDraft {
@@ -142,7 +142,10 @@ export function parseRecipeText(raw: string): ParsedRecipeDraft {
 }
 
 function classifyHeading(line: string): 'ingredients' | 'instructions' | 'other' | undefined {
-  const clean = line.toLowerCase().replace(/[:.\s]+$/g, '').trim();
+  const clean = line
+    .toLowerCase()
+    .replace(/[:.\s]+$/g, '')
+    .trim();
   if (INGREDIENT_HEADINGS.includes(clean)) return 'ingredients';
   if (INSTRUCTION_HEADINGS.includes(clean)) return 'instructions';
   // Markdown-style `## Ingredients`
@@ -171,9 +174,7 @@ function stripListBullet(line: string): string {
 }
 
 function stripStepNumber(line: string): string {
-  return line
-    .replace(/^(?:step\s*)?\d+\s*[.):-]\s*/i, '')
-    .trim();
+  return line.replace(/^(?:step\s*)?\d+\s*[.):-]\s*/i, '').trim();
 }
 
 function looksLikeStep(line: string): boolean {

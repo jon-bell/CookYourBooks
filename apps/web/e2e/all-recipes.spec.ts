@@ -1,4 +1,4 @@
-import { test, expect, waitForSynced } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Library-wide Recipes gallery', () => {

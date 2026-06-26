@@ -86,7 +86,9 @@ export function CalendarMonth({
                 inMonth
                   ? 'border-stone-200 dark:border-stone-700'
                   : 'border-transparent text-stone-400',
-                isSelected ? 'bg-stone-100 dark:bg-stone-800' : 'hover:bg-stone-50 dark:hover:bg-stone-900',
+                isSelected
+                  ? 'bg-stone-100 dark:bg-stone-800'
+                  : 'hover:bg-stone-50 dark:hover:bg-stone-900',
                 isToday ? 'ring-2 ring-stone-400' : '',
               ].join(' ')}
             >

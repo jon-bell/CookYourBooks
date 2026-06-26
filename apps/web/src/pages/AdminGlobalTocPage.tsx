@@ -1,8 +1,9 @@
 import { useParams } from 'react-router-dom';
-import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
+
 import { GlobalCookbookEditor } from '../admin/globalToc/GlobalCookbookEditor.js';
 import { GlobalCookbookImport } from '../admin/globalToc/GlobalCookbookImport.js';
 import { GlobalCookbookList } from '../admin/globalToc/GlobalCookbookList.js';
+import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
 
 interface Props {
   mode?: 'list' | 'editor' | 'import';

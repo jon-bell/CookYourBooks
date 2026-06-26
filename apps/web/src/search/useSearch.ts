@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { countSearchableEmbeddings } from '../local/repositories.js';
 import {
+  type EmbedderStatus,
   getEmbedderStatus,
   preloadEmbedder,
   subscribeEmbedderStatus,
-  type EmbedderStatus,
 } from './embedder.js';
-import { searchHybrid, searchSubstring, type SearchHit } from './semanticSearch.js';
+import { type SearchHit, searchHybrid, searchSubstring } from './semanticSearch.js';
 
 export interface UseSearchResult {
   hits: SearchHit[];
@@ -94,17 +95,35 @@ export function useSearch(q: string): UseSearchResult {
         // separate them — see semanticSearch.ts).
         const hybrid = await searchHybrid(ownerId, trimmed);
         if (hybrid.length > 0) {
-          searchDebug({ q: trimmed, mode: 'semantic', embedderStatus, embeddedCount, hits: hybrid.length });
+          searchDebug({
+            q: trimmed,
+            mode: 'semantic',
+            embedderStatus,
+            embeddedCount,
+            hits: hybrid.length,
+          });
           return { hits: hybrid, mode: 'semantic' as const };
         }
         // Cold cache: no vectors have been pulled / computed yet. Fall
         // through to substring so the user gets *something* useful while
         // the worker drains — and report the mode we ACTUALLY used so the
         // UI can tell the user it's showing literal matches.
-        searchDebug({ q: trimmed, mode: 'substring', reason: 'semantic-empty', embedderStatus, embeddedCount });
+        searchDebug({
+          q: trimmed,
+          mode: 'substring',
+          reason: 'semantic-empty',
+          embedderStatus,
+          embeddedCount,
+        });
         return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
       }
-      searchDebug({ q: trimmed, mode: 'substring', reason: 'embedder-not-ready', embedderStatus, embeddedCount });
+      searchDebug({
+        q: trimmed,
+        mode: 'substring',
+        reason: 'embedder-not-ready',
+        embedderStatus,
+        embeddedCount,
+      });
       return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
     },
     staleTime: 60_000,

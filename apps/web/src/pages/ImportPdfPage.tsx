@@ -1,18 +1,19 @@
+import { createRecipe, type ParsedRecipeDraft } from '@cookyourbooks/domain';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { createRecipe, type ParsedRecipeDraft } from '@cookyourbooks/domain';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
-import { reportError } from '../sentry.js';
-import { collectionRepo, recipeRepo } from '../data/repos.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
+import { collectionRepo, recipeRepo } from '../data/repos.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import { renderPdfToJpegs } from '../import/imageProcessing.js';
+import { extractRecipeFromPdf, PdfImportError, type PdfImportResult } from '../import/pdfImport.js';
 import { extractSourceUrlFromPdf } from '../import/pdfSourceUrl.js';
 import { readSharedFile } from '../import/sharedFile.js';
-import { extractRecipeFromPdf, PdfImportError, type PdfImportResult } from '../import/pdfImport.js';
+import { useSync } from '../local/SyncProvider.js';
+import { reportError } from '../sentry.js';
 
 type Phase = 'idle' | 'reading' | 'extracting' | 'saving';
 
@@ -171,9 +172,9 @@ export function ImportPdfPage() {
     <main className="mx-auto max-w-xl p-4">
       <h1 className="mb-1 text-xl font-semibold">Import from a PDF</h1>
       <p className="mb-4 text-sm text-stone-600 dark:text-stone-400">
-        Share a recipe PDF to CookYourBooks — or pick one below. Print a paywalled
-        recipe to PDF in Safari, then share it here: we'll read every page into one
-        recipe and link back to the original page.
+        Share a recipe PDF to CookYourBooks — or pick one below. Print a paywalled recipe to PDF in
+        Safari, then share it here: we'll read every page into one recipe and link back to the
+        original page.
       </p>
 
       {!params.get('file') && !pending && (
@@ -216,8 +217,8 @@ export function ImportPdfPage() {
               unassignedLabel={`New: ${pending.res.platformTitle}`}
             />
             <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-              Defaults to a new “{pending.res.platformTitle}” collection — pick an
-              existing one to file it there instead.
+              Defaults to a new “{pending.res.platformTitle}” collection — pick an existing one to
+              file it there instead.
             </p>
           </div>
           <div className="flex gap-2">

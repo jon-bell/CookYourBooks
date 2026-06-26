@@ -1,5 +1,5 @@
-import { supabase } from '../../supabase.js';
 import { COVER_CACHE_CONTROL, prepareCoverImage } from '../../recipe/coverImage.js';
+import { supabase } from '../../supabase.js';
 import { lookupOpenLibrary, normalizeIsbn } from './openLibrary.js';
 
 // Thin wrapper over the global_cookbooks / global_toc_entries tables.
@@ -56,7 +56,7 @@ export async function listCookbooks(search?: string): Promise<GlobalCookbook[]> 
   }
   const { data, error } = await q;
   if (error) throw error;
-  return (data ?? []) as GlobalCookbook[];
+  return data ?? [];
 }
 
 export async function getCookbook(id: string): Promise<GlobalCookbook | null> {
@@ -66,7 +66,7 @@ export async function getCookbook(id: string): Promise<GlobalCookbook | null> {
     .eq('id', id)
     .maybeSingle();
   if (error) throw error;
-  return (data as GlobalCookbook) ?? null;
+  return data ?? null;
 }
 
 export async function createCookbook(draft: GlobalCookbookDraft): Promise<GlobalCookbook> {
@@ -77,7 +77,7 @@ export async function createCookbook(draft: GlobalCookbookDraft): Promise<Global
     .select('*')
     .single();
   if (error) throw error;
-  return data as GlobalCookbook;
+  return data;
 }
 
 export async function updateCookbook(
@@ -92,7 +92,7 @@ export async function updateCookbook(
     .select('*')
     .single();
   if (error) throw error;
-  return data as GlobalCookbook;
+  return data;
 }
 
 export async function deleteCookbook(id: string): Promise<void> {
@@ -160,7 +160,7 @@ export async function listTocEntries(cookbookId: string): Promise<GlobalTocEntry
     .eq('cookbook_id', cookbookId)
     .order('sort_order', { ascending: true });
   if (error) throw error;
-  return (data ?? []) as GlobalTocEntry[];
+  return data ?? [];
 }
 
 export interface TocEntryDraft {
@@ -196,7 +196,7 @@ export async function replaceTocEntries(
     .insert(cleaned.map((d) => ({ ...d, cookbook_id: cookbookId })))
     .select('*');
   if (error) throw error;
-  return (data ?? []) as GlobalTocEntry[];
+  return data ?? [];
 }
 
 // ---------- Open Library + cover upload ----------
@@ -238,7 +238,7 @@ export async function adminImportCollection(sourceCollectionId: string): Promise
     source_collection_id: sourceCollectionId,
   });
   if (error) throw error;
-  return data as string;
+  return data;
 }
 
 export interface OpenLibraryResult {
@@ -272,13 +272,11 @@ export async function fetchFromOpenLibrary(
     // 1-year cache is safe.
     const prepared = await prepareCoverImage(lookup.cover);
     const path = `global/${cookbookId}-${Date.now()}.${prepared.ext}`;
-    const { error } = await supabase.storage
-      .from('covers')
-      .upload(path, prepared.blob, {
-        contentType: prepared.contentType,
-        cacheControl: COVER_CACHE_CONTROL,
-        upsert: false,
-      });
+    const { error } = await supabase.storage.from('covers').upload(path, prepared.blob, {
+      contentType: prepared.contentType,
+      cacheControl: COVER_CACHE_CONTROL,
+      upsert: false,
+    });
     if (error) throw error;
     coverPath = path;
     // Sweep older uploads for this cookbook so re-fetches don't pile
@@ -307,7 +305,7 @@ export async function listCookbooksMissingCovers(): Promise<GlobalCookbook[]> {
     .order('title', { ascending: true })
     .limit(500);
   if (error) throw error;
-  return (data ?? []) as GlobalCookbook[];
+  return data ?? [];
 }
 
 // Targeted update of just the cover. The full `updateCookbook` would
@@ -330,10 +328,7 @@ export async function setCookbookCover(id: string, coverImagePath: string): Prom
 // Caller is responsible for updating `global_cookbooks.cover_image_path`
 // to the returned value (so this composes with the editor's draft state
 // without forcing an immediate row write).
-export async function uploadCoverFile(
-  cookbookId: string,
-  file: Blob,
-): Promise<string> {
+export async function uploadCoverFile(cookbookId: string, file: Blob): Promise<string> {
   const prepared = await prepareCoverImage(file);
   const path = `global/${cookbookId}-${Date.now()}.${prepared.ext}`;
   const { error } = await supabase.storage.from('covers').upload(path, prepared.blob, {

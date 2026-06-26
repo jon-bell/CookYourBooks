@@ -1,17 +1,18 @@
 import { useDeferredValue, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+
+import { useLastMadeByRecipe } from '../cooking/queries.js';
 import type { CollectionRecipeSummary } from '../local/repositories.js';
+import { EmptyMadeHint } from './EmptyMadeHint.js';
+import { RecipeGalleryGrid } from './RecipeGalleryGrid.js';
 import {
-  SortableRecipeList,
   formatPages,
   isRecipeSortMode,
-  sortRecipes,
   type RecipeSortMode,
+  SortableRecipeList,
+  sortRecipes,
 } from './SortableRecipeList.js';
-import { RecipeGalleryGrid } from './RecipeGalleryGrid.js';
-import { EmptyMadeHint } from './EmptyMadeHint.js';
 import { usePersistedState } from './usePersistedState.js';
-import { useLastMadeByRecipe } from '../cooking/queries.js';
 
 /** True if the recipe's title or any ingredient name contains `q`
  *  (the caller passes `q` already trimmed + lowercased; `ingredientNames`
@@ -189,7 +190,9 @@ function RecipeIndex({
                 isPlaceholder ? 'text-stone-500 dark:text-stone-500' : ''
               }`}
             >
-              <span className={`line-clamp-1 ${isPlaceholder ? '' : 'font-medium'}`}>{r.title}</span>
+              <span className={`line-clamp-1 ${isPlaceholder ? '' : 'font-medium'}`}>
+                {r.title}
+              </span>
               {pages ? (
                 <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">{pages}</span>
               ) : null}
@@ -219,17 +222,16 @@ function RecipeGallery({
   // Covers first, preserving the caller's chosen sort within each group.
   const items = useMemo(
     () =>
-      [
-        ...recipes.filter((r) => r.coverImagePath),
-        ...recipes.filter((r) => !r.coverImagePath),
-      ].map((r) => ({
-        id: r.id,
-        title: r.title,
-        coverImagePath: r.coverImagePath,
-        pageNumbers: r.pageNumbers,
-        collectionId,
-        // No collectionTitle on purpose — we're already inside the collection.
-      })),
+      [...recipes.filter((r) => r.coverImagePath), ...recipes.filter((r) => !r.coverImagePath)].map(
+        (r) => ({
+          id: r.id,
+          title: r.title,
+          coverImagePath: r.coverImagePath,
+          pageNumbers: r.pageNumbers,
+          collectionId,
+          // No collectionTitle on purpose — we're already inside the collection.
+        }),
+      ),
     [recipes, collectionId],
   );
   return <RecipeGalleryGrid items={items} />;

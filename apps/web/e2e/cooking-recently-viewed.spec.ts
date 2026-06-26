@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Recently viewed (local-only)', () => {
@@ -43,9 +43,7 @@ test.describe('Recently viewed (local-only)', () => {
       steps: ['Cook.'],
     });
     await page.goto('/cooking/recent');
-    await expect(
-      page.getByTestId('recently-viewed-list').getByText('Private View'),
-    ).toBeVisible();
+    await expect(page.getByTestId('recently-viewed-list').getByText('Private View')).toBeVisible();
 
     // A brand-new browser context (separate IndexedDB) for the SAME user
     // must NOT inherit the view history — it lives only on the first device.

@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { previewInvite, type HouseholdInvitePreview, isTosNotAcceptedError } from '../household/api.js';
-import { useAcceptHouseholdInvite } from '../household/queries.js';
-import { AcceptTosGate } from '../household/AcceptTosGate.js';
 import { LoadingState } from '../components/LoadingState.js';
+import { AcceptTosGate } from '../household/AcceptTosGate.js';
+import {
+  type HouseholdInvitePreview,
+  isTosNotAcceptedError,
+  previewInvite,
+} from '../household/api.js';
+import { useAcceptHouseholdInvite } from '../household/queries.js';
 
 /**
  * Invite acceptance page. URL: /household/join?token=<token>.
@@ -107,14 +112,11 @@ export function HouseholdJoinPage() {
     <>
       <section className="space-y-4">
         <header>
-          <h1 className="text-2xl font-semibold">
-            Join "{preview.household_name}"?
-          </h1>
+          <h1 className="text-2xl font-semibold">Join "{preview.household_name}"?</h1>
           <p className="mt-1 text-stone-600 dark:text-stone-400">
             {preview.invited_by_name
               ? `Invited by ${preview.invited_by_name}.`
-              : 'You were invited to this household.'}
-            {' '}
+              : 'You were invited to this household.'}{' '}
             Expires {new Date(preview.expires_at).toLocaleString()}.
           </p>
         </header>
@@ -123,24 +125,27 @@ export function HouseholdJoinPage() {
           <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
             {preview.revoked && 'This invite has been revoked.'}
             {preview.used && 'This invite has already been used.'}
-            {expired && !preview.revoked && !preview.used && 'This invite has expired.'}
-            {' '}
-            Ask the owner for a new link.
+            {expired && !preview.revoked && !preview.used && 'This invite has expired.'} Ask the
+            owner for a new link.
           </div>
         )}
 
         <div className="rounded-md border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-800 px-3 py-2 text-sm text-stone-800 dark:text-stone-200">
           <p>
-            By joining, you'll be able to see recipe collections that members share with
-            this household. The household has a hard cap of 6 members. If you leave or are
-            removed, there's a 7-day cooldown before you can join or create another
-            household.
+            By joining, you'll be able to see recipe collections that members share with this
+            household. The household has a hard cap of 6 members. If you leave or are removed,
+            there's a 7-day cooldown before you can join or create another household.
           </p>
           <p className="mt-2 text-xs">
             Accepting this invite also accepts the current{' '}
-            <Link to="/legal/terms" className="underline">Terms of Service</Link>
+            <Link to="/legal/terms" className="underline">
+              Terms of Service
+            </Link>
             {' and '}
-            <Link to="/legal/aup" className="underline">Acceptable Use Policy</Link>.
+            <Link to="/legal/aup" className="underline">
+              Acceptable Use Policy
+            </Link>
+            .
           </p>
         </div>
 

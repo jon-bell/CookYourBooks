@@ -9,7 +9,7 @@ export async function shareCollectionToGlobal(collectionId: string): Promise<str
     source_collection_id: collectionId,
   });
   if (error) throw error;
-  return data as string;
+  return data;
 }
 
 // Returns the global_cookbooks row's id if this collection has been
@@ -25,5 +25,5 @@ export async function findSharedGlobalEntry(
     .eq('shared_from_collection_id', collectionId)
     .maybeSingle();
   if (error) throw error;
-  return data as { id: string; updated_at: string } | null;
+  return data;
 }

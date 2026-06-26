@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useSync } from '../local/SyncProvider.js';
 import { isLocalLibraryEmpty } from '../local/repositories.js';
 import { getSyncLog, subscribeSyncLog } from '../local/syncLog.js';
+import { useSync } from '../local/SyncProvider.js';
 import { LoadingOverlay } from './LoadingOverlay.js';
 
 // Friendly phase line derived from the latest sync-log entry, so the wait shows

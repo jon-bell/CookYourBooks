@@ -61,18 +61,21 @@ export async function listTransferEvents(
   if (opts.to) q = q.lt('created_at', opts.to);
   const { data, error } = await q;
   if (error) throw error;
-  return (data as unknown as TransferEventRow[]) ?? [];
+  return data ?? [];
 }
 
 /** Server-side rollup grouped by the chosen dimension. */
 export async function getTransferSummary(
   opts: TransferRange & { groupBy: TransferGroupBy },
 ): Promise<TransferSummaryRow[]> {
-  const { data, error } = await supabase.rpc('data_transfer_summary' as never, {
-    p_group_by: opts.groupBy,
-    p_from: opts.from,
-    p_to: opts.to,
-  } as never);
+  const { data, error } = await supabase.rpc(
+    'data_transfer_summary' as never,
+    {
+      p_group_by: opts.groupBy,
+      p_from: opts.from,
+      p_to: opts.to,
+    } as never,
+  );
   if (error) throw error;
-  return (data as unknown as TransferSummaryRow[]) ?? [];
+  return data ?? [];
 }

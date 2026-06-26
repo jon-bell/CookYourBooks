@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 // Config lives in the user's XDG config dir (or the equivalent on macOS
 // / Windows). File mode is 0600 so other users on a shared host can't

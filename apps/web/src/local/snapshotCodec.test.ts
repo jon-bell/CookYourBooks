@@ -1,6 +1,7 @@
+import { decode, encode } from '@msgpack/msgpack';
 import { describe, expect, it } from 'vitest';
-import { encode, decode } from '@msgpack/msgpack';
-import { decodeColumnar, encodeColumnar, type ColumnarTable } from './snapshotCodec.js';
+
+import { type ColumnarTable, decodeColumnar, encodeColumnar } from './snapshotCodec.js';
 
 describe('snapshotCodec', () => {
   it('roundtrips object rows through columnar form', () => {

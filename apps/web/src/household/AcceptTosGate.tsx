@@ -1,7 +1,8 @@
-import { Link } from 'react-router-dom';
 import { useState } from 'react';
-import { useAcceptTos } from './queries.js';
+import { Link } from 'react-router-dom';
+
 import { CURRENT_TOS_VERSION } from './api.js';
+import { useAcceptTos } from './queries.js';
 
 /**
  * Modal that intercepts an action gated on current ToS acceptance.
@@ -52,23 +53,27 @@ export function AcceptTosGate({
       >
         <h2 className="text-lg font-semibold">Accept the Terms of Service to continue</h2>
         <p className="text-sm text-stone-700 dark:text-stone-300">
-          Sharing or publishing content requires you to confirm the current Terms of Service
-          and Acceptable Use Policy. Reading content does not.
+          Sharing or publishing content requires you to confirm the current Terms of Service and
+          Acceptable Use Policy. Reading content does not.
         </p>
         <ul className="ml-5 list-disc text-sm text-stone-700 dark:text-stone-300 space-y-1">
-          <li>
-            You can only share content you own or have rights to redistribute.
-          </li>
+          <li>You can only share content you own or have rights to redistribute.</li>
           <li>Confirmed copyright violations result in a permanent account ban.</li>
           <li>Rights holders can take down content via the DMCA process.</li>
         </ul>
         <p className="text-sm">
           Full text:{' '}
-          <Link to="/legal/terms" className="underline" target="_blank">Terms</Link>{' '}
+          <Link to="/legal/terms" className="underline" target="_blank">
+            Terms
+          </Link>{' '}
           ·{' '}
-          <Link to="/legal/aup" className="underline" target="_blank">Acceptable Use</Link>{' '}
+          <Link to="/legal/aup" className="underline" target="_blank">
+            Acceptable Use
+          </Link>{' '}
           ·{' '}
-          <Link to="/legal/dmca" className="underline" target="_blank">DMCA</Link>
+          <Link to="/legal/dmca" className="underline" target="_blank">
+            DMCA
+          </Link>
         </p>
         <label className="flex items-center gap-2 text-sm">
           <input

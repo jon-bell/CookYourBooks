@@ -1,5 +1,6 @@
-import { supabase } from '../supabase.js';
 import type { NutritionFact, NutritionSource } from '@cookyourbooks/domain';
+
+import { supabase } from '../supabase.js';
 import { readLocalFact, writeLocalFact, writeLocalFacts } from './localCache.js';
 
 /**
@@ -122,9 +123,7 @@ export interface ResolvedMapping {
 /** Resolve the persisted mapping for an ingredient key, if any.
  *  Server-side function picks the user row first, falls back to the
  *  platform default. */
-export async function resolveMapping(
-  ingredientKey: string,
-): Promise<ResolvedMapping | null> {
+export async function resolveMapping(ingredientKey: string): Promise<ResolvedMapping | null> {
   const { data, error } = await supabase.rpc('resolve_nutrition_mapping', {
     p_ingredient_key: ingredientKey,
   });
@@ -140,7 +139,9 @@ export async function saveMapping(opts: {
   sourceId: string;
   customGramsPerUnit?: Record<string, number>;
 }): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) throw new Error('Sign in to save a nutrition mapping.');
   const { error } = await supabase.from('ingredient_nutrition_mappings').upsert(
     {
@@ -158,7 +159,9 @@ export async function saveMapping(opts: {
 /** Drop the user's mapping for an ingredient. Falls back to platform-
  *  default / auto-search on the next resolution. */
 export async function deleteMapping(ingredientKey: string): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return;
   await supabase
     .from('ingredient_nutrition_mappings')

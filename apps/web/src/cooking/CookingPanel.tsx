@@ -1,9 +1,10 @@
-import { useState } from 'react';
 import { newCookingEventId, type Recipe } from '@cookyourbooks/domain';
+import { useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useLogCook, useScheduleCook } from './queries.js';
+import { type CookMode, LogCookDialog } from './LogCookDialog.js';
 import { uploadCookingPhoto } from './photos.js';
-import { LogCookDialog, type CookMode } from './LogCookDialog.js';
+import { useLogCook, useScheduleCook } from './queries.js';
 
 /**
  * Primary cooking actions on the recipe page: "I made this" and

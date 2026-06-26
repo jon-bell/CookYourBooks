@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useCookingCalendar } from '../cooking/queries.js';
-import { useAttribution } from '../cooking/useAttribution.js';
-import { CalendarMonth, selectedDateLabel, type CalendarBadge } from '../cooking/CalendarMonth.js';
+import { type CalendarBadge, CalendarMonth, selectedDateLabel } from '../cooking/CalendarMonth.js';
 import { monthGridRange, todayISO } from '../cooking/dateGrid.js';
 import { mealSlotLabel, occasionLabel } from '../cooking/format.js';
+import { useCookingCalendar } from '../cooking/queries.js';
+import { useAttribution } from '../cooking/useAttribution.js';
 import type { CalendarEntry } from '../local/repositories.js';
 
 export function CookingTrackerPage() {
@@ -48,7 +49,10 @@ export function CookingTrackerPage() {
     <div className="mx-auto max-w-4xl space-y-6 p-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Cooking tracker</h1>
-        <Link to="/cooking/recent" className="text-sm text-stone-600 hover:underline dark:text-stone-400">
+        <Link
+          to="/cooking/recent"
+          className="text-sm text-stone-600 hover:underline dark:text-stone-400"
+        >
           Recently viewed →
         </Link>
       </div>

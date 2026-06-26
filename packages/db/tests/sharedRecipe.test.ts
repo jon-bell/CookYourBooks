@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fetchSharedRecipe } from '../src/sharedRecipe.js';
+
 import type { CookbooksClient } from '../src/repositories.js';
+import { fetchSharedRecipe } from '../src/sharedRecipe.js';
 
 // Minimal chainable PostgREST stub: routes a from(table) chain to a canned
 // result regardless of the filters applied. Enough to exercise the mapping

@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
 import { createTestUser, type TestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
 

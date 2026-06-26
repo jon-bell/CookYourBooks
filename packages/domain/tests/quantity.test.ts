@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
+
 import {
   exact,
-  fractional,
-  range,
-  quantityToNumber,
-  scaleQuantity,
   formatQuantity,
+  fractional,
+  quantityToNumber,
+  range,
+  scaleQuantity,
 } from '../src/model/quantity.js';
 
 describe('Quantity', () => {

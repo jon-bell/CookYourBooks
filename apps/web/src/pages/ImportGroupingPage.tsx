@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useImportBatch, useImportItems, useUpdateImportItem } from '../import/queries.js';
-import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
-import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
-import { finalizeGrouping, kickOcr } from '../import/api.js';
-import { rotateImportItemImage } from '../import/rotateItemImage.js';
-import type { ImportItem } from '../import/model.js';
-import { PinchPanImage } from '../components/PinchPanImage.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { PinchPanImage } from '../components/PinchPanImage.js';
+import { finalizeGrouping, kickOcr } from '../import/api.js';
+import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
+import type { ImportItem } from '../import/model.js';
+import { useImportBatch, useImportItems, useUpdateImportItem } from '../import/queries.js';
+import { rotateImportItemImage } from '../import/rotateItemImage.js';
+import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 
 /**
  * "Group then OCR" review page. Shown right after upload for batches
@@ -49,9 +50,7 @@ export function ImportGroupingPage() {
   // `rotationVersion` bumps per item so thumbnails + the preview re-fetch the
   // rewritten bytes (the signed-URL cache is busted inside rotateImportItemImage).
   const [rotatingId, setRotatingId] = useState<string | null>(null);
-  const [rotationVersion, setRotationVersion] = useState<Map<string, number>>(
-    () => new Map(),
-  );
+  const [rotationVersion, setRotationVersion] = useState<Map<string, number>>(() => new Map());
   const [rotateError, setRotateError] = useState<string | undefined>();
 
   // Items in upload order. Only AWAITING_GROUPING items participate in
@@ -145,9 +144,7 @@ export function ImportGroupingPage() {
       // flip). After syncNow lands it, finalizeGrouping flips the rows to
       // PENDING with is_toc intact, so the worker OCRs them with the
       // table-of-contents prompt on the first pass — no re-OCR needed.
-      const tocIds = groups
-        .filter((g) => tocPrimaryIds.has(g[0]!.id))
-        .map((g) => g[0]!.id);
+      const tocIds = groups.filter((g) => tocPrimaryIds.has(g[0]!.id)).map((g) => g[0]!.id);
       for (const id of tocIds) {
         await updateItem.mutateAsync({ id, patch: { kind: 'TOC' } });
       }
@@ -190,9 +187,7 @@ export function ImportGroupingPage() {
     // batch was never group-first. Redirect home for the batch.
     return (
       <div className="space-y-3">
-        <p className="text-stone-700 dark:text-stone-300">
-          Nothing left to group for this batch.
-        </p>
+        <p className="text-stone-700 dark:text-stone-300">Nothing left to group for this batch.</p>
         <button
           type="button"
           onClick={() => navigate(`/import/${batch.id}`)}
@@ -216,18 +211,15 @@ export function ImportGroupingPage() {
         </div>
         <h1 className="text-2xl font-semibold">Group pages into recipes</h1>
         <p className="max-w-3xl text-sm text-stone-600 dark:text-stone-400">
-          Each page is its own recipe by default. Click a page to view it
-          fullscreen, then click the{' '}
-          <span className="font-medium">split</span> between two pages to merge
-          them — pages in the same colored band become one recipe and OCR will
-          read them together.
+          Each page is its own recipe by default. Click a page to view it fullscreen, then click the{' '}
+          <span className="font-medium">split</span> between two pages to merge them — pages in the
+          same colored band become one recipe and OCR will read them together.
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 px-3 py-2 text-sm">
         <span>
-          <strong>{recipeCount}</strong>{' '}
-          {recipeCount === 1 ? 'recipe' : 'recipes'} from{' '}
+          <strong>{recipeCount}</strong> {recipeCount === 1 ? 'recipe' : 'recipes'} from{' '}
           <strong>{totalPages}</strong> pages
           {multiPageGroups > 0 && (
             <span className="text-stone-500 dark:text-stone-400">
@@ -295,9 +287,7 @@ export function ImportGroupingPage() {
         >
           {confirming
             ? 'Starting OCR…'
-            : `Start OCR on ${recipeCount} ${
-                recipeCount === 1 ? 'recipe' : 'recipes'
-              }`}
+            : `Start OCR on ${recipeCount} ${recipeCount === 1 ? 'recipe' : 'recipes'}`}
         </button>
         <button
           type="button"
@@ -357,55 +347,55 @@ function GroupingStrip({
           const primaryId = g[0]!.id;
           const isToc = tocPrimaryIds.has(primaryId);
           return (
-          <div
-            key={g.map((it) => it.id).join('-')}
-            className={`flex shrink-0 flex-col gap-1 rounded-md p-2 ${
-              isToc
-                ? 'bg-indigo-50 ring-2 ring-indigo-400 dark:bg-indigo-950/40'
-                : gi % 2 === 0
-                  ? 'bg-stone-50'
-                  : 'bg-amber-50'
-            }`}
-          >
-            <label className="flex cursor-pointer items-center gap-1.5 self-start rounded px-1 text-[11px] font-medium text-stone-600 dark:text-stone-300">
-              <input
-                type="checkbox"
-                checked={isToc}
-                onChange={() => onToggleToc(primaryId)}
-                className="h-3.5 w-3.5"
-              />
-              Table of Contents
-            </label>
-            <div className="flex items-stretch gap-1">
-            {g.map((it, ii) => {
-              const idxInBatch = indexById.get(it.id)!;
-              const isLastInBatch = idxInBatch === groupable.length - 1;
-              return (
-                <div key={it.id} className="flex items-stretch">
-                  <Thumb
-                    item={it}
-                    pageInGroup={ii + 1}
-                    groupSize={g.length}
-                    onPreview={() => onPreview(idxInBatch)}
-                    onRotate={(turns) => onRotate(it, turns)}
-                    rotating={rotatingId === it.id}
-                    version={rotationVersion.get(it.id) ?? 0}
-                  />
-                  {/* Splits live BETWEEN thumbs; render the right-side
+            <div
+              key={g.map((it) => it.id).join('-')}
+              className={`flex shrink-0 flex-col gap-1 rounded-md p-2 ${
+                isToc
+                  ? 'bg-indigo-50 ring-2 ring-indigo-400 dark:bg-indigo-950/40'
+                  : gi % 2 === 0
+                    ? 'bg-stone-50'
+                    : 'bg-amber-50'
+              }`}
+            >
+              <label className="flex cursor-pointer items-center gap-1.5 self-start rounded px-1 text-[11px] font-medium text-stone-600 dark:text-stone-300">
+                <input
+                  type="checkbox"
+                  checked={isToc}
+                  onChange={() => onToggleToc(primaryId)}
+                  className="h-3.5 w-3.5"
+                />
+                Table of Contents
+              </label>
+              <div className="flex items-stretch gap-1">
+                {g.map((it, ii) => {
+                  const idxInBatch = indexById.get(it.id)!;
+                  const isLastInBatch = idxInBatch === groupable.length - 1;
+                  return (
+                    <div key={it.id} className="flex items-stretch">
+                      <Thumb
+                        item={it}
+                        pageInGroup={ii + 1}
+                        groupSize={g.length}
+                        onPreview={() => onPreview(idxInBatch)}
+                        onRotate={(turns) => onRotate(it, turns)}
+                        rotating={rotatingId === it.id}
+                        version={rotationVersion.get(it.id) ?? 0}
+                      />
+                      {/* Splits live BETWEEN thumbs; render the right-side
                       gap on every thumb except the very last in the
                       batch. The gap toggles the split at index
                       `idxInBatch` (= the split AFTER this thumb). */}
-                  {!isLastInBatch && (
-                    <SplitGap
-                      removed={removedSplits.has(idxInBatch)}
-                      onClick={() => onToggleSplit(idxInBatch)}
-                    />
-                  )}
-                </div>
-              );
-            })}
+                      {!isLastInBatch && (
+                        <SplitGap
+                          removed={removedSplits.has(idxInBatch)}
+                          onClick={() => onToggleSplit(idxInBatch)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
           );
         })}
       </div>
@@ -499,13 +489,7 @@ function RotateButton({
   );
 }
 
-function SplitGap({
-  removed,
-  onClick,
-}: {
-  removed: boolean;
-  onClick: () => void;
-}) {
+function SplitGap({ removed, onClick }: { removed: boolean; onClick: () => void }) {
   // Two visual modes:
   //  - removed=true: the split has been TAKEN AWAY (pages are merged).
   //    Render a slim linking bar.
@@ -629,10 +613,7 @@ function PagePreviewOverlay({
       className="fixed inset-0 z-50 flex flex-col bg-stone-900/95"
       onClick={onClose}
     >
-      <div
-        className="relative min-h-0 flex-1"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="relative min-h-0 flex-1" onClick={(e) => e.stopPropagation()}>
         {imgUrl ? (
           <PinchPanImage
             src={imgUrl}
@@ -692,9 +673,7 @@ function PagePreviewOverlay({
               onClick={() => onToggleSplit(index)}
               className="rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
             >
-              {removedSplits.has(index)
-                ? 'Split from next page'
-                : 'Merge with next page'}
+              {removedSplits.has(index) ? 'Split from next page' : 'Merge with next page'}
             </button>
           )}
 

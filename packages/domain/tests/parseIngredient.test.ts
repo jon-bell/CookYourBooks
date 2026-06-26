@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { parseIngredientLine } from '../src/services/parseIngredient.js';
 
 describe('parseIngredientLine', () => {

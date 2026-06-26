@@ -1,5 +1,6 @@
 import { type Page } from '@playwright/test';
-import { test, expect } from './support/fixtures.js';
+
+import { expect, test } from './support/fixtures.js';
 
 // Guided Gemini-first onboarding wizard (/import/setup). The key validation
 // step is shimmed via `window.__cybOcrKeyTestShim` so the spec never calls the

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { failureRatePct, featureLabel, formatTokens, formatUsdFromMicros } from './format.js';
 
 describe('formatUsdFromMicros', () => {

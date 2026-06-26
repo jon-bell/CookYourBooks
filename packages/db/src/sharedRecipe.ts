@@ -1,12 +1,7 @@
 import type { Recipe } from '@cookyourbooks/domain';
+
+import { type InstructionRefRow, type InstructionRow, rowsToRecipe } from './mapping.js';
 import type { CookbooksClient } from './repositories.js';
-import {
-  rowsToRecipe,
-  type IngredientRow,
-  type InstructionRefRow,
-  type InstructionRow,
-  type RecipeRow,
-} from './mapping.js';
 
 export interface SharedRecipeCollectionMeta {
   id: string;
@@ -49,7 +44,7 @@ export async function fetchSharedRecipe(
     client
       .from('recipe_collections')
       .select('id, title, source_type, author, site_name, is_public')
-      .eq('id', (recipeRow as RecipeRow).collection_id)
+      .eq('id', recipeRow.collection_id)
       .maybeSingle(),
   ]);
   if (ings.error) throw ings.error;
@@ -67,16 +62,11 @@ export async function fetchSharedRecipe(
         instructionRows.map((i) => i.id),
       );
     if (refs.error) throw refs.error;
-    refRows = (refs.data ?? []) as InstructionRefRow[];
+    refRows = refs.data ?? [];
   }
 
   return {
-    recipe: rowsToRecipe(
-      recipeRow as RecipeRow,
-      (ings.data ?? []) as IngredientRow[],
-      instructionRows,
-      refRows,
-    ),
+    recipe: rowsToRecipe(recipeRow, ings.data ?? [], instructionRows, refRows),
     collection: coll.data
       ? {
           id: coll.data.id,

@@ -1,4 +1,5 @@
 import type { MealSlot, OccasionCategory, RecipeAdjustment } from '@cookyourbooks/domain';
+
 import { parseISODate } from './dateGrid.js';
 
 export const MEAL_SLOT_OPTIONS: { value: MealSlot; label: string }[] = [

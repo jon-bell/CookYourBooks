@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { test, expect } from './support/fixtures.js';
+import { fileURLToPath } from 'node:url';
+
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 const FIXTURES = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -44,8 +45,16 @@ test.describe('Cooking entry photos', () => {
 
     await page.getByTestId('i-made-this').click();
     await page.getByTestId('cook-photos').setInputFiles([
-      { name: 'a.png', mimeType: 'image/png', buffer: readFileSync(resolve(FIXTURES, 'page1.png')) },
-      { name: 'b.png', mimeType: 'image/png', buffer: readFileSync(resolve(FIXTURES, 'page2.png')) },
+      {
+        name: 'a.png',
+        mimeType: 'image/png',
+        buffer: readFileSync(resolve(FIXTURES, 'page1.png')),
+      },
+      {
+        name: 'b.png',
+        mimeType: 'image/png',
+        buffer: readFileSync(resolve(FIXTURES, 'page2.png')),
+      },
     ]);
     await expect(page.getByTestId('photo-preview')).toHaveCount(2);
 
@@ -55,8 +64,8 @@ test.describe('Cooking entry photos', () => {
 
     await page.getByTestId('cook-submit').click();
     // Exactly the one kept photo lands on the entry.
-    await expect(
-      page.getByTestId('cooking-history').getByTestId('cook-photo'),
-    ).toHaveCount(1, { timeout: 15_000 });
+    await expect(page.getByTestId('cooking-history').getByTestId('cook-photo')).toHaveCount(1, {
+      timeout: 15_000,
+    });
   });
 });

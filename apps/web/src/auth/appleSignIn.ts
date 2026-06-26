@@ -12,9 +12,11 @@ import { supabase } from '../supabase.js';
 
 /** True if running inside the Capacitor iOS shell. */
 export function isCapacitorIOS(): boolean {
-  const cap = (globalThis as {
-    Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
-  }).Capacitor;
+  const cap = (
+    globalThis as {
+      Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
+    }
+  ).Capacitor;
   return !!cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios';
 }
 
@@ -28,9 +30,7 @@ export function isCapacitorIOS(): boolean {
  * Caller is responsible for checking `isCapacitorIOS()` first; calling
  * this on web or Android throws when the plugin isn't bundled.
  */
-export async function signInWithAppleNative(): Promise<
-  { cancelled: true } | { cancelled: false }
-> {
+export async function signInWithAppleNative(): Promise<{ cancelled: true } | { cancelled: false }> {
   const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
   try {
     const result = await SignInWithApple.authorize({

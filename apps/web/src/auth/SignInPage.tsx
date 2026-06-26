@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+
 import { supabase } from '../supabase.js';
 import { AppleLogo } from './AppleLogo.js';
 import { isCapacitorIOS, signInWithAppleNative } from './appleSignIn.js';
@@ -55,7 +56,9 @@ export function SignInPage() {
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Email</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+            Email
+          </span>
           <input
             type="email"
             value={email}
@@ -66,7 +69,9 @@ export function SignInPage() {
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Password</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+            Password
+          </span>
           <input
             type="password"
             value={password}
@@ -114,7 +119,11 @@ export function SignInPage() {
       </button>
       <p className="text-center text-sm text-stone-600 dark:text-stone-400">
         No account?{' '}
-        <Link to="/sign-up" state={location.state} className="font-medium text-stone-900 dark:text-stone-100 underline">
+        <Link
+          to="/sign-up"
+          state={location.state as unknown}
+          className="font-medium text-stone-900 dark:text-stone-100 underline"
+        >
           Create one
         </Link>
       </p>

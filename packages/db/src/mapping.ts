@@ -1,22 +1,23 @@
 import {
   createCookbook,
   createPersonalCollection,
-  createWebCollection,
   createRecipe,
-  instruction,
-  measured,
-  vague,
+  createWebCollection,
   exact,
   fractional,
-  range,
-  servings as makeServings,
   type Ingredient,
   type Instruction,
+  instruction,
+  measured,
   type Quantity,
+  range,
   type Recipe,
   type RecipeCollection,
+  servings as makeServings,
   type SimplifiedStep,
+  vague,
 } from '@cookyourbooks/domain';
+
 import type { Database } from './database.types.js';
 
 type Tables = Database['public']['Tables'];
@@ -39,10 +40,7 @@ export type CollectionNoteInsert = Tables['collection_notes']['Insert'];
 
 // ---- Collection ----
 
-export function rowToCollection(
-  row: CollectionRow,
-  recipes: Recipe[] = [],
-): RecipeCollection {
+export function rowToCollection(row: CollectionRow, recipes: Recipe[] = []): RecipeCollection {
   const base = {
     id: row.id,
     title: row.title,
@@ -51,7 +49,8 @@ export function rowToCollection(
     isPublic: row.is_public,
     forkedFrom: row.forked_from ?? undefined,
     moderationState:
-      (row as CollectionRow & { moderation_state?: string | null }).moderation_state === 'TAKEN_DOWN'
+      (row as CollectionRow & { moderation_state?: string | null }).moderation_state ===
+      'TAKEN_DOWN'
         ? ('TAKEN_DOWN' as const)
         : ('ACTIVE' as const),
     moderationReason:
@@ -128,7 +127,7 @@ function jsonArray<T>(raw: unknown): T[] | undefined {
   if (Array.isArray(raw)) return raw as T[];
   if (typeof raw === 'string') {
     try {
-      const parsed = JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
       return Array.isArray(parsed) ? (parsed as T[]) : undefined;
     } catch {
       return undefined;
@@ -147,9 +146,7 @@ function stringArray(raw: unknown): string[] | undefined {
 function numberArray(raw: unknown): number[] | undefined {
   const arr = jsonArray<unknown>(raw);
   if (!arr) return undefined;
-  const out = arr.filter(
-    (x): x is number => typeof x === 'number' && Number.isFinite(x),
-  );
+  const out = arr.filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
   return out.length > 0 ? out : undefined;
 }
 
@@ -221,11 +218,7 @@ function toBool(v: unknown): boolean {
   return v === true || v === 1;
 }
 
-export function recipeToInsert(
-  recipe: Recipe,
-  collectionId: string,
-  sortOrder = 0,
-): RecipeInsert {
+export function recipeToInsert(recipe: Recipe, collectionId: string, sortOrder = 0): RecipeInsert {
   const base: RecipeInsert = {
     id: recipe.id,
     collection_id: collectionId,
@@ -251,7 +244,7 @@ export function recipeToInsert(
     starred: recipe.starred === true,
     cover_image_path: recipe.coverImagePath ?? null,
   };
-  return { ...base, ...extras } as RecipeInsert;
+  return { ...base, ...extras };
 }
 
 // ---- Ingredient ----
@@ -301,12 +294,7 @@ function rowToQuantity(row: IngredientRow): Quantity | undefined {
         row.quantity_denominator == null
       )
         return undefined;
-      return fractional(
-        row.quantity_whole,
-        row.quantity_numerator,
-        row.quantity_denominator,
-        unit,
-      );
+      return fractional(row.quantity_whole, row.quantity_numerator, row.quantity_denominator, unit);
     case 'RANGE':
       if (row.quantity_min == null || row.quantity_max == null) return undefined;
       return range(row.quantity_min, row.quantity_max, unit);
@@ -402,8 +390,7 @@ function refRowToQuantity(row: InstructionRefRow): Quantity | undefined {
           unit,
         );
       case 'RANGE':
-        if (r.consumed_quantity_min == null || r.consumed_quantity_max == null)
-          return undefined;
+        if (r.consumed_quantity_min == null || r.consumed_quantity_max == null) return undefined;
         return range(r.consumed_quantity_min, r.consumed_quantity_max, unit);
       default:
         return undefined;
@@ -459,12 +446,15 @@ function rowToInstruction(row: InstructionRow, refRows: InstructionRefRow[] = []
     simplified_steps?: unknown;
     notes?: string | null;
   };
+  const temperatureUnit: 'FAHRENHEIT' | 'CELSIUS' | undefined =
+    rowX.temperature_unit === 'FAHRENHEIT' || rowX.temperature_unit === 'CELSIUS'
+      ? rowX.temperature_unit
+      : undefined;
   const temperature =
-    rowX.temperature_value != null &&
-    (rowX.temperature_unit === 'FAHRENHEIT' || rowX.temperature_unit === 'CELSIUS')
+    rowX.temperature_value != null && temperatureUnit != null
       ? {
           value: rowX.temperature_value,
-          unit: rowX.temperature_unit as 'FAHRENHEIT' | 'CELSIUS',
+          unit: temperatureUnit,
         }
       : undefined;
   const subInstructionsList = stringArray(rowX.sub_instructions);
@@ -530,10 +520,7 @@ export function instructionRefToInsert(
   }
 }
 
-export function instructionToInsert(
-  step: Instruction,
-  recipeId: string,
-): InstructionInsert {
+export function instructionToInsert(step: Instruction, recipeId: string): InstructionInsert {
   const base: InstructionInsert = {
     id: step.id,
     recipe_id: recipeId,
@@ -554,5 +541,5 @@ export function instructionToInsert(
       : null,
     notes: step.notes ?? null,
   };
-  return { ...base, ...extras } as InstructionInsert;
+  return { ...base, ...extras };
 }

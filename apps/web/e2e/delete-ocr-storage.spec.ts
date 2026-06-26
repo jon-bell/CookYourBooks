@@ -1,6 +1,6 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { adminGet, createTestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, signIn, test } from './support/fixtures.js';
 
 /**
  * Right-to-delete-uploaded-images. The three scopes the user spec calls
@@ -31,10 +31,9 @@ async function uploadFakeImage(userId: string, path: string): Promise<void> {
 
 async function bucketObjectExists(userId: string, path: string): Promise<boolean> {
   const fullPath = `${userId}/${path}`;
-  const resp = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/info/imports/${fullPath}`,
-    { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}` } },
-  );
+  const resp = await fetch(`${SUPABASE_URL}/storage/v1/object/info/imports/${fullPath}`, {
+    headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}` },
+  });
   return resp.ok;
 }
 
@@ -105,16 +104,14 @@ test.describe('OCR uploaded-image deletion', () => {
       const removed = await page.evaluate(async (itemId) => {
         const client = window.__cybSupabase!;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: paths, error } = await (client as any).rpc(
-          'clear_my_import_storage',
-          { p_scope: 'item', p_id: itemId },
-        );
+        const { data: paths, error } = await (client as any).rpc('clear_my_import_storage', {
+          p_scope: 'item',
+          p_id: itemId,
+        });
         if (error) throw new Error(error.message);
         const list = (paths as string[]) ?? [];
         if (list.length === 0) return 0;
-        const { error: storageError } = await client.storage
-          .from('imports')
-          .remove(list);
+        const { error: storageError } = await client.storage.from('imports').remove(list);
         if (storageError) throw new Error(storageError.message);
         return list.length;
       }, itemIds[0]!);
@@ -134,9 +131,7 @@ test.describe('OCR uploaded-image deletion', () => {
     }
   });
 
-  test('per-batch: clears every item in the batch; other batches untouched', async ({
-    page,
-  }) => {
+  test('per-batch: clears every item in the batch; other batches untouched', async ({ page }) => {
     const u = await createTestUser('ocr-del-batch');
     try {
       await uploadFakeImage(u.id, 'b1-a.jpg');
@@ -157,16 +152,14 @@ test.describe('OCR uploaded-image deletion', () => {
       await page.evaluate(async (batchId) => {
         const client = window.__cybSupabase!;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: paths, error } = await (client as any).rpc(
-          'clear_my_import_storage',
-          { p_scope: 'batch', p_id: batchId },
-        );
+        const { data: paths, error } = await (client as any).rpc('clear_my_import_storage', {
+          p_scope: 'batch',
+          p_id: batchId,
+        });
         if (error) throw new Error(error.message);
         const list = (paths as string[]) ?? [];
         if (list.length === 0) return;
-        const { error: storageError } = await client.storage
-          .from('imports')
-          .remove(list);
+        const { error: storageError } = await client.storage.from('imports').remove(list);
         if (storageError) throw new Error(storageError.message);
       }, b1);
 
@@ -213,9 +206,9 @@ test.describe('OCR uploaded-image deletion', () => {
       // open-delete-all-ocr button sits behind the dialog so just
       // checking visibility on it isn't enough; check the dialog
       // itself is gone.
-      await expect(
-        page.getByRole('dialog', { name: /Confirm OCR storage deletion/ }),
-      ).toBeHidden({ timeout: 15_000 });
+      await expect(page.getByRole('dialog', { name: /Confirm OCR storage deletion/ })).toBeHidden({
+        timeout: 15_000,
+      });
 
       expect(await bucketObjectExists(u.id, 'all-1.jpg')).toBe(false);
       expect(await bucketObjectExists(u.id, 'all-2.jpg')).toBe(false);

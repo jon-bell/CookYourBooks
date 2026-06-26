@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
 import type { PluginListenerHandle } from '@capacitor/core';
 import type { PullToRefreshPlugin } from 'capacitor-native-pull-to-refresh';
+import { useEffect } from 'react';
+
 import { useSync } from '../local/SyncProvider.js';
 
 /**
@@ -16,8 +17,9 @@ import { useSync } from '../local/SyncProvider.js';
  * and dismiss the native spinner when it settles.
  */
 function isIosNative(): boolean {
-  const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } })
-    .Capacitor;
+  const cap = (
+    globalThis as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }
+  ).Capacitor;
   return !!cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios';
 }
 

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { searchRecipes } from '../src/services/search.js';
-import { createRecipe } from '../src/model/recipe.js';
+
 import { measured, vague } from '../src/model/ingredient.js';
 import { exact } from '../src/model/quantity.js';
+import { createRecipe } from '../src/model/recipe.js';
+import { searchRecipes } from '../src/services/search.js';
 
 describe('searchRecipes', () => {
   const cookies = createRecipe({

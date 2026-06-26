@@ -58,9 +58,7 @@ export function computeBatchQueueInfo(
 
   if (item.status === 'CLAIMED') {
     const startedAt =
-      item.claimExpiresAt > OCR_LEASE_MS
-        ? item.claimExpiresAt - OCR_LEASE_MS
-        : item.updatedAt;
+      item.claimExpiresAt > OCR_LEASE_MS ? item.claimExpiresAt - OCR_LEASE_MS : item.updatedAt;
     return {
       status: 'CLAIMED',
       queuePosition: null,
@@ -102,10 +100,7 @@ export function describeOcrQueueInfo(info: OcrQueueInfo): { title: string; detai
   if (info.status === 'CLAIMED') {
     const elapsed = info.processingForMs ?? 0;
     const attempt = info.isRetry ? `retry ${info.attemptNo}` : `attempt ${info.attemptNo}`;
-    const tail =
-      info.pendingTotal > 0
-        ? ` · ${info.pendingTotal} more queued in this batch`
-        : '';
+    const tail = info.pendingTotal > 0 ? ` · ${info.pendingTotal} more queued in this batch` : '';
     return {
       title: 'OCR in progress',
       detail: `${attempt} · running ${formatDuration(elapsed)}${tail}`,
@@ -122,9 +117,7 @@ export function describeOcrQueueInfo(info: OcrQueueInfo): { title: string; detai
     parts.push(`${info.pendingAhead} ahead in this batch`);
   }
   if (info.processingTotal > 0) {
-    parts.push(
-      `${info.processingTotal} processing now`,
-    );
+    parts.push(`${info.processingTotal} processing now`);
   }
   parts.push(`waiting ${formatDuration(info.queuedSinceMs)}`);
   if (info.isRetry) {

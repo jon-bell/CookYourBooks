@@ -1,5 +1,5 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { seedUserLibrary } from './support/admin.js';
+import { expect, signIn, test } from './support/fixtures.js';
 
 // Back must return to the same scroll position (custom restoration — the
 // declarative router has none), and pushing a new route starts at the top.

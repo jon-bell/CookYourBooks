@@ -1,5 +1,5 @@
-import { supabase } from '../supabase.js';
 import { CURRENT_TOS_VERSION as _CURRENT_TOS_VERSION } from '../legal/content.js';
+import { supabase } from '../supabase.js';
 
 // Re-export so existing callers (AcceptTosGate, etc.) don't need to change
 // their import path.
@@ -86,7 +86,9 @@ export async function getMyHousehold(): Promise<{
   /** Whether the caller currently shares their library with this household. */
   libraryShared: boolean;
 } | null> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return null;
   const { data: memberRows, error: memberErr } = await supabase
     .from('household_members')
@@ -102,7 +104,7 @@ export async function getMyHousehold(): Promise<{
     .eq('id', mine.household_id)
     .single();
   if (hhErr) throw hhErr;
-  const household = householdRow as Household;
+  const household = householdRow;
 
   // Hydrate display names for the members list — purely for UI labels.
   const memberIds = (memberRows as HouseholdMember[])
@@ -126,21 +128,21 @@ export async function getMyHousehold(): Promise<{
 }
 
 /** Pending invites for the caller's household (owner-visible). */
-export async function listMyHouseholdInvites(
-  householdId: string,
-): Promise<HouseholdInvite[]> {
+export async function listMyHouseholdInvites(householdId: string): Promise<HouseholdInvite[]> {
   const { data, error } = await supabase
     .from('household_invites')
     .select('*')
     .eq('household_id', householdId)
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return (data as HouseholdInvite[]) ?? [];
+  return data ?? [];
 }
 
 /** Current cooldown floor (or null if eligible now). */
 export async function getMyCooldown(): Promise<HouseholdCooldown | null> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return null;
   const { data, error } = await supabase
     .from('household_join_cooldowns')
@@ -196,7 +198,7 @@ export async function createHousehold(name: string): Promise<string> {
   const { data, error } = await supabase.rpc('create_household', { p_name: name });
   if (error) throw error;
   await refreshClaims();
-  return data as string;
+  return data;
 }
 
 export async function renameHousehold(householdId: string, name: string): Promise<void> {
@@ -219,7 +221,7 @@ export async function inviteToHousehold(householdId: string): Promise<string> {
     p_household_id: householdId,
   });
   if (error) throw error;
-  return data as string;
+  return data;
 }
 
 export async function revokeHouseholdInvite(inviteId: string): Promise<void> {
@@ -231,7 +233,7 @@ export async function acceptHouseholdInvite(token: string): Promise<string> {
   const { data, error } = await supabase.rpc('accept_household_invite', { p_token: token });
   if (error) throw error;
   await refreshClaims();
-  return data as string;
+  return data;
 }
 
 export async function leaveHousehold(): Promise<void> {
@@ -273,10 +275,7 @@ export async function setLibrarySharing(
 /** Step 1 of household→public escalation. Records a fresh public-scope
  *  attestation so the DB cascade trigger lets the subsequent is_public
  *  flip through. */
-export async function attestPublicShare(
-  collectionId: string,
-  attestation: string,
-): Promise<void> {
+export async function attestPublicShare(collectionId: string, attestation: string): Promise<void> {
   const { error } = await supabase.rpc('attest_public_share', {
     p_collection_id: collectionId,
     p_attestation: attestation,
@@ -292,7 +291,9 @@ export async function acceptTos(version: number = _CURRENT_TOS_VERSION): Promise
 }
 
 export async function getMyTosVersion(): Promise<number> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return 0;
   const { data, error } = await supabase
     .from('profiles')
@@ -300,7 +301,7 @@ export async function getMyTosVersion(): Promise<number> {
     .eq('id', user.id)
     .single();
   if (error) return 0;
-  return ((data as { tos_version?: number } | null)?.tos_version ?? 0) as number;
+  return (data as { tos_version?: number } | null)?.tos_version ?? 0;
 }
 
 /** True iff the supabase error came from the require_current_tos guard. */

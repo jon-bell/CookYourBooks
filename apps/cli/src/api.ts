@@ -123,10 +123,7 @@ export async function importRecipe(
   return newId;
 }
 
-export async function exportToc(
-  config: CliConfig,
-  collectionId?: string,
-): Promise<TocExport> {
+export async function exportToc(config: CliConfig, collectionId?: string): Promise<TocExport> {
   return rpc<TocExport>(config, 'cli_export_toc', {
     raw_token: config.token,
     collection_id: collectionId ?? null,

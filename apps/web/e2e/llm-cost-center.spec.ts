@@ -1,9 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
 import { createTestUser, type TestUser } from './support/admin.js';
-import { SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
-import { cleanupHouseholdFor, seedHousehold, seedMembership } from './support/household.js';
 import { userAccessToken } from './support/embeddings.js';
+import { SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
 import { signIn } from './support/fixtures.js';
+import { cleanupHouseholdFor, seedHousehold, seedMembership } from './support/household.js';
 
 // LLM Cost Center contract + RLS tests. The page reads the security_invoker
 // `llm_usage_report` view + `llm_usage_summary` RPC online, scoped by RLS to
@@ -68,7 +69,10 @@ async function summaryAsUser(
 /** Seed one OCR attempt (via batch+item+import_complete) and return its item id
  *  (the view's produced_ref for the row). Exercises the redefined import_complete
  *  + the set_owned_row_household trigger. */
-async function seedOcrAttempt(ownerId: string, cost: number): Promise<{ batchId: string; itemId: string }> {
+async function seedOcrAttempt(
+  ownerId: string,
+  cost: number,
+): Promise<{ batchId: string; itemId: string }> {
   const batchId = (
     (await (
       await svc('/rest/v1/import_batches', {

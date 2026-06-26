@@ -1,6 +1,6 @@
-import { test, expect, signIn, waitForSynced } from './support/fixtures.js';
 import { adminGet, createTestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, signIn, test, waitForSynced } from './support/fixtures.js';
 
 // E2E for the global cookbook ToC admin surface. Skips the live Open
 // Library call — that path is mocked at the network layer so the test
@@ -37,16 +37,18 @@ test.describe('Admin: global cookbook ToC', () => {
       await page.getByRole('button', { name: 'Save cookbook' }).click();
 
       // Verify the row landed and the ISBN got normalized (dashes stripped).
-      await expect.poll(async () => {
-        const rows = await adminGet<{ isbn: string; title: string; author: string }[]>(
-          '/rest/v1/global_cookbooks?select=isbn,title,author&isbn=eq.9781451624216',
-        );
-        return rows[0];
-      }).toMatchObject({
-        isbn: '9781451624216',
-        title: 'Salt Fat Acid Heat',
-        author: 'Samin Nosrat',
-      });
+      await expect
+        .poll(async () => {
+          const rows = await adminGet<{ isbn: string; title: string; author: string }[]>(
+            '/rest/v1/global_cookbooks?select=isbn,title,author&isbn=eq.9781451624216',
+          );
+          return rows[0];
+        })
+        .toMatchObject({
+          isbn: '9781451624216',
+          title: 'Salt Fat Acid Heat',
+          author: 'Samin Nosrat',
+        });
 
       // Add two ToC entries.
       await page.getByRole('button', { name: '+ Add entry' }).click();
@@ -95,29 +97,26 @@ test.describe('Admin: global cookbook ToC', () => {
       // Delete via the list page.
       await page.getByRole('link', { name: '← Back to list' }).click();
       page.once('dialog', (d) => void d.accept());
-      await page
-        .getByRole('button', { name: 'Delete Salt Fat Acid Heat' })
-        .click();
+      await page.getByRole('button', { name: 'Delete Salt Fat Acid Heat' }).click();
 
-      await expect.poll(async () => {
-        const rows = await adminGet<{ id: string }[]>(
-          '/rest/v1/global_cookbooks?select=id&isbn=eq.9781451624216',
-        );
-        return rows.length;
-      }).toBe(0);
+      await expect
+        .poll(async () => {
+          const rows = await adminGet<{ id: string }[]>(
+            '/rest/v1/global_cookbooks?select=id&isbn=eq.9781451624216',
+          );
+          return rows.length;
+        })
+        .toBe(0);
     } finally {
       // Best-effort cleanup of any orphan rows in case the test bailed
       // before deleting them via the UI.
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/global_cookbooks?isbn=eq.9781451624216`,
-        {
-          method: 'DELETE',
-          headers: {
-            apikey: SUPABASE_SERVICE_ROLE,
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
-          },
+      await fetch(`${SUPABASE_URL}/rest/v1/global_cookbooks?isbn=eq.9781451624216`, {
+        method: 'DELETE',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
         },
-      ).catch(() => {});
+      }).catch(() => {});
       await admin.cleanup();
     }
   });
@@ -196,7 +195,9 @@ test.describe('Admin: global cookbook ToC', () => {
     // Seed a user cookbook with ISBN + a couple recipes. We hit the REST
     // API directly so the test is hermetic — the user-facing collection
     // creation flow is exercised elsewhere.
-    const isbn = `97809${Math.floor(Math.random() * 100_000_000).toString().padStart(8, '0')}`;
+    const isbn = `97809${Math.floor(Math.random() * 100_000_000)
+      .toString()
+      .padStart(8, '0')}`;
     const owner = await createTestUser('owner');
     const colId = await seedCookbookCollection(owner.id, {
       title: 'User Library Cookbook',
@@ -212,12 +213,17 @@ test.describe('Admin: global cookbook ToC', () => {
       // candidates view before we hand off to the UI. Catches PostgREST
       // schema-cache lag on a fresh CI runner before it shows up as a
       // confusing "list is empty" failure deeper in the test.
-      await expect.poll(async () => {
-        const rows = await adminGet<{ collection_id: string }[]>(
-          `/rest/v1/admin_global_toc_import_candidates?select=collection_id&isbn=eq.${isbn}`,
-        );
-        return rows.length;
-      }, { timeout: 10_000 }).toBe(1);
+      await expect
+        .poll(
+          async () => {
+            const rows = await adminGet<{ collection_id: string }[]>(
+              `/rest/v1/admin_global_toc_import_candidates?select=collection_id&isbn=eq.${isbn}`,
+            );
+            return rows.length;
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(1);
 
       await signIn(page, admin);
 
@@ -243,9 +249,9 @@ test.describe('Admin: global cookbook ToC', () => {
       // gains an entry whose entries match the user's recipes.
       await expect(row.getByRole('link', { name: /Imported · edit/ })).toBeVisible();
 
-      const cookbook = await adminGet<{ id: string; title: string; shared_from_collection_id: string }[]>(
-        `/rest/v1/global_cookbooks?select=id,title,shared_from_collection_id&isbn=eq.${isbn}`,
-      );
+      const cookbook = await adminGet<
+        { id: string; title: string; shared_from_collection_id: string }[]
+      >(`/rest/v1/global_cookbooks?select=id,title,shared_from_collection_id&isbn=eq.${isbn}`);
       expect(cookbook[0]?.title).toBe('User Library Cookbook');
       expect(cookbook[0]?.shared_from_collection_id).toBe(colId);
 
@@ -271,12 +277,7 @@ test.describe('Admin: global cookbook ToC', () => {
     // so the SQL normalize_isbn upper() doesn't change them under us
     // when we round-trip through the view.
     const tail = Date.now().toString().slice(-8);
-    const isbns = [
-      `97800${tail}1`,
-      `97800${tail}2`,
-      `97800${tail}3`,
-      `97800${tail}4`,
-    ];
+    const isbns = [`97800${tail}1`, `97800${tail}2`, `97800${tail}3`, `97800${tail}4`];
     const ownerAlpha = await createTestUser('alpha');
     const ownerBeta = await createTestUser('beta');
     const colA1 = await seedCookbookCollection(ownerAlpha.id, {
@@ -303,12 +304,17 @@ test.describe('Admin: global cookbook ToC', () => {
     const admin = await createTestUser('bulkadm', { admin: true });
     try {
       // Wait for the seed to be visible in the view before driving the UI.
-      await expect.poll(async () => {
-        const rows = await adminGet<{ collection_id: string }[]>(
-          `/rest/v1/admin_global_toc_import_candidates?select=collection_id&isbn=in.(${isbns.join(',')})`,
-        );
-        return rows.length;
-      }, { timeout: 10_000 }).toBe(4);
+      await expect
+        .poll(
+          async () => {
+            const rows = await adminGet<{ collection_id: string }[]>(
+              `/rest/v1/admin_global_toc_import_candidates?select=collection_id&isbn=in.(${isbns.join(',')})`,
+            );
+            return rows.length;
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(4);
 
       await signIn(page, admin);
       await page.goto('/admin/global-toc/import');
@@ -346,16 +352,13 @@ test.describe('Admin: global cookbook ToC', () => {
       );
     } finally {
       // Clean up the two global rows we created and all four user cookbooks.
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/global_cookbooks?isbn=in.(${isbns.join(',')})`,
-        {
-          method: 'DELETE',
-          headers: {
-            apikey: SUPABASE_SERVICE_ROLE,
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
-          },
+      await fetch(`${SUPABASE_URL}/rest/v1/global_cookbooks?isbn=in.(${isbns.join(',')})`, {
+        method: 'DELETE',
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
         },
-      ).catch(() => {});
+      }).catch(() => {});
       await ownerAlpha.cleanup();
       await ownerBeta.cleanup();
       await admin.cleanup();
@@ -390,9 +393,7 @@ test.describe('Admin: global cookbook ToC', () => {
 
     // Button label flips to "Update shared catalog entry" once the
     // RPC returns.
-    await expect(
-      page.getByRole('button', { name: 'Update shared catalog entry' }),
-    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Update shared catalog entry' })).toBeVisible();
 
     // Verify a global row landed, with shared_from pointing at the user's
     // collection and NULL isbn.
@@ -422,7 +423,9 @@ test.describe('Admin: global cookbook ToC', () => {
   });
 
   test('admin edits sync back to the source user cookbook', async ({ page }) => {
-    const isbn = `97808${Math.floor(Math.random() * 100_000_000).toString().padStart(8, '0')}`;
+    const isbn = `97808${Math.floor(Math.random() * 100_000_000)
+      .toString()
+      .padStart(8, '0')}`;
     const owner = await createTestUser('syncback');
     const colId = await seedCookbookCollection(owner.id, {
       title: 'Original Title',
@@ -468,12 +471,14 @@ test.describe('Admin: global cookbook ToC', () => {
       await page.getByRole('button', { name: 'Save cookbook' }).click();
 
       // Source collection now reflects the polished metadata.
-      await expect.poll(async () => {
-        const rows = await adminGet<{ title: string; author: string }[]>(
-          `/rest/v1/recipe_collections?select=title,author&id=eq.${colId}`,
-        );
-        return rows[0];
-      }).toMatchObject({ title: 'Polished Title', author: 'Polished Author' });
+      await expect
+        .poll(async () => {
+          const rows = await adminGet<{ title: string; author: string }[]>(
+            `/rest/v1/recipe_collections?select=title,author&id=eq.${colId}`,
+          );
+          return rows[0];
+        })
+        .toMatchObject({ title: 'Polished Title', author: 'Polished Author' });
     } finally {
       await fetch(`${SUPABASE_URL}/rest/v1/global_cookbooks?isbn=eq.${isbn}`, {
         method: 'DELETE',
@@ -509,18 +514,15 @@ test.describe('Admin: global cookbook ToC', () => {
     const [col] = (await colResp.json()) as { id: string }[];
 
     // Attempt to flip to public — trigger should refuse.
-    const updateResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/recipe_collections?id=eq.${col!.id}`,
-      {
-        method: 'PATCH',
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ is_public: true }),
+    const updateResp = await fetch(`${SUPABASE_URL}/rest/v1/recipe_collections?id=eq.${col!.id}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify({ is_public: true }),
+    });
     expect(updateResp.ok).toBe(false);
     const body = await updateResp.text();
     expect(body).toMatch(/cannot be made public/i);

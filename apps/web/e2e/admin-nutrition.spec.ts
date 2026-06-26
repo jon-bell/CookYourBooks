@@ -1,6 +1,6 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { adminGet, createTestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, signIn, test } from './support/fixtures.js';
 
 /**
  * Admin nutrition flow:
@@ -137,9 +137,7 @@ test.describe('Admin nutrition surface', () => {
         await readerPage.getByRole('link', { name: 'New collection' }).click();
         await readerPage.getByLabel('Title').fill('Platform Test');
         await readerPage.getByRole('button', { name: 'Create' }).click();
-        await expect(
-          readerPage.getByRole('heading', { name: 'Platform Test' }),
-        ).toBeVisible();
+        await expect(readerPage.getByRole('heading', { name: 'Platform Test' })).toBeVisible();
 
         await readerPage.getByRole('link', { name: 'Add recipe' }).click();
         await readerPage.locator('main input').first().fill('Bread');

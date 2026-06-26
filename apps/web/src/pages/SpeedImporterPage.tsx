@@ -1,22 +1,22 @@
+import type { Recipe, RecipeCollection } from '@cookyourbooks/domain';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import type { Recipe, RecipeCollection } from '@cookyourbooks/domain';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollection, useCollections } from '../data/queries.js';
-import { useImportItems, useOcrKeys } from '../import/queries.js';
+import { ImportThumb } from '../import/ImportThumb.js';
+import { findOpenPlannerSession } from '../import/localRepos.js';
+import type { ImportBatch, ImportItem } from '../import/model.js';
+import { plannerHapticTick, plannerShutter } from '../import/plannerCapture.js';
 import {
   addPlannedShot,
   discardPlannedShot,
   ensurePlannerBatch,
   finalizePlannerSession,
-  type PlannedShotTarget,
 } from '../import/plannerUpload.js';
-import { plannerHapticTick, plannerShutter } from '../import/plannerCapture.js';
-import { findOpenPlannerSession } from '../import/localRepos.js';
-import { ImportThumb } from '../import/ImportThumb.js';
-import type { ImportBatch, ImportItem } from '../import/model.js';
+import { useImportItems, useOcrKeys } from '../import/queries.js';
 import { useSync } from '../local/SyncProvider.js';
-import { useQueryClient } from '@tanstack/react-query';
 
 type Phase = 'pick' | 'capture' | 'review' | 'finalizing';
 
@@ -79,10 +79,7 @@ export function SpeedImporterPage() {
       (c) =>
         c.sourceType === 'PUBLISHED_BOOK' &&
         c.recipes.some(
-          (r) =>
-            r.starred === true &&
-            r.ingredients.length === 0 &&
-            r.instructions.length === 0,
+          (r) => r.starred === true && r.ingredients.length === 0 && r.instructions.length === 0,
         ),
     );
     return (
@@ -90,15 +87,15 @@ export function SpeedImporterPage() {
         <div>
           <h1 className="text-2xl font-semibold">Speed Importer</h1>
           <p className="mt-1 max-w-2xl text-sm text-stone-600 dark:text-stone-400">
-            Star ToC placeholder recipes on a cookbook page, then come back here
-            and the planner will walk you through scanning them in page order
-            — one tap per shot, automatic page grouping, automatic linkage.
+            Star ToC placeholder recipes on a cookbook page, then come back here and the planner
+            will walk you through scanning them in page order — one tap per shot, automatic page
+            grouping, automatic linkage.
           </p>
         </div>
         {eligible.length === 0 ? (
           <div className="rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 p-4 text-sm text-stone-700 dark:text-stone-300">
-            No cookbooks with starred placeholders yet. Open a cookbook in your
-            library and tap the ☆ next to recipes you want to scan.
+            No cookbooks with starred placeholders yet. Open a cookbook in your library and tap the
+            ☆ next to recipes you want to scan.
           </div>
         ) : (
           <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
@@ -126,12 +123,7 @@ export function SpeedImporterPage() {
 
   // Starred placeholders, sorted by page number then title.
   const starredQueue: Recipe[] = collection.recipes
-    .filter(
-      (r) =>
-        r.starred === true &&
-        r.ingredients.length === 0 &&
-        r.instructions.length === 0,
-    )
+    .filter((r) => r.starred === true && r.ingredients.length === 0 && r.instructions.length === 0)
     .sort((a, b) => {
       const ap = a.pageNumbers?.[0] ?? Number.MAX_SAFE_INTEGER;
       const bp = b.pageNumbers?.[0] ?? Number.MAX_SAFE_INTEGER;
@@ -144,8 +136,8 @@ export function SpeedImporterPage() {
       <div className="space-y-3">
         <h1 className="text-2xl font-semibold">Speed Importer</h1>
         <p className="text-stone-700 dark:text-stone-300">
-          Nothing starred on <em>{collection.title}</em>. Tap the ☆ next to
-          recipes on the cookbook page to queue them.
+          Nothing starred on <em>{collection.title}</em>. Tap the ☆ next to recipes on the cookbook
+          page to queue them.
         </p>
         <Link
           to={`/collections/${collection.id}`}
@@ -162,8 +154,8 @@ export function SpeedImporterPage() {
       <div className="space-y-4">
         <h1 className="text-2xl font-semibold">Starting OCR…</h1>
         <p className="text-sm text-stone-600 dark:text-stone-400">
-          Queueing each recipe as one OCR call. You can leave this page;
-          progress shows up on the batch board.
+          Queueing each recipe as one OCR call. You can leave this page; progress shows up on the
+          batch board.
         </p>
       </div>
     );
@@ -238,10 +230,7 @@ function EligibleBookRow({
     };
   }, [ownerId, collection.id]);
   const starred = collection.recipes.filter(
-    (r) =>
-      r.starred === true &&
-      r.ingredients.length === 0 &&
-      r.instructions.length === 0,
+    (r) => r.starred === true && r.ingredients.length === 0 && r.instructions.length === 0,
   ).length;
   return (
     <li>
@@ -299,9 +288,7 @@ function CapturePanel({
   // `currentRecipe` falls back to the last item in the queue so the
   // panel doesn't crash when the queue length changes under us.
   const currentRecipe = queue[Math.min(cursor, queue.length - 1)];
-  const currentShots = currentRecipe
-    ? itemsByRecipe.get(currentRecipe.id) ?? []
-    : [];
+  const currentShots = currentRecipe ? (itemsByRecipe.get(currentRecipe.id) ?? []) : [];
 
   const totalShotsAcross = useMemo(
     () => Array.from(itemsByRecipe.values()).reduce((acc, list) => acc + list.length, 0),
@@ -417,8 +404,7 @@ function CapturePanel({
           </span>
           {pageNum != null && (
             <span>
-              Open to{' '}
-              <strong className="text-lg font-semibold">page {pageNum}</strong>
+              Open to <strong className="text-lg font-semibold">page {pageNum}</strong>
             </span>
           )}
         </div>
@@ -517,8 +503,8 @@ function CapturePanel({
         Done — review &amp; start OCR
         {recipesWithAnyShot > 0 && (
           <span className="ml-2 text-xs text-emerald-700 dark:text-emerald-300">
-            ({recipesWithAnyShot} recipe{recipesWithAnyShot === 1 ? '' : 's'} ·{' '}
-            {totalShotsAcross} photo{totalShotsAcross === 1 ? '' : 's'})
+            ({recipesWithAnyShot} recipe{recipesWithAnyShot === 1 ? '' : 's'} · {totalShotsAcross}{' '}
+            photo{totalShotsAcross === 1 ? '' : 's'})
           </span>
         )}
       </button>
@@ -557,8 +543,8 @@ function ReviewPanel({
         </div>
         <h1 className="text-2xl font-semibold">Review captures</h1>
         <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-          {filled.length} recipe{filled.length === 1 ? '' : 's'} ready. Each
-          recipe goes to OCR as one call so multi-page recipes stay together.
+          {filled.length} recipe{filled.length === 1 ? '' : 's'} ready. Each recipe goes to OCR as
+          one call so multi-page recipes stay together.
         </p>
       </div>
 
@@ -575,9 +561,7 @@ function ReviewPanel({
                 <div className="min-w-0">
                   <div className="truncate text-base font-medium">{r.title}</div>
                   {pageNum != null && (
-                    <div className="text-xs text-stone-500 dark:text-stone-400">
-                      p. {pageNum}
-                    </div>
+                    <div className="text-xs text-stone-500 dark:text-stone-400">p. {pageNum}</div>
                   )}
                 </div>
                 <div className="shrink-0 text-xs text-stone-500 dark:text-stone-400">

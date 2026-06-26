@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildShoppingList } from '../src/services/shoppingList.js';
-import { createRecipe } from '../src/model/recipe.js';
+
 import { measured, vague } from '../src/model/ingredient.js';
 import { exact } from '../src/model/quantity.js';
+import { createRecipe } from '../src/model/recipe.js';
+import { buildShoppingList } from '../src/services/shoppingList.js';
 
 describe('buildShoppingList', () => {
   it('aggregates like measured ingredients across recipes', () => {

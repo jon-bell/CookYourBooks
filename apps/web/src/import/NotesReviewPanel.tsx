@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import { useNoteForImportItem, useFileNote } from '../notes/queries.js';
+
+import { useFileNote, useNoteForImportItem } from '../notes/queries.js';
 
 /**
  * Batch-review surface for a NOTES page. The worker auto-files the note, so

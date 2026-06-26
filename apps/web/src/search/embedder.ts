@@ -43,9 +43,7 @@ export function getEmbedderStatus(): EmbedderStatus {
   return status;
 }
 
-export function subscribeEmbedderStatus(
-  fn: (s: EmbedderStatus) => void,
-): () => void {
+export function subscribeEmbedderStatus(fn: (s: EmbedderStatus) => void): () => void {
   listeners.add(fn);
   return () => {
     listeners.delete(fn);
@@ -78,7 +76,7 @@ export function preloadEmbedder(): Promise<FeatureExtractor> {
         setStatus('ready');
         return p;
       },
-      (err) => {
+      (err: unknown) => {
         setStatus('unavailable');
         pipelinePromise = undefined;
         throw err;
@@ -96,12 +94,10 @@ async function loadPipeline(): Promise<FeatureExtractor> {
   // library auto-picks WebGPU when present and falls back to WASM.
   // EMBEDDING_MODEL_ID is the HF repo id ('Xenova/gte-small'); the Edge
   // Function runs the same model through the native Supabase.ai API.
-  const extractor = await transformers.pipeline(
-    'feature-extraction',
-    EMBEDDING_MODEL_ID,
-    { dtype: 'q8' },
-  );
-  return extractor as unknown as FeatureExtractor;
+  const extractor = await transformers.pipeline('feature-extraction', EMBEDDING_MODEL_ID, {
+    dtype: 'q8',
+  });
+  return extractor;
 }
 
 /**

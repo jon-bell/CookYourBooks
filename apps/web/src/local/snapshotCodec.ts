@@ -24,7 +24,7 @@ export type Row = Record<string, unknown>;
 export function encodeColumnar(rows: readonly Row[]): ColumnarTable {
   if (rows.length === 0) return { cols: [], rows: [] };
   const cols = Object.keys(rows[0]!);
-  const out: unknown[][] = new Array(rows.length);
+  const out: unknown[][] = new Array<unknown[]>(rows.length);
   for (let i = 0; i < rows.length; i += 1) {
     const r = rows[i]!;
     const arr = new Array<unknown>(cols.length);
@@ -38,7 +38,7 @@ export function encodeColumnar(rows: readonly Row[]): ColumnarTable {
 export function decodeColumnar<T = Row>(table: ColumnarTable | undefined | null): T[] {
   if (!table || table.rows.length === 0) return [];
   const { cols, rows } = table;
-  const out: T[] = new Array(rows.length);
+  const out: T[] = new Array<T>(rows.length);
   for (let i = 0; i < rows.length; i += 1) {
     const arr = rows[i]!;
     const obj: Row = {};

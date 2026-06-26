@@ -32,8 +32,7 @@ export interface LegalDoc {
 export const TERMS: LegalDoc = {
   slug: 'terms',
   title: 'Terms of Service',
-  summary:
-    'Your obligations as a user, our obligations as a service, and the boundaries on both.',
+  summary: 'Your obligations as a user, our obligations as a service, and the boundaries on both.',
   body: `
 # Terms of Service
 
@@ -147,7 +146,7 @@ export const AUP: LegalDoc = {
   slug: 'aup',
   title: 'Acceptable Use Policy',
   summary:
-    'What you can and can\'t do with CookYourBooks. Violations risk account suspension or ban.',
+    "What you can and can't do with CookYourBooks. Violations risk account suspension or ban.",
   body: `
 # Acceptable Use Policy
 
@@ -238,8 +237,7 @@ provide an explanation. Appeals are reviewed by a human.
 export const DMCA: LegalDoc = {
   slug: 'dmca',
   title: 'DMCA notice & takedown',
-  summary:
-    'How to send a DMCA notice. Our designated Copyright Agent for §512 notices.',
+  summary: 'How to send a DMCA notice. Our designated Copyright Agent for §512 notices.',
   body: `
 # DMCA notice and takedown
 

@@ -1,7 +1,9 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 
 test.describe('Collections', () => {
-  test('creates a personal collection and it appears in the library', async ({ authedPage: page }) => {
+  test('creates a personal collection and it appears in the library', async ({
+    authedPage: page,
+  }) => {
     await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Weeknight Dinners');
@@ -58,9 +60,9 @@ test.describe('Collections', () => {
     });
 
     await page.getByRole('link', { name: 'Library' }).click();
-    await expect(
-      page.locator('li', { hasText: 'Greens' }).getByText('Public'),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('li', { hasText: 'Greens' }).getByText('Public')).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test('deletes a collection (with confirm accept) and it leaves the library', async ({

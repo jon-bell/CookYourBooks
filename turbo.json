@@ -1,19 +1,11 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalEnv": [
-    "CI",
-    "NODE_ENV"
-  ],
+  "globalEnv": ["CI", "NODE_ENV"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
-      "env": [
-        "VITE_*",
-        "SUPABASE_URL",
-        "SUPABASE_ANON_KEY",
-        "SUPABASE_PUBLISHABLE_KEY"
-      ]
+      "env": ["VITE_*", "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"]
     },
     "dev": {
       "cache": false,
@@ -23,14 +15,7 @@
     "test": {
       "dependsOn": ["^build"],
       "outputs": [],
-      "env": [
-        "TEST_SUPABASE_URL",
-        "TEST_SUPABASE_ANON_KEY",
-        "TEST_SUPABASE_SERVICE_ROLE"
-      ]
-    },
-    "lint": {
-      "outputs": []
+      "env": ["TEST_SUPABASE_URL", "TEST_SUPABASE_ANON_KEY", "TEST_SUPABASE_SERVICE_ROLE"]
     },
     "typecheck": {
       "dependsOn": ["^build"],

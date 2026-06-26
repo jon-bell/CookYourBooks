@@ -50,15 +50,15 @@ export function MakePublicDialog({
           Publish "{collectionTitle}" to Discover?
         </h2>
         <p className="text-sm text-stone-700 dark:text-stone-300">
-          Anyone — signed in or not — will be able to read this collection's recipes and fork
-          them into their own library.
+          Anyone — signed in or not — will be able to read this collection's recipes and fork them
+          into their own library.
         </p>
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
           <p className="font-medium">Zero tolerance for copyright violations.</p>
           <p className="mt-1">
             Only publish recipes you wrote yourself, or that you have explicit permission to
-            redistribute. Cookbooks tied to an ISBN can't be published at all — their recipes
-            belong to the publisher.
+            redistribute. Cookbooks tied to an ISBN can't be published at all — their recipes belong
+            to the publisher.
           </p>
           <p className="mt-1">
             Rights holders can report a violation through our{' '}

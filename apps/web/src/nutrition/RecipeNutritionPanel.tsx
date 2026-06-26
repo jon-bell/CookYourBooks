@@ -1,14 +1,15 @@
-import { useState, useMemo } from 'react';
 import {
   fmtGrams,
   fmtKcal,
   fmtMg,
+  type Recipe,
   scaleToServing,
   type ServingMode,
 } from '@cookyourbooks/domain';
-import type { Recipe } from '@cookyourbooks/domain';
-import { useRecipeNutrition } from './useRecipeNutrition.js';
+import { useMemo, useState } from 'react';
+
 import { IngredientMatchOverrideDialog } from './IngredientMatchOverrideDialog.js';
+import { useRecipeNutrition } from './useRecipeNutrition.js';
 
 /**
  * Recipe-level nutrition panel. Renders below the steps on RecipePage.
@@ -25,9 +26,7 @@ import { IngredientMatchOverrideDialog } from './IngredientMatchOverrideDialog.j
 export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
   const { data, isLoading, error } = useRecipeNutrition(recipe);
   const [mode, setMode] = useState<'proportion' | 'weight'>('proportion');
-  const [proportionServings, setProportionServings] = useState(
-    () => recipe.servings?.amount ?? 1,
-  );
+  const [proportionServings, setProportionServings] = useState(() => recipe.servings?.amount ?? 1);
   const [totalRecipeGrams, setTotalRecipeGrams] = useState<number | null>(null);
   const [servingGrams, setServingGrams] = useState(200);
   const [overrideIngredient, setOverrideIngredient] = useState<{
@@ -63,7 +62,7 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
   if (error) {
     return (
       <section className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 p-4 text-sm text-red-800 dark:text-red-200">
-        Couldn't compute nutrition: {(error as Error).message}
+        Couldn't compute nutrition: {error.message}
       </section>
     );
   }
@@ -76,12 +75,8 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
   // Totals are computed only from rows that have BOTH a fact and grams,
   // so any of these three undercounts the recipe.
   const unmatched = data.rows.filter((r) => r.fact == null);
-  const missingKcal = data.rows.filter(
-    (r) => r.fact != null && r.fact.calories_kcal == null,
-  );
-  const missingGrams = data.rows.filter(
-    (r) => r.fact != null && r.grams == null,
-  );
+  const missingKcal = data.rows.filter((r) => r.fact != null && r.fact.calories_kcal == null);
+  const missingGrams = data.rows.filter((r) => r.fact != null && r.grams == null);
   const hasGaps = unmatched.length + missingKcal.length + missingGrams.length > 0;
 
   return (
@@ -94,18 +89,13 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
         <span className="text-xs text-stone-500 dark:text-stone-400">
           <span
             className={
-              unmatched.length > 0
-                ? 'font-semibold text-amber-700 dark:text-amber-400'
-                : ''
+              unmatched.length > 0 ? 'font-semibold text-amber-700 dark:text-amber-400' : ''
             }
           >
-            {totals.resolved_count} of{' '}
-            {totals.resolved_count + totals.unresolved_count}
+            {totals.resolved_count} of {totals.resolved_count + totals.unresolved_count}
           </span>{' '}
           ingredients
-          {totals.approximate_count > 0 && (
-            <> · {totals.approximate_count} approximate</>
-          )}
+          {totals.approximate_count > 0 && <> · {totals.approximate_count} approximate</>}
         </span>
       </header>
 
@@ -150,11 +140,7 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <NutritionColumn
           title="Whole recipe"
-          subtitle={
-            totals.total_grams > 0
-              ? `≈ ${Math.round(totals.total_grams)} g`
-              : undefined
-          }
+          subtitle={totals.total_grams > 0 ? `≈ ${Math.round(totals.total_grams)} g` : undefined}
           totals={totals}
         />
         <NutritionColumn
@@ -265,8 +251,8 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
               const rowTint = noMatch
                 ? 'bg-amber-50 dark:bg-amber-950/40'
                 : noKcal || noGrams
-                ? 'bg-yellow-50 dark:bg-yellow-950/30'
-                : '';
+                  ? 'bg-yellow-50 dark:bg-yellow-950/30'
+                  : '';
               return (
                 <tr
                   key={row.ingredientId}
@@ -338,9 +324,7 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
                             : 'text-stone-400 dark:text-stone-500'
                         }
                         title={
-                          noKcal
-                            ? 'Match has no calorie data — pick a different match'
-                            : undefined
+                          noKcal ? 'Match has no calorie data — pick a different match' : undefined
                         }
                       >
                         —
@@ -391,9 +375,7 @@ function NutritionColumn({
     <div className="rounded-md border border-stone-200 dark:border-stone-700 p-3">
       <div className="flex items-baseline justify-between">
         <h3 className="font-medium">{title}</h3>
-        {subtitle && (
-          <span className="text-xs text-stone-500 dark:text-stone-400">{subtitle}</span>
-        )}
+        {subtitle && <span className="text-xs text-stone-500 dark:text-stone-400">{subtitle}</span>}
       </div>
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
         <Row label="Calories" value={fmtKcal(totals.calories_kcal)} bold />

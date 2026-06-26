@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  directionLabel,
-  formatBytes,
-  formatCount,
-  formatDuration,
-  phaseLabel,
-} from './format.js';
+
+import { directionLabel, formatBytes, formatCount, formatDuration, phaseLabel } from './format.js';
 
 describe('formatBytes', () => {
   it('formats whole bytes without decimals', () => {

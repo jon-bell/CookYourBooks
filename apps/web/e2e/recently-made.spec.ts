@@ -1,5 +1,5 @@
-import { test, expect, signIn, waitForSynced } from './support/fixtures.js';
 import { seedUserLibrary } from './support/admin.js';
+import { expect, signIn, test, waitForSynced } from './support/fixtures.js';
 
 // "Recently made" sorting is derived from COOKED cooking_events. One seeded
 // collection, log a cook on the second recipe, and the made-sort should

@@ -1,8 +1,9 @@
 import { createElement } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
+
 import { CameraScanner, type CameraScannerProps } from './CameraScanner.js';
 import { captureMultiShot, isMultiShotAvailable } from './multiShotShim.js';
-import { type ScannedPage, DEFAULT_MARKER, asScannedPages } from './pageMarker.js';
+import { asScannedPages, DEFAULT_MARKER, type ScannedPage } from './pageMarker.js';
 
 export interface ScanOptions {
   maxShots?: number;
@@ -73,10 +74,10 @@ function mountScanner(opts?: ScanOptions): Promise<ScannedPage[]> {
     const host = document.createElement('div');
     host.setAttribute('data-camera-scanner-root', '');
     document.body.appendChild(host);
-    let root: Root | undefined;
+    const root = createRoot(host);
     const cleanup = () => {
       queueMicrotask(() => {
-        root?.unmount();
+        root.unmount();
         if (host.parentNode) host.parentNode.removeChild(host);
       });
     };
@@ -105,7 +106,6 @@ function mountScanner(opts?: ScanOptions): Promise<ScannedPage[]> {
         }
       },
     };
-    root = createRoot(host);
     root.render(createElement(CameraScanner, props));
   });
 }

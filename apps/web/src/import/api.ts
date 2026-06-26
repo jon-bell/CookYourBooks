@@ -66,15 +66,15 @@ export async function validateOcrKey(
   if (typeof window !== 'undefined' && window.__cybOcrKeyTestShim) {
     return window.__cybOcrKeyTestShim(provider, rawKey, baseUrl);
   }
-  const { data, error } = await supabase.functions.invoke('ocr-key-test', {
+  const { data, error } = (await supabase.functions.invoke('ocr-key-test', {
     body: { provider, apiKey: rawKey, baseUrl },
-  });
+  })) as { data: OcrKeyTestResult | null; error: { message: string } | null };
   if (error) {
     // Transport / function-level failure (not a provider rejection) — treat as
     // a network problem so the wizard tells the user to check their connection.
     return { ok: false, reason: 'network', message: error.message };
   }
-  return data as OcrKeyTestResult;
+  return data ?? { ok: false, reason: 'network', message: 'no response' };
 }
 
 export async function resetImportItem(itemId: string): Promise<void> {
@@ -91,10 +91,7 @@ export async function resetImportItem(itemId: string): Promise<void> {
  * the stale drafts + any prior ToC entries, and sets is_toc in one shot;
  * the caller then kicks the worker so the re-OCR starts immediately.
  */
-export async function setImportItemToc(
-  itemId: string,
-  isToc: boolean,
-): Promise<void> {
+export async function setImportItemToc(itemId: string, isToc: boolean): Promise<void> {
   const { error } = await supabase.rpc('import_set_item_toc', {
     p_item_id: itemId,
     p_is_toc: isToc,
@@ -179,7 +176,7 @@ export async function startBakeoff(
     p_input_recipe_id: opts.inputRecipeId ?? undefined,
   });
   if (error) throw error;
-  return data as string;
+  return data;
 }
 
 export async function getBakeoffRun(runId: string): Promise<{
@@ -275,9 +272,7 @@ export async function getBatchVariants(batchId: string): Promise<ImportBatchVari
   return (data ?? []) as ImportBatchVariantRow[];
 }
 
-export async function getItemVariantResults(
-  itemId: string,
-): Promise<ImportItemVariantResultRow[]> {
+export async function getItemVariantResults(itemId: string): Promise<ImportItemVariantResultRow[]> {
   const { data, error } = await supabase
     .from('import_item_variant_results')
     .select(
@@ -397,8 +392,7 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
     getUserOcrPrefs().catch(() => null),
     listOcrKeys().catch(() => [] as OcrKeySummary[]),
   ]);
-  const hasOwnKeyForPrefs =
-    prefs != null && ownKeys.some((k) => k.provider === prefs.provider);
+  const hasOwnKeyForPrefs = prefs != null && ownKeys.some((k) => k.provider === prefs.provider);
   if (prefs && hasOwnKeyForPrefs) {
     return {
       provider: prefs.provider,
@@ -549,7 +543,7 @@ export async function listOcrKeys(): Promise<OcrKeySummary[]> {
     .from('user_ocr_keys')
     .select('provider, key_fingerprint, base_url, rotated_at');
   if (error) throw error;
-  return (data ?? []) as OcrKeySummary[];
+  return data ?? [];
 }
 
 // ---------- instruction rewrites ----------
@@ -596,7 +590,7 @@ export async function startRewrite(input: {
     p_prompt: input.prompt,
   });
   if (error) throw error;
-  return data as string;
+  return data;
 }
 
 export async function cancelRewrite(jobId: string): Promise<void> {
@@ -668,10 +662,10 @@ export async function startRemix(input: {
     p_instruction: input.instruction,
     // PostgREST's typed Json parameter accepts an object fine at runtime, but
     // the generated type alias is too narrow (see startBakeoff p_variants).
-    p_input_recipe_json: input.inputRecipeJson as unknown as never,
+    p_input_recipe_json: input.inputRecipeJson as never,
   });
   if (error) throw error;
-  return data as string;
+  return data;
 }
 
 export async function cancelRemix(jobId: string): Promise<void> {

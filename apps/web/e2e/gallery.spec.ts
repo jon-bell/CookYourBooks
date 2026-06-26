@@ -1,6 +1,6 @@
-import { test, expect, waitForSynced } from './support/fixtures.js';
-import { createRecipeViaUi } from './support/helpers.js';
 import { SUPABASE_URL } from './support/env.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
+import { createRecipeViaUi } from './support/helpers.js';
 
 // 1×1 transparent PNG, the smallest valid image the browser will render.
 const PNG_BYTES = Buffer.from(

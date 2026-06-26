@@ -1,10 +1,8 @@
-import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Cookbook } from '@cookyourbooks/domain';
-import {
-  findSharedGlobalEntry,
-  shareCollectionToGlobal,
-} from '../data/shareCollection.js';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+
+import { findSharedGlobalEntry, shareCollectionToGlobal } from '../data/shareCollection.js';
 
 /**
  * "Share to global catalog" affordance on a PUBLISHED_BOOK collection.
@@ -67,9 +65,7 @@ export function ShareToGlobalButton({ cookbook }: { cookbook: Cookbook }) {
         {label}
       </button>
       {share.error && (
-        <span className="self-center text-xs text-red-700">
-          {(share.error as Error).message}
-        </span>
+        <span className="self-center text-xs text-red-700">{share.error.message}</span>
       )}
       {showConfirm && (
         <ConfirmDialog

@@ -1,23 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   createRecipe,
-  instruction,
-  measured,
-  vague,
   exact,
-  parseIngredientLine,
-  servings as makeServings,
-  Units,
-  isMeasured,
   type Ingredient,
   type Instruction,
+  instruction,
+  isMeasured,
+  measured,
   type ParsedRecipeDraft,
+  parseIngredientLine,
   type Quantity,
   type Recipe,
+  servings as makeServings,
+  Units,
+  vague,
 } from '@cookyourbooks/domain';
-import { useCollectionMeta, useRecipe, useSaveRecipe } from '../data/queries.js';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { useCollectionMeta, useRecipe, useSaveRecipe } from '../data/queries.js';
 
 type IngredientDraft = {
   id: string;
@@ -63,11 +64,7 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
     return (
       <p className="text-stone-700 dark:text-stone-300">
         Collection not found.{' '}
-        <button
-          type="button"
-          onClick={() => navigate('/collections')}
-          className="underline"
-        >
+        <button type="button" onClick={() => navigate('/collections')} className="underline">
           Back to collections
         </button>
       </p>
@@ -75,9 +72,7 @@ export function RecipeEditorPage({ mode }: { mode: 'create' | 'edit' }) {
   }
   // Recipe gone (deleted, or a stale link) — the effect above is redirecting.
   if (mode === 'edit' && !existing) return null;
-  return (
-    <RecipeEditorForm key={recipeId ?? 'create'} mode={mode} existing={existing} />
-  );
+  return <RecipeEditorForm key={recipeId ?? 'create'} mode={mode} existing={existing} />;
 }
 
 function RecipeEditorForm({
@@ -113,8 +108,7 @@ function RecipeEditorForm({
 
   const initialIngredients: IngredientDraft[] = useMemo(() => {
     if (existing) return existing.ingredients.map(toDraft);
-    if (seedDraft && seedDraft.ingredients.length > 0)
-      return seedDraft.ingredients.map(toDraft);
+    if (seedDraft && seedDraft.ingredients.length > 0) return seedDraft.ingredients.map(toDraft);
     return [newIngredientDraft()];
   }, [existing, seedDraft]);
   const [ingredients, setIngredients] = useState<IngredientDraft[]>(initialIngredients);
@@ -152,9 +146,7 @@ function RecipeEditorForm({
 
   async function save() {
     if (!title.trim()) return;
-    const sourceIngredientsById = new Map(
-      (source?.ingredients ?? []).map((ing) => [ing.id, ing]),
-    );
+    const sourceIngredientsById = new Map((source?.ingredients ?? []).map((ing) => [ing.id, ing]));
     const builtIngredients: Ingredient[] = ingredients
       .filter((d) => d.name.trim())
       .map((d) => preservingIngredient(fromDraft(d), sourceIngredientsById.get(d.id)));
@@ -166,9 +158,7 @@ function RecipeEditorForm({
       .filter((d) => d.text.trim())
       .map((d, i) => {
         const src = sourceStepsById.get(d.id);
-        const refsBySource = new Map(
-          (src?.ingredientRefs ?? []).map((r) => [r.ingredientId, r]),
-        );
+        const refsBySource = new Map((src?.ingredientRefs ?? []).map((r) => [r.ingredientId, r]));
         return instruction({
           id: d.id,
           stepNumber: i + 1,
@@ -185,8 +175,7 @@ function RecipeEditorForm({
         });
       });
     const servingsNum = servingsAmount ? Number(servingsAmount) : undefined;
-    const servingsMax =
-      existing?.servings?.amountMax ?? seedDraft?.servings?.amountMax;
+    const servingsMax = existing?.servings?.amountMax ?? seedDraft?.servings?.amountMax;
     const recipe: Recipe = createRecipe({
       id: existing?.id,
       title: title.trim(),
@@ -197,9 +186,7 @@ function RecipeEditorForm({
               servingsDesc.trim() || undefined,
               // Preserve a range-style yield only when the upper bound
               // is still compatible with the user-entered amount.
-              servingsMax !== undefined && servingsMax >= servingsNum
-                ? servingsMax
-                : undefined,
+              servingsMax !== undefined && servingsMax >= servingsNum ? servingsMax : undefined,
             )
           : undefined,
       ingredients: builtIngredients,
@@ -233,7 +220,10 @@ function RecipeEditorForm({
   }
 
   function handleBulkPaste() {
-    const lines = bulkPaste.split('\n').map((l) => l.trim()).filter(Boolean);
+    const lines = bulkPaste
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
     const parsed: IngredientDraft[] = [];
     for (const line of lines) {
       const ing = parseIngredientLine(line);
@@ -250,9 +240,7 @@ function RecipeEditorForm({
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">
-        {mode === 'edit' ? 'Edit recipe' : 'New recipe'}
-      </h1>
+      <h1 className="text-2xl font-semibold">{mode === 'edit' ? 'Edit recipe' : 'New recipe'}</h1>
       <section className="space-y-3">
         <Field label="Title">
           <input
@@ -302,16 +290,16 @@ function RecipeEditorForm({
                   onChange={(next) =>
                     setIngredients((cur) => cur.map((x, i) => (i === idx ? next : x)))
                   }
-                  onRemove={() =>
-                    setIngredients((cur) => cur.filter((_, i) => i !== idx))
-                  }
+                  onRemove={() => setIngredients((cur) => cur.filter((_, i) => i !== idx))}
                 />
               </li>
             ))}
           </ul>
         </div>
         <details className="text-sm">
-          <summary className="cursor-pointer text-stone-600 dark:text-stone-400">Paste ingredients from text</summary>
+          <summary className="cursor-pointer text-stone-600 dark:text-stone-400">
+            Paste ingredients from text
+          </summary>
           <div className="mt-2 space-y-2">
             <textarea
               value={bulkPaste}
@@ -335,10 +323,7 @@ function RecipeEditorForm({
           <h2 className="text-lg font-semibold">Instructions</h2>
           <button
             onClick={() =>
-              setInstructions((cur) => [
-                ...cur,
-                { id: crypto.randomUUID(), text: '', refIds: [] },
-              ])
+              setInstructions((cur) => [...cur, { id: crypto.randomUUID(), text: '', refIds: [] }])
             }
             className="text-sm text-stone-700 dark:text-stone-300 hover:underline"
           >
@@ -347,7 +332,10 @@ function RecipeEditorForm({
         </div>
         <ol className="space-y-3">
           {instructions.map((d, idx) => (
-            <li key={d.id} className="space-y-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+            <li
+              key={d.id}
+              className="space-y-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3"
+            >
               <div className="flex gap-2">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-stone-200 dark:bg-stone-700 text-sm">
                   {idx + 1}
@@ -429,7 +417,7 @@ function RecipeEditorForm({
 
       {saveRecipe.isError && (
         <div className="rounded border border-red-200 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">
-          {(saveRecipe.error as Error).message}
+          {saveRecipe.error.message}
         </div>
       )}
 
@@ -584,7 +572,9 @@ function flattenQuantity(q: Quantity): { amount: number; unit: string } {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+        {label}
+      </span>
       {children}
     </label>
   );

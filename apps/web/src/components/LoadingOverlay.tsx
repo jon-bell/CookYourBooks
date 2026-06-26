@@ -56,9 +56,7 @@ export function LoadingOverlay({
             briefly up during first sync. The dialog's aria-label already names
             it. */}
         <div className="text-base font-semibold text-stone-900 dark:text-stone-100">{title}</div>
-        {subtitle && (
-          <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{subtitle}</p>
-        )}
+        {subtitle && <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{subtitle}</p>}
 
         {!error && (
           <div className="mt-4">
@@ -110,7 +108,9 @@ export function LoadingOverlay({
                 Retry
               </button>
             )}
-            <p className="mt-2 text-xs text-stone-400">Still working on it — you can keep waiting too.</p>
+            <p className="mt-2 text-xs text-stone-400">
+              Still working on it — you can keep waiting too.
+            </p>
           </div>
         )}
       </div>

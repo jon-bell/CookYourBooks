@@ -75,13 +75,13 @@ export async function enqueue(entry: {
 
 export async function listPending(limit = 1000): Promise<OutboxEntry[]> {
   const db = await getLocalDb();
-  const rows = (await db.execO<OutboxEntry>(
+  const rows = await db.execO<OutboxEntry>(
     `select id, kind, entity_id, collection_id, enqueued_at, attempts, last_error
        from outbox
       order by id asc
       limit ?`,
     [limit],
-  )) as OutboxEntry[];
+  );
   return rows;
 }
 
@@ -92,10 +92,10 @@ export async function markDone(id: number): Promise<void> {
 
 export async function markFailed(id: number, error: string): Promise<void> {
   const db = await getLocalDb();
-  await db.exec(
-    `update outbox set attempts = attempts + 1, last_error = ? where id = ?`,
-    [error, id],
-  );
+  await db.exec(`update outbox set attempts = attempts + 1, last_error = ? where id = ?`, [
+    error,
+    id,
+  ]);
 }
 
 /**

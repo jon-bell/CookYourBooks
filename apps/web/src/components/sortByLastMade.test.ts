@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { isRecipeSortMode, sortByLastMade } from './recipeSort.js';
 
 const items = [

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useHouseholdOcrConfig, useSetHouseholdOcrConfig } from './queries.js';
-import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
+
 import type { OcrProvider } from '../import/api.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import type { HouseholdMemberWithProfile } from './api.js';
+import { useHouseholdOcrConfig, useSetHouseholdOcrConfig } from './queries.js';
 
 /**
  * Owner-only control to share an OCR setup (provider/model/prompt/fallback +
@@ -75,8 +76,8 @@ export function HouseholdOcrSection({
               <span className="rounded-md bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 px-2 py-0.5 text-xs text-emerald-900 dark:text-emerald-200">
                 On
               </span>{' '}
-              {householdName} shares OCR ({cfg?.provider} · {cfg?.model}) using {keyOwnerName}'s
-              key — you can import without configuring your own.
+              {householdName} shares OCR ({cfg?.provider} · {cfg?.model}) using {keyOwnerName}'s key
+              — you can import without configuring your own.
             </>
           ) : (
             <>The household owner hasn't shared an OCR setup.</>
@@ -93,8 +94,8 @@ export function HouseholdOcrSection({
       <h2 className="text-lg font-semibold">Shared OCR</h2>
       <div className="mt-2 space-y-3 rounded-md border border-stone-200 dark:border-stone-700 px-3 py-3">
         <p className="text-sm text-stone-700 dark:text-stone-300">
-          Share one OCR setup with everyone in <strong>{householdName}</strong>. Members who
-          haven't added their own key import using the key owner's account.{' '}
+          Share one OCR setup with everyone in <strong>{householdName}</strong>. Members who haven't
+          added their own key import using the key owner's account.{' '}
           <span className="text-xs text-stone-500">Costs bill to the key owner's provider.</span>
         </p>
 

@@ -1,5 +1,5 @@
-import { useAuditLog } from './queries.js';
 import type { AuditLogRow } from './api.js';
+import { useAuditLog } from './queries.js';
 
 const ACTION_LABEL: Record<string, string> = {
   HOUSEHOLD_CREATED: 'Household created',
@@ -35,15 +35,13 @@ export function AuditLogSection() {
   if (audit.error) {
     return (
       <p className="text-sm text-red-700 dark:text-red-300">
-        Couldn't load activity log: {(audit.error as Error).message}
+        Couldn't load activity log: {audit.error.message}
       </p>
     );
   }
   const rows = audit.data ?? [];
   if (rows.length === 0) {
-    return (
-      <p className="text-sm text-stone-500 dark:text-stone-400">No activity yet.</p>
-    );
+    return <p className="text-sm text-stone-500 dark:text-stone-400">No activity yet.</p>;
   }
   return (
     <ol
@@ -61,9 +59,7 @@ function AuditRow({ row }: { row: AuditLogRow }) {
   const label = ACTION_LABEL[row.action] ?? row.action;
   const when = new Date(row.created_at).toLocaleString();
   const attestation =
-    typeof row.metadata?.attestation === 'string'
-      ? (row.metadata.attestation as string)
-      : null;
+    typeof row.metadata?.attestation === 'string' ? row.metadata.attestation : null;
   return (
     <li className="px-3 py-2" data-testid={`audit-row-${row.action}`}>
       <div className="flex items-center justify-between">
@@ -71,9 +67,7 @@ function AuditRow({ row }: { row: AuditLogRow }) {
         <time className="text-xs text-stone-500 dark:text-stone-400">{when}</time>
       </div>
       {attestation && (
-        <p className="mt-1 text-xs italic text-stone-600 dark:text-stone-400">
-          "{attestation}"
-        </p>
+        <p className="mt-1 text-xs italic text-stone-600 dark:text-stone-400">"{attestation}"</p>
       )}
       {row.target_type && row.target_id && (
         <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">

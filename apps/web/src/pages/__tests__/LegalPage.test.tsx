@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { splitListItems } from '../LegalPage.js';
 
 // Regression tests for the multi-line-bullet rendering bug.
@@ -8,11 +9,7 @@ import { splitListItems } from '../LegalPage.js';
 
 describe('splitListItems', () => {
   it('keeps a wrapped bullet item as a single entry', () => {
-    const block = [
-      '- First item that wraps onto',
-      '  a second line.',
-      '- Second item.',
-    ].join('\n');
+    const block = ['- First item that wraps onto', '  a second line.', '- Second item.'].join('\n');
     const items = splitListItems(block);
     expect(items).toHaveLength(2);
     expect(items[0]).toBe('First item that wraps onto a second line.');

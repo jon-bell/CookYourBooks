@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import type { BatchJobRow } from './api.js';
 import {
   isInFlight,
@@ -83,7 +84,10 @@ describe('sortJobsForFeed', () => {
   });
 
   it('does not mutate the input array', () => {
-    const rows = [row('a', 'done', '2026-06-01T00:00:00Z'), row('b', 'pending', '2026-06-02T00:00:00Z')];
+    const rows = [
+      row('a', 'done', '2026-06-01T00:00:00Z'),
+      row('b', 'pending', '2026-06-02T00:00:00Z'),
+    ];
     const before = rows.map((r) => r.id);
     sortJobsForFeed(rows);
     expect(rows.map((r) => r.id)).toEqual(before);

@@ -1,5 +1,4 @@
-import { expect, test } from './support/fixtures.js';
-import { waitForSynced } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import {
   configureOcrKey,
   seedOcrFixture,
@@ -17,10 +16,7 @@ async function batchIdFromUrl(page: import('@playwright/test').Page): Promise<st
   return m[1]!;
 }
 
-async function createCookbook(
-  page: import('@playwright/test').Page,
-  title: string,
-): Promise<void> {
+async function createCookbook(page: import('@playwright/test').Page, title: string): Promise<void> {
   await page.goto('/library');
   await waitForSynced(page);
   await page.getByRole('link', { name: 'New collection' }).click();

@@ -8,11 +8,11 @@ import {
   isMultiShotAvailable as isMultiShotAvailableImpl,
 } from './multiShotCamera.js';
 
-export async function isMultiShotAvailable(): Promise<boolean> {
+export function isMultiShotAvailable(): Promise<boolean> {
   try {
-    return isMultiShotAvailableImpl();
+    return Promise.resolve(isMultiShotAvailableImpl());
   } catch {
-    return false;
+    return Promise.resolve(false);
   }
 }
 

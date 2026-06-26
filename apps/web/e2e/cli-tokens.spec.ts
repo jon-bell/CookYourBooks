@@ -1,6 +1,6 @@
-import { test, expect } from './support/fixtures.js';
 import { adminGet } from './support/admin.js';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './support/env.js';
+import { expect, test } from './support/fixtures.js';
 
 test.describe('CLI tokens', () => {
   test('user mints a token, uses it to drive RPCs, revokes it', async ({ authedPage: page }) => {
@@ -30,9 +30,7 @@ test.describe('CLI tokens', () => {
     await page.goto('/settings/cli');
     await page.getByLabel(/New token label/).fill('e2e');
     await page.getByRole('button', { name: 'Create token' }).click();
-    await expect(
-      page.getByText(/Copy it now — you won't see it again/),
-    ).toBeVisible();
+    await expect(page.getByText(/Copy it now — you won't see it again/)).toBeVisible();
     const rawToken = (await page.locator('code', { hasText: /^cyb_cli_/ }).textContent()) ?? '';
     expect(rawToken).toMatch(/^cyb_cli_[0-9a-f]{48}$/);
 
@@ -119,9 +117,10 @@ test.describe('CLI tokens', () => {
     // here we just issue one via the in-page supabase client).
     const rawToken = await page.evaluate(async () => {
       const sb = window.__cybSupabase;
+      if (!sb) throw new Error('window.__cybSupabase not exposed');
       const { data, error } = await sb.rpc('cli_issue_token', { token_name: 'toc-e2e' });
       if (error) throw error;
-      return data as string;
+      return data;
     });
 
     // Export the ToC — should surface the collection but zero recipes

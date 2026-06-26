@@ -1,13 +1,20 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useCancelJob, useJobs, useRetryJob } from '../jobs/queries.js';
-import { canCancel, canRetry, type BatchJobRow } from '../jobs/api.js';
-import { isInFlight, jobKindLabel, sortJobsForFeed, statusLabel, statusPillClass } from '../jobs/format.js';
+import { LoadingState } from '../components/LoadingState.js';
 import { useDisplayNames } from '../cost/queries.js';
 import { useRecipeSummaries } from '../data/queries.js';
+import { type BatchJobRow, canCancel, canRetry } from '../jobs/api.js';
+import {
+  isInFlight,
+  jobKindLabel,
+  sortJobsForFeed,
+  statusLabel,
+  statusPillClass,
+} from '../jobs/format.js';
+import { useCancelJob, useJobs, useRetryJob } from '../jobs/queries.js';
 import type { RecipeSummary } from '../local/repositories.js';
-import { LoadingState } from '../components/LoadingState.js';
 
 /**
  * Activity — a read-only live view of the user's (and, when library sharing is
@@ -99,9 +106,7 @@ export function ActivityPage() {
         </p>
       </header>
 
-      {jobs.error && (
-        <p className="text-red-700 dark:text-red-300">{(jobs.error as Error).message}</p>
-      )}
+      {jobs.error && <p className="text-red-700 dark:text-red-300">{jobs.error.message}</p>}
       {(cancel.error || retry.error) && (
         <p className="text-red-700 dark:text-red-300">
           {((cancel.error || retry.error) as Error).message}
@@ -185,12 +190,17 @@ function JobRow({
       </span>
 
       {link && (
-        <Link to={link.to} className="max-w-[16rem] truncate text-stone-700 underline dark:text-stone-300">
+        <Link
+          to={link.to}
+          className="max-w-[16rem] truncate text-stone-700 underline dark:text-stone-300"
+        >
           {link.label}
         </Link>
       )}
 
-      {row.kind === 'ocr' && <span className="text-xs text-stone-500 dark:text-stone-400">{ocrSummary(row)}</span>}
+      {row.kind === 'ocr' && (
+        <span className="text-xs text-stone-500 dark:text-stone-400">{ocrSummary(row)}</span>
+      )}
 
       {row.status === 'failed' && row.last_error && row.last_error !== 'CANCELLED' && (
         <span className="max-w-[18rem] truncate text-xs text-red-600 dark:text-red-400">
@@ -234,12 +244,18 @@ function JobRow({
 }
 
 /** Deep link for a job's target, or null when there's nothing to link to. */
-function jobLink(row: BatchJobRow, recipe: RecipeSummary | undefined): { to: string; label: string } | null {
+function jobLink(
+  row: BatchJobRow,
+  recipe: RecipeSummary | undefined,
+): { to: string; label: string } | null {
   if (row.target_kind === 'batch' && row.target_id) {
     return { to: `/import/${row.target_id}`, label: 'Open batch' };
   }
   if (row.target_kind === 'recipe' && row.target_id && recipe) {
-    return { to: `/collections/${recipe.collectionId}/recipes/${row.target_id}`, label: recipe.title };
+    return {
+      to: `/collections/${recipe.collectionId}/recipes/${row.target_id}`,
+      label: recipe.title,
+    };
   }
   return null;
 }

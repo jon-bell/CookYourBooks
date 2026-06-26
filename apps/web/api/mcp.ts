@@ -32,9 +32,7 @@ function env(name: string): string | undefined {
 function supabaseCreds(): { url: string; anonKey: string } | undefined {
   const url = env('SUPABASE_URL') ?? env('VITE_SUPABASE_URL');
   const anonKey =
-    env('SUPABASE_ANON_KEY') ??
-    env('SUPABASE_PUBLISHABLE_KEY') ??
-    env('VITE_SUPABASE_ANON_KEY');
+    env('SUPABASE_ANON_KEY') ?? env('SUPABASE_PUBLISHABLE_KEY') ?? env('VITE_SUPABASE_ANON_KEY');
   if (!url || !anonKey) return undefined;
   return { url, anonKey };
 }
@@ -53,10 +51,7 @@ function extractBearer(req: Request): string | undefined {
   return undefined;
 }
 
-function makeRpcClient(
-  creds: { url: string; anonKey: string },
-  rawToken: string,
-): RpcClient {
+function makeRpcClient(creds: { url: string; anonKey: string }, rawToken: string): RpcClient {
   return {
     async call<T>(fn: string, args: Record<string, unknown>): Promise<T> {
       const body = JSON.stringify({ raw_token: rawToken, ...args });
@@ -160,9 +155,7 @@ export default async function handler(req: Request): Promise<Response> {
 
   // Batched requests are permitted by JSON-RPC; handle them uniformly.
   if (Array.isArray(body)) {
-    const results = await Promise.all(
-      body.map((msg) => dispatch(msg as JsonRpcRequest, client)),
-    );
+    const results = await Promise.all(body.map((msg) => dispatch(msg as JsonRpcRequest, client)));
     const filtered = results.filter((r): r is NonNullable<typeof r> => r !== null);
     if (filtered.length === 0) return new Response(null, { status: 202, headers: CORS_HEADERS });
     return json(filtered);

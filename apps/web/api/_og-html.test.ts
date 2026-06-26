@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { buildOgImageUrl, cleanDescription, renderOgHtml } from './_og-html.js';
 
 describe('renderOgHtml', () => {
@@ -47,7 +48,7 @@ describe('renderOgHtml', () => {
   it('falls back to /api/og-image with encoded query params', () => {
     const meta = {
       kind: 'recipe' as const,
-      title: 'Mom\'s Stew',
+      title: "Mom's Stew",
       description: '',
       url: 'U',
       subtitle: 'Comfort food',

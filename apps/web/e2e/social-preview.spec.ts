@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 
 test.describe('Sharing + social preview', () => {
   test('landing page ships with OG + Twitter Card tags', async ({ page }) => {
@@ -8,10 +8,7 @@ test.describe('Sharing + social preview', () => {
       'content',
       /CookYourBooks/,
     );
-    await expect(page.locator('meta[property="og:type"]')).toHaveAttribute(
-      'content',
-      'website',
-    );
+    await expect(page.locator('meta[property="og:type"]')).toHaveAttribute('content', 'website');
     await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
       'content',
       'summary_large_image',

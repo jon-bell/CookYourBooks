@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { Link } from 'react-router-dom';
+
 import { CoverImage } from './CoverImage.js';
 import { formatPages } from './SortableRecipeList.js';
 
@@ -25,7 +26,12 @@ const GalleryCardCell = memo(function GalleryCardCell({ item }: { item: GalleryC
   return (
     <li className="gallery-card relative overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
       <Link to={`/collections/${item.collectionId}/recipes/${item.id}`} className="block">
-        <CoverImage path={item.coverImagePath ?? undefined} alt={item.title} className="aspect-[3/2] w-full" variant="thumb" />
+        <CoverImage
+          path={item.coverImagePath ?? undefined}
+          alt={item.title}
+          className="aspect-[3/2] w-full"
+          variant="thumb"
+        />
         <div className={item.collectionTitle ? 'px-3 pt-3' : 'p-3'}>
           <div className="line-clamp-2 font-medium">{item.title}</div>
           {pages ? (

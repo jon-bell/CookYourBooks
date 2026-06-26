@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import type { Recipe, RecipeAdjustment } from '@cookyourbooks/domain';
+import { useState } from 'react';
 
 type AdjustmentKind = RecipeAdjustment['type'];
 

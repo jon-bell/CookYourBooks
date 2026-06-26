@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs';
+
 import { defineConfig, devices } from '@playwright/test';
+
 import { IPHONE_17_USE } from './e2e/support/viewport.js';
 
 // Pick a chromium binary:
@@ -33,11 +35,7 @@ export default defineConfig({
   fullyParallel: process.env.E2E_FULLY_PARALLEL === '1',
   workers: Number(process.env.E2E_WORKERS) || 1,
   retries:
-    process.env.E2E_RETRIES != null
-      ? Number(process.env.E2E_RETRIES)
-      : process.env.CI
-        ? 3
-        : 0,
+    process.env.E2E_RETRIES != null ? Number(process.env.E2E_RETRIES) : process.env.CI ? 3 : 0,
   // Stop the whole run after 5 failures so a systemic CI breakage fails
   // fast and leaves its artifacts behind, rather than timing out the
   // job after every single test has been retried twice.
@@ -78,9 +76,7 @@ export default defineConfig({
     // `vite preview` — no dep-optimization pass, no HMR websocket, just
     // static files. The `pnpm build` step earlier in the pipeline
     // produces the artifacts this server consumes.
-    command: process.env.CI
-      ? 'pnpm exec vite preview --port 5173 --strictPort'
-      : 'pnpm dev',
+    command: process.env.CI ? 'pnpm exec vite preview --port 5173 --strictPort' : 'pnpm dev',
     url: 'http://localhost:5173/',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
+
 import {
   fmtGrams,
   fmtKcal,
   fmtMg,
   ingredientLookupKey,
+  type IngredientNutritionRow,
+  type NutritionFact,
   quantityToGrams,
   scaleToServing,
   totalNutrition,
-  type IngredientNutritionRow,
-  type NutritionFact,
 } from '../src/services/nutritionMath.js';
 
 function fact(over: Partial<NutritionFact> = {}): NutritionFact {

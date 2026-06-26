@@ -1,4 +1,3 @@
-import { supabase } from '../supabase.js';
 import {
   COVER_CACHE_CONTROL,
   COVER_THUMB_MAX_EDGE,
@@ -6,6 +5,7 @@ import {
   prepareCoverImage,
   thumbPathFor,
 } from '../recipe/coverImage.js';
+import { supabase } from '../supabase.js';
 
 // Shared cover-upload helper for a user's own collection. Mirrors the path
 // and upsert posture used by CoverImageEditor (`<user>/collections/<id>-<hash>.<ext>`)
@@ -31,13 +31,11 @@ export async function uploadCollectionCover(
     await prepared.blob.arrayBuffer(),
     prepared.ext,
   );
-  const { error } = await supabase.storage
-    .from('covers')
-    .upload(path, prepared.blob, {
-      upsert: true,
-      contentType: prepared.contentType,
-      cacheControl: COVER_CACHE_CONTROL,
-    });
+  const { error } = await supabase.storage.from('covers').upload(path, prepared.blob, {
+    upsert: true,
+    contentType: prepared.contentType,
+    cacheControl: COVER_CACHE_CONTROL,
+  });
   if (error) throw error;
 
   // Best-effort thumbnail upload — a missing thumb never fails the cover set.

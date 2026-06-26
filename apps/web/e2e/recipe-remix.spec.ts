@@ -1,4 +1,4 @@
-import { test, expect } from './support/fixtures.js';
+import { expect, test } from './support/fixtures.js';
 import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 import { configureOcrKey, pumpWorker, seedRemixFixture } from './support/imports.js';
 
@@ -28,13 +28,16 @@ const SHEETPAN = {
   ],
 };
 
-async function resolveRecipeId(page: import('@playwright/test').Page, title: string): Promise<string> {
+async function resolveRecipeId(
+  page: import('@playwright/test').Page,
+  title: string,
+): Promise<string> {
   const id = await page.evaluate(async (t) => {
     const sb = window.__cybSupabase;
     if (!sb) return null;
     for (let i = 0; i < 30; i += 1) {
       const { data } = await sb.from('recipes').select('id').eq('title', t).limit(1);
-      const row = data?.[0] as { id: string } | undefined;
+      const row = data?.[0];
       if (row) return row.id;
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -47,7 +50,9 @@ async function resolveRecipeId(page: import('@playwright/test').Page, title: str
 test.describe('Recipe Remix', () => {
   test.slow();
 
-  test('remixes a recipe, iterates, and saves a new linked recipe', async ({ authedPage: page }) => {
+  test('remixes a recipe, iterates, and saves a new linked recipe', async ({
+    authedPage: page,
+  }) => {
     await configureOcrKey(page, 'gemini');
 
     await createRecipeViaUi(page, {
@@ -94,38 +99,45 @@ test.describe('Recipe Remix', () => {
 
     // Save → new recipe, navigates to it.
     await page.getByTestId('remix-save').click();
-    await expect(page.getByRole('heading', { name: SHEETPAN.title })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: SHEETPAN.title })).toBeVisible({
+      timeout: 30_000,
+    });
 
     // The new recipe is linked to the original, and the original is untouched.
     // The save is local-first; poll the server until the outbox push lands.
-    const check = await page.evaluate(async ({ src }) => {
-      const sb = window.__cybSupabase!;
-      let derivedTitles: string[] = [];
-      for (let i = 0; i < 40; i += 1) {
-        const derived = await sb
+    const check = await page.evaluate(
+      async ({ src }) => {
+        const sb = window.__cybSupabase!;
+        let derivedTitles: string[] = [];
+        for (let i = 0; i < 40; i += 1) {
+          const derived = await sb
+            .from('recipes')
+            .select('id, title, parent_recipe_id')
+            .eq('parent_recipe_id', src);
+          derivedTitles = (derived.data ?? []).map((r: { title: string }) => r.title);
+          if (derivedTitles.length > 0) break;
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        const original = await sb
           .from('recipes')
-          .select('id, title, parent_recipe_id')
-          .eq('parent_recipe_id', src);
-        derivedTitles = (derived.data ?? []).map((r: { title: string }) => r.title);
-        if (derivedTitles.length > 0) break;
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      const original = await sb
-        .from('recipes')
-        .select('id, title, instructions(id)')
-        .eq('id', src)
-        .maybeSingle();
-      const remixUsage = await sb
-        .from('llm_usage_report')
-        .select('feature, succeeded')
-        .eq('feature', 'remix');
-      return {
-        derivedTitles,
-        originalTitle: (original.data as { title?: string } | null)?.title ?? null,
-        originalSteps: ((original.data as { instructions?: unknown[] } | null)?.instructions ?? []).length,
-        remixRows: (remixUsage.data ?? []).length,
-      };
-    }, { src: sourceId });
+          .select('id, title, instructions(id)')
+          .eq('id', src)
+          .maybeSingle();
+        const remixUsage = await sb
+          .from('llm_usage_report')
+          .select('feature, succeeded')
+          .eq('feature', 'remix');
+        return {
+          derivedTitles,
+          originalTitle: (original.data as { title?: string } | null)?.title ?? null,
+          originalSteps: (
+            (original.data as { instructions?: unknown[] } | null)?.instructions ?? []
+          ).length,
+          remixRows: (remixUsage.data ?? []).length,
+        };
+      },
+      { src: sourceId },
+    );
 
     expect(check.derivedTitles).toContain(SHEETPAN.title);
     // Original is unchanged: still "Beef Stew", still has its single step.
@@ -149,7 +161,13 @@ test.describe('Recipe Remix', () => {
     const sourceId = await resolveRecipeId(page, 'Plain Toast');
 
     // Force the worker down the PARSE error path.
-    await seedRemixFixture({ recipeId: '*', provider: 'gemini', model: '', errorKind: 'PARSE', upsert: true });
+    await seedRemixFixture({
+      recipeId: '*',
+      provider: 'gemini',
+      model: '',
+      errorKind: 'PARSE',
+      upsert: true,
+    });
 
     await openRecipeMoreMenu(page);
     await page.getByTestId('remix-open').click();
@@ -158,7 +176,9 @@ test.describe('Recipe Remix', () => {
     await pumpWorker();
 
     // The turn shows a failed status; no preview / save appears.
-    await expect(page.getByTestId('remix-turns').getByText('✗ Failed')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('remix-turns').getByText('✗ Failed')).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByTestId('remix-preview')).toHaveCount(0);
     await expect(page.getByTestId('remix-save')).toHaveCount(0);
 

@@ -42,7 +42,11 @@ export function findRate(
   model: string,
 ): { input_usd_per_mtok: number; output_usd_per_mtok: number } {
   const hit = PRICING.find((p) => p.provider === provider && p.model === model);
-  if (hit) return { input_usd_per_mtok: hit.input_usd_per_mtok, output_usd_per_mtok: hit.output_usd_per_mtok };
+  if (hit)
+    return {
+      input_usd_per_mtok: hit.input_usd_per_mtok,
+      output_usd_per_mtok: hit.output_usd_per_mtok,
+    };
   return PRICING_FALLBACK;
 }
 

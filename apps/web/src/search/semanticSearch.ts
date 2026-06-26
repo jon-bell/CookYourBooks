@@ -1,6 +1,7 @@
-import { listSearchableEmbeddings, type RecipeSearchHit } from '../local/repositories.js';
 import { collectionRepo } from '../data/repos.js';
+import { listSearchableEmbeddings, type RecipeSearchHit } from '../local/repositories.js';
 import { embedText } from './embedder.js';
+// eslint-disable-next-line import/default
 import SearchWorker from './searchWorker.ts?worker';
 
 /** A search result row. Same shape the literal search returns
@@ -110,10 +111,7 @@ function scoreOffMainThread(
     // The query vector is small (1.5 KB) — copy is fine. The flat
     // embeddings buffer is transferred so we don't pay the
     // structured-clone copy on the hot path.
-    getWorker().postMessage(
-      { id, queryVec, embeddings, count, dim: DIM },
-      [embeddings.buffer],
-    );
+    getWorker().postMessage({ id, queryVec, embeddings, count, dim: DIM }, [embeddings.buffer]);
   });
 }
 
@@ -150,7 +148,7 @@ export async function searchSemantic(
   const scores = await scoreOffMainThread(queryVec, flat, candidates.length);
 
   type Scored = { idx: number; score: number };
-  const scored: Scored[] = new Array(scores.length);
+  const scored: Scored[] = new Array<Scored>(scores.length);
   for (let i = 0; i < scores.length; i += 1) {
     scored[i] = { idx: i, score: scores[i]! };
   }
@@ -189,11 +187,7 @@ export async function searchSemantic(
  * also cover "not imported" placeholders and recipes with no embedding yet,
  * so nothing the literal search would have found is lost by going semantic.
  */
-export async function searchHybrid(
-  ownerId: string,
-  q: string,
-  limit = 200,
-): Promise<SearchHit[]> {
+export async function searchHybrid(ownerId: string, q: string, limit = 200): Promise<SearchHit[]> {
   const trimmed = q.trim();
   if (!trimmed) return [];
   const [literal, semantic] = await Promise.all([

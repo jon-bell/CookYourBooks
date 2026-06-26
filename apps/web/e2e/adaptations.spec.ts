@@ -1,4 +1,4 @@
-import { test, expect, waitForSynced } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import { openRecipeMoreMenu } from './support/helpers.js';
 
 async function seedCollection(page: import('@playwright/test').Page, title: string) {
@@ -20,9 +20,7 @@ async function seedRecipe(page: import('@playwright/test').Page, title: string) 
 }
 
 test.describe('Recipe adaptations', () => {
-  test('adapt → tweak notes → lineage is visible on both ends', async ({
-    authedPage: page,
-  }) => {
+  test('adapt → tweak notes → lineage is visible on both ends', async ({ authedPage: page }) => {
     await seedCollection(page, 'Bakery');
     await seedRecipe(page, 'Base Loaf');
 

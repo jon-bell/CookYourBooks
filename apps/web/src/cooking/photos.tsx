@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../supabase.js';
+
 import { prepareImage } from '../import/imageProcessing.js';
+import { supabase } from '../supabase.js';
 
 const BUCKET = 'cooking-photos';
 const SIGN_TTL_SECONDS = 60 * 60;

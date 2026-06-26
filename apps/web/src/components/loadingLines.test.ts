@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest';
+
 import { COOKING_FLAVOR_LINES, interleaveLines } from './loadingLines.js';
 
 describe('interleaveLines', () => {
   it('alternates info and flavor 1:1 so every other line is informational', () => {
     const out = interleaveLines(['Fetching…'], ['Reticulating roux…', 'Proofing…']);
-    expect(out).toEqual([
-      'Fetching…',
-      'Reticulating roux…',
-      'Fetching…',
-      'Proofing…',
-    ]);
+    expect(out).toEqual(['Fetching…', 'Reticulating roux…', 'Fetching…', 'Proofing…']);
   });
 
   it('cycles multiple info lines through the rotation', () => {

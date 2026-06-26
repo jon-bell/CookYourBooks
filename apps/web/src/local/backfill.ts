@@ -33,7 +33,10 @@ interface BackfillDef {
    * Process one chunk starting after `cursor`. Returns the new cursor, how many
    * rows were scanned, and whether the backfill is complete. Must be idempotent.
    */
-  step(cursor: string, chunkSize: number): Promise<{ nextCursor: string; scanned: number; done: boolean }>;
+  step(
+    cursor: string,
+    chunkSize: number,
+  ): Promise<{ nextCursor: string; scanned: number; done: boolean }>;
 }
 
 // ---------- progress pub/sub ----------
@@ -62,7 +65,9 @@ export function backfillActive(): boolean {
 
 // ---------- backfill_state persistence ----------
 
-async function readState(id: string): Promise<{ status: string; cursor: string; processed: number } | null> {
+async function readState(
+  id: string,
+): Promise<{ status: string; cursor: string; processed: number } | null> {
   const db = await getLocalDb();
   const rows = (await db.execO<{ status: string; cursor: string; processed: number }>(
     `select status, cursor, processed from backfill_state where id = ?`,
@@ -152,7 +157,12 @@ export async function startBackfills(opts: { shouldPause?: () => boolean } = {})
     try {
       const state = await readState(def.id);
       if (state?.status === 'done') {
-        progress.set(def.id, { id: def.id, status: 'done', processed: state.processed, total: state.processed });
+        progress.set(def.id, {
+          id: def.id,
+          status: 'done',
+          processed: state.processed,
+          total: state.processed,
+        });
         continue;
       }
       const total = await def.total();

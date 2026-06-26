@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { issueCliToken, listCliTokens, revokeCliToken, type CliTokenRow } from './cliTokens.js';
+
 import { LoadingState } from '../components/LoadingState.js';
+import { type CliTokenRow, issueCliToken, listCliTokens, revokeCliToken } from './cliTokens.js';
 
 /**
  * CLI tokens UI block. Drops into the Settings page. List + create +
@@ -64,16 +65,19 @@ export function CliTokensSection() {
       <div>
         <h2 className="text-lg font-semibold">CLI tokens</h2>
         <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-          Generate a token to drive the <code className="rounded bg-stone-100 dark:bg-stone-800 px-1">cyb</code>{' '}
-          command-line tool for scripted import/export. A token is shown once — copy it to a
-          password manager or <code className="rounded bg-stone-100 dark:bg-stone-800 px-1">cyb login</code>{' '}
+          Generate a token to drive the{' '}
+          <code className="rounded bg-stone-100 dark:bg-stone-800 px-1">cyb</code> command-line tool
+          for scripted import/export. A token is shown once — copy it to a password manager or{' '}
+          <code className="rounded bg-stone-100 dark:bg-stone-800 px-1">cyb login</code>{' '}
           immediately. Tokens only grant access to your own recipes.
         </p>
       </div>
 
       <form onSubmit={handleIssue} className="flex flex-wrap items-end gap-3">
         <label className="flex-1 min-w-[220px]">
-          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">New token label</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+            New token label
+          </span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}

@@ -8,10 +8,10 @@
 // incident device did with 14 manual uploads.
 
 import { Sentry } from '../sentry.js';
-import { getSyncLog } from './syncLog.js';
+import { readDbStats, snapshotDbOps } from './db.js';
 import { listOutboxForDebug, outboxKindCounts } from './outbox.js';
 import { listWatermarks } from './sync.js';
-import { snapshotDbOps, readDbStats } from './db.js';
+import { getSyncLog } from './syncLog.js';
 import { getTabRole } from './tabLeader.js';
 
 export interface SyncFacets {
@@ -33,7 +33,7 @@ export async function gatherSyncDiagnostics(
 ): Promise<Record<string, unknown>> {
   const [outbox, kindCounts, watermarks] = await Promise.all([
     listOutboxForDebug().catch(() => []),
-    outboxKindCounts().catch(() => ({}) as Record<string, number>),
+    outboxKindCounts().catch(() => ({})),
     listWatermarks().catch(() => [] as { topic: string; high_water_mark: number }[]),
   ]);
   const dbOps = snapshotDbOps().map((o) => ({

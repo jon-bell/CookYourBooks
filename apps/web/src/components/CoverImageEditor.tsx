@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react';
 import type { RecipeCollection } from '@cookyourbooks/domain';
-import { supabase } from '../supabase.js';
+import { useRef, useState } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
 import { uploadCollectionCover } from '../books/cover.js';
 import { thumbPathFor } from '../recipe/coverImage.js';
+import { supabase } from '../supabase.js';
 import { CoverImage } from './CoverImage.js';
 
 export function CoverImageEditor({

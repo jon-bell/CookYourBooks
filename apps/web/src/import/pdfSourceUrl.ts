@@ -60,9 +60,7 @@ export async function extractSourceUrlFromPdf(file: File): Promise<string | null
     const pdfjs = await import('pdfjs-dist');
     // Same worker wiring as renderPdfToJpegs — Vite resolves the ESM worker
     // URL at build time via the ?url query.
-    const workerMod = (await import(
-      /* @vite-ignore */ 'pdfjs-dist/build/pdf.worker.mjs?url'
-    )) as { default: string };
+    const workerMod = await import(/* @vite-ignore */ 'pdfjs-dist/build/pdf.worker.mjs?url');
     pdfjs.GlobalWorkerOptions.workerSrc = workerMod.default;
 
     const buf = await file.arrayBuffer();

@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { planPageGroups, type PageKind, type PageMarker } from './pageMarker.js';
+import { describe, expect, it } from 'vitest';
 
-const m = (kind: PageKind = 'RECIPE', joinsPrevious = false): PageMarker => ({ kind, joinsPrevious });
+import { type PageKind, type PageMarker, planPageGroups } from './pageMarker.js';
+
+const m = (kind: PageKind = 'RECIPE', joinsPrevious = false): PageMarker => ({
+  kind,
+  joinsPrevious,
+});
 const page = (id: string, marker: PageMarker) => ({ id, marker });
 
 describe('planPageGroups', () => {

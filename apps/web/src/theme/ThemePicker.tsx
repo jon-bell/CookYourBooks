@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useTheme, type ThemePref } from './ThemeProvider.js';
+
+import { type ThemePref, useTheme } from './ThemeProvider.js';
 
 // Inline SVGs so we don't pull in an icon library for three glyphs.
 // Each is a 1.25rem (h-5 w-5) outline icon styled via currentColor.
@@ -91,9 +92,12 @@ export function ThemePicker() {
     };
   }, [open]);
 
-  useEffect(() => () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
 
   function pick(p: ThemePref) {
     setPref(p);

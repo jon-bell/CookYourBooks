@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
+import { AcceptTosGate } from '../household/AcceptTosGate.js';
+import { isTosNotAcceptedError } from '../household/api.js';
+import { AuditLogSection } from '../household/AuditLogSection.js';
+import { HouseholdOcrSection } from '../household/HouseholdOcrSection.js';
+import { LibrarySharingSection } from '../household/LibrarySharingSection.js';
 import {
   useCreateHousehold,
   useDeleteHousehold,
@@ -14,11 +20,6 @@ import {
   useRevokeHouseholdInvite,
   useTransferHouseholdOwnership,
 } from '../household/queries.js';
-import { AcceptTosGate } from '../household/AcceptTosGate.js';
-import { AuditLogSection } from '../household/AuditLogSection.js';
-import { LibrarySharingSection } from '../household/LibrarySharingSection.js';
-import { HouseholdOcrSection } from '../household/HouseholdOcrSection.js';
-import { isTosNotAcceptedError } from '../household/api.js';
 
 /**
  * Household membership + settings page.
@@ -41,12 +42,16 @@ export function HouseholdPage() {
   if (!user) {
     return (
       <p className="text-stone-600 dark:text-stone-400">
-        <Link to="/sign-in" className="underline">Sign in</Link> to manage your household.
+        <Link to="/sign-in" className="underline">
+          Sign in
+        </Link>{' '}
+        to manage your household.
       </p>
     );
   }
-  if (my.isLoading) return <LoadingState surface="household" hints={['Fetching household from the server…']} />;
-  if (my.error) return <p className="text-red-700 dark:text-red-300">{(my.error as Error).message}</p>;
+  if (my.isLoading)
+    return <LoadingState surface="household" hints={['Fetching household from the server…']} />;
+  if (my.error) return <p className="text-red-700 dark:text-red-300">{my.error.message}</p>;
 
   const data = my.data;
   if (!data) {
@@ -128,22 +133,28 @@ function NoHouseholdView({
   return (
     <section aria-labelledby="household-empty-title" className="space-y-4">
       <header>
-        <h1 id="household-empty-title" className="text-2xl font-semibold">Household sharing</h1>
+        <h1 id="household-empty-title" className="text-2xl font-semibold">
+          Household sharing
+        </h1>
         <p className="mt-1 text-stone-600 dark:text-stone-400">
           Create a household to share recipe collections with up to 6 family members. Members see
           each other's shared collections in their own library — content stays inside the household.
         </p>
         <p className="mt-2 text-sm text-stone-600 dark:text-stone-400">
-          <Link to="/legal/aup" className="underline">Acceptable Use Policy</Link>
+          <Link to="/legal/aup" className="underline">
+            Acceptable Use Policy
+          </Link>
           {' · '}
-          <Link to="/legal/terms" className="underline">Terms of Service</Link>
+          <Link to="/legal/terms" className="underline">
+            Terms of Service
+          </Link>
         </p>
       </header>
 
       {cooldownActive && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-          You recently left or were removed from a household. You can create or join one again
-          after <strong>{cooldownUntil!.toLocaleString()}</strong>.
+          You recently left or were removed from a household. You can create or join one again after{' '}
+          <strong>{cooldownUntil.toLocaleString()}</strong>.
         </div>
       )}
 
@@ -173,8 +184,8 @@ function NoHouseholdView({
 
 // ---------- Member-of-household view ----------
 
-import type { Household, HouseholdMemberWithProfile, HouseholdRole } from '../household/api.js';
 import { LoadingState } from '../components/LoadingState.js';
+import type { Household, HouseholdMemberWithProfile, HouseholdRole } from '../household/api.js';
 
 function HouseholdView({
   household,
@@ -335,8 +346,8 @@ function HouseholdView({
         <div>
           <h2 className="text-lg font-semibold">Invites</h2>
           <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-            Send the link to someone you want to share your collections with. Invites expire after
-            7 days and can only be used once.
+            Send the link to someone you want to share your collections with. Invites expire after 7
+            days and can only be used once.
           </p>
           <button
             onClick={async () => {
@@ -368,10 +379,10 @@ function HouseholdView({
                 const status = inv.used_at
                   ? 'Used'
                   : inv.revoked_at
-                  ? 'Revoked'
-                  : expired
-                  ? 'Expired'
-                  : 'Pending';
+                    ? 'Revoked'
+                    : expired
+                      ? 'Expired'
+                      : 'Pending';
                 return (
                   <li key={inv.id} className="flex items-center justify-between px-3 py-2">
                     <span>
@@ -422,15 +433,11 @@ function HouseholdView({
         ) : (
           <button
             onClick={() =>
-              confirm('Leave this household? You\'ll have a 7-day cooldown before rejoining.') &&
+              confirm("Leave this household? You'll have a 7-day cooldown before rejoining.") &&
               void run(() => leave.mutateAsync())
             }
             disabled={isOwner && otherActive.length > 0}
-            title={
-              isOwner && otherActive.length > 0
-                ? 'Transfer ownership first'
-                : undefined
-            }
+            title={isOwner && otherActive.length > 0 ? 'Transfer ownership first' : undefined}
             className="rounded-md px-3 py-1.5 text-sm text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-60"
           >
             Leave household

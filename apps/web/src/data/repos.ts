@@ -1,4 +1,5 @@
 import type { Recipe, RecipeCollection } from '@cookyourbooks/domain';
+
 import {
   LocalCollectionNoteRepository,
   LocalCookingEventRepository,

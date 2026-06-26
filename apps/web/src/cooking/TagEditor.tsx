@@ -1,6 +1,7 @@
+import { normalizeLabel } from '@cookyourbooks/domain';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { normalizeLabel } from '@cookyourbooks/domain';
+
 import { useAddRecipeTag, useAllTags, useRecipeTags, useRemoveRecipeTag } from './queries.js';
 
 /**
@@ -19,9 +20,7 @@ export function TagEditor({ recipeId }: { recipeId: string }) {
   const suggestions = useMemo(() => {
     const typed = normalizeLabel(input);
     if (!typed) return [];
-    return allLabels
-      .filter((l) => l.includes(typed) && !tags.includes(l))
-      .slice(0, 6);
+    return allLabels.filter((l) => l.includes(typed) && !tags.includes(l)).slice(0, 6);
   }, [input, allLabels, tags]);
 
   function commit(label: string) {

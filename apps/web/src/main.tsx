@@ -1,21 +1,18 @@
+import './styles.css';
+
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import {
-  QueryClient,
-  QueryClientProvider,
-  QueryCache,
-  MutationCache,
-} from '@tanstack/react-query';
+
 import { App } from './App.js';
 import { AuthProvider } from './auth/AuthProvider.js';
-import { SyncProvider } from './local/SyncProvider.js';
-import { SchemaUpgradeOverlay } from './components/SchemaUpgradeOverlay.js';
 import { FirstSyncOverlay } from './components/FirstSyncOverlay.js';
-import { ThemeProvider } from './theme/ThemeProvider.js';
+import { SchemaUpgradeOverlay } from './components/SchemaUpgradeOverlay.js';
 import { ToastProvider } from './components/ToastProvider.js';
+import { SyncProvider } from './local/SyncProvider.js';
 import { initSentry, reportError, Sentry } from './sentry.js';
-import './styles.css';
+import { ThemeProvider } from './theme/ThemeProvider.js';
 
 // Initialize before React renders so the first paint / route load is
 // already instrumented; the Sentry ErrorBoundary below is what catches
@@ -37,18 +34,20 @@ const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (err, query) => {
       if (isExpectedFailure(err)) return;
+      const key = query.queryKey?.[0];
       reportError(err, {
         operation: 'query',
-        tags: { query_key: String(query.queryKey?.[0] ?? 'unknown') },
+        tags: { query_key: typeof key === 'string' ? key : 'unknown' },
       });
     },
   }),
   mutationCache: new MutationCache({
     onError: (err, _vars, _ctx, mutation) => {
       if (isExpectedFailure(err)) return;
+      const key = mutation.options.mutationKey?.[0];
       reportError(err, {
         operation: 'mutation',
-        tags: { mutation_key: String(mutation.options.mutationKey?.[0] ?? 'unknown') },
+        tags: { mutation_key: typeof key === 'string' ? key : 'unknown' },
       });
     },
   }),
@@ -63,7 +62,7 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Sentry.ErrorBoundary
-      fallback={({ resetError }) => (
+      fallback={(errorData) => (
         <div
           role="alert"
           style={{
@@ -74,18 +73,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             lineHeight: 1.5,
           }}
         >
-          <h1 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>
-            Something went wrong
-          </h1>
+          <h1 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Something went wrong</h1>
           <p>
-            The error has been reported. You can reload to keep going — your
-            local data is intact.
+            The error has been reported. You can reload to keep going — your local data is intact.
           </p>
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
             <button
               type="button"
               onClick={() => {
-                resetError();
+                errorData.resetError();
                 location.reload();
               }}
               style={{

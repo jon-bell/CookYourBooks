@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useTransferEvents, useTransferSummary } from '../datausage/queries.js';
+import { LoadingState } from '../components/LoadingState.js';
 import type { TransferEventRow, TransferGroupBy } from '../datausage/api.js';
 import {
   directionLabel,
@@ -10,7 +11,7 @@ import {
   formatDuration,
   phaseLabel,
 } from '../datausage/format.js';
-import { LoadingState } from '../components/LoadingState.js';
+import { useTransferEvents, useTransferSummary } from '../datausage/queries.js';
 
 type RangeKey = '7d' | '30d' | 'all';
 
@@ -113,9 +114,7 @@ export function DataUsagePage() {
         />
       </div>
 
-      {summary.error && (
-        <p className="text-red-700 dark:text-red-300">{(summary.error as Error).message}</p>
-      )}
+      {summary.error && <p className="text-red-700 dark:text-red-300">{summary.error.message}</p>}
 
       {/* Totals */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -132,16 +131,23 @@ export function DataUsagePage() {
         </h2>
         {summary.isLoading ? (
           <div className="mt-2">
-            <LoadingState surface="data-usage-summary" hints={['Fetching the usage report from the server…']} />
+            <LoadingState
+              surface="data-usage-summary"
+              hints={['Fetching the usage report from the server…']}
+            />
           </div>
         ) : (summary.data ?? []).length === 0 ? (
-          <p className="mt-2 text-stone-500 dark:text-stone-400">No sync activity in this period.</p>
+          <p className="mt-2 text-stone-500 dark:text-stone-400">
+            No sync activity in this period.
+          </p>
         ) : (
           <div className="mt-2 overflow-x-auto rounded-md border border-stone-200 dark:border-stone-700">
             <table className="w-full text-sm">
               <thead className="bg-stone-50 dark:bg-stone-800 text-left text-xs uppercase text-stone-500 dark:text-stone-400">
                 <tr>
-                  <th className="px-3 py-2 font-medium">{GROUPS.find((g) => g.key === groupBy)?.label}</th>
+                  <th className="px-3 py-2 font-medium">
+                    {GROUPS.find((g) => g.key === groupBy)?.label}
+                  </th>
                   <th className="px-3 py-2 text-right font-medium">Data</th>
                   <th className="px-3 py-2 text-right font-medium">Rows</th>
                   <th className="px-3 py-2 text-right font-medium">Requests</th>
@@ -154,8 +160,12 @@ export function DataUsagePage() {
                   .map((r, i) => (
                     <tr key={`${r.bucket}-${i}`}>
                       <td className="px-3 py-2">{bucketLabel(r.bucket)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatBytes(num(r.bytes))}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatCount(num(r.rows))}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatBytes(num(r.bytes))}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {formatCount(num(r.rows))}
+                      </td>
                       <td className="px-3 py-2 text-right tabular-nums">
                         {formatCount(num(r.requests))}
                       </td>
@@ -174,11 +184,14 @@ export function DataUsagePage() {
       <div>
         <h2 className="text-lg font-semibold">Recent transfers</h2>
         {events.error && (
-          <p className="mt-2 text-red-700 dark:text-red-300">{(events.error as Error).message}</p>
+          <p className="mt-2 text-red-700 dark:text-red-300">{events.error.message}</p>
         )}
         {events.isLoading ? (
           <div className="mt-2">
-            <LoadingState surface="data-usage-events" hints={['Fetching the usage report from the server…']} />
+            <LoadingState
+              surface="data-usage-events"
+              hints={['Fetching the usage report from the server…']}
+            />
           </div>
         ) : (events.data ?? []).length === 0 ? (
           <p className="mt-2 text-stone-500 dark:text-stone-400" data-testid="data-usage-empty">

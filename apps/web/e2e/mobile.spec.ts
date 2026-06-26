@@ -1,16 +1,16 @@
-import { test, expect, signIn } from './support/fixtures.js';
-import { IPHONE_17_USE } from './support/viewport.js';
-import { expectNoHorizontalOverflow } from './support/layout.js';
-import { createRecipeViaUi } from './support/helpers.js';
 import { seedUserLibrary } from './support/admin.js';
+import { expect, signIn, test } from './support/fixtures.js';
+import { createRecipeViaUi } from './support/helpers.js';
 import {
-  installScanShim,
-  seedOcrFixture,
   configureOcrKey,
+  installScanShim,
   pumpWorker,
+  seedOcrFixture,
   waitForBatchItemCount,
   waitForItemStatuses,
 } from './support/imports.js';
+import { expectNoHorizontalOverflow } from './support/layout.js';
+import { IPHONE_17_USE } from './support/viewport.js';
 
 // A recipe title long enough to overflow a 402px row if it didn't wrap.
 const LONG_TITLE =
@@ -42,9 +42,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
     await expectNoHorizontalOverflow(dialog);
   });
 
-  test('long recipe titles wrap instead of overflowing the list', async ({
-    authedPage: page,
-  }) => {
+  test('long recipe titles wrap instead of overflowing the list', async ({ authedPage: page }) => {
     await createRecipeViaUi(page, {
       collectionTitle: 'Mobile Ragu Book',
       recipeTitle: LONG_TITLE,
@@ -53,7 +51,10 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
     });
     // Back to the collection page, which renders the recipe list.
     await page.goto('/library');
-    await page.getByRole('link', { name: /Mobile Ragu Book/ }).first().click();
+    await page
+      .getByRole('link', { name: /Mobile Ragu Book/ })
+      .first()
+      .click();
     await expect(page.getByRole('heading', { name: 'Mobile Ragu Book' })).toBeVisible();
 
     // The full title stays in the DOM (line-clamp only clips the paint)…
@@ -144,9 +145,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
     await page.getByTestId('text-size-increase').click();
     await page.getByTestId('text-size-increase').click();
     await expect
-      .poll(() =>
-        page.evaluate(() => localStorage.getItem('cookyourbooks.recipeTextScale.v1')),
-      )
+      .poll(() => page.evaluate(() => localStorage.getItem('cookyourbooks.recipeTextScale.v1')))
       .toBe('1.2');
     await expect(grid).toBeVisible();
     await expectNoHorizontalOverflow(page);
@@ -159,9 +158,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
     ).toBe('1.2');
   });
 
-  test('scan pages creates a batch and OCRs every captured page', async ({
-    authedPage: page,
-  }) => {
+  test('scan pages creates a batch and OCRs every captured page', async ({ authedPage: page }) => {
     await configureOcrKey(page, 'gemini');
     // Bypass the live camera with two canned page images.
     await installScanShim(page, ['page1.png', 'page2.png']);

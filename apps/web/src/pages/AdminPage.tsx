@@ -1,21 +1,22 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
 import {
   banUser,
+  type CollectionTarget,
   dismissReport,
   fetchCollectionTarget,
   listModerationActions,
   listReports,
+  type Report,
+  type ReportStatus,
   republishCollection,
   unbanUser,
   unpublishCollection,
-  type CollectionTarget,
-  type Report,
-  type ReportStatus,
 } from '../moderation/api.js';
-import { ReasonDialog } from '../moderation/ReasonDialog.js';
-import { AdminTabs, RequireAdmin } from '../admin/RequireAdmin.js';
 import { GlobalConversionsAdmin } from '../moderation/GlobalConversionsAdmin.js';
+import { ReasonDialog } from '../moderation/ReasonDialog.js';
 
 type PendingAction =
   | { kind: 'unpublish'; collectionId: string }
@@ -108,7 +109,8 @@ function ReportList({ status, showDismissed }: { status: ReportStatus; showDismi
 
   if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading reports…</p>;
   if (error) return <p className="text-red-700 dark:text-red-300">{error.message}</p>;
-  if (reports.length === 0) return <p className="text-stone-600 dark:text-stone-400">Nothing to review.</p>;
+  if (reports.length === 0)
+    return <p className="text-stone-600 dark:text-stone-400">Nothing to review.</p>;
 
   return (
     <ul className="space-y-3">
@@ -130,7 +132,9 @@ function ReportCard({ report }: { report: Report }) {
   return (
     <li className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
       <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
-        <span className="rounded bg-stone-100 dark:bg-stone-800 px-2 py-0.5 font-medium">{report.reason}</span>
+        <span className="rounded bg-stone-100 dark:bg-stone-800 px-2 py-0.5 font-medium">
+          {report.reason}
+        </span>
         <span>{new Date(report.created_at).toLocaleString()}</span>
         <span>· target {report.target_type.toLowerCase()}</span>
         <span
@@ -146,14 +150,13 @@ function ReportCard({ report }: { report: Report }) {
         </span>
       </div>
       {report.message && (
-        <p className="mt-2 text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap">{report.message}</p>
+        <p className="mt-2 text-sm text-stone-700 dark:text-stone-300 whitespace-pre-wrap">
+          {report.message}
+        </p>
       )}
       {report.target_type === 'COLLECTION' && <CollectionTargetCard targetId={report.target_id} />}
       {report.status === 'OPEN' && (
-        <ReportActions
-          report={report}
-          onAction={() => invalidateReports()}
-        />
+        <ReportActions report={report} onAction={() => invalidateReports()} />
       )}
     </li>
   );
@@ -164,9 +167,13 @@ function CollectionTargetCard({ targetId }: { targetId: string }) {
     queryKey: ['moderation-target', 'COLLECTION', targetId],
     queryFn: () => fetchCollectionTarget(targetId),
   });
-  if (isLoading) return <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">Loading target…</p>;
-  if (error) return <p className="mt-3 text-xs text-red-700 dark:text-red-300">{(error as Error).message}</p>;
-  if (!data) return <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">Target no longer exists.</p>;
+  if (isLoading)
+    return <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">Loading target…</p>;
+  if (error) return <p className="mt-3 text-xs text-red-700 dark:text-red-300">{error.message}</p>;
+  if (!data)
+    return (
+      <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">Target no longer exists.</p>
+    );
   return (
     <div className="mt-3 rounded border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 p-3 text-sm">
       <div className="font-medium">{data.title}</div>
@@ -296,16 +303,16 @@ function ModerationLog() {
   async function confirm(reason: string) {
     if (!pending) return;
     if (pending.kind === 'unban') await unbanUser(pending.userId, reason);
-    else if (pending.kind === 'republish')
-      await republishCollection(pending.collectionId, reason);
+    else if (pending.kind === 'republish') await republishCollection(pending.collectionId, reason);
     setPending(null);
     qc.invalidateQueries({ queryKey: ['moderation-actions'] });
     qc.invalidateQueries({ queryKey: ['public-collections'] });
   }
 
   if (isLoading) return <p className="text-stone-500 dark:text-stone-400">Loading log…</p>;
-  if (error) return <p className="text-red-700 dark:text-red-300">{(error as Error).message}</p>;
-  if ((data ?? []).length === 0) return <p className="text-stone-600 dark:text-stone-400">No moderation actions yet.</p>;
+  if (error) return <p className="text-red-700 dark:text-red-300">{error.message}</p>;
+  if ((data ?? []).length === 0)
+    return <p className="text-stone-600 dark:text-stone-400">No moderation actions yet.</p>;
 
   return (
     <ul className="space-y-2">
@@ -314,7 +321,9 @@ function ModerationLog() {
           key={a.id}
           className="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-4 py-2 text-sm"
         >
-          <span className="rounded bg-stone-100 dark:bg-stone-800 px-2 py-0.5 font-mono text-xs">{a.action}</span>
+          <span className="rounded bg-stone-100 dark:bg-stone-800 px-2 py-0.5 font-mono text-xs">
+            {a.action}
+          </span>
           <span className="text-stone-600 dark:text-stone-400">
             {a.target_type} · <code className="font-mono text-xs">{a.target_id.slice(0, 8)}</code>
           </span>

@@ -1,20 +1,21 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
 import { CoverImage } from '../../components/CoverImage.js';
+import { LoadingState } from '../../components/LoadingState.js';
 import {
   fetchFromOpenLibrary,
   getCookbook,
-  listTocEntries,
-  replaceTocEntries,
-  updateCookbook,
-  uploadCoverFile,
   type GlobalCookbook,
   type GlobalTocEntry,
+  listTocEntries,
+  replaceTocEntries,
   type TocEntryDraft,
+  updateCookbook,
+  uploadCoverFile,
 } from './api.js';
 import { normalizeIsbn } from './openLibrary.js';
-import { LoadingState } from '../../components/LoadingState.js';
 
 interface FormState {
   isbn: string;
@@ -42,14 +43,18 @@ export function GlobalCookbookEditor() {
   const { cookbookId } = useParams<{ cookbookId: string }>();
   const qc = useQueryClient();
 
-  const { data: cookbook, isLoading, error } = useQuery({
+  const {
+    data: cookbook,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['global-cookbook', cookbookId],
     queryFn: () => getCookbook(cookbookId!),
     enabled: !!cookbookId,
   });
 
   if (isLoading) return <LoadingState surface="admin-toc-editor" />;
-  if (error) return <p className="text-red-700">{(error as Error).message}</p>;
+  if (error) return <p className="text-red-700">{error.message}</p>;
   if (!cookbook) {
     return (
       <div className="space-y-2">
@@ -69,13 +74,7 @@ export function GlobalCookbookEditor() {
   );
 }
 
-function CookbookForm({
-  cookbook,
-  onSaved,
-}: {
-  cookbook: GlobalCookbook;
-  onSaved: () => void;
-}) {
+function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved: () => void }) {
   const qc = useQueryClient();
   const [form, setForm] = useState<FormState>(() => toForm(cookbook));
   const [olStatus, setOlStatus] = useState<string | null>(null);
@@ -93,9 +92,7 @@ function CookbookForm({
         isbn: form.isbn || null,
         author: form.author,
         publisher: form.publisher,
-        publication_year: form.publication_year
-          ? Number.parseInt(form.publication_year, 10)
-          : null,
+        publication_year: form.publication_year ? Number.parseInt(form.publication_year, 10) : null,
         cover_image_path: form.cover_image_path || null,
         notes: form.notes,
       }),
@@ -119,8 +116,7 @@ function CookbookForm({
         title: result.metadata?.title || prev.title,
         author: result.metadata?.author || prev.author,
         publisher: result.metadata?.publisher || prev.publisher,
-        publication_year:
-          result.metadata?.publicationYear?.toString() || prev.publication_year,
+        publication_year: result.metadata?.publicationYear?.toString() || prev.publication_year,
         cover_image_path: result.coverImagePath ?? prev.cover_image_path,
       }));
       const bits: string[] = [];
@@ -132,7 +128,7 @@ function CookbookForm({
           : `Populated from Open Library: ${bits.join(' + ')}. Click Save to keep it.`,
       );
     },
-    onError: (err) => setOlStatus((err as Error).message),
+    onError: (err) => setOlStatus(err.message),
   });
 
   return (
@@ -145,9 +141,9 @@ function CookbookForm({
 
       {cookbook.shared_from_collection_id && (
         <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/40 px-3 py-2 text-xs text-sky-900 dark:text-sky-100">
-          Linked to a user's library cookbook. Edits to the title, author, publisher, year,
-          ISBN, or cover propagate back to that source row on save. (Recipe titles don't sync —
-          those stay user-curated.)
+          Linked to a user's library cookbook. Edits to the title, author, publisher, year, ISBN, or
+          cover propagate back to that source row on save. (Recipe titles don't sync — those stay
+          user-curated.)
         </div>
       )}
 
@@ -240,9 +236,7 @@ function CookbookForm({
           {save.isPending ? 'Saving…' : 'Save cookbook'}
         </button>
         {save.error && (
-          <span className="self-center text-sm text-red-700">
-            {(save.error as Error).message}
-          </span>
+          <span className="self-center text-sm text-red-700">{save.error.message}</span>
         )}
       </div>
 
@@ -282,7 +276,11 @@ function rowsFrom(entries: GlobalTocEntry[]): DraftRow[] {
 
 function TocEditor({ cookbookId }: { cookbookId: string }) {
   const qc = useQueryClient();
-  const { data: entries, isLoading, error } = useQuery({
+  const {
+    data: entries,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['global-toc-entries', cookbookId],
     queryFn: () => listTocEntries(cookbookId),
   });
@@ -340,7 +338,7 @@ function TocEditor({ cookbookId }: { cookbookId: string }) {
   const nonEmpty = useMemo(() => rows.filter((r) => r.title.trim() !== '').length, [rows]);
 
   if (isLoading) return <p className="text-stone-500">Loading table of contents…</p>;
-  if (error) return <p className="text-red-700">{(error as Error).message}</p>;
+  if (error) return <p className="text-red-700">{error.message}</p>;
 
   return (
     <section className="space-y-3">
@@ -409,9 +407,7 @@ function TocEditor({ cookbookId }: { cookbookId: string }) {
           {save.isPending ? 'Saving…' : 'Save table of contents'}
         </button>
         {save.error && (
-          <span className="self-center text-sm text-red-700">
-            {(save.error as Error).message}
-          </span>
+          <span className="self-center text-sm text-red-700">{save.error.message}</span>
         )}
       </div>
     </section>
@@ -456,7 +452,7 @@ function CoverDropZone({
       onUploaded(path);
       setError(null);
     },
-    onError: (err) => setError((err as Error).message),
+    onError: (err) => setError(err.message),
   });
 
   function onPaste(e: React.ClipboardEvent) {

@@ -1,6 +1,6 @@
-import { test, expect, signIn } from './support/fixtures.js';
 import { createTestUser } from './support/admin.js';
 import { SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, signIn, test } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 /**
@@ -144,9 +144,7 @@ test.describe('Recipe nutrition panel', () => {
     }
   });
 
-  test('per-ingredient breakdown lists every measured row with a match', async ({
-    page,
-  }) => {
+  test('per-ingredient breakdown lists every measured row with a match', async ({ page }) => {
     const u = await createTestUser('nutrition-rows');
     try {
       await seedNutrition({

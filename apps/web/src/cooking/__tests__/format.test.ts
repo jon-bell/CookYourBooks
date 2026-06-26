@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { occasionLabel, relativeTime, summarizeAdjustment } from '../format.js';
 import type { RecipeAdjustment } from '@cookyourbooks/domain';
+import { describe, expect, it } from 'vitest';
+
+import { occasionLabel, relativeTime, summarizeAdjustment } from '../format.js';
 
 describe('summarizeAdjustment', () => {
   it('summarizes each adjustment kind', () => {
@@ -12,10 +13,19 @@ describe('summarizeAdjustment', () => {
       [{ type: 'INGREDIENT_OMIT', ingredientId: 'i', fromName: 'salt' }, 'Left out salt'],
       [{ type: 'INGREDIENT_ADD', toText: 'chili flakes' }, 'Added chili flakes'],
       [
-        { type: 'INSTRUCTION_SWAP', instructionId: 's', stepNumber: 2, fromText: 'x', toText: 'baked it' },
+        {
+          type: 'INSTRUCTION_SWAP',
+          instructionId: 's',
+          stepNumber: 2,
+          fromText: 'x',
+          toText: 'baked it',
+        },
         'Step 2: did "baked it" instead',
       ],
-      [{ type: 'INSTRUCTION_SKIP', instructionId: 's', stepNumber: 4, fromText: 'rest' }, 'Skipped step 4'],
+      [
+        { type: 'INSTRUCTION_SKIP', instructionId: 's', stepNumber: 4, fromText: 'rest' },
+        'Skipped step 4',
+      ],
     ];
     for (const [adj, expected] of cases) {
       expect(summarizeAdjustment(adj)).toBe(expected);

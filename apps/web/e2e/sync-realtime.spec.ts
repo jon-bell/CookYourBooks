@@ -1,4 +1,4 @@
-import { test, expect, signIn } from './support/fixtures.js';
+import { expect, signIn, test } from './support/fixtures.js';
 
 test.describe('Local-first: realtime propagates across sessions', () => {
   test('a change in one tab appears in another tab for the same user', async ({
@@ -34,7 +34,9 @@ test.describe('Local-first: realtime propagates across sessions', () => {
 
     // The second tab should see the collection flip to public without manual
     // refresh. Allow generous time for realtime delivery.
-    await expect(pageB.locator('li', { hasText: 'Realtime Source' }).getByText('Public')).toBeVisible({
+    await expect(
+      pageB.locator('li', { hasText: 'Realtime Source' }).getByText('Public'),
+    ).toBeVisible({
       timeout: 15_000,
     });
 

@@ -1,4 +1,4 @@
-import { test, expect, waitForSynced } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Cook multiple recipes together', () => {
@@ -52,10 +52,7 @@ test.describe('Cook multiple recipes together', () => {
 
     // Back on a recipe, the entry is now in history (cooked), not upcoming.
     await page.goto('/cooking');
-    await page
-      .getByTestId('calendar-day-detail')
-      .getByRole('link', { name: 'Roast Veg' })
-      .click();
+    await page.getByTestId('calendar-day-detail').getByRole('link', { name: 'Roast Veg' }).click();
     await expect(page.getByTestId('cooking-history').getByText(/History \(1\)/)).toBeVisible();
   });
 });

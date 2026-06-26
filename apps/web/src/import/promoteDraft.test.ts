@@ -1,16 +1,13 @@
-import { describe, it, expect } from 'vitest';
 import {
   instruction,
-  vague,
   type ParsedRecipeDraft,
   type RecipeCollection,
+  vague,
 } from '@cookyourbooks/domain';
-import {
-  buildRecipeFromDraft,
-  isAutoAcceptable,
-  resolveTargetRecipe,
-} from './promoteDraft.js';
+import { describe, expect, it } from 'vitest';
+
 import type { ImportItem } from './model.js';
+import { buildRecipeFromDraft, isAutoAcceptable, resolveTargetRecipe } from './promoteDraft.js';
 
 function makeDraft(over: Partial<ParsedRecipeDraft> = {}): ParsedRecipeDraft {
   return {
@@ -25,10 +22,7 @@ function makeDraft(over: Partial<ParsedRecipeDraft> = {}): ParsedRecipeDraft {
   };
 }
 
-type AcceptItem = Pick<
-  ImportItem,
-  'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'
->;
+type AcceptItem = Pick<ImportItem, 'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'>;
 
 function makeItem(over: Partial<AcceptItem> = {}): AcceptItem {
   return {
@@ -69,14 +63,18 @@ describe('isAutoAcceptable (Conservative bar)', () => {
   });
 
   it('rejects pages with more than one recipe', () => {
-    expect(
-      isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft(), makeDraft()] }), target),
-    ).toBe(false);
+    expect(isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft(), makeDraft()] }), target)).toBe(
+      false,
+    );
   });
 
   it('rejects a missing / blank title', () => {
-    expect(isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft({ title: undefined })] }), target)).toBe(false);
-    expect(isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft({ title: '   ' })] }), target)).toBe(false);
+    expect(
+      isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft({ title: undefined })] }), target),
+    ).toBe(false);
+    expect(
+      isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft({ title: '   ' })] }), target),
+    ).toBe(false);
   });
 
   it('rejects fewer than 3 ingredients', () => {
@@ -85,13 +83,18 @@ describe('isAutoAcceptable (Conservative bar)', () => {
   });
 
   it('rejects fewer than 2 instructions', () => {
-    const d = makeDraft({ instructions: [instruction({ stepNumber: 1, text: 'x', ingredientRefs: [] })] });
+    const d = makeDraft({
+      instructions: [instruction({ stepNumber: 1, text: 'x', ingredientRefs: [] })],
+    });
     expect(isAutoAcceptable(makeItem({ parsedDrafts: [d] }), target)).toBe(false);
   });
 
   it('rejects when the parser left anything unplaced', () => {
     expect(
-      isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft({ leftover: ['??? 1 cup mystery'] })] }), target),
+      isAutoAcceptable(
+        makeItem({ parsedDrafts: [makeDraft({ leftover: ['??? 1 cup mystery'] })] }),
+        target,
+      ),
     ).toBe(false);
   });
 });
@@ -146,17 +149,29 @@ describe('resolveTargetRecipe', () => {
   } as unknown as RecipeCollection;
 
   it('honors a planner pre-binding above any fuzzy match', () => {
-    const out = resolveTargetRecipe(makeDraft({ title: 'Apple Pie' }), { assignedRecipeId: 'r-cake' }, collection);
+    const out = resolveTargetRecipe(
+      makeDraft({ title: 'Apple Pie' }),
+      { assignedRecipeId: 'r-cake' },
+      collection,
+    );
     expect(out.recipeId).toBe('r-cake');
   });
 
   it('fuzzy-matches a near-identical title (OCR casing)', () => {
-    const out = resolveTargetRecipe(makeDraft({ title: 'chocolate cake' }), { assignedRecipeId: null }, collection);
+    const out = resolveTargetRecipe(
+      makeDraft({ title: 'chocolate cake' }),
+      { assignedRecipeId: null },
+      collection,
+    );
     expect(out.recipeId).toBe('r-cake');
   });
 
   it('returns nothing when no recipe is close enough', () => {
-    const out = resolveTargetRecipe(makeDraft({ title: 'Beef Wellington' }), { assignedRecipeId: null }, collection);
+    const out = resolveTargetRecipe(
+      makeDraft({ title: 'Beef Wellington' }),
+      { assignedRecipeId: null },
+      collection,
+    );
     expect(out.recipeId).toBeUndefined();
   });
 

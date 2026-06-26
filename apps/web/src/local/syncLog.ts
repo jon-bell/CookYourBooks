@@ -62,8 +62,8 @@ export function logSync(
 // breakdowns ("pull recipes: 87 rows in Xms") without scraping the
 // diagnostics dialog. Cheap — just a getter — so always on.
 if (typeof window !== 'undefined') {
-  (window as unknown as { __cybSyncLog?: () => readonly SyncLogEntry[] }).__cybSyncLog =
-    () => buffer.slice();
+  (window as unknown as { __cybSyncLog?: () => readonly SyncLogEntry[] }).__cybSyncLog = () =>
+    buffer.slice();
 }
 
 export function getSyncLog(): readonly SyncLogEntry[] {

@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { adaptiveFloor, mergeLiteralAndSemantic } from './semanticSearch.js';
+import { describe, expect, it } from 'vitest';
+
 import type { SearchHit } from './semanticSearch.js';
+import { adaptiveFloor, mergeLiteralAndSemantic } from './semanticSearch.js';
 
 function hit(id: string, score?: number): SearchHit {
   return {

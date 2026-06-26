@@ -38,10 +38,7 @@ export async function lookupOpenLibrary(rawIsbn: string): Promise<OpenLibraryLoo
   const isbn = normalizeIsbn(rawIsbn);
   if (!isbn) throw new Error('Not a valid ISBN-10 or ISBN-13.');
 
-  const [metadata, cover] = await Promise.all([
-    fetchMetadata(isbn),
-    fetchCover(isbn),
-  ]);
+  const [metadata, cover] = await Promise.all([fetchMetadata(isbn), fetchCover(isbn)]);
   return { metadata, cover };
 }
 
@@ -60,8 +57,16 @@ async function fetchMetadata(isbn: string): Promise<OpenLibraryMetadata | null> 
   if (!entry) return null;
   return {
     title: entry.title,
-    author: entry.authors?.map((a) => a.name).filter(Boolean).join(', ') || undefined,
-    publisher: entry.publishers?.map((p) => p.name).filter(Boolean).join(', ') || undefined,
+    author:
+      entry.authors
+        ?.map((a) => a.name)
+        .filter(Boolean)
+        .join(', ') || undefined,
+    publisher:
+      entry.publishers
+        ?.map((p) => p.name)
+        .filter(Boolean)
+        .join(', ') || undefined,
     publicationYear: parsePublicationYear(entry.publish_date),
     coverUrl: entry.cover?.large ?? entry.cover?.medium ?? entry.cover?.small,
   };

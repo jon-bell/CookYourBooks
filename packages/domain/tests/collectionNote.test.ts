@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { createCollectionNote } from '../src/model/collectionNote.js';
 
 describe('createCollectionNote', () => {

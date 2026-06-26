@@ -1,5 +1,3 @@
-import { test, expect } from './support/fixtures.js';
-
 // These tests hit /api/mcp directly via fetch. In CI (production) the
 // edge function reads env vars at runtime; under `vite preview` + the
 // Playwright serve step, there's no serverless runtime, so we
@@ -11,8 +9,8 @@ import { test, expect } from './support/fixtures.js';
 // active `window.__cybSupabase` client scoped to the test user, which
 // means we can mint a CLI token + hit the RPCs directly without
 // re-implementing cookie/session plumbing here.
-
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './support/env.js';
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from './support/env.js';
+import { expect, test } from './support/fixtures.js';
 
 async function mintToken(page: import('@playwright/test').Page): Promise<string> {
   return page.evaluate(async () => {
@@ -20,7 +18,7 @@ async function mintToken(page: import('@playwright/test').Page): Promise<string>
     if (!sb) throw new Error('supabase client not available');
     const { data, error } = await sb.rpc('cli_issue_token', { token_name: 'mcp-e2e' });
     if (error) throw new Error(error.message ?? 'cli_issue_token failed');
-    return data as string;
+    return data;
   });
 }
 
@@ -156,8 +154,6 @@ test.describe('Pantry UI', () => {
     await expect(
       page.getByTestId('pantry-section').getByText('whole milk', { exact: false }),
     ).toBeVisible();
-    await expect(
-      page.getByTestId('pantry-section').getByText('1 gallon'),
-    ).toBeVisible();
+    await expect(page.getByTestId('pantry-section').getByText('1 gallon')).toBeVisible();
   });
 });

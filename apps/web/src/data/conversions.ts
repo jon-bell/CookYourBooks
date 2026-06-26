@@ -1,15 +1,16 @@
-import { useEffect } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   canonicalUnitName,
-  conversionRule,
   type ConversionRule,
+  conversionRule,
   type ConversionRulePriority,
 } from '@cookyourbooks/domain';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { getLocalDb } from '../local/db.js';
 import { enqueue } from '../local/outbox.js';
+import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { supabase } from '../supabase.js';
 
 // ---------- Types ----------
@@ -48,7 +49,7 @@ interface LocalRow {
 
 async function listHouseRulesLocal(ownerId: string): Promise<HouseConversionRule[]> {
   const db = await getLocalDb();
-  const rows = (await db.execO<LocalRow>(
+  const rows = await db.execO<LocalRow>(
     `select id, owner_id, from_unit, to_unit, factor, ingredient_name, notes, deleted
        from conversion_rules
       where owner_id = ?
@@ -56,7 +57,7 @@ async function listHouseRulesLocal(ownerId: string): Promise<HouseConversionRule
         and priority = 'HOUSE'
       order by coalesce(ingredient_name, '') asc, from_unit asc, to_unit asc`,
     [ownerId],
-  )) as LocalRow[];
+  );
   return rows.map((r) => ({
     id: r.id,
     ownerId: r.owner_id,
@@ -144,9 +145,7 @@ export function useUpsertHouseConversionRule() {
         fromUnit: input.fromUnit.toLowerCase(),
         toUnit: input.toUnit.toLowerCase(),
         factor: input.factor,
-        ingredientName: input.ingredientName
-          ? input.ingredientName.trim().toLowerCase()
-          : null,
+        ingredientName: input.ingredientName ? input.ingredientName.trim().toLowerCase() : null,
         notes: input.notes && input.notes.trim() !== '' ? input.notes.trim() : null,
       };
       await writeHouseRuleLocal(rule);
@@ -210,13 +209,9 @@ export function useGlobalConversionRules() {
   useEffect(() => {
     const channel = supabase
       .channel('global_conversions:invalidate')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'global_conversions' },
-        () => {
-          void qc.invalidateQueries({ queryKey: ['conversion-rules', 'global'] });
-        },
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'global_conversions' }, () => {
+        void qc.invalidateQueries({ queryKey: ['conversion-rules', 'global'] });
+      })
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -244,7 +239,7 @@ export async function upsertGlobalConversion(input: {
     p_notes: input.notes ?? undefined,
   });
   if (error) throw error;
-  return data as string;
+  return data;
 }
 
 export async function deleteGlobalConversion(id: string): Promise<void> {

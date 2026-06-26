@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { useLocation, useNavigationType } from 'react-router-dom';
+import { NavigationType, useLocation, useNavigationType } from 'react-router-dom';
 
 const STORE_KEY = 'cookyourbooks.scroll.v1';
 const MAX_ENTRIES = 50;
@@ -94,7 +94,7 @@ export function useScrollRestoration(): void {
     }
     const token = ++restoreToken.current;
 
-    if (navType === 'POP') {
+    if (navType === NavigationType.Pop) {
       const y = read(location.key);
       if (y != null && y > 0) {
         restoreWhenReady(y, token, restoreToken);
@@ -103,15 +103,11 @@ export function useScrollRestoration(): void {
     }
     // PUSH → a brand-new page starts at the top. REPLACE keeps the position
     // (it's the same logical page — e.g. a canonical-redirect or tab swap).
-    if (navType !== 'REPLACE') window.scrollTo(0, 0);
+    if (navType !== NavigationType.Replace) window.scrollTo(0, 0);
   }, [location.key, navType]);
 }
 
-function restoreWhenReady(
-  y: number,
-  token: number,
-  restoreToken: { current: number },
-): void {
+function restoreWhenReady(y: number, token: number, restoreToken: { current: number }): void {
   const start = performance.now();
   const cancel = () => {
     restoreToken.current += 1;

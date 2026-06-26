@@ -1,7 +1,8 @@
 import type {
-  CollectionRow,
   CollectionNoteRow,
+  CollectionRow,
   CookingEventRow,
+  Database,
   IngredientRow,
   InstructionRefRow,
   InstructionRow,
@@ -9,48 +10,47 @@ import type {
   RecipeRow,
   RecipeTagRow,
 } from '@cookyourbooks/db';
+import { decode as msgpackDecode } from '@msgpack/msgpack';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@cookyourbooks/db';
+
+import { claimsFromSession } from '../auth/claims.js';
+import { reportError } from '../sentry.js';
 import { getLocalDb } from './db.js';
 import {
+  listPending,
+  locallyDeletedIds,
+  markDone,
+  markFailed,
+  type OutboxEntry,
+  type OutboxKind,
+  pruneDeleteTombstones,
+} from './outbox.js';
+import {
+  bulkInsertIgnoreId,
+  bulkInsertOnConflictId,
+  deleteLocalEmbedding,
+  filterFresherIncoming,
+  getLocalEmbedding,
+  type LocalEmbeddingRow,
+  PULL_CRR_BODY_TABLES,
+  PULL_CRR_TABLES,
   purgeCollection,
   purgeRecipe,
+  type RecipeBatchEntry,
+  recipeBatchRowCount,
+  upsertCollectionNoteRow,
   upsertCollectionRow,
   upsertCollectionsBatch,
   upsertCookingEventRow,
-  upsertRecipeTagRow,
-  upsertCollectionNoteRow,
-  upsertRecipesBatch,
-  upsertRecipesBatchInner,
-  upsertRecipeRowsOnly,
-  recipeBatchRowCount,
-  PULL_CRR_TABLES,
-  PULL_CRR_BODY_TABLES,
-  withSuppressedCrrTriggers,
-  filterFresherIncoming,
-  bulkInsertOnConflictId,
-  bulkInsertIgnoreId,
-  upsertLocalEmbeddingsBatch,
   upsertLocalEmbedding,
-  deleteLocalEmbedding,
-  getLocalEmbedding,
-  type LocalEmbeddingRow,
-  type RecipeBatchEntry,
+  upsertLocalEmbeddingsBatch,
+  upsertRecipeRowsOnly,
+  upsertRecipesBatchInner,
+  upsertRecipeTagRow,
+  withSuppressedCrrTriggers,
 } from './repositories.js';
-import {
-  listPending,
-  markDone,
-  markFailed,
-  locallyDeletedIds,
-  pruneDeleteTombstones,
-  type OutboxEntry,
-  type OutboxKind,
-} from './outbox.js';
-import { logSync } from './syncLog.js';
-import { reportError } from '../sentry.js';
-import { claimsFromSession } from '../auth/claims.js';
-import { decode as msgpackDecode } from '@msgpack/msgpack';
 import { decodeColumnar, type SnapshotBodies, type SnapshotMeta } from './snapshotCodec.js';
+import { logSync } from './syncLog.js';
 import { meterPhase, meterRows } from './transferMeter.js';
 
 type CookbooksClient = SupabaseClient<Database>;
@@ -69,9 +69,9 @@ export async function getWatermark(topic: string): Promise<number> {
 /** Debug helper: enumerate every sync watermark for the diagnostics panel. */
 export async function listWatermarks(): Promise<{ topic: string; high_water_mark: number }[]> {
   const db = await getLocalDb();
-  return (await db.execO<{ topic: string; high_water_mark: number }>(
+  return await db.execO<{ topic: string; high_water_mark: number }>(
     `select topic, high_water_mark from sync_state order by topic`,
-  )) as { topic: string; high_water_mark: number }[];
+  );
 }
 
 export async function bumpWatermark(topic: string, value: number): Promise<void> {
@@ -212,7 +212,7 @@ async function fetchAllByUpdatedKeyset<T extends { updated_at: string }>(
   let cur = start;
   while (true) {
     const { data, error } = await build(cur);
-    if (error) throw error;
+    if (error) throw new Error(error.message, { cause: error });
     const rows = (data ?? []) as T[];
     out.push(...rows);
     if (rows.length < PAGE_SIZE) break;
@@ -245,7 +245,7 @@ const RECIPE_CHECKPOINT_CHUNK = 250;
 
 interface PageResult {
   data: unknown[] | null;
-  error: unknown;
+  error: { message: string } | null;
 }
 
 /**
@@ -266,7 +266,7 @@ async function fetchAllPages<T>(
   // Page 0 alone: incremental / small pulls are a single short page, so the
   // common case stays exactly one request and never fans out.
   const first = await build(0, PAGE_SIZE - 1);
-  if (first.error) throw first.error;
+  if (first.error) throw new Error(first.error.message, { cause: first.error });
   const firstRows = (first.data ?? []) as T[];
   out.push(...firstRows);
   if (firstRows.length < PAGE_SIZE) return out;
@@ -283,7 +283,7 @@ async function fetchAllPages<T>(
     );
     let reachedEnd = false;
     for (const { data, error } of pages) {
-      if (error) throw error;
+      if (error) throw new Error(error.message, { cause: error });
       const rows = (data ?? []) as T[];
       out.push(...rows);
       if (rows.length < PAGE_SIZE) reachedEnd = true;
@@ -311,7 +311,7 @@ async function fetchAllByIdKeyset<T extends { id: string }>(
   let afterId: string | null = null;
   while (true) {
     const { data, error } = await build(afterId);
-    if (error) throw error;
+    if (error) throw new Error(error.message, { cause: error });
     const rows = (data ?? []) as T[];
     out.push(...rows);
     if (rows.length < PAGE_SIZE) break;
@@ -618,7 +618,9 @@ async function invokeSnapshotStage<T>(
   client: CookbooksClient,
   body: Record<string, unknown>,
 ): Promise<T> {
-  const { data, error } = await client.functions.invoke('library-snapshot', { body });
+  const { data, error } = (await client.functions.invoke<unknown>('library-snapshot', {
+    body,
+  })) as { data: unknown; error: Error | null };
   if (error) throw error;
   let bytes: Uint8Array;
   if (data instanceof Uint8Array) bytes = data;
@@ -2084,7 +2086,7 @@ function decodeVector(raw: number[] | string | null | undefined): Float32Array |
     const trimmed = raw.trim();
     if (trimmed.length === 0) return null;
     try {
-      const parsed = JSON.parse(trimmed);
+      const parsed: unknown = JSON.parse(trimmed);
       if (Array.isArray(parsed)) return Float32Array.from(parsed as number[]);
     } catch {
       // Fall through; pgvector text format is always JSON-array shape,
@@ -3529,10 +3531,10 @@ async function pushImportItemsBulk(client: CookbooksClient, ids: readonly string
   for (let offset = 0; offset < ids.length; offset += IMPORT_ITEM_PUSH_CHUNK) {
     const slice = ids.slice(offset, offset + IMPORT_ITEM_PUSH_CHUNK);
     const placeholders = slice.map(() => '?').join(',');
-    const rows = (await db.execO<Record<string, unknown>>(
+    const rows = await db.execO<Record<string, unknown>>(
       `select * from import_items where id in (${placeholders})`,
-      slice as unknown as string[],
-    )) as Record<string, unknown>[];
+      slice,
+    );
     if (rows.length === 0) continue;
     const payload: ItemInsert[] = rows.map((local) => ({
       id: local.id as string,
@@ -3636,7 +3638,7 @@ async function pushRecipeEmbedding(client: CookbooksClient, recipeId: string): P
   const { error } = await client.rpc('embed_upsert_client', {
     p_recipe_id: recipeId,
     p_text_hash: local.textHash,
-    p_embedding: payload as unknown as number[],
+    p_embedding: payload,
     p_model: local.model,
   });
   if (error) throw error;
@@ -3648,10 +3650,10 @@ async function pushCookingEvent(
   id: string,
 ): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(
+  const rows = await db.execO<Record<string, unknown>>(
     `select * from cooking_events where id = ?`,
     [id],
-  )) as Record<string, unknown>[];
+  );
   const local = rows[0];
   if (!local) return; // locally purged; a delete was queued separately
   if (local.deleted === 1 || local.deleted === true) {
@@ -3687,9 +3689,9 @@ async function pushCookingEvent(
 
 async function pushRecipeTag(client: CookbooksClient, ownerId: string, id: string): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(`select * from recipe_tags where id = ?`, [
+  const rows = await db.execO<Record<string, unknown>>(`select * from recipe_tags where id = ?`, [
     id,
-  ])) as Record<string, unknown>[];
+  ]);
   const local = rows[0];
   if (!local) return;
   type TagInsert = Database['public']['Tables']['recipe_tags']['Insert'];
@@ -3714,10 +3716,10 @@ async function pushCollectionNote(
   id: string,
 ): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(
+  const rows = await db.execO<Record<string, unknown>>(
     `select * from collection_notes where id = ?`,
     [id],
-  )) as Record<string, unknown>[];
+  );
   const local = rows[0];
   if (!local) return;
   type NoteInsert = Database['public']['Tables']['collection_notes']['Insert'];
@@ -3747,10 +3749,10 @@ async function pushCollectionNote(
 
 async function pushImportBatchInsert(client: CookbooksClient, id: string): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(
+  const rows = await db.execO<Record<string, unknown>>(
     `select * from import_batches where id = ?`,
     [id],
-  )) as Record<string, unknown>[];
+  );
   const local = rows[0];
   if (!local) return;
   type BatchInsert = Database['public']['Tables']['import_batches']['Insert'];
@@ -3776,9 +3778,9 @@ async function pushImportBatchInsert(client: CookbooksClient, id: string): Promi
 
 async function pushImportItemInsert(client: CookbooksClient, id: string): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(`select * from import_items where id = ?`, [
+  const rows = await db.execO<Record<string, unknown>>(`select * from import_items where id = ?`, [
     id,
-  ])) as Record<string, unknown>[];
+  ]);
   const local = rows[0];
   if (!local) return;
   type ItemInsert = Database['public']['Tables']['import_items']['Insert'];
@@ -3841,10 +3843,10 @@ export async function pushImportBatchGraph(
 
 async function pushConversionRule(client: CookbooksClient, id: string): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(
+  const rows = await db.execO<Record<string, unknown>>(
     `select * from conversion_rules where id = ?`,
     [id],
-  )) as Record<string, unknown>[];
+  );
   const local = rows[0];
   if (!local) return;
   // The RPC is a true upsert keyed by id: inserts if the row doesn't
@@ -3863,10 +3865,10 @@ async function pushConversionRule(client: CookbooksClient, id: string): Promise<
 
 async function pushImportBatch(client: CookbooksClient, id: string): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(
+  const rows = await db.execO<Record<string, unknown>>(
     `select * from import_batches where id = ?`,
     [id],
-  )) as Record<string, unknown>[];
+  );
   const local = rows[0];
   if (!local) return;
   const payload = {
@@ -3885,9 +3887,9 @@ async function pushImportBatch(client: CookbooksClient, id: string): Promise<voi
 
 async function pushImportItem(client: CookbooksClient, id: string): Promise<void> {
   const db = await getLocalDb();
-  const rows = (await db.execO<Record<string, unknown>>(`select * from import_items where id = ?`, [
+  const rows = await db.execO<Record<string, unknown>>(`select * from import_items where id = ?`, [
     id,
-  ])) as Record<string, unknown>[];
+  ]);
   const local = rows[0];
   if (!local) return;
   const status = local.status as string;
@@ -4038,35 +4040,24 @@ async function loadRecipeForPush(
     db.execO<IngredientRow>(
       `select * from ingredients where recipe_id = ? order by sort_order asc`,
       [id],
-    ) as Promise<IngredientRow[]>,
+    ),
     db.execO<InstructionRow>(
       `select * from instructions where recipe_id = ? order by step_number asc`,
       [id],
-    ) as Promise<InstructionRow[]>,
+    ),
     db.execO<InstructionRefRow>(
       `select r.*
        from instruction_ingredient_refs r
        join instructions i on i.id = r.instruction_id
        where i.recipe_id = ?`,
       [id],
-    ) as Promise<InstructionRefRow[]>,
+    ),
   ]);
 
   // Drop client-only / trigger-owned columns; the RPC injects created_at /
   // updated_at, the server has no `deleted` column, and has_content is owned by
   // the server trigger on ingredients/instructions (20260629000000).
-  const {
-    deleted: _d,
-    created_at: _rc,
-    updated_at: _ru,
-    has_content: _hc,
-    ...recipeRow
-  } = recipe as RecipeRow & {
-    deleted: number;
-    created_at?: unknown;
-    updated_at?: unknown;
-    has_content?: unknown;
-  };
+  const { deleted: _d, created_at: _rc, updated_at: _ru, has_content: _hc, ...recipeRow } = recipe;
   const starredRaw = (recipeRow as { starred?: unknown }).starred;
   const recipePayload: Record<string, unknown> = {
     ...recipeRow,

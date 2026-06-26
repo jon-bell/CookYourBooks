@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+
 import { getBackfillProgress, subscribeBackfill } from '../local/backfill.js';
-import { LoadingOverlay } from './LoadingOverlay.js';
 import { COOKING_FLAVOR_LINES } from './loadingLines.js';
+import { LoadingOverlay } from './LoadingOverlay.js';
 
 /**
  * Shown only while a one-time local backfill is actively running. We

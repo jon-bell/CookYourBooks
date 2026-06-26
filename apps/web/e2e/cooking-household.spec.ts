@@ -1,5 +1,6 @@
-import { test, expect, signIn, waitForSynced } from './support/fixtures.js';
 import { createTestUser } from './support/admin.js';
+import { expect, signIn, test, waitForSynced } from './support/fixtures.js';
+import { createRecipeViaUi } from './support/helpers.js';
 import {
   acceptTosViaService,
   cleanupHouseholdFor,
@@ -7,12 +8,9 @@ import {
   seedHousehold,
   seedMembership,
 } from './support/household.js';
-import { createRecipeViaUi } from './support/helpers.js';
 
 test.describe('Cooking tracker household sharing', () => {
-  test('a co-member sees cooks only while the owner shares their library', async ({
-    browser,
-  }) => {
+  test('a co-member sees cooks only while the owner shares their library', async ({ browser }) => {
     test.setTimeout(120_000);
     const owner = await createTestUser('ck-owner');
     const member = await createTestUser('ck-member');
@@ -42,9 +40,9 @@ test.describe('Cooking tracker household sharing', () => {
       const pageB = await ctxB.newPage();
       await signIn(pageB, member);
       await pageB.goto('/cooking');
-      await expect(
-        pageB.getByTestId('calendar-day-detail').getByText('Shared Stew'),
-      ).toBeVisible({ timeout: 15_000 });
+      await expect(pageB.getByTestId('calendar-day-detail').getByText('Shared Stew')).toBeVisible({
+        timeout: 15_000,
+      });
       await ctxB.close();
 
       // Owner turns library sharing off.
@@ -62,9 +60,9 @@ test.describe('Cooking tracker household sharing', () => {
       await expect(
         pageC.getByTestId('calendar-day-detail').getByText('Nothing cooked or planned'),
       ).toBeVisible({ timeout: 15_000 });
-      await expect(
-        pageC.getByTestId('calendar-day-detail').getByText('Shared Stew'),
-      ).toHaveCount(0);
+      await expect(pageC.getByTestId('calendar-day-detail').getByText('Shared Stew')).toHaveCount(
+        0,
+      );
       await ctxC.close();
     } finally {
       await cleanupHouseholdFor([owner.id, member.id]);
@@ -74,7 +72,7 @@ test.describe('Cooking tracker household sharing', () => {
     }
   });
 
-  test('a non-member cannot see another user\'s cooks', async ({ authedPage: page, browser }) => {
+  test("a non-member cannot see another user's cooks", async ({ authedPage: page, browser }) => {
     test.setTimeout(90_000);
     const stranger = await createTestUser('ck-stranger');
     await acceptTosViaService(stranger.id);

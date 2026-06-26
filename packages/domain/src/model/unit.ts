@@ -87,9 +87,7 @@ export function unitByName(name: string): UnitDef | undefined {
 // quantities so display is consistent regardless of source. Unknown
 // tokens round-trip unchanged (we don't want to destroy data the UI
 // can still render literally).
-const byKey = new Map<string, UnitDef>(
-  Object.entries(Units).map(([k, v]) => [k.toLowerCase(), v]),
-);
+const byKey = new Map<string, UnitDef>(Object.entries(Units).map(([k, v]) => [k.toLowerCase(), v]));
 // "WHOLE" is sometimes emitted by LLMs for countable yields (eggs,
 // loaves). We map it to `piece`, the closest thing in the catalog.
 byKey.set('whole', Units.PIECE);
@@ -99,10 +97,5 @@ export function canonicalUnitName(token: string | null | undefined): string {
   const t = token.trim();
   if (!t) return '';
   const lower = t.toLowerCase();
-  return (
-    byKey.get(lower)?.name ??
-    byName.get(lower)?.name ??
-    byAbbr.get(lower)?.name ??
-    t
-  );
+  return byKey.get(lower)?.name ?? byName.get(lower)?.name ?? byAbbr.get(lower)?.name ?? t;
 }

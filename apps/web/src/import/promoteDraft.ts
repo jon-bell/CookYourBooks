@@ -4,9 +4,10 @@ import {
   type Recipe,
   type RecipeCollection,
 } from '@cookyourbooks/domain';
+
 import { withFreshIds } from './draftToRecipe.js';
-import { scoreTocMatch } from './tocMatch.js';
 import type { ImportItem } from './model.js';
+import { scoreTocMatch } from './tocMatch.js';
 
 /**
  * Shared "draft → real recipe" logic for the bulk OCR flow. Both the
@@ -39,13 +40,9 @@ export interface PromoteContext {
  * (see `withFreshIds`) so a retry — or two drafts that happened to share an
  * id — never trips the global UNIQUE on ingredients.id / instructions.id.
  */
-export function buildRecipeFromDraft(
-  draft: ParsedRecipeDraft,
-  ctx: PromoteContext = {},
-): Recipe {
+export function buildRecipeFromDraft(draft: ParsedRecipeDraft, ctx: PromoteContext = {}): Recipe {
   const { ingredients, instructions } = withFreshIds(draft);
-  const pageNumbers =
-    ctx.pageNumbers ?? (draft.pageNumbers ? [...draft.pageNumbers] : undefined);
+  const pageNumbers = ctx.pageNumbers ?? (draft.pageNumbers ? [...draft.pageNumbers] : undefined);
   return createRecipe({
     id: ctx.recipeId,
     title: draft.title?.trim() || ctx.overwriteTitle || 'Untitled',
@@ -110,10 +107,7 @@ export const AUTO_ACCEPT_MIN_INGREDIENTS = 3;
 export const AUTO_ACCEPT_MIN_INSTRUCTIONS = 2;
 
 export function isAutoAcceptable(
-  item: Pick<
-    ImportItem,
-    'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'
-  >,
+  item: Pick<ImportItem, 'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'>,
   batchTargetCollectionId: string | null,
 ): boolean {
   if (item.status !== 'OCR_DONE') return false;

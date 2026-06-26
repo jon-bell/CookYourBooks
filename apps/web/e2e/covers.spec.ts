@@ -1,6 +1,6 @@
-import { test, expect } from './support/fixtures.js';
-import { SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
 import { adminGet } from './support/admin.js';
+import { SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE, SUPABASE_URL } from './support/env.js';
+import { expect, test } from './support/fixtures.js';
 
 // A valid 16×16 RGBA PNG. Must be a real, decodable image (not a 1×1 stub):
 // the cover upload now decodes + re-encodes client-side, so an undecodable
@@ -92,9 +92,8 @@ test.describe('Cover images', () => {
     const enqueued = await page.evaluate(
       async ({ url, key }) => {
         const session = JSON.parse(
-          localStorage.getItem(
-            Object.keys(localStorage).find((k) => k.startsWith('sb-')) ?? '',
-          ) ?? '{}',
+          localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('sb-')) ?? '') ??
+            '{}',
         );
         const token = session?.access_token as string | undefined;
         const resp = await fetch(`${url}/rest/v1/rpc/cover_jobs_enqueue`, {
@@ -134,18 +133,15 @@ test.describe('Cover images', () => {
             '{}',
         );
         const token = session?.access_token as string | undefined;
-        const resp = await fetch(
-          `${url}/storage/v1/object/covers/${notMyId}/covers/evil.png`,
-          {
-            method: 'POST',
-            headers: {
-              apikey: key,
-              Authorization: `Bearer ${token ?? ''}`,
-              'Content-Type': 'image/png',
-            },
-            body: new Uint8Array([137, 80, 78, 71]),
+        const resp = await fetch(`${url}/storage/v1/object/covers/${notMyId}/covers/evil.png`, {
+          method: 'POST',
+          headers: {
+            apikey: key,
+            Authorization: `Bearer ${token ?? ''}`,
+            'Content-Type': 'image/png',
           },
-        );
+          body: new Uint8Array([137, 80, 78, 71]),
+        });
         return { status: resp.status };
       },
       {

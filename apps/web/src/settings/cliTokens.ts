@@ -14,7 +14,7 @@ export async function listCliTokens(): Promise<CliTokenRow[]> {
     .select('id, name, prefix, created_at, last_used_at')
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return (data ?? []) as CliTokenRow[];
+  return data ?? [];
 }
 
 /**

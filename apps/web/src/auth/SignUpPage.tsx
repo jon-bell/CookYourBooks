@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+
 import { supabase } from '../supabase.js';
 import { AppleLogo } from './AppleLogo.js';
 import { isCapacitorIOS, signInWithAppleNative } from './appleSignIn.js';
@@ -62,7 +63,9 @@ export function SignUpPage() {
       <h1 className="text-2xl font-semibold">Create account</h1>
       <form onSubmit={handleSubmit} className="space-y-4">
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Display name</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+            Display name
+          </span>
           <input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
@@ -70,7 +73,9 @@ export function SignUpPage() {
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Email</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+            Email
+          </span>
           <input
             type="email"
             value={email}
@@ -80,7 +85,9 @@ export function SignUpPage() {
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">Password</span>
+          <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+            Password
+          </span>
           <input
             type="password"
             value={password}
@@ -131,7 +138,11 @@ export function SignUpPage() {
       </button>
       <p className="text-center text-sm text-stone-600 dark:text-stone-400">
         Already have one?{' '}
-        <Link to="/sign-in" state={location.state} className="font-medium text-stone-900 dark:text-stone-100 underline">
+        <Link
+          to="/sign-in"
+          state={location.state as unknown}
+          className="font-medium text-stone-900 dark:text-stone-100 underline"
+        >
           Sign in
         </Link>
       </p>

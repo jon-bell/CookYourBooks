@@ -1,29 +1,29 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
-  DndContext,
-  PointerSensor,
-  KeyboardSensor,
   closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
   useSensor,
   useSensors,
-  type DragEndEvent,
 } from '@dnd-kit/core';
 import {
+  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
-  arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+
 import type { CollectionRecipeSummary } from '../local/repositories.js';
 import { CoverImage } from './CoverImage.js';
-
 // Sort logic lives in recipeSort.ts (pure, no component imports — unit tests
 // use it without pulling the supabase client into the module graph).
 // Re-exported here so existing component-side importers keep working.
-import { sortRecipes, type RecipeSortMode } from './recipeSort.js';
+import { type RecipeSortMode, sortRecipes } from './recipeSort.js';
 export { isRecipeSortMode, sortByLastMade, sortRecipes } from './recipeSort.js';
 export type { RecipeSortMode } from './recipeSort.js';
 
@@ -227,7 +227,9 @@ function RecipeRowBody({
               variant="thumb"
             />
           )}
-          <span className={`line-clamp-2 min-w-0 ${isPlaceholder ? '' : 'font-medium'}`}>{recipe.title}</span>
+          <span className={`line-clamp-2 min-w-0 ${isPlaceholder ? '' : 'font-medium'}`}>
+            {recipe.title}
+          </span>
           {pages && (
             <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">· {pages}</span>
           )}
@@ -238,9 +240,7 @@ function RecipeRowBody({
           )}
         </span>
         <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400 sm:text-sm">
-          {isPlaceholder
-            ? '—'
-            : `${recipe.ingredientCount} ing · ${recipe.instructionCount} steps`}
+          {isPlaceholder ? '—' : `${recipe.ingredientCount} ing · ${recipe.instructionCount} steps`}
         </span>
       </Link>
     </>

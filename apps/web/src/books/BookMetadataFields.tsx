@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+
 import { CoverImage } from '../components/CoverImage.js';
-import { useBookMetadataLookup } from './bookLookup.js';
 import { applyMatch, type BookForm } from './bookForm.js';
-import { scanIsbnFromImage, IsbnScanError } from './scanIsbn.js';
+import { useBookMetadataLookup } from './bookLookup.js';
+import { IsbnScanError, scanIsbnFromImage } from './scanIsbn.js';
 
 // Shared cookbook-metadata fields used by every "add / edit a cookbook"
 // entry point. The ISBN field auto-looks-up against our catalog then Open
@@ -145,7 +146,12 @@ export function BookMetadataFields({
           <button
             type="button"
             onClick={() =>
-              onChange({ ...value, coverImagePath: undefined, coverBlob: null, coverPreviewUrl: undefined })
+              onChange({
+                ...value,
+                coverImagePath: undefined,
+                coverBlob: null,
+                coverPreviewUrl: undefined,
+              })
             }
             className="text-xs text-stone-500 hover:text-red-700 dark:hover:text-red-300"
           >
@@ -160,7 +166,9 @@ export function BookMetadataFields({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">{label}</span>
+      <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -173,9 +181,7 @@ function LookupHint({ lookup }: { lookup: ReturnType<typeof useBookMetadataLooku
   }
   if (!lookup.match) {
     return (
-      <p className="mt-2 text-xs text-stone-500">
-        No match found — fill in the details by hand.
-      </p>
+      <p className="mt-2 text-xs text-stone-500">No match found — fill in the details by hand.</p>
     );
   }
   const m = lookup.match;
@@ -183,7 +189,8 @@ function LookupHint({ lookup }: { lookup: ReturnType<typeof useBookMetadataLooku
   return (
     <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">
       Found “{m.title}”{m.author ? ` · ${m.author}` : ''} via {source}.
-      {m.tocEntries && m.tocEntries.length > 0 &&
+      {m.tocEntries &&
+        m.tocEntries.length > 0 &&
         ` ${m.tocEntries.length} known recipes in the catalog.`}
     </p>
   );

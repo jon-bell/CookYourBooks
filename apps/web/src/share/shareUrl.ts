@@ -10,8 +10,7 @@
  */
 export function absoluteUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path;
-  const origin =
-    typeof window !== 'undefined' && window.location ? window.location.origin : '';
+  const origin = typeof window !== 'undefined' && window.location ? window.location.origin : '';
   const clean = path.startsWith('/') ? path : `/${path}`;
   return `${origin}${clean}`;
 }

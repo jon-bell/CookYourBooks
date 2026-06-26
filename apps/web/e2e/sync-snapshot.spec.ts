@@ -1,9 +1,10 @@
-import { test, expect } from './support/fixtures.js';
+import type { Page } from '@playwright/test';
+
+import type { TestUser } from './support/admin.js';
 import { seedUserLibrary } from './support/admin.js';
 import { userAccessToken } from './support/embeddings.js';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './support/env.js';
-import type { Page } from '@playwright/test';
-import type { TestUser } from './support/admin.js';
+import { expect, test } from './support/fixtures.js';
 
 /**
  * First-load snapshot + /data-usage metrics.

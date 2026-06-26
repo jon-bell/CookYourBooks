@@ -54,9 +54,7 @@ export interface PageGroup {
  * `joinsPrevious` page (no predecessor) becomes its own leader rather than
  * being dropped. `pageIndex` is contiguous across leaders only.
  */
-export function planPageGroups(
-  pages: readonly { id: string; marker: PageMarker }[],
-): PageGroup[] {
+export function planPageGroups(pages: readonly { id: string; marker: PageMarker }[]): PageGroup[] {
   const groups: PageGroup[] = [];
   for (const p of pages) {
     if (p.marker.joinsPrevious && groups.length > 0) {

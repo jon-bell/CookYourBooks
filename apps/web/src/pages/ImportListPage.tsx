@@ -1,13 +1,14 @@
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useCollections } from '../data/queries.js';
-import { useImportBatches, useOcrKeys } from '../import/queries.js';
-import type { ImportBatch } from '../import/model.js';
-import { LocalImportItemRepository } from '../import/localRepos.js';
-import { useQuery } from '@tanstack/react-query';
+
 import { useAuth } from '../auth/AuthProvider.js';
-import { useLocalQueryEnabled } from '../local/SyncProvider.js';
 import { LoadingState } from '../components/LoadingState.js';
+import { useCollections } from '../data/queries.js';
+import { LocalImportItemRepository } from '../import/localRepos.js';
+import type { ImportBatch } from '../import/model.js';
+import { useImportBatches, useOcrKeys } from '../import/queries.js';
+import { useLocalQueryEnabled } from '../local/SyncProvider.js';
 
 interface BatchStats {
   total: number;
@@ -52,10 +53,7 @@ export function ImportListPage() {
   const batchIds = useMemo(() => batches.map((b) => b.id), [batches]);
   const { data: stats = {} } = useBatchStats(user?.id, batchIds);
 
-  const collectionsById = useMemo(
-    () => new Map(collections.map((c) => [c.id, c])),
-    [collections],
-  );
+  const collectionsById = useMemo(() => new Map(collections.map((c) => [c.id, c])), [collections]);
 
   const hasOcrKey = ocrKeys.length > 0;
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -180,38 +178,32 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
   const steps: Array<{ title: string; body: string; placeholder: string }> = [
     {
       title: '1. Upload pages',
-      body:
-        'Drag in a stack of cookbook photos, or upload a PDF. We split PDFs page-by-page automatically. 100+ pages at a time is fine — uploads stream.',
+      body: 'Drag in a stack of cookbook photos, or upload a PDF. We split PDFs page-by-page automatically. 100+ pages at a time is fine — uploads stream.',
       placeholder: '[screenshot: drag-drop wizard]',
     },
     {
       title: '2. Worker OCRs in the background',
-      body:
-        'Pages move from Pending → Processing → Needs review as Gemini reads them. Close the tab and come back later — work continues server-side.',
+      body: 'Pages move from Pending → Processing → Needs review as Gemini reads them. Close the tab and come back later — work continues server-side.',
       placeholder: '[screenshot: batch board with progress + cost]',
     },
     {
       title: '3. Review with scan on the left',
-      body:
-        'Each page opens with the source image alongside the parsed recipe. Click any field — title, ingredient, step — to edit in place. Quantity has a structured editor with the real unit list.',
+      body: 'Each page opens with the source image alongside the parsed recipe. Click any field — title, ingredient, step — to edit in place. Quantity has a structured editor with the real unit list.',
       placeholder: '[screenshot: split editor]',
     },
     {
       title: '4. Merge stitched-wrong pages',
-      body:
-        'When a recipe spans a page break, the worker can parse each page in isolation and split it into two items. On the batch board, tick the checkboxes for the related pages and click "Merge into one item" — the worker re-runs OCR with all images attached at once and the result lands on the earliest page. Absorbed pages move to Discarded automatically.',
+      body: 'When a recipe spans a page break, the worker can parse each page in isolation and split it into two items. On the batch board, tick the checkboxes for the related pages and click "Merge into one item" — the worker re-runs OCR with all images attached at once and the result lands on the earliest page. Absorbed pages move to Discarded automatically.',
       placeholder: '[screenshot: bulk select + merge]',
     },
     {
       title: '5. Save and move on',
-      body:
-        'Save commits the recipe to the target cookbook (matching ToC titles get updated in place) and jumps you to the next reviewable page. Discard, Re-OCR, and Restore original are always one click away.',
+      body: 'Save commits the recipe to the target cookbook (matching ToC titles get updated in place) and jumps you to the next reviewable page. Discard, Re-OCR, and Restore original are always one click away.',
       placeholder: '[screenshot: save toast + jump]',
     },
     {
       title: '6. Keyboard',
-      body:
-        '← / k previous · → / j next · f fullscreen · esc to close · ? for this list. Edits inside fields keep their usual keys.',
+      body: '← / k previous · → / j next · f fullscreen · esc to close · ? for this list. Edits inside fields keep their usual keys.',
       placeholder: '[screenshot: kbd cheatsheet]',
     },
   ];
@@ -238,7 +230,9 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
           {steps.map((step) => (
             <li key={step.title} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
               <div>
-                <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">{step.title}</h3>
+                <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                  {step.title}
+                </h3>
                 <p className="mt-1 text-sm text-stone-700 dark:text-stone-300">{step.body}</p>
               </div>
               <div className="flex h-20 w-40 items-center justify-center rounded-md border border-dashed border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 text-[10px] text-stone-400">
@@ -261,13 +255,7 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
   );
 }
 
-function BatchProgress({
-  batch,
-  stats,
-}: {
-  batch: ImportBatch;
-  stats: BatchStats | undefined;
-}) {
+function BatchProgress({ batch, stats }: { batch: ImportBatch; stats: BatchStats | undefined }) {
   const total = stats?.total ?? batch.totalItems;
   const done = stats?.done ?? 0;
   const failed = stats?.failed ?? 0;
@@ -291,11 +279,11 @@ function BatchProgress({
 
 function StatusBadge({ status }: { status: 'OPEN' | 'ARCHIVED' }) {
   const cls =
-    status === 'ARCHIVED'
-      ? 'bg-stone-200 text-stone-700'
-      : 'bg-emerald-100 text-emerald-800';
+    status === 'ARCHIVED' ? 'bg-stone-200 text-stone-700' : 'bg-emerald-100 text-emerald-800';
   return (
-    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}>
+    <span
+      className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${cls}`}
+    >
       {status === 'ARCHIVED' ? 'Archived' : 'Open'}
     </span>
   );
