@@ -77,8 +77,33 @@ export async function validateOcrKey(
   return data ?? { ok: false, reason: 'network', message: 'no response' };
 }
 
-export async function resetImportItem(itemId: string): Promise<void> {
-  const { error } = await supabase.rpc('import_reset_item', { p_item_id: itemId });
+/**
+ * Force-reset an import item to PENDING for a fresh OCR pass. When `config`
+ * is supplied, the RPC also re-snapshots that OCR config onto the parent
+ * batch (the worker reads provider/model/prompt from the batch, captured at
+ * upload time), so Re-OCR honors the caller's *current* Settings rather than
+ * the model/prompt frozen when the batch was first uploaded.
+ */
+export async function resetImportItem(
+  itemId: string,
+  config?: Pick<
+    EffectiveOcrConfig,
+    'provider' | 'model' | 'prompt' | 'fallbackProvider' | 'fallbackModel' | 'keyOwnerId'
+  >,
+): Promise<void> {
+  const { error } = await supabase.rpc('import_reset_item', {
+    p_item_id: itemId,
+    ...(config
+      ? {
+          p_provider: config.provider,
+          p_model: config.model,
+          p_prompt: config.prompt ?? undefined,
+          p_fallback_provider: config.fallbackProvider ?? undefined,
+          p_fallback_model: config.fallbackModel ?? undefined,
+          p_key_owner_id: config.keyOwnerId ?? undefined,
+        }
+      : {}),
+  });
   if (error) throw error;
 }
 

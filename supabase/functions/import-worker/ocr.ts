@@ -104,8 +104,18 @@ export async function runOcr(p: OcrCallParams): Promise<OcrCallResult> {
 
 // ---------- Gemini ----------
 
+// A single `content.parts[]` entry. Thinking models (gemini-3.x) attach a
+// `thoughtSignature` to the answer part and, when thought summaries are on,
+// emit separate `thought: true` parts whose `text` is reasoning prose, not
+// the answer. We must skip those.
+interface GeminiPart {
+  text?: string;
+  thought?: boolean;
+  thoughtSignature?: string;
+}
+
 interface GeminiCandidate {
-  content?: { parts?: Array<{ text?: string }> };
+  content?: { parts?: GeminiPart[] };
   finishReason?: string;
 }
 
@@ -116,6 +126,24 @@ interface GeminiResponse {
     candidatesTokenCount?: number;
   };
   error?: { code?: number; message?: string; status?: string };
+}
+
+/**
+ * Pull the answer text out of a Gemini candidate. Concatenates every
+ * non-empty text part while skipping thought-summary parts (`thought:
+ * true`), so a thinking-model response — where the JSON answer may be
+ * split across parts or preceded by reasoning prose — still yields the
+ * whole answer and never the thinking. Returns undefined when there's no
+ * answer text at all. Kept in sync with the sibling import Edge Functions.
+ */
+export function extractGeminiText(cand: GeminiCandidate | undefined): string | undefined {
+  const parts = cand?.content?.parts;
+  if (!parts) return undefined;
+  const joined = parts
+    .filter((part) => part.thought !== true && typeof part.text === 'string' && part.text.length > 0)
+    .map((part) => part.text)
+    .join('');
+  return joined.length > 0 ? joined : undefined;
 }
 
 async function callGemini(
@@ -192,7 +220,7 @@ async function callGemini(
   const completionTokens = parsed.usageMetadata?.candidatesTokenCount ?? 0;
 
   const cand = parsed.candidates?.[0];
-  const text = cand?.content?.parts?.find((part) => typeof part.text === 'string' && part.text.length > 0)?.text;
+  const text = extractGeminiText(cand);
   const finish = cand?.finishReason;
 
   if (!text) {

@@ -25,7 +25,13 @@ import {
   useSaveCollection,
   useSaveRecipe,
 } from '../data/queries.js';
-import { kickOcr, resetImportItem, setImportItemKind, setImportItemToc } from '../import/api.js';
+import {
+  getEffectiveOcrConfig,
+  kickOcr,
+  resetImportItem,
+  setImportItemKind,
+  setImportItemToc,
+} from '../import/api.js';
 import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
 import { CookbookCombobox } from '../import/CookbookCombobox.js';
 import { deleteOcrStorage } from '../import/deleteStorage.js';
@@ -554,7 +560,13 @@ export function ImportItemPage() {
       // because the push handler refuses any status that isn't
       // REVIEWED or DISCARDED (server-owned), so an in-place flip
       // here never reached the worker.
-      await resetImportItem(item.id);
+      //
+      // Re-snapshot the *current* effective OCR config onto the batch
+      // (same resolution the upload page uses) so re-OCR honors the
+      // model/prompt the user has in Settings now, not the one frozen
+      // when this batch was first uploaded.
+      const cfg = await getEffectiveOcrConfig().catch(() => null);
+      await resetImportItem(item.id, cfg ?? undefined);
       await syncNow();
       try {
         await kickOcr(batch.id);

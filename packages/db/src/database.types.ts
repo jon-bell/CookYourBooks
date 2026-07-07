@@ -3452,7 +3452,18 @@ export type Database = {
         Args: { p_absorb_ids: string[]; p_primary_id: string }
         Returns: undefined
       }
-      import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
+      import_reset_item: {
+        Args: {
+          p_item_id: string
+          p_provider?: string
+          p_model?: string
+          p_prompt?: string
+          p_fallback_provider?: string
+          p_fallback_model?: string
+          p_key_owner_id?: string
+        }
+        Returns: undefined
+      }
       import_retry_recitation_failures: {
         Args: { p_batch_id: string }
         Returns: number

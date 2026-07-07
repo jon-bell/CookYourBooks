@@ -288,6 +288,27 @@ describe('parseLlmJson', () => {
     expect(d.ingredients).toHaveLength(1);
     expect(d.leftover.length).toBeGreaterThan(0);
   });
+
+  it('tolerates a real gemini-3.5-flash answer (doubled brace + escaped quotes + WHOLE units)', () => {
+    // Verbatim shape of a gemini-3.5-flash (thinking model) OCR answer: a
+    // valid object with a stray doubled closing brace, escaped quotes inside
+    // description/rawText, range/exact quantities carrying the model's WHOLE
+    // unit, whole:0 fractionals, and mojibake unicode in the raw text.
+    const text =
+      '{\n  "recipes": [\n    {\n      "title": "Silver Lake Smash",\n      "pageNumbers": [74, 75],\n      "bookTitle": "TROPICAL STANDARD",\n      "yield": null,\n      "description": "Dale calls it \\"a julep on a small plan.\\" Fresh quarters of lemon are muddled à la minute.",\n      "ingredients": [\n        { "type": "measured", "name": "lemon quarters", "quantity": { "type": "range", "min": 5.0, "max": 6.0, "unit": "WHOLE" } },\n        { "type": "measured", "name": "salt solution", "quantity": { "type": "exact", "value": 5.0, "unit": "WHOLE" }, "notes": "see page 27" },\n        { "type": "measured", "name": "gum syrup", "quantity": { "type": "fractional", "whole": 0, "numerator": 1, "denominator": 2, "unit": "FLUID_OUNCE" } },\n        { "type": "measured", "name": "Don Q Reserva 7 Rum", "quantity": { "type": "fractional", "whole": 2, "numerator": 1, "denominator": 2, "unit": "FLUID_OUNCE" } }\n      ],\n      "instructions": [\n        { "stepNumber": 1, "text": "Muddle the lemon quarters. Top with 8 ounces of crushed ice.", "consumedIngredients": [ { "ingredientName": "lemon quarters", "quantity": { "type": "range", "min": 5.0, "max": 6.0, "unit": "WHOLE" } } ] }\n      ]\n    }\n  ],\n  "rawText": "74 . TROPICAL STANDARD .\\n\\nSilver Lake Smash\\n½ ounce gum syrup (see page 197)\\n2½ ounces Don Q Reserva 7 Rum\\n• Muddle the lemon quarters. Top with 8 ounces of crushed ice."\n}\n}';
+    const drafts = parseLlmJson(text);
+    expect(drafts).toHaveLength(1);
+    const d = drafts[0]!;
+    expect(d.title).toBe('Silver Lake Smash');
+    expect(d.bookTitle).toBe('TROPICAL STANDARD');
+    expect(d.pageNumbers).toEqual([74, 75]);
+    // All four ingredients parse; nothing is quarantined.
+    expect(d.ingredients).toHaveLength(4);
+    expect(d.leftover).toEqual([]);
+    expect(d.instructions).toHaveLength(1);
+    // The trailing doubled brace didn't truncate the rawText tail.
+    expect(d.sourceImageText).toContain('crushed ice.');
+  });
 });
 
 describe('parseNotesJson', () => {

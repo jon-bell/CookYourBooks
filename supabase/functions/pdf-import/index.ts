@@ -113,7 +113,9 @@ interface GeminiPart {
 
 interface GeminiResponse {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
+    // `thought`/`thoughtSignature` mark thinking-model (gemini-3.x) parts:
+    // a `thought: true` part is reasoning prose, never the answer.
+    content?: { parts?: Array<{ text?: string; thought?: boolean; thoughtSignature?: string }> };
     finishReason?: string;
   }>;
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
@@ -167,9 +169,12 @@ async function callGemini(apiKey: string, parts: GeminiPart[]): Promise<GeminiCa
     throw new HttpError('EXTRACTION_FAILED', `Gemini response not JSON: ${(err as Error).message}`);
   }
   const cand = parsed.candidates?.[0];
-  const text = cand?.content?.parts?.find(
-    (p) => typeof p.text === 'string' && p.text.length > 0,
-  )?.text;
+  // Concatenate every answer part, skipping thought summaries — a thinking
+  // model can split the JSON across parts or lead with reasoning prose.
+  const text = cand?.content?.parts
+    ?.filter((p) => p.thought !== true && typeof p.text === 'string' && p.text.length > 0)
+    .map((p) => p.text)
+    .join('');
   if (!text) {
     throw new HttpError(
       'EXTRACTION_FAILED',
