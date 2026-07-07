@@ -74,13 +74,18 @@ async function callGemini(
   if (!resp.ok) throw new Error(`Gemini ${resp.status}: ${await resp.text()}`);
   const data = (await resp.json()) as {
     candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> };
+      content?: { parts?: Array<{ text?: string; thought?: boolean }> };
       finishReason?: string;
       safetyRatings?: unknown;
     }>;
     promptFeedback?: unknown;
   };
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  // Concatenate answer parts, skipping thought summaries — the gemini-3.x
+  // models this test targets are thinking models.
+  const text = data.candidates?.[0]?.content?.parts
+    ?.filter((p) => p.thought !== true && typeof p.text === 'string' && p.text.length > 0)
+    .map((p) => p.text)
+    .join('');
   if (text) return { kind: 'ok', text };
   return {
     kind: 'blocked',

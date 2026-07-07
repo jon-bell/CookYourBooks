@@ -56,7 +56,7 @@ export const TOC_PROMPT = `This image is a cookbook table of contents (or index)
 }
 
 Rules:
-- One object per visible line; do not invent or merge entries.
+- One object per title + page-number pair, NOT per physical line. Contents pages are often laid out in two or more columns, so a single line can carry several entries — e.g. "Blue Leilani (à la Blue Hawaii) • 252   Frozen Banana Daiquiri • 256" is TWO entries ({"title":"Blue Leilani (à la Blue Hawaii)","page_number":252} and {"title":"Frozen Banana Daiquiri","page_number":256}), not one. Split on each title/number pair; never merge distinct titles into a single entry, and never invent entries.
 - page_number is an integer when shown; omit the field if no number is visible for that line.
 - Preserve the on-page wording for title — do not paraphrase or translate.
 - Skip page-furniture lines (running heads, copyright, "Continued on..." pointers).
