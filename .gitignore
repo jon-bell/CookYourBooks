@@ -41,3 +41,4 @@ apps/mobile/.capacitor/
 
 # Claude Code local state
 .claude/
+perf-fixtures/
