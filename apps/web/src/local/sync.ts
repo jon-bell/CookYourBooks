@@ -16,6 +16,7 @@ import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import { claimsFromSession } from '../auth/claims.js';
 import { reportError } from '../sentry.js';
 import { getLocalDb } from './db.js';
+import { buildImportItemInsertPayload } from './importItemPayload.js';
 import {
   listPending,
   locallyDeletedIds,
@@ -3629,7 +3630,6 @@ const IMPORT_ITEM_PUSH_CHUNK = 100;
 async function pushImportItemsBulk(client: CookbooksClient, ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
   const db = await getLocalDb();
-  type ItemInsert = Database['public']['Tables']['import_items']['Insert'];
   for (let offset = 0; offset < ids.length; offset += IMPORT_ITEM_PUSH_CHUNK) {
     const slice = ids.slice(offset, offset + IMPORT_ITEM_PUSH_CHUNK);
     const placeholders = slice.map(() => '?').join(',');
@@ -3638,22 +3638,7 @@ async function pushImportItemsBulk(client: CookbooksClient, ids: readonly string
       slice,
     );
     if (rows.length === 0) continue;
-    const payload: ItemInsert[] = rows.map((local) => ({
-      id: local.id as string,
-      batch_id: local.batch_id as string,
-      owner_id: local.owner_id as string,
-      page_index: local.page_index as number,
-      storage_path: local.storage_path as string,
-      thumb_path: (local.thumb_path as string | null) ?? null,
-      source_pdf_path: (local.source_pdf_path as string | null) ?? null,
-      source_pdf_page: (local.source_pdf_page as number | null) ?? null,
-      assigned_collection_id: (local.assigned_collection_id as string | null) ?? null,
-      assigned_page_number: (local.assigned_page_number as number | null) ?? null,
-      assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
-      is_toc: local.is_toc === 1 || local.is_toc === true,
-      kind: (local.kind as string) ?? 'RECIPE',
-      status: local.status as ItemInsert['status'],
-    }));
+    const payload = rows.map((local) => buildImportItemInsertPayload(local));
     const { error } = await client.from('import_items').upsert(payload, { onConflict: 'id' });
     if (error) throw error;
   }
@@ -3885,26 +3870,10 @@ async function pushImportItemInsert(client: CookbooksClient, id: string): Promis
   ]);
   const local = rows[0];
   if (!local) return;
-  type ItemInsert = Database['public']['Tables']['import_items']['Insert'];
-  // Status is included so that AWAITING_GROUPING uploads don't get
-  // silently re-defaulted to PENDING on the server side and immediately
-  // picked up by the worker before the user finishes grouping.
-  const payload: ItemInsert = {
-    id: local.id as string,
-    batch_id: local.batch_id as string,
-    owner_id: local.owner_id as string,
-    page_index: local.page_index as number,
-    storage_path: local.storage_path as string,
-    thumb_path: (local.thumb_path as string | null) ?? null,
-    source_pdf_path: (local.source_pdf_path as string | null) ?? null,
-    source_pdf_page: (local.source_pdf_page as number | null) ?? null,
-    assigned_collection_id: (local.assigned_collection_id as string | null) ?? null,
-    assigned_page_number: (local.assigned_page_number as number | null) ?? null,
-    assigned_recipe_id: (local.assigned_recipe_id as string | null) ?? null,
-    is_toc: local.is_toc === 1 || local.is_toc === true,
-    kind: (local.kind as string) ?? 'RECIPE',
-    status: local.status as ItemInsert['status'],
-  };
+  // Status is included (via buildImportItemInsertPayload) so AWAITING_GROUPING
+  // uploads don't get silently re-defaulted to PENDING on the server side and
+  // immediately picked up by the worker before the user finishes grouping.
+  const payload = buildImportItemInsertPayload(local);
   const { error } = await client.from('import_items').upsert(payload, { onConflict: 'id' });
   if (error) throw error;
 }
