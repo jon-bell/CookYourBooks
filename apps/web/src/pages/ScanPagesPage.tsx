@@ -83,6 +83,14 @@ export function ScanPagesPage() {
       const fallbackModel =
         cfg?.source === 'household' ? cfg.fallbackModel : localFallback.fallbackModel;
       const defaultProvider = cfg?.provider ?? 'gemini';
+      // Capture-time chaining (the camera's ⛓ toggle) is carried to the
+      // organizer as an initial merge state — NOT folded at upload — so every
+      // page uploads as its own AWAITING_GROUPING item the user can still
+      // un-merge. `initialMerges` is the list of split indices to remove (a
+      // page that joins its predecessor removes the split before it).
+      const initialMerges = pages.flatMap((p, i) =>
+        i > 0 && p.marker.joinsPrevious ? [i - 1] : [],
+      );
       const { batchId } = await uploadBatch(
         {
           ownerId: user.id,
@@ -96,12 +104,12 @@ export function ScanPagesPage() {
           keyOwnerId: cfg?.source === 'household' ? cfg.keyOwnerId : null,
           sourceKind: 'IMAGES',
           files: pages.map((p) => p.file),
-          markers: pages.map((p) => p.marker),
+          awaitGrouping: true,
         },
         setProgress,
       );
       await syncNow();
-      navigate(`/import/${batchId}`);
+      navigate(`/import/${batchId}/group`, { state: { initialMerges } });
     } catch (e) {
       setError((e as Error).message);
       setPhase('config');
