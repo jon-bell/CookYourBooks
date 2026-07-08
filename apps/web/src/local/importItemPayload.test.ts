@@ -63,8 +63,12 @@ describe('buildImportItemInsertPayload', () => {
   });
 
   it('defaults extra_storage_paths to [] when the local column is empty/null/malformed', () => {
-    expect(buildImportItemInsertPayload(localRow({ extra_storage_paths: '[]' })).extra_storage_paths).toEqual([]);
-    expect(buildImportItemInsertPayload(localRow({ extra_storage_paths: null })).extra_storage_paths).toEqual([]);
+    expect(
+      buildImportItemInsertPayload(localRow({ extra_storage_paths: '[]' })).extra_storage_paths,
+    ).toEqual([]);
+    expect(
+      buildImportItemInsertPayload(localRow({ extra_storage_paths: null })).extra_storage_paths,
+    ).toEqual([]);
     expect(
       buildImportItemInsertPayload(localRow({ extra_storage_paths: 'oops' })).extra_storage_paths,
     ).toEqual([]);

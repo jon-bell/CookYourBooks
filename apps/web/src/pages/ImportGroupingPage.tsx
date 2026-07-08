@@ -5,7 +5,12 @@ import { LoadingState } from '../components/LoadingState.js';
 import { SAFE_BOTTOM, TAP_TARGET } from '../components/mobileSafeArea.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
 import { finalizeGrouping, kickOcr } from '../import/api.js';
-import { buildFinalizePayload, deriveGroups, mergeAllSplits, toggleInSet } from '../import/groupingModel.js';
+import {
+  buildFinalizePayload,
+  deriveGroups,
+  mergeAllSplits,
+  toggleInSet,
+} from '../import/groupingModel.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import type { ImportItem } from '../import/model.js';
 import { KIND_OPTIONS, type PageKind } from '../import/pageMarker.js';
@@ -46,7 +51,9 @@ export function ImportGroupingPage() {
   // pages by default. Read once on mount; a cold reload (no router state)
   // falls back to one-recipe-per-page with every page still present.
   const initialMerges = (location.state as { initialMerges?: number[] } | null)?.initialMerges;
-  const [removedSplits, setRemovedSplits] = useState<Set<number>>(() => new Set(initialMerges ?? []));
+  const [removedSplits, setRemovedSplits] = useState<Set<number>>(
+    () => new Set(initialMerges ?? []),
+  );
   // Per-group page-type overrides, keyed by the group's primary (lowest-page)
   // item id so the choice follows the lead page as splits change. Missing key
   // => use the captured `item.kind` (see `effectiveKind`).
@@ -215,7 +222,10 @@ export function ImportGroupingPage() {
             <strong>{recipeCount}</strong> {recipeCount === 1 ? 'recipe' : 'recipes'} from{' '}
             <strong>{totalPages}</strong> {totalPages === 1 ? 'page' : 'pages'}
             {multiPageGroups > 0 && (
-              <span className="text-stone-500 dark:text-stone-400"> · {multiPageGroups} multi-page</span>
+              <span className="text-stone-500 dark:text-stone-400">
+                {' '}
+                · {multiPageGroups} multi-page
+              </span>
             )}
           </span>
           <span className="ml-auto flex gap-2 text-xs">
@@ -239,9 +249,9 @@ export function ImportGroupingPage() {
 
       <p className="text-sm text-stone-600 dark:text-stone-400">
         Each page is its own recipe by default. Tap a page to view it fullscreen. Use{' '}
-        <span className="font-medium">Merge with next recipe</span> to join two pages into one recipe,
-        or the <span className="font-medium">✂</span> between pages to split them apart. Set a
-        recipe's type with the Recipe / Contents / Notes toggle.
+        <span className="font-medium">Merge with next recipe</span> to join two pages into one
+        recipe, or the <span className="font-medium">✂</span> between pages to split them apart. Set
+        a recipe's type with the Recipe / Contents / Notes toggle.
       </p>
 
       <RecipeCardList
@@ -731,7 +741,9 @@ function PagePreviewOverlay({
               onClick={() => onToggleSplit(index - 1)}
               className="rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
             >
-              {removedSplits.has(index - 1) ? 'Split from previous page' : 'Merge with previous page'}
+              {removedSplits.has(index - 1)
+                ? 'Split from previous page'
+                : 'Merge with previous page'}
             </button>
           )}
           {index < total - 1 && (

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildFinalizePayload, deriveGroups, mergeAllSplits, toggleInSet } from './groupingModel.js';
+import {
+  buildFinalizePayload,
+  deriveGroups,
+  mergeAllSplits,
+  toggleInSet,
+} from './groupingModel.js';
 import type { ImportItem } from './model.js';
 
 /** Minimal ImportItem stand-in — the model only reads `id` and `pageIndex`. */
