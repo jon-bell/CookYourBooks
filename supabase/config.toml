@@ -427,8 +427,14 @@ verify_jwt = false
 [functions.library-snapshot]
 verify_jwt = false
 
+# Disabled: the analytics (Logflare) container and its `vector` log-shipper
+# dependency are local-only log aggregation the app/E2E never touches, and
+# they flakily fail their Docker health check on the self-hosted CI runner
+# ("supabase_analytics/vector … unhealthy"), taking down `supabase start`
+# before any test runs. Turning them off removes that recurring CI flake with
+# no effect on the app under test. Re-enable locally if you need Logflare.
 [analytics]
-enabled = true
+enabled = false
 port = 54427
 # Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"
