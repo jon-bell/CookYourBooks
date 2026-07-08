@@ -1,6 +1,7 @@
 import { expect, test, waitForSynced } from './support/fixtures.js';
 import {
   configureOcrKey,
+  pumpItemStatuses,
   seedOcrFixture,
   triggerWorker,
   uploadTestImages,
@@ -92,6 +93,57 @@ test.describe('OCR notes pages', () => {
     await expect(
       page.getByText('A love letter to slow cooking, written over ten winters.'),
     ).toBeVisible();
+  });
+
+  test('a prose page caught under the recipe prompt auto-files as a note', async ({
+    authedPage: page,
+  }) => {
+    await configureOcrKey(page, 'gemini');
+    await createCookbook(page, 'Essay Cookbook');
+
+    await page.goto('/import/new');
+    await uploadTestImages(page, ['page1.png']);
+    await page.getByLabel('Batch name').fill('Essay Batch');
+    await pickTargetCookbook(page, 'Essay Cookbook');
+    await page.getByRole('button', { name: 'Start import' }).click();
+
+    await page.waitForURL(/\/import\/[0-9a-f-]+$/);
+    const batchId = await batchIdFromUrl(page);
+    const items = await waitForBatchItemCount(batchId, 1);
+    const item = items[0]!;
+
+    // The page stays a RECIPE (the user didn't mark it). OCR reports no recipe,
+    // just prose + a top-level note — the recipe prompt's prose path.
+    await seedOcrFixture({
+      storagePath: item.storage_path,
+      provider: 'gemini',
+      kind: 'recipe',
+      proseNote: {
+        title: 'Our Grandmother’s Kitchen',
+        body: 'A memory of winters spent baking together.',
+      },
+    });
+
+    // Drain to OCR_DONE robustly (re-kick until done); the worker reclassifies
+    // the page to NOTES and files the note as part of the same completion.
+    await pumpItemStatuses(batchId, (c) => c.ocrDone === 1, 45_000);
+    await waitForItemKind(item.id, 'NOTES');
+
+    // It's out of the recipe review queue and under the Notes tab instead.
+    await page.goto(`/import/${batchId}`);
+    await waitForSynced(page);
+    await expect(page.getByRole('button', { name: /Needs review \(0\)/ })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByRole('button', { name: /Notes \(1\)/ })).toBeVisible();
+
+    // And the prose is filed under the cookbook's Notes.
+    await page.getByRole('link', { name: 'Library' }).click();
+    await page.getByRole('link', { name: 'Essay Cookbook' }).click();
+    await page.reload();
+    await waitForSynced(page);
+    await expect(page.getByText('Our Grandmother’s Kitchen')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('A memory of winters spent baking together.')).toBeVisible();
   });
 
   test('a page misread as a recipe can be re-read as a note (no duplicate)', async ({

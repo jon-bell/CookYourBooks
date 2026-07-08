@@ -39,6 +39,8 @@ export interface FakeRecipeDraft {
   instructions?: FakeInstruction[];
   bookTitle?: string;
   pageNumbers?: number[];
+  /** Model's completeness self-report; omit for "no signal". */
+  complete?: boolean;
 }
 
 export interface TocEntryInput {
@@ -52,6 +54,13 @@ export interface SeedFixtureArgs {
   draft?: FakeRecipeDraft;
   /** For kind 'notes' — the prose the mock LLM "returns" ({ title, body }). */
   note?: { title?: string; body: string };
+  /**
+   * For kind 'recipe' — simulate a prose page caught under the recipe prompt:
+   * the mock returns an empty `recipes: []` plus a top-level `note`, exactly
+   * as the recipe prompt asks for a foreword/essay page. The worker then
+   * auto-files it as a collection note.
+   */
+  proseNote?: { title?: string; body: string };
   /**
    * For multi-recipe responses (e.g. a cookbook spread). When set the
    * response payload uses the `{ recipes: [...] }` wrapper shape so the
@@ -238,6 +247,16 @@ function buildResponseJson(args: SeedFixtureArgs): Record<string, unknown> {
     // retry the same fixture supplies the recipe. error_kind stays OK because
     // the ocr_test_fixtures CHECK constraint has a fixed allow-list.
     const needsCaption = args.kind === 'needs-caption' ? { __needs_caption: true } : {};
+    if (args.proseNote) {
+      // Prose page under the recipe prompt: no recipe, just a top-level note.
+      return {
+        recipes: [],
+        note: { title: args.proseNote.title ?? 'Note', body: args.proseNote.body },
+        rawText: args.proseNote.body,
+        ...needsCaption,
+        __mock_usage: { prompt_tokens: 100, completion_tokens: 200 },
+      };
+    }
     if (args.drafts && args.drafts.length > 1) {
       // Multi-recipe responses go through the `{ recipes: [...] }`
       // wrapper so the worker's parser returns multiple drafts.
@@ -297,6 +316,7 @@ function serializeDraft(d: FakeRecipeDraft): Record<string, unknown> {
       stepNumber: s.stepNumber,
       text: s.text,
     })),
+    complete: d.complete,
     bookTitle: d.bookTitle,
     pageNumbers: d.pageNumbers,
   };
