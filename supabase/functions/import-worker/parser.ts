@@ -76,6 +76,9 @@ export interface ParsedRecipeDraft {
   ingredients: Ingredient[];
   instructions: Instruction[];
   leftover: string[];
+  /** Model's self-assessment: full self-contained recipe vs a page fragment.
+   *  Undefined when not reported. Mirrors the domain ParsedRecipeDraft. */
+  complete?: boolean;
   description?: string;
   timeEstimate?: string;
   equipment?: string[];
@@ -356,6 +359,7 @@ function buildDraft(raw: unknown, rawText: string | undefined): ParsedRecipeDraf
     ingredients,
     instructions,
     leftover,
+    complete: asBoolean(obj.complete),
     description: asTrimmedString(obj.description),
     timeEstimate: asTrimmedString(obj.timeEstimate),
     equipment,
@@ -568,7 +572,34 @@ export function parseNotesJson(text: string): ParsedNote {
   return { title, body };
 }
 
+/**
+ * Extract the optional top-level `note` object from a RECIPE-prompt response.
+ * The recipe prompt asks the model to return `{ recipes: [], note: { title,
+ * body } }` when a page is entirely prose (a foreword, essay, chapter intro)
+ * with no recipe on it, so the worker can auto-file it as a collection note
+ * instead of parking an empty recipe draft in review. Returns null when there
+ * is no usable note (the normal recipe case). Never throws — a malformed note
+ * simply falls back to the recipe path.
+ */
+export function parseLlmNote(text: string): ParsedNote | null {
+  const cleaned = stripFences(text).trim();
+  const raw = tolerantJsonParse(cleaned);
+  if (raw === PARSE_FAILED || !raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const noteRaw = (raw as Record<string, unknown>).note;
+  if (!noteRaw || typeof noteRaw !== 'object' || Array.isArray(noteRaw)) return null;
+  const obj = noteRaw as Record<string, unknown>;
+  const body = asTrimmedString(obj.body) ?? asTrimmedString(obj.text);
+  if (!body) return null;
+  return { title: asTrimmedString(obj.title) ?? 'Note', body };
+}
+
 // ---------- helpers ----------
+
+function asBoolean(raw: unknown): boolean | undefined {
+  return typeof raw === 'boolean' ? raw : undefined;
+}
 
 function arrayOrEmpty(raw: unknown): unknown[] {
   return Array.isArray(raw) ? raw : [];

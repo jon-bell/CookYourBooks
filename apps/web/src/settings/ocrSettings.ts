@@ -42,6 +42,7 @@ Return a JSON object with this structure:
   "recipes": [
     {
       "title": "Recipe Title",
+      "complete": true,
       "pageNumbers": [123],
       "bookTitle": "Cookbook Name",
       "yield": {
@@ -167,6 +168,7 @@ Return a JSON object with this structure:
       ]
     }
   ],
+  "note": null,
   "rawText": "The raw text extracted from the image"
 }
 
@@ -225,6 +227,8 @@ These are "house" units used for small, imprecise measurements that don't have e
 - Temperature must be null OR an object like: { "value": 350, "unit": "FAHRENHEIT" }
 - Include the raw text extracted from the image in the "rawText" field
 - If multiple recipes are present, include all in the "recipes" array
+- complete: true when a recipe is whole and self-contained on THIS page (its title, full ingredient list, and full method are all visible). false when only a fragment is present — e.g. the recipe continues onto or from another page, or the ingredients/steps are cut off. When in doubt, use true.
+- note: usually null. If the page contains NO recipe at all — it is entirely prose (a foreword, chapter introduction, technique essay, or headnote) — return an empty "recipes": [] and set "note" to { "title": "a short heading", "body": "the full prose as clean Markdown" }. Only when there is genuinely no recipe on the page; never use it to summarize a recipe.
 - pageNumbers: array of integers, extract from corners or headers/footers (e.g., [123] or [123, 124] if recipe spans pages)
 - bookTitle: extract from top/bottom of page if visible (null if not found)
 - yield: extract yield information as a Quantity object. For "serves 4", "makes 12 cookies", "yields 1 loaf", etc., extract the numeric value and use PEOPLE unit for serving quantities (e.g., "serves 4", "serves 4-6"). Use "exact" type for single values, "range" type if a range is given (e.g., "serves 4-6"). Format: { "type": "exact", "value": 4.0, "unit": "PEOPLE" } or { "type": "range", "min": 4.0, "max": 6.0, "unit": "PEOPLE" } (null if not found). Examples: "serves 4" -> { "type": "exact", "value": 4.0, "unit": "PEOPLE" }, "serves 4-6" -> { "type": "range", "min": 4.0, "max": 6.0, "unit": "PEOPLE" }, "makes 12 cookies" -> { "type": "exact", "value": 12.0, "unit": "WHOLE" } (use WHOLE for non-serving yields like cookies, loaves, etc.), "yields 1 loaf" -> { "type": "exact", "value": 1.0, "unit": "WHOLE" }

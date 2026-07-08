@@ -19,6 +19,7 @@ import { costFromMap, loadPricing, seedFromBundled, type RateMap } from './prici
 import { runOcr, type ErrorKind, type Provider } from './ocr.ts';
 import {
   parseLlmJson,
+  parseLlmNote,
   parseTocJson,
   parseNotesJson,
   type ParsedRecipeDraft,
@@ -845,6 +846,14 @@ async function handleRecitation(
   return 'OCR_FAILED';
 }
 
+/** True when at least one parsed draft carries real recipe content. A prose
+ *  page yields only the parser's empty fallback draft, so this is false. */
+function draftsHaveRecipe(drafts: ParsedRecipeDraft[]): boolean {
+  return drafts.some(
+    (d) => Boolean(d.title) || d.ingredients.length > 0 || d.instructions.length > 0,
+  );
+}
+
 async function parseAndComplete(
   item: ImportItem,
   batch: ImportBatch,
@@ -868,6 +877,13 @@ async function parseAndComplete(
       note = parseNotesJson(text);
     } else {
       drafts = parseLlmJson(text);
+      // A RECIPE-captured page that's actually prose (foreword, essay, chapter
+      // intro): the recipe prompt returns no recipe plus a top-level note. File
+      // it as a collection note (branch below) rather than parking an empty
+      // recipe draft in "Needs review".
+      if (!draftsHaveRecipe(drafts)) {
+        note = parseLlmNote(text);
+      }
     }
     log.info('parse ok', {
       drafts: drafts.length,
@@ -901,9 +917,12 @@ async function parseAndComplete(
     latency_ms: result.latencyMs,
   };
 
-  if (kind === 'NOTES' && note) {
+  if (note) {
     // Auto-file the note: import_complete_notes upserts collection_notes keyed
-    // on this page, then logs the attempt + flips status via import_complete.
+    // on this page, logs the attempt + flips status via import_complete, and
+    // stamps kind='NOTES' (so an auto-detected prose page captured as RECIPE
+    // reclassifies and renders as a note). Fires for both a page the user
+    // marked NOTES and a RECIPE page the model reported as prose.
     const { data: notesOk, error: notesErr } = await supabase.rpc('import_complete_notes', {
       p_item_id: item.id,
       p_claim_token: claimToken,
