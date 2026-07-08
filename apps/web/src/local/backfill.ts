@@ -12,6 +12,8 @@
 // Progress is observable (subscribeBackfill) for the SchemaUpgradeOverlay.
 
 import { getLocalDb } from './db.js';
+import { computeAndApplyLinks } from './ingredientLinks.js';
+import { enqueue } from './outbox.js';
 import { logSync } from './syncLog.js';
 
 const CHUNK = 200;
@@ -131,6 +133,43 @@ const REGISTRY: BackfillDef[] = [
         nextCursor: ids[ids.length - 1]!.id,
         scanned: ids.length,
         done: ids.length < chunkSize,
+      };
+    },
+  },
+  {
+    // Auto-link ingredients that are themselves recipes in the same collection
+    // (component / sub-recipe cross-references). Fill mode: only sets links on
+    // ingredients that don't already have one, so a background pass on a
+    // partially-synced device can never clear a link another device set, and
+    // manual/dismissed rows are left alone. Re-running also links sub-recipes
+    // added since the last pass (reverse direction). Touched hosts enqueue a
+    // recipe_save so links reach the server. Idempotent: a host whose links
+    // don't change is neither rewritten nor re-pushed.
+    id: 'ingredient_links_v1',
+    async total() {
+      const db = await getLocalDb();
+      const rows = (await db.execO<{ c: number }>(
+        `select count(*) as c from recipes where deleted = 0`,
+      )) as { c: number }[];
+      return rows[0]?.c ?? 0;
+    },
+    async step(cursor, chunkSize) {
+      const db = await getLocalDb();
+      const rows = (await db.execO<{ id: string; title: string; collection_id: string }>(
+        `select id, title, collection_id from recipes where deleted = 0 and id > ? order by id limit ?`,
+        [cursor, chunkSize],
+      )) as { id: string; title: string; collection_id: string }[];
+      if (rows.length === 0) return { nextCursor: cursor, scanned: 0, done: true };
+      for (const r of rows) {
+        const changed = await computeAndApplyLinks(r.id, r.title, r.collection_id);
+        if (changed) {
+          await enqueue({ kind: 'recipe_save', entity_id: r.id, collection_id: r.collection_id });
+        }
+      }
+      return {
+        nextCursor: rows[rows.length - 1]!.id,
+        scanned: rows.length,
+        done: rows.length < chunkSize,
       };
     },
   },

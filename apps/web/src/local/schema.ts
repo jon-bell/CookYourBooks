@@ -83,6 +83,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     preparation text,
     notes text,
     description text,
+    linked_recipe_id text,
+    link_source text,
     quantity_type text,
     quantity_amount real,
     quantity_whole integer,
@@ -842,4 +844,12 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipes add column has_content integer not null default 0`,
   `create index if not exists recipes_collection_active_idx
      on recipes(collection_id) where deleted = 0`,
+  // Ingredient → recipe cross-reference link (2026-07-07). Nullable, so no
+  // default needed (cr-sqlite only requires defaults on NOT NULL columns).
+  // Added to BOTH the ingredients CREATE above and here: fresh installs get
+  // the columns from the CREATE (required — the CRR ALTER wrapper in db.ts
+  // assumes the table is already CRR and would throw at begin_alter on a
+  // fresh DB), and existing on-device DBs gain them on upgrade here.
+  `alter table ingredients add column linked_recipe_id text`,
+  `alter table ingredients add column link_source text`,
 ];

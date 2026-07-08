@@ -44,6 +44,7 @@ import {
 import { useImportItemsForRecipe } from '../import/queries.js';
 import { RecipeNutritionPanel } from '../nutrition/RecipeNutritionPanel.js';
 import { RecipeContentGrid, RecipeHeaderMeta } from '../recipe/RecipeBody.js';
+import { useRecipeIngredientLinks } from '../recipe/useRecipeIngredientLinks.js';
 import { RemixDialog } from '../recipe/RemixDialog.js';
 import { usePinchTextScale } from '../recipe/usePinchTextScale.js';
 import {
@@ -80,6 +81,9 @@ export function RecipePage() {
   const saveRecipe = useSaveRecipe(collectionId ?? '');
   const { data: parent } = useRecipeSummary(recipe?.parentRecipeId);
   const { data: adaptations = [] } = useAdaptations(recipe?.id);
+  // Resolve ingredient → recipe cross-reference links (keyed by stable
+  // ingredient id, so it works against the scaled recipe too).
+  const resolveLink = useRecipeIngredientLinks(recipe);
 
   const [scale, setScale] = useState(1);
   const [targetUnit, setTargetUnit] = useState<string>('');
@@ -476,6 +480,7 @@ export function RecipePage() {
           recipe={scaled}
           displayQuantity={displayQuantity}
           textScale={textScale.scale}
+          resolveLink={resolveLink}
         />
       </div>
 

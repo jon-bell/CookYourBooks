@@ -5,6 +5,7 @@ import {
   type Instruction,
   instruction,
   isMeasured,
+  type LinkSource,
   measured,
   type ParsedRecipeDraft,
   parseIngredientLine,
@@ -19,6 +20,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
 import { useCollectionMeta, useRecipe, useSaveRecipe } from '../data/queries.js';
+import { RecipeLinkPickerDialog } from '../recipe/RecipeLinkPickerDialog.js';
 
 type IngredientDraft = {
   id: string;
@@ -27,6 +29,12 @@ type IngredientDraft = {
   preparation: string;
   amount: string;
   unit: string;
+  // Cross-reference link carried across the edit round-trip (the form doesn't
+  // let you type these, but dropping them would wipe the link — and the
+  // server's wholesale child-replace would null it). The user can unlink
+  // (→ 'dismissed') or re-enable auto-linking.
+  linkedRecipeId?: string;
+  linkSource?: LinkSource;
 };
 
 type InstructionDraft = {
@@ -133,6 +141,8 @@ function RecipeEditorForm({
   useEffect(() => setInstructions(initialInstructions), [initialInstructions]);
 
   const [bulkPaste, setBulkPaste] = useState('');
+  // Ingredient id whose manual link-to-recipe picker is open, if any.
+  const [linkingId, setLinkingId] = useState<string | null>(null);
   const [notes, setNotes] = useState(existing?.notes ?? '');
   useEffect(() => setNotes(existing?.notes ?? ''), [existing?.notes]);
 
@@ -238,6 +248,8 @@ function RecipeEditorForm({
     }
   }
 
+  const linkingDraft = linkingId ? ingredients.find((d) => d.id === linkingId) : undefined;
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">{mode === 'edit' ? 'Edit recipe' : 'New recipe'}</h1>
@@ -291,6 +303,7 @@ function RecipeEditorForm({
                     setIngredients((cur) => cur.map((x, i) => (i === idx ? next : x)))
                   }
                   onRemove={() => setIngredients((cur) => cur.filter((_, i) => i !== idx))}
+                  onStartLink={() => setLinkingId(d.id)}
                 />
               </li>
             ))}
@@ -436,6 +449,22 @@ function RecipeEditorForm({
           Cancel
         </button>
       </div>
+
+      {linkingDraft && (
+        <RecipeLinkPickerDialog
+          ingredientName={linkingDraft.name}
+          excludeRecipeId={existing?.id ?? ''}
+          onPick={(recipeId) => {
+            setIngredients((cur) =>
+              cur.map((x) =>
+                x.id === linkingId ? { ...x, linkedRecipeId: recipeId, linkSource: 'manual' } : x,
+              ),
+            );
+            setLinkingId(null);
+          }}
+          onClose={() => setLinkingId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -444,65 +473,120 @@ function IngredientRow({
   draft,
   onChange,
   onRemove,
+  onStartLink,
 }: {
   draft: IngredientDraft;
   onChange: (next: IngredientDraft) => void;
   onRemove: () => void;
+  onStartLink: () => void;
 }) {
+  const isLinked = Boolean(draft.linkedRecipeId) && draft.linkSource !== 'dismissed';
+  const isDismissed = draft.linkSource === 'dismissed';
+  const canLink = draft.name.trim().length > 0;
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <select
-        value={draft.kind}
-        onChange={(e) => onChange({ ...draft, kind: e.target.value as IngredientDraft['kind'] })}
-        className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-      >
-        <option value="MEASURED">Measured</option>
-        <option value="VAGUE">To taste</option>
-      </select>
-      {draft.kind === 'MEASURED' && (
-        <>
-          <input
-            type="number"
-            step="any"
-            min={0}
-            value={draft.amount}
-            onChange={(e) => onChange({ ...draft, amount: e.target.value })}
-            placeholder="amount"
-            className="w-24 rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-          />
-          <select
-            value={draft.unit}
-            onChange={(e) => onChange({ ...draft, unit: e.target.value })}
-            className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-          >
-            {Object.values(Units).map((u) => (
-              <option key={u.name} value={u.name}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </>
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={draft.kind}
+          onChange={(e) => onChange({ ...draft, kind: e.target.value as IngredientDraft['kind'] })}
+          className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+        >
+          <option value="MEASURED">Measured</option>
+          <option value="VAGUE">To taste</option>
+        </select>
+        {draft.kind === 'MEASURED' && (
+          <>
+            <input
+              type="number"
+              step="any"
+              min={0}
+              value={draft.amount}
+              onChange={(e) => onChange({ ...draft, amount: e.target.value })}
+              placeholder="amount"
+              className="w-24 rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+            />
+            <select
+              value={draft.unit}
+              onChange={(e) => onChange({ ...draft, unit: e.target.value })}
+              className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+            >
+              {Object.values(Units).map((u) => (
+                <option key={u.name} value={u.name}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        <input
+          value={draft.name}
+          onChange={(e) => onChange({ ...draft, name: e.target.value })}
+          placeholder="ingredient name"
+          className="flex-1 min-w-[160px] rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+        />
+        <input
+          value={draft.preparation}
+          onChange={(e) => onChange({ ...draft, preparation: e.target.value })}
+          placeholder="preparation (optional)"
+          className="w-48 rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
+        />
+        <button
+          onClick={onRemove}
+          type="button"
+          aria-label={`Remove ingredient ${draft.name || 'row'}`}
+          className="ml-auto rounded-md px-2 py-1 text-xs text-stone-500 dark:text-stone-400 hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
+        >
+          Remove
+        </button>
+      </div>
+      {(isLinked || isDismissed || canLink) && (
+        <div className="flex items-center gap-2 pl-1 text-xs">
+          {isDismissed ? (
+            <>
+              <span className="text-stone-400 dark:text-stone-500">
+                Auto-linking off for this ingredient
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({ ...draft, linkedRecipeId: undefined, linkSource: undefined })
+                }
+                className="rounded px-1.5 py-0.5 text-stone-600 underline decoration-dotted underline-offset-2 hover:text-stone-900 dark:text-stone-300 dark:hover:text-stone-100"
+              >
+                Re-enable
+              </button>
+            </>
+          ) : isLinked ? (
+            <>
+              <span className="text-emerald-700 dark:text-emerald-400">🔗 Linked to a recipe</span>
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({ ...draft, linkedRecipeId: undefined, linkSource: 'dismissed' })
+                }
+                className="rounded px-1.5 py-0.5 text-stone-600 underline decoration-dotted underline-offset-2 hover:text-stone-900 dark:text-stone-300 dark:hover:text-stone-100"
+              >
+                Unlink
+              </button>
+              <button
+                type="button"
+                onClick={onStartLink}
+                className="rounded px-1.5 py-0.5 text-stone-500 underline decoration-dotted underline-offset-2 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-200"
+              >
+                Change…
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onStartLink}
+              className="rounded px-1.5 py-0.5 text-stone-400 underline decoration-dotted underline-offset-2 hover:text-stone-700 dark:text-stone-500 dark:hover:text-stone-300"
+            >
+              Link to a recipe…
+            </button>
+          )}
+        </div>
       )}
-      <input
-        value={draft.name}
-        onChange={(e) => onChange({ ...draft, name: e.target.value })}
-        placeholder="ingredient name"
-        className="flex-1 min-w-[160px] rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-      />
-      <input
-        value={draft.preparation}
-        onChange={(e) => onChange({ ...draft, preparation: e.target.value })}
-        placeholder="preparation (optional)"
-        className="w-48 rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-      />
-      <button
-        onClick={onRemove}
-        type="button"
-        aria-label={`Remove ingredient ${draft.name || 'row'}`}
-        className="ml-auto rounded-md px-2 py-1 text-xs text-stone-500 dark:text-stone-400 hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
-      >
-        Remove
-      </button>
     </div>
   );
 }
@@ -519,6 +603,7 @@ function newIngredientDraft(): IngredientDraft {
 }
 
 function toDraft(ing: Ingredient): IngredientDraft {
+  const link = { linkedRecipeId: ing.linkedRecipeId, linkSource: ing.linkSource };
   if (isMeasured(ing)) {
     const { amount, unit } = flattenQuantity(ing.quantity);
     return {
@@ -528,6 +613,7 @@ function toDraft(ing: Ingredient): IngredientDraft {
       preparation: ing.preparation ?? '',
       amount: String(amount),
       unit,
+      ...link,
     };
   }
   return {
@@ -537,6 +623,7 @@ function toDraft(ing: Ingredient): IngredientDraft {
     preparation: ing.preparation ?? '',
     amount: '',
     unit: '',
+    ...link,
   };
 }
 
@@ -549,12 +636,16 @@ function fromDraft(d: IngredientDraft): Ingredient {
       name: d.name.trim(),
       preparation: d.preparation.trim() || undefined,
       quantity: exact(safe, d.unit),
+      linkedRecipeId: d.linkedRecipeId,
+      linkSource: d.linkSource,
     });
   }
   return vague({
     id: d.id,
     name: d.name.trim(),
     preparation: d.preparation.trim() || undefined,
+    linkedRecipeId: d.linkedRecipeId,
+    linkSource: d.linkSource,
   });
 }
 

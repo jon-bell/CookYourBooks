@@ -29,6 +29,7 @@ import { createWebCollection, newTagId, normalizeLabel } from '@cookyourbooks/do
 
 import { CRR_SUPPRESS_MIN_ROWS, shouldSuppressCrrTriggers } from './crrSuppression.js';
 import { getLocalDb, type LocalDb } from './db.js';
+import { applyLinksToRecipe } from './ingredientLinks.js';
 import { enqueue } from './outbox.js';
 
 // Milliseconds since epoch, good enough for a monotonic-ish write marker
@@ -437,9 +438,10 @@ export async function upsertRecipeRow(
       await tx.exec(
         `insert into ingredients
            (id, recipe_id, sort_order, type, name, preparation, notes, description,
+            linked_recipe_id, link_source,
             quantity_type, quantity_amount, quantity_whole, quantity_numerator,
             quantity_denominator, quantity_min, quantity_max, quantity_unit)
-         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           ing.id,
           ing.recipe_id,
@@ -449,6 +451,8 @@ export async function upsertRecipeRow(
           ing.preparation,
           ing.notes,
           ingX.description ?? null,
+          ing.linked_recipe_id ?? null,
+          ing.link_source ?? null,
           ing.quantity_type,
           ing.quantity_amount,
           ing.quantity_whole,
@@ -1030,6 +1034,8 @@ async function bulkInsertIngredients(
     'preparation',
     'notes',
     'description',
+    'linked_recipe_id',
+    'link_source',
     'quantity_type',
     'quantity_amount',
     'quantity_whole',
@@ -1054,6 +1060,8 @@ async function bulkInsertIngredients(
         ing.preparation,
         ing.notes,
         ingX.description ?? null,
+        ing.linked_recipe_id ?? null,
+        ing.link_source ?? null,
         ing.quantity_type,
         ing.quantity_amount,
         ing.quantity_whole,
@@ -2464,9 +2472,12 @@ async function hydrateRecipe(row: RecipeRow): Promise<Recipe> {
 
 async function saveLocalRecipe(
   collectionId: string,
-  recipe: Recipe,
+  recipeIn: Recipe,
   sortOrder: number,
 ): Promise<void> {
+  // Resolve same-collection ingredient cross-reference links BEFORE persisting,
+  // so the link rides this recipe's first push (see applyLinksToRecipe).
+  const recipe = await applyLinksToRecipe(recipeIn, collectionId);
   const rInsert = recipeToInsert(recipe, collectionId, sortOrder);
   const recipeRow = {
     ...rInsert,
@@ -2508,6 +2519,29 @@ export async function getRecipeSummary(id: string): Promise<RecipeSummary | unde
   const row = rows[0];
   if (!row) return undefined;
   return { id: row.id, title: row.title, collectionId: row.collection_id };
+}
+
+/**
+ * Resolve ingredient cross-reference targets: for the given recipe ids that
+ * still exist locally, their collection + whether they're a placeholder
+ * (not-yet-OCR'd). A linked id absent from the result was deleted — the caller
+ * renders it as plain text (no dangling tap).
+ */
+export async function getRecipeLinkTargets(
+  ids: readonly string[],
+): Promise<Map<string, { collectionId: string; isPlaceholder: boolean }>> {
+  const out = new Map<string, { collectionId: string; isPlaceholder: boolean }>();
+  if (ids.length === 0) return out;
+  const db = await getLocalDb();
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = (await db.execO<{ id: string; collection_id: string; has_content: number }>(
+    `select id, collection_id, has_content from recipes where id in (${placeholders}) and deleted = 0`,
+    [...ids],
+  )) as { id: string; collection_id: string; has_content: number }[];
+  for (const r of rows) {
+    out.set(r.id, { collectionId: r.collection_id, isPlaceholder: r.has_content !== 1 });
+  }
+  return out;
 }
 
 /** Batched {@link getRecipeSummary}: title + collection for many ids in one query. */
