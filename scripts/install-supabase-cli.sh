@@ -6,17 +6,31 @@
 # platform-specific), so new clones + CI need to fetch it once.
 #
 # Usage:
-#   scripts/install-supabase-cli.sh          # latest release
+#   scripts/install-supabase-cli.sh          # pinned default (see below)
 #   SUPABASE_CLI_VERSION=2.90.0 scripts/install-supabase-cli.sh
+#
+# The default is pinned, not "latest": CI re-fetches the CLI on every run,
+# so an upstream release can break every branch with zero repo changes.
+# v2.108.0 did exactly that — it ported `functions serve` to the new
+# TypeScript CLI shell, whose edge-runtime boot fails with
+# "worker boot error: failed to bootstrap runtime: failed to determine
+# entrypoint" when serving the whole functions dir (no function name), so
+# the e2e functions server never comes up. 2.107.0 is the newest version
+# still on the old Go `functions serve` (verified: old versions bail with a
+# plain "supabase start is not running"; >= 2.108.0 emit the TS shell's
+# `{"_tag":"Error"}` JSON and the [inbucket] deprecation warning). Bump
+# deliberately, after a green local `db reset` + e2e run, once upstream
+# fixes the TS-shell serve.
 #
 # CLI >= 2.106.0 no longer auto-exposes public schema objects through
 # the Data API (local start/reset revokes the default anon/authenticated
 # grants). That's fine here: the Data API grants are explicit — see
-# supabase/migrations/20260701000200_explicit_data_api_grants.sql.
+# supabase/migrations/20260701000200_explicit_data_api_grants.sql. (2.107.0
+# is >= 2.106.0, so this pin still relies on that explicit-grants migration.)
 
 set -euo pipefail
 
-VERSION="${SUPABASE_CLI_VERSION:-latest}"
+VERSION="${SUPABASE_CLI_VERSION:-2.107.0}"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 

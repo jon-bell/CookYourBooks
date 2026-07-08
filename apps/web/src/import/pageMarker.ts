@@ -25,6 +25,14 @@ export interface PageMarker {
 
 export const DEFAULT_MARKER: PageMarker = { kind: 'RECIPE', joinsPrevious: false };
 
+/** The three page kinds as a pickable list — shared by the camera and the
+ *  import organizer so their labels/order stay in sync. */
+export const KIND_OPTIONS: ReadonlyArray<{ kind: PageKind; label: string; aria: string }> = [
+  { kind: 'RECIPE', label: 'Recipe', aria: 'Recipe page' },
+  { kind: 'TOC', label: 'Contents', aria: 'Table of contents page' },
+  { kind: 'NOTES', label: 'Notes', aria: 'Intro / notes page' },
+];
+
 /** A captured page plus its capture-time marker. */
 export interface ScannedPage {
   file: File;

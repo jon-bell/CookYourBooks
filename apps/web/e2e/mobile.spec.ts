@@ -166,9 +166,15 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
     await page.goto('/import/scan');
     await page.getByRole('button', { name: 'Scan pages' }).click();
 
-    // Lands on the batch board for the freshly-created batch.
-    await page.waitForURL(/\/import\/[0-9a-f-]+$/, { timeout: 30_000 });
+    // Capture lands on the mobile organizer; it must fit the phone viewport.
+    await page.waitForURL(/\/import\/[0-9a-f-]+\/group$/, { timeout: 30_000 });
     const batchId = page.url().split('/import/')[1]!.split(/[/?#]/)[0]!;
+    await expectNoHorizontalOverflow(page);
+
+    // Two pages → two recipes by default; confirm to release them to OCR and
+    // land on the batch board.
+    await page.getByRole('button', { name: /Start OCR on 2 recipes/ }).click();
+    await page.waitForURL(/\/import\/[0-9a-f-]+$/, { timeout: 30_000 });
 
     // Two captured frames → two import items. Seed a fixture per actual
     // storage path, scoped to provider 'gemini' — the worker probes

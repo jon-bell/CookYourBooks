@@ -326,6 +326,7 @@ interface ImportItemRow {
   page_index: number;
   storage_path: string;
   status: string;
+  extra_storage_paths: string[];
 }
 
 export interface ImportItemAttemptRow {
@@ -400,7 +401,7 @@ export async function waitForItemKind(
 
 export async function listBatchItems(batchId: string): Promise<ImportItemRow[]> {
   const resp = await fetch(
-    `${SUPABASE_URL}/rest/v1/import_items?batch_id=eq.${batchId}&select=id,page_index,storage_path,status&order=page_index.asc`,
+    `${SUPABASE_URL}/rest/v1/import_items?batch_id=eq.${batchId}&select=id,page_index,storage_path,status,extra_storage_paths&order=page_index.asc`,
     { headers: adminHeaders() },
   );
   if (!resp.ok) {
