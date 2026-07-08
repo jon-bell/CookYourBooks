@@ -468,6 +468,40 @@ function extractFirstJsonValue(text: string): string | undefined {
 }
 
 /**
+ * Best-effort completion of an *under-closed* JSON value. Gemini's thinking
+ * models (gemini-3.x) sometimes emit structurally-incomplete JSON — most often
+ * the final `}` is dropped even though the response's finishReason is STOP,
+ * which trips strict JSON.parse with "Unexpected end of JSON input". Walk the
+ * text tracking open-bracket nesting (ignoring string literals); if it ends
+ * outside a string with unclosed `{`/`[`, strip any trailing comma and append
+ * the matching closers in nesting order. Returns undefined when the text is
+ * already balanced or ends inside a string literal (a genuinely truncated
+ * value we can't safely reconstruct).
+ */
+function closeUnbalancedJson(text: string): string | undefined {
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  if (inStr || stack.length === 0) return undefined;
+  let trimmed = text.replace(/\s+$/, '');
+  if (trimmed.endsWith(',')) trimmed = trimmed.slice(0, -1);
+  return trimmed + stack.reverse().join('');
+}
+
+/**
  * Strict JSON.parse first. On failure, try a series of conservative
  * repairs and return the first that parses:
  *   1. the first balanced JSON value — drops trailing junk such as a
@@ -475,6 +509,8 @@ function extractFirstJsonValue(text: string): string | undefined {
  *   2. backslash-escape repair (Gemini occasionally emits invalid escapes
  *      like `\T`) plus collapsing of stray trailing commas before `}`/`]`
  *   3. (1) and (2) combined
+ *   4. bracket completion — append missing trailing `}`/`]` when a thinking
+ *      model drops the final closer(s) despite a STOP finish
  * Returns the PARSE_FAILED sentinel if nothing parses. Mirrors the
  * worker's tolerantJsonParse in each Edge Function's parser.ts — keep in
  * sync.
@@ -488,10 +524,13 @@ function tolerantJsonParse(text: string): unknown {
   const escapeRepair = (s: string): string =>
     s.replace(/\\(?!["\\/bfnrtu])/g, '\\\\').replace(/,(\s*[}\]])/g, '$1');
   const extracted = extractFirstJsonValue(text);
+  const closed = closeUnbalancedJson(text);
   const candidates: (string | undefined)[] = [
     extracted,
     escapeRepair(text),
     extracted ? escapeRepair(extracted) : undefined,
+    closed,
+    closed ? escapeRepair(closed) : undefined,
   ];
   for (const candidate of candidates) {
     if (candidate === undefined || candidate === text) continue;
