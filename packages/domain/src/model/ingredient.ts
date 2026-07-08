@@ -1,5 +1,14 @@
 import type { Quantity } from './quantity.js';
 
+/**
+ * Provenance of an ingredient's `linkedRecipeId` cross-reference:
+ * - `auto`      — created by the same-collection matcher.
+ * - `manual`    — the user explicitly linked (may target another book).
+ * - `dismissed` — the user unlinked; suppresses auto-linking so a rescan
+ *                 won't re-add it (`linkedRecipeId` is cleared).
+ */
+export type LinkSource = 'auto' | 'manual' | 'dismissed';
+
 export interface MeasuredIngredient {
   readonly type: 'MEASURED';
   readonly id: string;
@@ -7,6 +16,12 @@ export interface MeasuredIngredient {
   readonly quantity: Quantity;
   readonly preparation?: string;
   readonly notes?: string;
+  /**
+   * When this ingredient is itself a recipe in the library (a component /
+   * sub-recipe), the linked recipe's id. See `services/recipeLinks.ts`.
+   */
+  readonly linkedRecipeId?: string;
+  readonly linkSource?: LinkSource;
 }
 
 export interface VagueIngredient {
@@ -22,6 +37,9 @@ export interface VagueIngredient {
    * temperature") and `notes` (free-form extras).
    */
   readonly description?: string;
+  /** See {@link MeasuredIngredient.linkedRecipeId}. */
+  readonly linkedRecipeId?: string;
+  readonly linkSource?: LinkSource;
 }
 
 export type Ingredient = MeasuredIngredient | VagueIngredient;
@@ -52,6 +70,8 @@ export function measured(params: {
   quantity: Quantity;
   preparation?: string;
   notes?: string;
+  linkedRecipeId?: string;
+  linkSource?: LinkSource;
 }): MeasuredIngredient {
   return {
     type: 'MEASURED',
@@ -60,6 +80,8 @@ export function measured(params: {
     quantity: params.quantity,
     preparation: params.preparation,
     notes: params.notes,
+    linkedRecipeId: params.linkedRecipeId,
+    linkSource: params.linkSource,
   };
 }
 
@@ -69,6 +91,8 @@ export function vague(params: {
   preparation?: string;
   notes?: string;
   description?: string;
+  linkedRecipeId?: string;
+  linkSource?: LinkSource;
 }): VagueIngredient {
   return {
     type: 'VAGUE',
@@ -77,5 +101,7 @@ export function vague(params: {
     preparation: params.preparation,
     notes: params.notes,
     description: params.description,
+    linkedRecipeId: params.linkedRecipeId,
+    linkSource: params.linkSource,
   };
 }

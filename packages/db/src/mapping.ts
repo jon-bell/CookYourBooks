@@ -8,6 +8,7 @@ import {
   type Ingredient,
   type Instruction,
   instruction,
+  type LinkSource,
   measured,
   type Quantity,
   range,
@@ -252,6 +253,8 @@ export function recipeToInsert(recipe: Recipe, collectionId: string, sortOrder =
 function rowToIngredient(row: IngredientRow): Ingredient {
   const rowX = row as IngredientRow & { description?: string | null };
   const description = rowX.description ?? undefined;
+  const linkedRecipeId = row.linked_recipe_id ?? undefined;
+  const linkSource = (row.link_source as LinkSource | null) ?? undefined;
   if (row.type === 'MEASURED') {
     const quantity = rowToQuantity(row);
     if (!quantity) {
@@ -262,6 +265,8 @@ function rowToIngredient(row: IngredientRow): Ingredient {
         preparation: row.preparation ?? undefined,
         notes: row.notes ?? undefined,
         description,
+        linkedRecipeId,
+        linkSource,
       });
     }
     return measured({
@@ -270,6 +275,8 @@ function rowToIngredient(row: IngredientRow): Ingredient {
       quantity,
       preparation: row.preparation ?? undefined,
       notes: row.notes ?? undefined,
+      linkedRecipeId,
+      linkSource,
     });
   }
   return vague({
@@ -278,6 +285,8 @@ function rowToIngredient(row: IngredientRow): Ingredient {
     preparation: row.preparation ?? undefined,
     notes: row.notes ?? undefined,
     description,
+    linkedRecipeId,
+    linkSource,
   });
 }
 
@@ -317,6 +326,8 @@ export function ingredientToInsert(
     preparation: ing.preparation ?? null,
     notes: ing.notes ?? null,
     description: ing.type === 'VAGUE' ? (ing.description ?? null) : null,
+    linked_recipe_id: ing.linkedRecipeId ?? null,
+    link_source: ing.linkSource ?? null,
     quantity_type: null,
     quantity_amount: null,
     quantity_whole: null,

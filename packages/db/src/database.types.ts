@@ -1512,6 +1512,8 @@ export type Database = {
           description: string | null
           household_id: string | null
           id: string
+          link_source: string | null
+          linked_recipe_id: string | null
           name: string
           notes: string | null
           owner_id: string | null
@@ -1532,6 +1534,8 @@ export type Database = {
           description?: string | null
           household_id?: string | null
           id?: string
+          link_source?: string | null
+          linked_recipe_id?: string | null
           name: string
           notes?: string | null
           owner_id?: string | null
@@ -1552,6 +1556,8 @@ export type Database = {
           description?: string | null
           household_id?: string | null
           id?: string
+          link_source?: string | null
+          linked_recipe_id?: string | null
           name?: string
           notes?: string | null
           owner_id?: string | null
