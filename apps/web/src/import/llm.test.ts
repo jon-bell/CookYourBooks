@@ -1,7 +1,7 @@
 import { isMeasured } from '@cookyourbooks/domain';
 import { describe, expect, it } from 'vitest';
 
-import { parseLlmJson, parseNotesJson } from './llm.js';
+import { parseLlmJson, parseLlmNote, parseNotesJson } from './llm.js';
 
 // These tests pin the JSON-response contract. The parser is deliberately
 // lenient — it accepts both the rich prompt's lowercase-typed multi-recipe
@@ -309,6 +309,27 @@ describe('parseLlmJson', () => {
     // The trailing doubled brace didn't truncate the rawText tail.
     expect(d.sourceImageText).toContain('crushed ice.');
   });
+
+  it('carries the model’s per-recipe `complete` flag through (true / false / absent)', () => {
+    const mk = (complete: unknown) =>
+      JSON.stringify({
+        recipes: [
+          {
+            title: 'T',
+            complete,
+            ingredients: [{ type: 'vague', name: 'salt' }],
+            instructions: [],
+          },
+        ],
+      });
+    expect(parseLlmJson(mk(true))[0]!.complete).toBe(true);
+    expect(parseLlmJson(mk(false))[0]!.complete).toBe(false);
+    // A non-boolean (or omitted) value is treated as "no signal", not false.
+    expect(parseLlmJson(mk('yes'))[0]!.complete).toBeUndefined();
+    expect(
+      parseLlmJson('{"recipes":[{"title":"T","ingredients":[],"instructions":[]}]}')[0]!.complete,
+    ).toBeUndefined();
+  });
 });
 
 describe('parseNotesJson', () => {
@@ -350,5 +371,33 @@ describe('parseNotesJson', () => {
     const note = parseNotesJson('{"title":"Foreword","body":"Cooking is joy."}\n}');
     expect(note.title).toBe('Foreword');
     expect(note.body).toBe('Cooking is joy.');
+  });
+});
+
+describe('parseLlmNote (prose page under the recipe prompt)', () => {
+  it('extracts a top-level note when the model returns no recipe', () => {
+    const note = parseLlmNote(
+      JSON.stringify({ recipes: [], note: { title: 'About This Book', body: 'A love letter.' } }),
+    );
+    expect(note).not.toBeNull();
+    expect(note!.title).toBe('About This Book');
+    expect(note!.body).toBe('A love letter.');
+  });
+
+  it('defaults a missing note title to "Note"', () => {
+    const note = parseLlmNote('{"recipes":[],"note":{"body":"untitled prose"}}');
+    expect(note!.title).toBe('Note');
+  });
+
+  it('returns null for a normal recipe response (no note field)', () => {
+    expect(parseLlmNote('{"recipes":[{"title":"Cake"}]}')).toBeNull();
+  });
+
+  it('returns null when note is present but has no body', () => {
+    expect(parseLlmNote('{"recipes":[],"note":{"title":"only a title"}}')).toBeNull();
+  });
+
+  it('returns null (never throws) on malformed JSON', () => {
+    expect(parseLlmNote('not json at all')).toBeNull();
   });
 });

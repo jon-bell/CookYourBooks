@@ -18,6 +18,7 @@ Return a JSON object with this structure:
   "recipes": [
     {
       "title": "Recipe Title",
+      "complete": true,
       "pageNumbers": [123],
       "bookTitle": "Cookbook Name",
       "yield": { "type": "exact", "value": 4.0, "unit": "PEOPLE" },
@@ -33,10 +34,13 @@ Return a JSON object with this structure:
       ]
     }
   ],
+  "note": null,
   "rawText": "The raw text extracted from the image"
 }
 
 Rules:
+- complete: true when this is a whole, self-contained recipe — its title, full ingredient list, and full method are all visible on THIS page. false when only a fragment is present, e.g. the recipe clearly continues onto or from another page, or the ingredients or steps are cut off. When in doubt, use true.
+- note: usually null. If the page contains NO recipe at all — it is entirely prose (a foreword, chapter introduction, technique essay, or headnote) — return "recipes": [] and set "note" to { "title": "a short heading", "body": "the full prose as clean Markdown" }. Only do this when there is genuinely no recipe on the page; never use it to summarize a recipe.
 - INGREDIENT TYPE must be exactly "measured" (with quantity) or "vague" (with description). Never use a quantity-type word ("exact"/"fractional"/"range") as the ingredient type.
 - QUANTITY TYPES are "exact" ({ value, unit }), "fractional" ({ whole, numerator, denominator, unit }), or "range" ({ min, max, unit }).
 - UNITS: CUP, TABLESPOON, TEASPOON, FLUID_OUNCE, OUNCE, POUND, MILLILITER, LITER, DECILITER, GRAM, KILOGRAM, WHOLE, PEOPLE, PINCH, DASH, HANDFUL, TO_TASTE.

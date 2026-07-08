@@ -1,48 +1,63 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
+import { SAFE_BOTTOM, TAP_TARGET } from '../components/mobileSafeArea.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
 import { finalizeGrouping, kickOcr } from '../import/api.js';
+import {
+  buildFinalizePayload,
+  deriveGroups,
+  mergeAllSplits,
+  toggleInSet,
+} from '../import/groupingModel.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import type { ImportItem } from '../import/model.js';
+import { KIND_OPTIONS, type PageKind } from '../import/pageMarker.js';
 import { useImportBatch, useImportItems, useUpdateImportItem } from '../import/queries.js';
 import { rotateImportItemImage } from '../import/rotateItemImage.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 
 /**
- * "Group then OCR" review page. Shown right after upload for batches
- * created with `awaitGrouping: true`. Items are listed in page-index
- * order; the gap between any two adjacent thumbnails is a split
- * toggle. Default state is "split after every page" so every page is
- * its own recipe — clicking a gap removes its split, merging two
- * pages (and any further pages already part of the right neighbor's
- * group) into one recipe.
+ * Mobile-first "Organize / review" page for a scan session. Shown right after
+ * a scan (`awaitGrouping: true`) so the user can thumb through the captured
+ * pages, set each recipe's page type (Recipe / Contents / Notes), and adjust
+ * stitching — which adjacent pages form one multi-page recipe.
+ *
+ * Grouping model (pure, in `groupingModel.ts`): items are listed in
+ * page-index order and a `removedSplits` set records which split between two
+ * adjacent pages has been TAKEN AWAY — removing a split merges its two pages
+ * (and any further pages already in the right neighbor's group) into one
+ * recipe. Default is "split after every page" (one recipe per page); the
+ * camera's chain toggle pre-seeds `removedSplits` via router state so pages
+ * chained at capture arrive already merged and adjustable.
  *
  * On confirm we hand a `[[primary, …absorb], …]` payload to
- * `import_finalize_grouping`. The RPC appends absorbed items'
- * storage_paths onto the primary's `extra_storage_paths`, marks
- * absorbed items DISCARDED, and flips every remaining
- * AWAITING_GROUPING row in the batch to PENDING in one transaction.
+ * `import_finalize_grouping`, which appends absorbed pages' storage_paths onto
+ * the primary's `extra_storage_paths` (server-side), marks absorbed items
+ * DISCARDED, and flips remaining AWAITING_GROUPING rows to PENDING.
  */
 export function ImportGroupingPage() {
   const { batchId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const enabled = useLocalQueryEnabled();
   const { syncNow } = useSync();
   const updateItem = useUpdateImportItem();
   const { data: batch, isLoading: batchLoading } = useImportBatch(batchId);
   const { data: items = [], isLoading: itemsLoading } = useImportItems(batchId);
 
-  // True = there IS a split between this position and the next one.
-  // Indexed by left-item's index (0..n-2). Default: split everywhere.
-  // Storing as a Set so toggles are O(1) and the empty state (= "all
-  // grouped into one") is just an empty set.
-  const [removedSplits, setRemovedSplits] = useState<Set<number>>(new Set());
-  // Groups the user flagged as Table-of-Contents pages, keyed by the
-  // group's primary (first/lowest-page) item id so the flag follows the
-  // lead page as splits change.
-  const [tocPrimaryIds, setTocPrimaryIds] = useState<Set<string>>(new Set());
+  // Split indices removed at capture time (camera chain toggle) → merge those
+  // pages by default. Read once on mount; a cold reload (no router state)
+  // falls back to one-recipe-per-page with every page still present.
+  const initialMerges = (location.state as { initialMerges?: number[] } | null)?.initialMerges;
+  const [removedSplits, setRemovedSplits] = useState<Set<number>>(
+    () => new Set(initialMerges ?? []),
+  );
+  // Per-group page-type overrides, keyed by the group's primary (lowest-page)
+  // item id so the choice follows the lead page as splits change. Missing key
+  // => use the captured `item.kind` (see `effectiveKind`).
+  const [modeOverrides, setModeOverrides] = useState<Map<string, PageKind>>(() => new Map());
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
@@ -53,10 +68,8 @@ export function ImportGroupingPage() {
   const [rotationVersion, setRotationVersion] = useState<Map<string, number>>(() => new Map());
   const [rotateError, setRotateError] = useState<string | undefined>();
 
-  // Items in upload order. Only AWAITING_GROUPING items participate in
-  // the grouping decision — any item already past that status (e.g.,
-  // user came back to this page after confirming) is shown but ignored
-  // when building the payload.
+  // Items in upload order. Only AWAITING_GROUPING items participate in the
+  // grouping decision — any item already past that status is ignored.
   const groupable: ImportItem[] = useMemo(
     () =>
       [...items]
@@ -64,38 +77,28 @@ export function ImportGroupingPage() {
         .sort((a, b) => a.pageIndex - b.pageIndex),
     [items],
   );
+  const groupableById = useMemo(() => {
+    const m = new Map<string, ImportItem>();
+    for (const it of groupable) m.set(it.id, it);
+    return m;
+  }, [groupable]);
 
-  // Walk groupable items left-to-right. Start a new group whenever
-  // there's a split AFTER the previous item (i.e., the index of the
-  // previous item is NOT in `removedSplits`).
-  const groups: ImportItem[][] = useMemo(() => {
-    if (groupable.length === 0) return [];
-    const out: ImportItem[][] = [[groupable[0]!]];
-    for (let i = 1; i < groupable.length; i += 1) {
-      const splitRemoved = removedSplits.has(i - 1);
-      if (splitRemoved) {
-        out[out.length - 1]!.push(groupable[i]!);
-      } else {
-        out.push([groupable[i]!]);
-      }
-    }
-    return out;
-  }, [groupable, removedSplits]);
+  const groups: ImportItem[][] = useMemo(
+    () => deriveGroups(groupable, removedSplits),
+    [groupable, removedSplits],
+  );
+
+  const effectiveKind = (leader: ImportItem): PageKind =>
+    modeOverrides.get(leader.id) ?? leader.kind;
 
   function toggleSplit(leftIdx: number) {
-    setRemovedSplits((prev) => {
-      const next = new Set(prev);
-      if (next.has(leftIdx)) next.delete(leftIdx);
-      else next.add(leftIdx);
-      return next;
-    });
+    setRemovedSplits((prev) => toggleInSet(prev, leftIdx));
   }
 
-  function toggleToc(primaryId: string) {
-    setTocPrimaryIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(primaryId)) next.delete(primaryId);
-      else next.add(primaryId);
+  function setMode(leaderId: string, kind: PageKind) {
+    setModeOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(leaderId, kind);
       return next;
     });
   }
@@ -104,9 +107,13 @@ export function ImportGroupingPage() {
     setRemovedSplits(new Set());
   }
 
-  // Rotate the page image 90° (turns = +1 CW / -1 CCW) and re-upload in
-  // place. Pre-OCR, so no re-OCR reset is needed — the worker reads the
-  // rewritten bytes when grouping is confirmed.
+  function mergeAll() {
+    setRemovedSplits(mergeAllSplits(groupable.length));
+  }
+
+  // Rotate the page image 90° (turns = +1 CW / -1 CCW) and re-upload in place.
+  // Pre-OCR, so no re-OCR reset is needed — the worker reads the rewritten
+  // bytes when grouping is confirmed.
   async function rotateItem(item: ImportItem, quarterTurns: number) {
     if (rotatingId) return;
     setRotatingId(item.id);
@@ -125,33 +132,27 @@ export function ImportGroupingPage() {
     }
   }
 
-  function mergeAll() {
-    // Drop every split — collapse the whole batch into one recipe.
-    const all = new Set<number>();
-    for (let i = 0; i < groupable.length - 1; i += 1) all.add(i);
-    setRemovedSplits(all);
-  }
-
   async function confirm() {
     if (!batchId || groupable.length === 0) return;
     setError(undefined);
     setConfirming(true);
     try {
-      const payload = groups.map((g) => g.map((it) => it.id));
-      // Flag ToC groups BEFORE finalizing. The items are still
-      // AWAITING_GROUPING, so this sets is_toc without touching status
-      // (the outbox push carries is_toc but never a non-terminal status
-      // flip). After syncNow lands it, finalizeGrouping flips the rows to
-      // PENDING with is_toc intact, so the worker OCRs them with the
-      // table-of-contents prompt on the first pass — no re-OCR needed.
-      const tocIds = groups.filter((g) => tocPrimaryIds.has(g[0]!.id)).map((g) => g[0]!.id);
-      for (const id of tocIds) {
-        await updateItem.mutateAsync({ id, patch: { kind: 'TOC' } });
+      const payload = buildFinalizePayload(groups);
+      // Persist any changed page types on the group leaders BEFORE finalizing.
+      // Items are still AWAITING_GROUPING, so this sets kind (RECIPE/TOC/NOTES)
+      // without flipping status (the outbox push carries kind but never a
+      // non-terminal status flip). After syncNow lands it, finalizeGrouping
+      // releases the rows to PENDING with kind intact, so the worker OCRs them
+      // with the right prompt on the first pass — no re-OCR needed.
+      const kindChanges = groups
+        .map((g) => g[0]!)
+        .map((leader) => ({ id: leader.id, kind: effectiveKind(leader) }))
+        .filter((c) => c.kind !== (groupableById.get(c.id)?.kind ?? 'RECIPE'));
+      for (const c of kindChanges) {
+        await updateItem.mutateAsync({ id: c.id, patch: { kind: c.kind } });
       }
-      if (tocIds.length > 0) await syncNow();
+      if (kindChanges.length > 0) await syncNow();
       await finalizeGrouping(batchId, payload);
-      // Worker picks up PENDING rows on the next pg_cron tick; kick it
-      // so the user sees progress immediately. Best-effort.
       try {
         await kickOcr(batchId);
       } catch {
@@ -175,7 +176,7 @@ export function ImportGroupingPage() {
         <button
           type="button"
           onClick={() => void syncNow()}
-          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+          className={`rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 ${TAP_TARGET}`}
         >
           Sync now
         </button>
@@ -183,15 +184,15 @@ export function ImportGroupingPage() {
     );
   }
   if (groupable.length === 0) {
-    // No AWAITING_GROUPING items — either already finalized or this
-    // batch was never group-first. Redirect home for the batch.
+    // No AWAITING_GROUPING items — either already finalized or this batch was
+    // never group-first. Redirect home for the batch.
     return (
       <div className="space-y-3">
         <p className="text-stone-700 dark:text-stone-300">Nothing left to group for this batch.</p>
         <button
           type="button"
           onClick={() => navigate(`/import/${batch.id}`)}
-          className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
+          className={`rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 ${TAP_TARGET}`}
         >
           Go to batch
         </button>
@@ -203,55 +204,61 @@ export function ImportGroupingPage() {
   const recipeCount = groups.length;
   const multiPageGroups = groups.filter((g) => g.length > 1).length;
 
+  const previewItem = previewIndex !== null ? groupable[previewIndex] : undefined;
+  const previewLeader = previewItem
+    ? (groups.find((g) => g.some((it) => it.id === previewItem.id))?.[0] ?? previewItem)
+    : undefined;
+
   return (
-    <div className="space-y-5">
-      <div className="space-y-1">
+    <div className="space-y-4">
+      {/* Sticky summary — stays on screen while the cards scroll. */}
+      <div className="sticky top-0 z-10 -mx-4 border-b border-stone-200 dark:border-stone-800 bg-white/95 px-4 py-3 backdrop-blur dark:bg-stone-950/95">
         <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-          {batch.name} · grouping
+          {batch.name} · organize
         </div>
-        <h1 className="text-2xl font-semibold">Group pages into recipes</h1>
-        <p className="max-w-3xl text-sm text-stone-600 dark:text-stone-400">
-          Each page is its own recipe by default. Click a page to view it fullscreen, then click the{' '}
-          <span className="font-medium">split</span> between two pages to merge them — pages in the
-          same colored band become one recipe and OCR will read them together.
-        </p>
+        <h1 className="text-xl font-semibold">Organize into recipes</h1>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+          <span>
+            <strong>{recipeCount}</strong> {recipeCount === 1 ? 'recipe' : 'recipes'} from{' '}
+            <strong>{totalPages}</strong> {totalPages === 1 ? 'page' : 'pages'}
+            {multiPageGroups > 0 && (
+              <span className="text-stone-500 dark:text-stone-400">
+                {' '}
+                · {multiPageGroups} multi-page
+              </span>
+            )}
+          </span>
+          <span className="ml-auto flex gap-2 text-xs">
+            <button
+              type="button"
+              onClick={resetToAllSplit}
+              className={`rounded-md border border-stone-300 dark:border-stone-600 bg-white px-2 py-1 hover:bg-stone-100 dark:bg-stone-900 dark:hover:bg-stone-800 ${TAP_TARGET}`}
+            >
+              One per page
+            </button>
+            <button
+              type="button"
+              onClick={mergeAll}
+              className={`rounded-md border border-stone-300 dark:border-stone-600 bg-white px-2 py-1 hover:bg-stone-100 dark:bg-stone-900 dark:hover:bg-stone-800 ${TAP_TARGET}`}
+            >
+              One recipe
+            </button>
+          </span>
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 px-3 py-2 text-sm">
-        <span>
-          <strong>{recipeCount}</strong> {recipeCount === 1 ? 'recipe' : 'recipes'} from{' '}
-          <strong>{totalPages}</strong> pages
-          {multiPageGroups > 0 && (
-            <span className="text-stone-500 dark:text-stone-400">
-              {' '}
-              · {multiPageGroups} multi-page
-            </span>
-          )}
-        </span>
-        <span className="ml-auto flex gap-2 text-xs">
-          <button
-            type="button"
-            onClick={resetToAllSplit}
-            className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 hover:bg-stone-100 dark:hover:bg-stone-800"
-          >
-            One recipe per page
-          </button>
-          <button
-            type="button"
-            onClick={mergeAll}
-            className="rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 hover:bg-stone-100 dark:hover:bg-stone-800"
-          >
-            Everything is one recipe
-          </button>
-        </span>
-      </div>
+      <p className="text-sm text-stone-600 dark:text-stone-400">
+        Each page is its own recipe by default. Tap a page to view it fullscreen. Use{' '}
+        <span className="font-medium">Merge with next recipe</span> to join two pages into one
+        recipe, or the <span className="font-medium">✂</span> between pages to split them apart. Set
+        a recipe's type with the Recipe / Contents / Notes toggle.
+      </p>
 
-      <GroupingStrip
+      <RecipeCardList
         groups={groups}
-        removedSplits={removedSplits}
         groupable={groupable}
-        tocPrimaryIds={tocPrimaryIds}
-        onToggleToc={toggleToc}
+        effectiveKind={effectiveKind}
+        onSetMode={setMode}
         onToggleSplit={toggleSplit}
         onPreview={(idx) => setPreviewIndex(idx)}
         onRotate={rotateItem}
@@ -259,17 +266,19 @@ export function ImportGroupingPage() {
         rotationVersion={rotationVersion}
       />
 
-      {previewIndex !== null && (
+      {previewItem && previewLeader && (
         <PagePreviewOverlay
-          item={groupable[previewIndex]!}
-          index={previewIndex}
+          item={previewItem}
+          index={previewIndex!}
           total={groupable.length}
           groups={groups}
           removedSplits={removedSplits}
+          leaderKind={effectiveKind(previewLeader)}
+          onSetMode={(k) => setMode(previewLeader.id, k)}
           onToggleSplit={toggleSplit}
-          onRotate={(turns) => void rotateItem(groupable[previewIndex]!, turns)}
-          rotating={rotatingId === groupable[previewIndex]!.id}
-          version={rotationVersion.get(groupable[previewIndex]!.id) ?? 0}
+          onRotate={(turns) => void rotateItem(previewItem, turns)}
+          rotating={rotatingId === previewItem.id}
+          version={rotationVersion.get(previewItem.id) ?? 0}
           onClose={() => setPreviewIndex(null)}
           onNavigate={setPreviewIndex}
         />
@@ -278,12 +287,15 @@ export function ImportGroupingPage() {
       {rotateError && <p className="text-sm text-red-700 dark:text-red-300">{rotateError}</p>}
       {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
 
-      <div className="flex gap-3">
+      {/* Sticky confirm bar. */}
+      <div
+        className={`sticky bottom-0 z-10 -mx-4 flex gap-3 border-t border-stone-200 dark:border-stone-800 bg-white/95 px-4 py-3 backdrop-blur dark:bg-stone-950/95 ${SAFE_BOTTOM}`}
+      >
         <button
           type="button"
           onClick={() => void confirm()}
           disabled={confirming || groupable.length === 0}
-          className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
+          className={`flex-1 rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50 ${TAP_TARGET}`}
         >
           {confirming
             ? 'Starting OCR…'
@@ -293,7 +305,7 @@ export function ImportGroupingPage() {
           type="button"
           onClick={() => navigate(`/import/${batch.id}`)}
           disabled={confirming}
-          className="rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 disabled:opacity-50"
+          className={`rounded-md px-4 py-2 text-sm text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 disabled:opacity-50 ${TAP_TARGET}`}
         >
           Cancel
         </button>
@@ -302,19 +314,12 @@ export function ImportGroupingPage() {
   );
 }
 
-/**
- * Horizontal scroll strip of thumbnails interleaved with clickable
- * split toggles. The visual cue for "merged" (no split between
- * neighbors) is a subtle linking band; "split" is a wider gap with a
- * vertical rule. Each group is alternately shaded to make the recipe
- * boundaries unambiguous.
- */
-function GroupingStrip({
+/** Vertical list of recipe cards with between-card "merge" dividers. */
+function RecipeCardList({
   groups,
-  removedSplits,
   groupable,
-  tocPrimaryIds,
-  onToggleToc,
+  effectiveKind,
+  onSetMode,
   onToggleSplit,
   onPreview,
   onRotate,
@@ -322,18 +327,17 @@ function GroupingStrip({
   rotationVersion,
 }: {
   groups: ImportItem[][];
-  removedSplits: Set<number>;
   groupable: ImportItem[];
-  tocPrimaryIds: Set<string>;
-  onToggleToc: (primaryId: string) => void;
+  effectiveKind: (leader: ImportItem) => PageKind;
+  onSetMode: (leaderId: string, kind: PageKind) => void;
   onToggleSplit: (leftIdx: number) => void;
   onPreview: (idx: number) => void;
   onRotate: (item: ImportItem, quarterTurns: number) => void;
   rotatingId: string | null;
   rotationVersion: Map<string, number>;
 }) {
-  // Map item.id -> its index inside `groupable`, used by the split
-  // gap to know which split toggle it represents.
+  // Map item.id -> its index inside `groupable`, used by the split/merge
+  // controls to know which split index they toggle.
   const indexById = useMemo(() => {
     const m = new Map<string, number>();
     groupable.forEach((it, i) => m.set(it.id, i));
@@ -341,60 +345,90 @@ function GroupingStrip({
   }, [groupable]);
 
   return (
-    <div className="overflow-x-auto">
-      <div className="flex min-w-min items-stretch gap-0 pb-2">
-        {groups.map((g, gi) => {
-          const primaryId = g[0]!.id;
-          const isToc = tocPrimaryIds.has(primaryId);
+    <div className="space-y-3">
+      {groups.map((g, gi) => {
+        const lastIdx = indexById.get(g[g.length - 1]!.id)!;
+        return (
+          <div key={g.map((it) => it.id).join('-')} className="space-y-3">
+            <RecipeCard
+              group={g}
+              recipeNumber={gi + 1}
+              mode={effectiveKind(g[0]!)}
+              onSetMode={onSetMode}
+              indexById={indexById}
+              onPreview={onPreview}
+              onToggleSplit={onToggleSplit}
+              onRotate={onRotate}
+              rotatingId={rotatingId}
+              rotationVersion={rotationVersion}
+            />
+            {gi < groups.length - 1 && <MergeDivider onClick={() => onToggleSplit(lastIdx)} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RecipeCard({
+  group,
+  recipeNumber,
+  mode,
+  onSetMode,
+  indexById,
+  onPreview,
+  onToggleSplit,
+  onRotate,
+  rotatingId,
+  rotationVersion,
+}: {
+  group: ImportItem[];
+  recipeNumber: number;
+  mode: PageKind;
+  onSetMode: (leaderId: string, kind: PageKind) => void;
+  indexById: Map<string, number>;
+  onPreview: (idx: number) => void;
+  onToggleSplit: (leftIdx: number) => void;
+  onRotate: (item: ImportItem, quarterTurns: number) => void;
+  rotatingId: string | null;
+  rotationVersion: Map<string, number>;
+}) {
+  const leader = group[0]!;
+  const ring =
+    mode === 'TOC'
+      ? 'ring-2 ring-indigo-400 dark:ring-indigo-500'
+      : mode === 'NOTES'
+        ? 'ring-2 ring-amber-400 dark:ring-amber-500'
+        : 'ring-1 ring-stone-200 dark:ring-stone-700';
+  const label = mode === 'TOC' ? 'Contents' : mode === 'NOTES' ? 'Notes' : `Recipe ${recipeNumber}`;
+  return (
+    <div className={`rounded-lg bg-white p-3 dark:bg-stone-900 ${ring}`}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-sm font-medium text-stone-700 dark:text-stone-200">
+          {label}
+          {group.length > 1 && (
+            <span className="ml-1 text-xs font-normal text-stone-500 dark:text-stone-400">
+              · {group.length} pages
+            </span>
+          )}
+        </div>
+        <ModeToggle value={mode} onChange={(k) => onSetMode(leader.id, k)} />
+      </div>
+      <div className="flex items-stretch gap-1 overflow-x-auto pb-1">
+        {group.map((it, ii) => {
+          const idxInBatch = indexById.get(it.id)!;
           return (
-            <div
-              key={g.map((it) => it.id).join('-')}
-              className={`flex shrink-0 flex-col gap-1 rounded-md p-2 ${
-                isToc
-                  ? 'bg-indigo-50 ring-2 ring-indigo-400 dark:bg-indigo-950/40'
-                  : gi % 2 === 0
-                    ? 'bg-stone-50'
-                    : 'bg-amber-50'
-              }`}
-            >
-              <label className="flex cursor-pointer items-center gap-1.5 self-start rounded px-1 text-[11px] font-medium text-stone-600 dark:text-stone-300">
-                <input
-                  type="checkbox"
-                  checked={isToc}
-                  onChange={() => onToggleToc(primaryId)}
-                  className="h-3.5 w-3.5"
-                />
-                Table of Contents
-              </label>
-              <div className="flex items-stretch gap-1">
-                {g.map((it, ii) => {
-                  const idxInBatch = indexById.get(it.id)!;
-                  const isLastInBatch = idxInBatch === groupable.length - 1;
-                  return (
-                    <div key={it.id} className="flex items-stretch">
-                      <Thumb
-                        item={it}
-                        pageInGroup={ii + 1}
-                        groupSize={g.length}
-                        onPreview={() => onPreview(idxInBatch)}
-                        onRotate={(turns) => onRotate(it, turns)}
-                        rotating={rotatingId === it.id}
-                        version={rotationVersion.get(it.id) ?? 0}
-                      />
-                      {/* Splits live BETWEEN thumbs; render the right-side
-                      gap on every thumb except the very last in the
-                      batch. The gap toggles the split at index
-                      `idxInBatch` (= the split AFTER this thumb). */}
-                      {!isLastInBatch && (
-                        <SplitGap
-                          removed={removedSplits.has(idxInBatch)}
-                          onClick={() => onToggleSplit(idxInBatch)}
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+            <div key={it.id} className="flex items-stretch">
+              <PageThumb
+                item={it}
+                pageInGroup={ii + 1}
+                groupSize={group.length}
+                onPreview={() => onPreview(idxInBatch)}
+                onRotate={(turns) => onRotate(it, turns)}
+                rotating={rotatingId === it.id}
+                version={rotationVersion.get(it.id) ?? 0}
+              />
+              {ii < group.length - 1 && <SplitControl onClick={() => onToggleSplit(idxInBatch)} />}
             </div>
           );
         })}
@@ -403,7 +437,52 @@ function GroupingStrip({
   );
 }
 
-function Thumb({
+/** Segmented Recipe / Contents / Notes control (per recipe group). */
+function ModeToggle({
+  value,
+  onChange,
+  tone = 'light',
+}: {
+  value: PageKind;
+  onChange: (kind: PageKind) => void;
+  tone?: 'light' | 'dark';
+}) {
+  const border = tone === 'dark' ? 'border-white/20' : 'border-stone-300 dark:border-stone-600';
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Page type"
+      className={`inline-flex shrink-0 overflow-hidden rounded-md border ${border}`}
+    >
+      {KIND_OPTIONS.map((opt) => {
+        const active = value === opt.kind;
+        const activeCls =
+          tone === 'dark'
+            ? 'bg-white text-stone-900'
+            : 'bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-900';
+        const idleCls =
+          tone === 'dark'
+            ? 'text-white/80 hover:bg-white/10'
+            : 'bg-white text-stone-600 hover:bg-stone-100 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-800';
+        return (
+          <button
+            key={opt.kind}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            aria-label={opt.aria}
+            onClick={() => onChange(opt.kind)}
+            className={`min-h-[36px] px-2.5 text-xs font-medium ${active ? activeCls : idleCls}`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PageThumb({
   item,
   pageInGroup,
   groupSize,
@@ -421,7 +500,7 @@ function Thumb({
   version: number;
 }) {
   return (
-    <div className="flex w-32 flex-col items-center gap-1">
+    <div className="flex w-24 shrink-0 flex-col items-center gap-1 sm:w-28">
       <button
         type="button"
         onClick={onPreview}
@@ -453,7 +532,7 @@ function Thumb({
   );
 }
 
-/** Small ⟲ / ⟳ rotate control. Shared by the strip thumbs and the preview. */
+/** Small ⟲ / ⟳ rotate control. Shared by the cards and the preview. */
 function RotateButton({
   dir,
   disabled,
@@ -489,40 +568,35 @@ function RotateButton({
   );
 }
 
-function SplitGap({ removed, onClick }: { removed: boolean; onClick: () => void }) {
-  // Two visual modes:
-  //  - removed=true: the split has been TAKEN AWAY (pages are merged).
-  //    Render a slim linking bar.
-  //  - removed=false: the split is PRESENT (recipe boundary). Render a
-  //    wider gap with a vertical rule.
-  if (removed) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        title="Click to split these pages into separate recipes"
-        aria-label="Split here"
-        className="group mx-0.5 flex w-3 items-center justify-center"
-      >
-        <span className="block h-12 w-1 rounded-full bg-stone-400 group-hover:bg-stone-700" />
-      </button>
-    );
-  }
+/** ✂ control between two pages of one recipe — splits them into two recipes. */
+function SplitControl({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title="Click to merge these pages into one recipe"
-      aria-label="Merge here"
-      className="group mx-1 flex w-8 flex-col items-center justify-center gap-1"
+      title="Split into a new recipe here"
+      aria-label="Split into a new recipe here"
+      className="mx-0.5 flex shrink-0 items-stretch"
     >
-      <span className="text-[10px] uppercase tracking-wide text-stone-400 group-hover:text-stone-700">
-        split
+      <span className="flex min-h-[44px] items-center self-stretch rounded bg-stone-100 px-1 text-stone-400 hover:bg-red-100 hover:text-red-600 dark:bg-stone-800 dark:hover:bg-red-950/40">
+        <span aria-hidden className="text-xs">
+          ✂
+        </span>
       </span>
-      <span className="block h-12 w-px bg-stone-300 dark:bg-stone-600 group-hover:bg-stone-700" />
-      <span className="text-[10px] uppercase tracking-wide text-stone-400 group-hover:text-stone-700">
-        merge?
-      </span>
+    </button>
+  );
+}
+
+/** Full-width control between two recipe cards — merges them into one recipe. */
+function MergeDivider({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Merge with next recipe"
+      className={`flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-stone-300 py-2 text-xs font-medium text-stone-500 hover:border-sky-400 hover:text-sky-600 dark:border-stone-600 dark:text-stone-400 dark:hover:text-sky-300 ${TAP_TARGET}`}
+    >
+      <span aria-hidden>⛓</span> Merge with next recipe
     </button>
   );
 }
@@ -533,6 +607,8 @@ function PagePreviewOverlay({
   total,
   groups,
   removedSplits,
+  leaderKind,
+  onSetMode,
   onToggleSplit,
   onRotate,
   rotating,
@@ -545,6 +621,8 @@ function PagePreviewOverlay({
   total: number;
   groups: ImportItem[][];
   removedSplits: Set<number>;
+  leaderKind: PageKind;
+  onSetMode: (kind: PageKind) => void;
   onToggleSplit: (leftIdx: number) => void;
   onRotate: (quarterTurns: number) => void;
   rotating: boolean;
@@ -632,7 +710,7 @@ function PagePreviewOverlay({
       </div>
 
       <div
-        className="flex shrink-0 flex-col gap-2 border-t border-white/10 px-4 py-3 text-sm text-white/90"
+        className={`flex shrink-0 flex-col gap-2 border-t border-white/10 px-4 py-3 text-sm text-white/90 ${SAFE_BOTTOM}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-wrap items-center gap-3">
@@ -646,9 +724,10 @@ function PagePreviewOverlay({
                 ` · page ${membership.pageInGroup} of ${membership.groupSize}`}
             </span>
           )}
-          <span className="hidden text-white/60 sm:inline">
-            Pinch or ⌘+scroll to zoom · drag to pan · ← / → to move between pages
-          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-wide text-white/50">Type</span>
+          <ModeToggle value={leaderKind} onChange={onSetMode} tone="dark" />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs uppercase tracking-wide text-white/50">Rotate</span>

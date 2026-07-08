@@ -10,6 +10,14 @@ export interface ParsedRecipeDraft {
   instructions: Instruction[];
   /** Lines we couldn't place. Shown to the user for manual review. */
   leftover: string[];
+  /**
+   * The vision model's self-assessment: is this a full, self-contained recipe
+   * (its title, ingredients, and method are all present) rather than a
+   * fragment continued from/onto another page? Only the LLM path sets it; a
+   * plain-text parse and older OCR results leave it undefined. The auto-accept
+   * pass treats `false` as "hold for review" and undefined as no signal.
+   */
+  complete?: boolean;
   // Rich OCR metadata — all optional, plain-text parse fills none of
   // these but the vision-model path (apps/web/src/import/llm.ts) does.
   description?: string;

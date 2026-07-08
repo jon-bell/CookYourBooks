@@ -1,6 +1,7 @@
 import {
   formatQuantity,
   formatServings,
+  type Ingredient,
   isMeasured,
   type Quantity,
   type Recipe,
@@ -9,6 +10,37 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { CoverImage } from '../components/CoverImage.js';
+
+/** A resolved ingredient → recipe cross-reference target (same-collection for
+ *  auto links; any collection for manual links). `isPlaceholder` is true when
+ *  the target recipe hasn't been OCR'd yet. */
+export interface IngredientLinkTarget {
+  recipeId: string;
+  collectionId: string;
+  isPlaceholder: boolean;
+}
+
+/** Renders an ingredient name, tappable when it links to another recipe. */
+function IngredientName({ ing, link }: { ing: Ingredient; link?: IngredientLinkTarget }) {
+  if (!link) return <>{ing.name}</>;
+  return (
+    <Link
+      to={`/collections/${link.collectionId}/recipes/${link.recipeId}`}
+      data-testid="ingredient-link"
+      title={link.isPlaceholder ? 'Linked recipe — not imported yet' : 'Open the linked recipe'}
+      className={
+        link.isPlaceholder
+          ? 'underline decoration-dotted decoration-stone-400 underline-offset-2 hover:decoration-solid'
+          : 'text-emerald-700 dark:text-emerald-400 underline decoration-dotted underline-offset-2 hover:decoration-solid'
+      }
+    >
+      {ing.name}
+      <span aria-hidden className="ml-0.5 text-[0.7em] align-super opacity-70">
+        ↗
+      </span>
+    </Link>
+  );
+}
 
 /** The slice of collection metadata the presentational recipe body needs —
  *  satisfied by both the local domain RecipeCollection and the remote
@@ -158,11 +190,16 @@ export function RecipeContentGrid({
   recipe,
   displayQuantity = (q) => formatQuantity(q),
   textScale = 1,
+  resolveLink,
 }: {
   /** Pass the scaled recipe. */
   recipe: Recipe;
   displayQuantity?: (q: Quantity, ingredientName: string) => string;
   textScale?: number;
+  /** Resolve an ingredient (by id) to a cross-referenced recipe, if any. The
+   *  owner recipe page passes this; the anonymous share view does not (no
+   *  collection context), so links degrade to plain text. */
+  resolveLink?: (ingredientId: string) => IngredientLinkTarget | undefined;
 }) {
   return (
     <div style={textScale !== 1 ? { zoom: textScale } : undefined} className="space-y-6">
@@ -175,7 +212,7 @@ export function RecipeContentGrid({
                 {isMeasured(ing) ? (
                   <>
                     <span className="font-medium">{displayQuantity(ing.quantity, ing.name)}</span>{' '}
-                    {ing.name}
+                    <IngredientName ing={ing} link={resolveLink?.(ing.id)} />
                     {ing.preparation && (
                       <span className="text-stone-500 dark:text-stone-400">
                         , {ing.preparation}
@@ -184,7 +221,7 @@ export function RecipeContentGrid({
                   </>
                 ) : (
                   <>
-                    {ing.name}
+                    <IngredientName ing={ing} link={resolveLink?.(ing.id)} />
                     {ing.preparation && (
                       <span className="text-stone-500 dark:text-stone-400">
                         , {ing.preparation}

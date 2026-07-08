@@ -211,57 +211,44 @@ test.describe('Discover + fork', () => {
       const forkedId = page.url().split('/collections/')[1]!;
       expect(forkedId).toMatch(/^[0-9a-f-]+$/);
 
-      // Source counts (the truth the fork must match).
-      const srcRecipes = await adminGet<{ id: string }[]>(
-        `/rest/v1/recipes?select=id&collection_id=eq.${seed.collectionId}`,
+      // Children ride as JSON on the recipe row, and fork copies that JSON
+      // verbatim — so the fork can't multiply rows. Compare totals + verify
+      // each ref stays within its own recipe.
+      type RJson = {
+        id: string;
+        ingredients: { id: string }[] | null;
+        instructions: { id: string; ingredientRefs?: { ingredientId: string }[] }[] | null;
+      };
+      const sel = 'select=id,ingredients,instructions';
+      const srcRecipes = await adminGet<RJson[]>(
+        `/rest/v1/recipes?${sel}&collection_id=eq.${seed.collectionId}`,
       );
-      const srcRecipeIds = srcRecipes.map((r) => r.id);
-      const inList = (ids: string[]) => `in.(${ids.join(',')})`;
-      const srcIng = await adminGet<{ id: string }[]>(
-        `/rest/v1/ingredients?select=id&recipe_id=${inList(srcRecipeIds)}`,
+      const fRecipes = await adminGet<RJson[]>(
+        `/rest/v1/recipes?${sel}&collection_id=eq.${forkedId}`,
       );
-      const srcSteps = await adminGet<{ id: string }[]>(
-        `/rest/v1/instructions?select=id&recipe_id=${inList(srcRecipeIds)}`,
-      );
-      const srcRefs = await adminGet<{ instruction_id: string }[]>(
-        `/rest/v1/instruction_ingredient_refs?select=instruction_id&instruction_id=${inList(
-          srcSteps.map((s) => s.id),
-        )}`,
-      );
-
-      // Forked counts must EQUAL the source — no multiplication.
-      const fRecipes = await adminGet<{ id: string }[]>(
-        `/rest/v1/recipes?select=id&collection_id=eq.${forkedId}`,
-      );
-      const fRecipeIds = fRecipes.map((r) => r.id);
       expect(fRecipes.length).toBe(srcRecipes.length);
 
-      const fIng = await adminGet<{ id: string }[]>(
-        `/rest/v1/ingredients?select=id&recipe_id=${inList(fRecipeIds)}`,
-      );
-      expect(fIng.length).toBe(srcIng.length);
+      const countIng = (rs: RJson[]) => rs.reduce((a, r) => a + (r.ingredients?.length ?? 0), 0);
+      const countSteps = (rs: RJson[]) => rs.reduce((a, r) => a + (r.instructions?.length ?? 0), 0);
+      const countRefs = (rs: RJson[]) =>
+        rs.reduce(
+          (a, r) =>
+            a + (r.instructions ?? []).reduce((b, s) => b + (s.ingredientRefs?.length ?? 0), 0),
+          0,
+        );
+      expect(countIng(fRecipes)).toBe(countIng(srcRecipes));
+      expect(countSteps(fRecipes)).toBe(countSteps(srcRecipes));
+      expect(countRefs(fRecipes)).toBeGreaterThan(0);
+      expect(countRefs(fRecipes)).toBe(countRefs(srcRecipes));
 
-      const fSteps = await adminGet<{ id: string }[]>(
-        `/rest/v1/instructions?select=id&recipe_id=${inList(fRecipeIds)}`,
-      );
-      expect(fSteps.length).toBe(srcSteps.length);
-
-      // Refs: same count, and each forked ref must join an instruction and an
-      // ingredient that belong to the SAME recipe (no cross-wiring).
-      const fRefs = await adminGet<
-        {
-          instruction: { recipe_id: string } | null;
-          ingredient: { recipe_id: string } | null;
-        }[]
-      >(
-        `/rest/v1/instruction_ingredient_refs` +
-          `?select=instruction:instructions(recipe_id),ingredient:ingredients(recipe_id)` +
-          `&instruction_id=${inList(fSteps.map((s) => s.id))}`,
-      );
-      expect(fRefs.length).toBe(srcRefs.length);
-      for (const ref of fRefs) {
-        expect(ref.instruction?.recipe_id).toBeTruthy();
-        expect(ref.ingredient?.recipe_id).toBe(ref.instruction?.recipe_id);
+      // Each forked ref must reference an ingredient in its OWN recipe.
+      for (const r of fRecipes) {
+        const ingIds = new Set((r.ingredients ?? []).map((i) => i.id));
+        for (const s of r.instructions ?? []) {
+          for (const ref of s.ingredientRefs ?? []) {
+            expect(ingIds.has(ref.ingredientId)).toBe(true);
+          }
+        }
       }
     } finally {
       await seed.cleanup();

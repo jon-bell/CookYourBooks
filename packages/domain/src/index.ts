@@ -23,6 +23,7 @@ export * from './services/parseRecipeText.js';
 export * from './services/embeddingModel.js';
 export * from './services/nutritionMath.js';
 export * from './services/ingredientTerms.js';
+export * from './services/recipeLinks.js';
 
 // Export
 export * from './export/markdown.js';

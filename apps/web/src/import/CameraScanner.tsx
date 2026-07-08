@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SAFE_BOTTOM, SAFE_TOP, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
-import { DEFAULT_MARKER, type PageKind, type PageMarker, type ScannedPage } from './pageMarker.js';
+import { DEFAULT_MARKER, type PageMarker, type ScannedPage } from './pageMarker.js';
 import { plannerHapticTick } from './plannerCapture.js';
 
 const DEFAULT_MAX_SHOTS = 200;
@@ -21,19 +21,11 @@ export interface CameraScannerProps {
 type Shot = { id: string; file: File; url: string; marker: PageMarker };
 type Status = 'starting' | 'live' | 'denied' | 'no-camera' | 'error';
 
-const KIND_OPTIONS: ReadonlyArray<{ kind: PageKind; label: string; aria: string }> = [
-  { kind: 'RECIPE', label: 'Recipe', aria: 'Recipe page' },
-  { kind: 'TOC', label: 'Contents', aria: 'Table of contents page' },
-  { kind: 'NOTES', label: 'Notes', aria: 'Intro / notes page' },
-];
-
 /** Screen-reader label for a thumbnail — the corner badges are visual-only. */
 function ariaForShot(index: number, m: PageMarker): string {
   const parts = [`Page ${index + 1}`];
   if (m.joinsPrevious && index > 0) parts.push('joins previous page');
-  if (m.kind === 'TOC') parts.push('table of contents');
-  else if (m.kind === 'NOTES') parts.push('intro and notes');
-  return `${parts.join(', ')}. Tap for options.`;
+  return `${parts.join(', ')}. Tap × to remove.`;
 }
 
 function classifyError(err: unknown): Status {
@@ -54,11 +46,16 @@ function classifyError(err: unknown): Status {
  * cookbook pages. Each shutter tap grabs the current video frame into a JPEG
  * without leaving the screen, so the user can fire page after page.
  *
- * Pure capture: it never uploads or routes — it hands the captured `File[]`
- * back via `onDone` (or `onCancel` if the user backs out with nothing). The
- * orchestrator in `scanPages.ts` owns mounting + the fallback chain, so this
- * component stays reusable. Captured frames are full-resolution; the upload
- * pipeline (`prepareImage`) does the downscale, so we don't double-process.
+ * Layout is a strict 3-part flex column that always fits the visible viewport:
+ * a `shrink-0` header, a single `flex-1 min-h-0` media region, and a
+ * `shrink-0` control bar. Everything incremental (torch, the "chain on" hint,
+ * the captured-pages strip) is an absolute OVERLAY inside the media region, so
+ * it never adds a stacked row that pushes controls off-screen.
+ *
+ * Pure capture: it never uploads or routes — it hands the captured pages back
+ * via `onDone` (each carrying its `joinsPrevious` chain marker; page-type
+ * classification + grouping happen later on the organizer screen). The
+ * orchestrator in `scanPages.ts` owns mounting + the fallback chain.
  */
 export function CameraScanner({
   onDone,
@@ -78,9 +75,9 @@ export function CameraScanner({
   const [busy, setBusy] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
-  const [sheetForId, setSheetForId] = useState<string>();
-  // Chain mode: while on, each new shot continues the previous shot's recipe
-  // (the pages are folded together at upload). One tap per multi-page recipe.
+  // Chain mode: while on, each new shot continues the previous shot's recipe.
+  // The marker is carried through to the organizer, which pre-merges these
+  // pages (and lets the user un-merge them). One tap per multi-page recipe.
   const [chainNext, setChainNext] = useState(false);
 
   // Revoke object URLs on unmount.
@@ -220,13 +217,6 @@ export function CameraScanner({
       if (target) URL.revokeObjectURL(target.url);
       return prev.filter((s) => s.id !== id);
     });
-    setSheetForId(undefined);
-  }, []);
-
-  const setMarker = useCallback((id: string, patch: Partial<PageMarker>) => {
-    setShots((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, marker: { ...s.marker, ...patch } } : s)),
-    );
   }, []);
 
   async function toggleTorch() {
@@ -259,15 +249,15 @@ export function CameraScanner({
       aria-label="Camera scanner"
       data-testid="camera-scanner"
       // `h-[100dvh] w-screen` (not `inset-0`/`h-screen`) pins the surface to the
-      // *visible* viewport: `inset-0`/`100vh` resolve to the large mobile
-      // viewport, pushing the shutter + strip under the browser chrome / home
-      // indicator. dvh tracks the dynamic viewport and shrinks with the chrome.
-      className="fixed left-0 top-0 z-50 flex h-[100dvh] w-screen flex-col bg-stone-950 text-white"
+      // *visible* viewport; `overflow-hidden` + the strict shrink-0 / flex-1
+      // min-h-0 column below guarantees the shutter never lands under the home
+      // indicator no matter the device height.
+      className="fixed left-0 top-0 z-50 flex h-[100dvh] w-screen flex-col overflow-hidden bg-stone-950 text-white"
     >
       <canvas ref={canvasRef} className="hidden" aria-hidden />
 
       <header
-        className={`flex items-center justify-between gap-2 py-3 text-sm ${SAFE_TOP} ${SAFE_X}`}
+        className={`flex shrink-0 items-center justify-between gap-2 py-3 text-sm ${SAFE_TOP} ${SAFE_X}`}
       >
         <button
           type="button"
@@ -292,7 +282,7 @@ export function CameraScanner({
         </button>
       </header>
 
-      <div className="relative flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <video
           ref={videoRef}
           autoPlay
@@ -339,21 +329,75 @@ export function CameraScanner({
             </span>
           </button>
         )}
+
+        {/* Chain-on hint — an overlay so toggling it never reflows the column. */}
+        {chainNext && (
+          <div
+            className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-sky-600/90 px-3 py-1 text-center text-xs"
+            aria-live="polite"
+          >
+            ⛓ Chain on — next photo joins this recipe
+          </div>
+        )}
+
+        {/* Captured-pages strip — overlaid along the bottom of the preview so
+            it doesn't consume column height. Tap × to remove a shot. */}
+        {shots.length > 0 && (
+          <div
+            className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-stone-950/80 to-transparent px-2 pb-2 pt-8 ${SAFE_X}`}
+          >
+            <ol className="flex gap-2 overflow-x-auto">
+              {shots.map((s, i) => {
+                const isCont = s.marker.joinsPrevious && i > 0;
+                return (
+                  <li key={s.id} className="relative shrink-0 pr-1 pt-1">
+                    <div
+                      className={`h-16 w-12 overflow-hidden rounded ring-2 ${
+                        isCont ? 'ring-sky-500' : 'ring-white/40'
+                      }`}
+                    >
+                      <img
+                        src={s.url}
+                        alt={ariaForShot(i, s.marker)}
+                        className="h-full w-full object-cover"
+                        draggable={false}
+                      />
+                    </div>
+                    {isCont && (
+                      <span
+                        className="absolute left-0 top-1 bg-sky-600/90 px-1 text-[10px] leading-tight"
+                        aria-hidden
+                      >
+                        ⛓
+                      </span>
+                    )}
+                    <span className="absolute bottom-0 left-0 right-1 bg-stone-950/70 text-center text-[10px] leading-tight text-stone-100">
+                      {i + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => remove(s.id)}
+                      aria-label={`Remove page ${i + 1}`}
+                      className="absolute right-0 top-0 flex h-5 w-5 items-center justify-center rounded-full bg-stone-900/90 text-xs leading-none text-white shadow ring-1 ring-white/30"
+                    >
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        )}
       </div>
 
-      {chainNext && (
-        <p className="px-4 pt-2 text-center text-xs text-sky-300" aria-live="polite">
-          ⛓ Chain on — new photos join the same recipe
-        </p>
-      )}
-      <div className={`grid grid-cols-3 items-center py-3 ${SAFE_X}`}>
+      <div className={`grid shrink-0 grid-cols-3 items-center py-3 ${SAFE_BOTTOM} ${SAFE_X}`}>
         <button
           type="button"
           role="switch"
           aria-checked={chainNext}
           aria-label="Chain mode: each new photo continues the previous recipe"
           onClick={() => setChainNext((v) => !v)}
-          className={`inline-flex justify-self-start items-center justify-center rounded-full ${TAP_TARGET} ${
+          className={`inline-flex items-center justify-center justify-self-start rounded-full ${TAP_TARGET} ${
             chainNext ? 'bg-sky-600 text-white' : 'bg-stone-800 text-stone-300'
           }`}
         >
@@ -366,143 +410,10 @@ export function CameraScanner({
           onClick={onShutter}
           disabled={!isLive || busy}
           aria-label="Capture page"
-          className="h-20 w-20 justify-self-center rounded-full border-4 border-white bg-white/90 shadow-lg disabled:opacity-40"
+          className="h-16 w-16 justify-self-center rounded-full border-4 border-white bg-white/90 shadow-lg disabled:opacity-40 sm:h-20 sm:w-20"
         />
         <span aria-hidden />
       </div>
-
-      <div className={`border-t border-stone-800 bg-stone-900 py-3 ${SAFE_BOTTOM} ${SAFE_X}`}>
-        {shots.length === 0 ? (
-          <p className="text-center text-xs text-stone-500">Captured pages appear here.</p>
-        ) : (
-          <ol className="flex gap-2 overflow-x-auto pb-1">
-            {shots.map((s, i) => {
-              const m = s.marker;
-              const isCont = m.joinsPrevious && i > 0;
-              return (
-                <li key={s.id} className="shrink-0">
-                  <button
-                    type="button"
-                    aria-label={ariaForShot(i, m)}
-                    onClick={() => setSheetForId(s.id)}
-                    className={`relative block h-20 w-16 overflow-hidden rounded ring-2 ${
-                      isCont ? 'ring-sky-500' : 'ring-stone-700'
-                    }`}
-                  >
-                    <img
-                      src={s.url}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
-                    {isCont && (
-                      <span
-                        className="absolute left-0 top-0 bg-sky-600/90 px-1 text-[10px] leading-tight"
-                        aria-hidden
-                      >
-                        ⛓
-                      </span>
-                    )}
-                    {m.kind === 'TOC' && (
-                      <span
-                        className="absolute right-0 top-0 bg-stone-950/80 px-1 text-[10px] leading-tight"
-                        aria-hidden
-                      >
-                        ToC
-                      </span>
-                    )}
-                    {m.kind === 'NOTES' && (
-                      <span
-                        className="absolute right-0 top-0 bg-stone-950/80 px-1 text-[10px] leading-tight"
-                        aria-hidden
-                      >
-                        ✎
-                      </span>
-                    )}
-                    <span className="absolute bottom-0 left-0 right-0 bg-stone-950/70 px-1 py-0.5 text-center text-[10px] text-stone-100">
-                      {i + 1}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </div>
-
-      {sheetForId &&
-        (() => {
-          const idx = shots.findIndex((s) => s.id === sheetForId);
-          const shot = shots[idx];
-          if (!shot) return null;
-          const m = shot.marker;
-          return (
-            <div
-              className="fixed inset-0 z-50 flex items-end bg-stone-950/60"
-              onClick={() => setSheetForId(undefined)}
-            >
-              <div
-                role="dialog"
-                aria-label={`Page ${idx + 1} options`}
-                onClick={(e) => e.stopPropagation()}
-                className={`w-full space-y-3 rounded-t-2xl bg-stone-900 p-4 ${SAFE_BOTTOM} ${SAFE_X}`}
-              >
-                <div>
-                  <p className="mb-1 text-xs uppercase tracking-wide text-stone-400">Page type</p>
-                  <div role="radiogroup" aria-label="Page type" className="grid grid-cols-3 gap-2">
-                    {KIND_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.kind}
-                        type="button"
-                        role="radio"
-                        aria-checked={m.kind === opt.kind}
-                        aria-label={opt.aria}
-                        onClick={() => setMarker(shot.id, { kind: opt.kind })}
-                        className={`rounded-md px-2 py-3 text-sm ${TAP_TARGET} ${
-                          m.kind === opt.kind
-                            ? 'bg-amber-500 font-medium text-stone-950'
-                            : 'bg-stone-800 text-stone-200'
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {idx > 0 && (
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={m.joinsPrevious}
-                    onClick={() => setMarker(shot.id, { joinsPrevious: !m.joinsPrevious })}
-                    className={`flex w-full items-center justify-between rounded-md px-4 py-3 ${TAP_TARGET} ${
-                      m.joinsPrevious ? 'bg-sky-600 text-white' : 'bg-stone-800 text-stone-200'
-                    }`}
-                  >
-                    <span>⛓ Joins previous page</span>
-                    <span aria-hidden>{m.joinsPrevious ? 'On' : 'Off'}</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => remove(shot.id)}
-                  className={`block w-full rounded-md bg-red-600 px-4 py-3 font-medium text-white ${TAP_TARGET}`}
-                >
-                  Delete page
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSheetForId(undefined)}
-                  className={`block w-full rounded-md bg-stone-700 px-4 py-3 ${TAP_TARGET}`}
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          );
-        })()}
     </div>
   );
 }

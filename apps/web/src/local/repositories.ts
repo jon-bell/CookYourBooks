@@ -1,16 +1,12 @@
 import {
   type CollectionRow,
   collectionToInsert,
-  type IngredientRow,
-  ingredientToInsert,
-  type InstructionRefRow,
-  instructionRefToInsert,
-  type InstructionRow,
-  instructionToInsert,
   type RecipeRow,
   recipeToInsert,
-  rowsToRecipe,
   rowToCollection,
+  rowToRecipe,
+  type StoredIngredient,
+  storedIngredientsSearchText,
 } from '@cookyourbooks/db';
 import type {
   CollectionNote,
@@ -29,6 +25,7 @@ import { createWebCollection, newTagId, normalizeLabel } from '@cookyourbooks/do
 
 import { CRR_SUPPRESS_MIN_ROWS, shouldSuppressCrrTriggers } from './crrSuppression.js';
 import { getLocalDb, type LocalDb } from './db.js';
+import { applyLinksToRecipe } from './ingredientLinks.js';
 import { enqueue } from './outbox.js';
 
 // Milliseconds since epoch, good enough for a monotonic-ish write marker
@@ -329,197 +326,22 @@ export async function upsertCollectionNoteRow(row: CollectionNoteUpsertInput): P
   );
 }
 
-/** Upsert a recipe row and replace its child ingredients/instructions + step refs. */
-export async function upsertRecipeRow(
-  recipeRow: RecipeRow,
-  ingredients: IngredientRow[],
-  instructions: InstructionRow[],
-  refs: InstructionRefRow[] = [],
-): Promise<void> {
+/**
+ * Upsert a single recipe row. Children ride as JSON on the row itself
+ * (`ingredients` / `instructions`); {@link bulkUpsertRecipes} maintains the
+ * folded JSON columns plus the local-only `ingredients_text` search column and
+ * `has_content`. Refuses to regress a fresher local row with a stale write.
+ */
+export async function upsertRecipeRow(recipeRow: RecipeRow): Promise<void> {
   const db = await getLocalDb();
   const incomingTs = tsToMs(recipeRow.updated_at);
-  // Refuse to regress a fresher local row with a stale pull. Check the
-  // existing row's timestamp *before* starting the tx so we don't wipe its
-  // child rows only to skip the parent overwrite.
   const existing = (await db.execO<{ updated_at: number }>(
     `select updated_at from recipes where id = ?`,
     [recipeRow.id],
   )) as { updated_at: number }[];
   if (existing[0] && existing[0].updated_at > incomingTs) return;
-
   await db.tx(async (tx) => {
-    const recipeRowX = recipeRow as RecipeRow & {
-      notes?: string | null;
-      parent_recipe_id?: string | null;
-      servings_amount_max?: number | null;
-      description?: string | null;
-      time_estimate?: string | null;
-      equipment?: unknown;
-      book_title?: string | null;
-      page_numbers?: unknown;
-      source_image_text?: string | null;
-      source_url?: string | null;
-      starred?: boolean | number | null;
-      cover_image_path?: string | null;
-    };
-    // Array-ish columns live as TEXT (JSON) in SQLite; the Postgres
-    // mirror uses jsonb. Accept either shape on input.
-    const equipmentJson = toJsonText(recipeRowX.equipment);
-    const pageNumbersJson = toJsonText(recipeRowX.page_numbers);
-    const starredRaw: unknown = recipeRowX.starred;
-    const starredInt = starredRaw === true || starredRaw === 1 ? 1 : 0;
-    await tx.exec(
-      `insert into recipes
-         (id, collection_id, title, servings_amount, servings_description,
-          servings_amount_max, sort_order, notes, parent_recipe_id,
-          description, time_estimate, equipment, book_title, page_numbers,
-          source_image_text, source_url, starred, cover_image_path, has_content, updated_at, deleted)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-       on conflict(id) do update set
-         collection_id=excluded.collection_id,
-         title=excluded.title,
-         servings_amount=excluded.servings_amount,
-         servings_description=excluded.servings_description,
-         servings_amount_max=excluded.servings_amount_max,
-         sort_order=excluded.sort_order,
-         notes=excluded.notes,
-         parent_recipe_id=excluded.parent_recipe_id,
-         description=excluded.description,
-         time_estimate=excluded.time_estimate,
-         equipment=excluded.equipment,
-         book_title=excluded.book_title,
-         page_numbers=excluded.page_numbers,
-         source_image_text=excluded.source_image_text,
-         source_url=excluded.source_url,
-         starred=excluded.starred,
-         cover_image_path=excluded.cover_image_path,
-         has_content=excluded.has_content,
-         updated_at=excluded.updated_at,
-         deleted=0`,
-      [
-        recipeRow.id,
-        recipeRow.collection_id,
-        recipeRow.title,
-        recipeRow.servings_amount,
-        recipeRow.servings_description,
-        recipeRowX.servings_amount_max ?? null,
-        recipeRow.sort_order,
-        recipeRowX.notes ?? null,
-        recipeRowX.parent_recipe_id ?? null,
-        recipeRowX.description ?? null,
-        recipeRowX.time_estimate ?? null,
-        equipmentJson,
-        recipeRowX.book_title ?? null,
-        pageNumbersJson,
-        recipeRowX.source_image_text ?? null,
-        recipeRowX.source_url ?? null,
-        starredInt,
-        recipeRowX.cover_image_path ?? null,
-        // Optimistic: a local save knows its own children, so reflect filled
-        // state immediately instead of waiting for the server round-trip + pull.
-        ingredients.length > 0 || instructions.length > 0 ? 1 : 0,
-        incomingTs,
-      ],
-    );
-    // Wipe child rows before re-inserting. Refs are identified by their
-    // instruction_id, so a blanket `in (select id from instructions
-    // where recipe_id = ?)` works before we drop the instructions
-    // themselves.
-    await tx.exec(
-      `delete from instruction_ingredient_refs
-       where instruction_id in (select id from instructions where recipe_id = ?)`,
-      [recipeRow.id],
-    );
-    await tx.exec(`delete from ingredients where recipe_id = ?`, [recipeRow.id]);
-    await tx.exec(`delete from instructions where recipe_id = ?`, [recipeRow.id]);
-    for (const ing of ingredients) {
-      const ingX = ing as IngredientRow & { description?: string | null };
-      await tx.exec(
-        `insert into ingredients
-           (id, recipe_id, sort_order, type, name, preparation, notes, description,
-            quantity_type, quantity_amount, quantity_whole, quantity_numerator,
-            quantity_denominator, quantity_min, quantity_max, quantity_unit)
-         values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [
-          ing.id,
-          ing.recipe_id,
-          ing.sort_order,
-          ing.type,
-          ing.name,
-          ing.preparation,
-          ing.notes,
-          ingX.description ?? null,
-          ing.quantity_type,
-          ing.quantity_amount,
-          ing.quantity_whole,
-          ing.quantity_numerator,
-          ing.quantity_denominator,
-          ing.quantity_min,
-          ing.quantity_max,
-          ing.quantity_unit,
-        ],
-      );
-    }
-    for (const step of instructions) {
-      const stepX = step as InstructionRow & {
-        temperature_value?: number | null;
-        temperature_unit?: string | null;
-        sub_instructions?: unknown;
-        simplified_steps?: unknown;
-        notes?: string | null;
-      };
-      await tx.exec(
-        `insert into instructions
-           (id, recipe_id, step_number, text,
-            temperature_value, temperature_unit, sub_instructions,
-            simplified_steps, notes)
-         values (?,?,?,?,?,?,?,?,?)`,
-        [
-          step.id,
-          step.recipe_id,
-          step.step_number,
-          step.text,
-          stepX.temperature_value ?? null,
-          stepX.temperature_unit ?? null,
-          toJsonText(stepX.sub_instructions),
-          toJsonText(stepX.simplified_steps),
-          stepX.notes ?? null,
-        ],
-      );
-    }
-    for (const ref of refs) {
-      const refX = ref as InstructionRefRow & {
-        consumed_quantity_type?: string | null;
-        consumed_quantity_amount?: number | null;
-        consumed_quantity_whole?: number | null;
-        consumed_quantity_numerator?: number | null;
-        consumed_quantity_denominator?: number | null;
-        consumed_quantity_min?: number | null;
-        consumed_quantity_max?: number | null;
-        consumed_quantity_unit?: string | null;
-      };
-      await tx.exec(
-        `insert into instruction_ingredient_refs
-           (instruction_id, ingredient_id,
-            consumed_quantity_type, consumed_quantity_amount,
-            consumed_quantity_whole, consumed_quantity_numerator,
-            consumed_quantity_denominator, consumed_quantity_min,
-            consumed_quantity_max, consumed_quantity_unit)
-         values (?,?,?,?,?,?,?,?,?,?) on conflict do nothing`,
-        [
-          ref.instruction_id,
-          ref.ingredient_id,
-          refX.consumed_quantity_type ?? null,
-          refX.consumed_quantity_amount ?? null,
-          refX.consumed_quantity_whole ?? null,
-          refX.consumed_quantity_numerator ?? null,
-          refX.consumed_quantity_denominator ?? null,
-          refX.consumed_quantity_min ?? null,
-          refX.consumed_quantity_max ?? null,
-          refX.consumed_quantity_unit ?? null,
-        ],
-      );
-    }
+    await bulkUpsertRecipes(tx, [recipeRow]);
   });
 }
 
@@ -544,27 +366,9 @@ export async function upsertRecipeRow(
  * iPad WASM SQLite each trigger fire is ~10–15ms; disabling them
  * collapses an 87-recipe pull from ~38s to seconds.
  */
-export const PULL_CRR_TABLES = [
-  'instruction_ingredient_refs',
-  'instructions',
-  'ingredients',
-  'recipes',
-] as const;
-
-/**
- * The CRR child tables only — `recipes` excluded. The library-snapshot full
- * pull writes recipe rows in its `meta` stage (one commit_alter on `recipes`)
- * and then attaches children in its `bodies` stage. If the bodies stage
- * re-upserted the recipe rows under {@link PULL_CRR_TABLES} it would pay a
- * *second* O(table-size) commit_alter on `recipes` for no benefit — the rows
- * are already current. The bodies stage instead writes children only, under
- * this boundary, so `recipes` is altered exactly once per full pull.
- */
-export const PULL_CRR_BODY_TABLES = [
-  'instruction_ingredient_refs',
-  'instructions',
-  'ingredients',
-] as const;
+// Children are folded into recipes.ingredients / recipes.instructions JSON, so
+// a recipe pull writes exactly one CRR table now.
+export const PULL_CRR_TABLES = ['recipes'] as const;
 
 /**
  * Largest current row count among `tables`. commit_alter scans the whole
@@ -678,19 +482,15 @@ export async function filterFresherIncoming<T>(
   });
 }
 
-export type RecipeBatchEntry = {
-  recipe: RecipeRow;
-  ingredients: IngredientRow[];
-  instructions: InstructionRow[];
-  refs: InstructionRefRow[];
-};
+/**
+ * A recipe batch is just its recipe rows now — ingredients / instructions ride
+ * as JSON on each row.
+ */
+export type RecipeBatchEntry = RecipeRow;
 
-/** Total rows a recipe batch writes — a recipe drags in its children. */
+/** Total rows a recipe batch writes — one per recipe now that children fold in. */
 export function recipeBatchRowCount(batch: ReadonlyArray<RecipeBatchEntry>): number {
-  return batch.reduce(
-    (acc, b) => acc + 1 + b.ingredients.length + b.instructions.length + b.refs.length,
-    0,
-  );
+  return batch.length;
 }
 
 /**
@@ -698,27 +498,19 @@ export function recipeBatchRowCount(batch: ReadonlyArray<RecipeBatchEntry>): num
  * the CRR-trigger suppression. Use this when draining a large pull in
  * checkpointed chunks under ONE {@link withSuppressedCrrTriggers} boundary:
  * `crsql_commit_alter` is O(table size), so suppressing per-chunk pays that
- * full-table cost once per chunk (64 × O(16k) wedged a large library's pull
- * past the 45s watchdog). Hoisting the boundary to wrap the whole loop makes
- * it run exactly once regardless of library size. Callers writing a small
- * one-off batch (realtime echoes) should use {@link upsertRecipesBatch},
- * which manages the boundary itself.
+ * full-table cost once per chunk. Callers writing a small one-off batch
+ * (realtime echoes) should use {@link upsertRecipesBatch}, which manages the
+ * boundary itself.
  */
 export async function upsertRecipesBatchInner(
   batch: ReadonlyArray<RecipeBatchEntry>,
   signal?: AbortSignal,
-  opts?: { writeRecipeRows?: boolean },
 ): Promise<void> {
   if (batch.length === 0) return;
   if (signal?.aborted) return;
-  // The snapshot bodies stage passes `false`: recipe rows were already written
-  // by the meta stage, so we replace their children but leave `recipes`
-  // untouched (and out of the caller's suppression boundary), dodging a second
-  // full-table commit_alter on `recipes`.
-  const writeRecipeRows = opts?.writeRecipeRows ?? true;
   const db = await getLocalDb();
   await db.tx(async (tx) => {
-    const ids = batch.map((b) => b.recipe.id);
+    const ids = batch.map((b) => b.id);
     const existingMap = new Map<string, number>();
     const placeholders = ids.map(() => '?').join(',');
     const rows = await tx.execO<{ id: string; updated_at: number }>(
@@ -728,44 +520,12 @@ export async function upsertRecipesBatchInner(
     for (const r of rows) existingMap.set(r.id, r.updated_at);
 
     const fresh = batch.filter((b) => {
-      const local = existingMap.get(b.recipe.id);
-      return !local || local <= tsToMs(b.recipe.updated_at);
+      const local = existingMap.get(b.id);
+      return !local || local <= tsToMs(b.updated_at);
     });
     if (fresh.length === 0) return;
 
-    const freshIds = fresh.map((b) => b.recipe.id);
-    await execInChunks(tx, freshIds, (chunk, ph) => [
-      `delete from instruction_ingredient_refs
-       where instruction_id in (select id from instructions where recipe_id in (${ph}))`,
-      chunk,
-    ]);
-    await execInChunks(tx, freshIds, (chunk, ph) => [
-      `delete from ingredients where recipe_id in (${ph})`,
-      chunk,
-    ]);
-    await execInChunks(tx, freshIds, (chunk, ph) => [
-      `delete from instructions where recipe_id in (${ph})`,
-      chunk,
-    ]);
-
-    if (writeRecipeRows) {
-      await bulkUpsertRecipes(
-        tx,
-        fresh.map((b) => b.recipe),
-      );
-    }
-    await bulkInsertIngredients(
-      tx,
-      fresh.flatMap((b) => b.ingredients),
-    );
-    await bulkInsertInstructions(
-      tx,
-      fresh.flatMap((b) => b.instructions),
-    );
-    await bulkInsertRefs(
-      tx,
-      fresh.flatMap((b) => b.refs),
-    );
+    await bulkUpsertRecipes(tx, fresh);
   });
 }
 
@@ -807,6 +567,38 @@ export async function upsertRecipeRowsOnly(
         return !local || local <= tsToMs(r.updated_at);
       });
       await bulkUpsertRecipes(tx, fresh);
+    });
+  });
+}
+
+/**
+ * Attach folded children (ingredients / instructions JSON) onto already-written
+ * recipe rows — the library-snapshot `bodies` stage. The `meta` stage writes
+ * recipe cards (JSON columns left null so the grid renders immediately, but
+ * `has_content` carried through for the placeholder badge); this fills the JSON
+ * in and recomputes the local-only `ingredients_text` search column.
+ */
+export async function updateRecipeBodies(
+  rows: readonly { id: string; ingredients: unknown; instructions: unknown }[],
+  signal?: AbortSignal,
+): Promise<void> {
+  if (rows.length === 0 || signal?.aborted) return;
+  await withSuppressedCrrTriggers(['recipes'], rows.length, async () => {
+    const db = await getLocalDb();
+    await db.tx(async (tx) => {
+      for (const r of rows) {
+        const ingredients = parseJsonArray(r.ingredients) as StoredIngredient[];
+        await tx.exec(
+          `update recipes set ingredients = ?, instructions = ?, ingredients_text = ?
+             where id = ?`,
+          [
+            toJsonText(r.ingredients),
+            toJsonText(r.instructions),
+            storedIngredientsSearchText(ingredients),
+            r.id,
+          ],
+        );
+      }
     });
   });
 }
@@ -919,20 +711,6 @@ export async function bulkInsertIgnoreId<T>(
   }
 }
 
-async function execInChunks(
-  tx: RecipeTx,
-  ids: readonly string[],
-  build: (chunk: string[], placeholders: string) => [string, unknown[]],
-): Promise<void> {
-  const CHUNK = 500;
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK);
-    const ph = chunk.map(() => '?').join(',');
-    const [sql, bind] = build(chunk, ph);
-    await tx.exec(sql, bind);
-  }
-}
-
 async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): Promise<void> {
   if (recipes.length === 0) return;
   const cols = [
@@ -954,6 +732,9 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
     'source_url',
     'starred',
     'cover_image_path',
+    'ingredients',
+    'instructions',
+    'ingredients_text',
     'has_content',
     'updated_at',
     'deleted',
@@ -980,8 +761,13 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         source_url?: string | null;
         starred?: boolean | number | null;
         cover_image_path?: string | null;
+        ingredients?: unknown;
+        instructions?: unknown;
       };
       const starredRaw: unknown = rx.starred;
+      const ingText = storedIngredientsSearchText(
+        parseJsonArray(rx.ingredients) as StoredIngredient[],
+      );
       params.push(
         r.id,
         r.collection_id,
@@ -1001,6 +787,9 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
         rx.source_url ?? null,
         starredRaw === true || starredRaw === 1 ? 1 : 0,
         rx.cover_image_path ?? null,
+        toJsonText(rx.ingredients),
+        toJsonText(rx.instructions),
+        ingText.length > 0 ? ingText : null,
         r.has_content === true || (r.has_content as unknown) === 1 ? 1 : 0,
         tsToMs(r.updated_at),
         0,
@@ -1016,159 +805,6 @@ async function bulkUpsertRecipes(tx: RecipeTx, recipes: readonly RecipeRow[]): P
   }
 }
 
-async function bulkInsertIngredients(
-  tx: RecipeTx,
-  ingredients: readonly IngredientRow[],
-): Promise<void> {
-  if (ingredients.length === 0) return;
-  const cols = [
-    'id',
-    'recipe_id',
-    'sort_order',
-    'type',
-    'name',
-    'preparation',
-    'notes',
-    'description',
-    'quantity_type',
-    'quantity_amount',
-    'quantity_whole',
-    'quantity_numerator',
-    'quantity_denominator',
-    'quantity_min',
-    'quantity_max',
-    'quantity_unit',
-  ];
-  const tuple = `(${cols.map(() => '?').join(',')})`;
-  for (let i = 0; i < ingredients.length; i += MAX_ROWS_PER_INSERT) {
-    const chunk = ingredients.slice(i, i + MAX_ROWS_PER_INSERT);
-    const params: unknown[] = [];
-    for (const ing of chunk) {
-      const ingX = ing as IngredientRow & { description?: string | null };
-      params.push(
-        ing.id,
-        ing.recipe_id,
-        ing.sort_order,
-        ing.type,
-        ing.name,
-        ing.preparation,
-        ing.notes,
-        ingX.description ?? null,
-        ing.quantity_type,
-        ing.quantity_amount,
-        ing.quantity_whole,
-        ing.quantity_numerator,
-        ing.quantity_denominator,
-        ing.quantity_min,
-        ing.quantity_max,
-        ing.quantity_unit,
-      );
-    }
-    await tx.exec(
-      `insert into ingredients (${cols.join(',')}) values ${chunk.map(() => tuple).join(',')}`,
-      params,
-    );
-  }
-}
-
-async function bulkInsertInstructions(
-  tx: RecipeTx,
-  steps: readonly InstructionRow[],
-): Promise<void> {
-  if (steps.length === 0) return;
-  const cols = [
-    'id',
-    'recipe_id',
-    'step_number',
-    'text',
-    'temperature_value',
-    'temperature_unit',
-    'sub_instructions',
-    'simplified_steps',
-    'notes',
-  ];
-  const tuple = `(${cols.map(() => '?').join(',')})`;
-  for (let i = 0; i < steps.length; i += MAX_ROWS_PER_INSERT) {
-    const chunk = steps.slice(i, i + MAX_ROWS_PER_INSERT);
-    const params: unknown[] = [];
-    for (const step of chunk) {
-      const sx = step as InstructionRow & {
-        temperature_value?: number | null;
-        temperature_unit?: string | null;
-        sub_instructions?: unknown;
-        simplified_steps?: unknown;
-        notes?: string | null;
-      };
-      params.push(
-        step.id,
-        step.recipe_id,
-        step.step_number,
-        step.text,
-        sx.temperature_value ?? null,
-        sx.temperature_unit ?? null,
-        toJsonText(sx.sub_instructions),
-        toJsonText(sx.simplified_steps),
-        sx.notes ?? null,
-      );
-    }
-    await tx.exec(
-      `insert into instructions (${cols.join(',')}) values ${chunk.map(() => tuple).join(',')}`,
-      params,
-    );
-  }
-}
-
-async function bulkInsertRefs(tx: RecipeTx, refs: readonly InstructionRefRow[]): Promise<void> {
-  if (refs.length === 0) return;
-  const cols = [
-    'instruction_id',
-    'ingredient_id',
-    'consumed_quantity_type',
-    'consumed_quantity_amount',
-    'consumed_quantity_whole',
-    'consumed_quantity_numerator',
-    'consumed_quantity_denominator',
-    'consumed_quantity_min',
-    'consumed_quantity_max',
-    'consumed_quantity_unit',
-  ];
-  const tuple = `(${cols.map(() => '?').join(',')})`;
-  for (let i = 0; i < refs.length; i += MAX_ROWS_PER_INSERT) {
-    const chunk = refs.slice(i, i + MAX_ROWS_PER_INSERT);
-    const params: unknown[] = [];
-    for (const ref of chunk) {
-      const rx = ref as InstructionRefRow & {
-        consumed_quantity_type?: string | null;
-        consumed_quantity_amount?: number | null;
-        consumed_quantity_whole?: number | null;
-        consumed_quantity_numerator?: number | null;
-        consumed_quantity_denominator?: number | null;
-        consumed_quantity_min?: number | null;
-        consumed_quantity_max?: number | null;
-        consumed_quantity_unit?: string | null;
-      };
-      params.push(
-        ref.instruction_id,
-        ref.ingredient_id,
-        rx.consumed_quantity_type ?? null,
-        rx.consumed_quantity_amount ?? null,
-        rx.consumed_quantity_whole ?? null,
-        rx.consumed_quantity_numerator ?? null,
-        rx.consumed_quantity_denominator ?? null,
-        rx.consumed_quantity_min ?? null,
-        rx.consumed_quantity_max ?? null,
-        rx.consumed_quantity_unit ?? null,
-      );
-    }
-    await tx.exec(
-      `insert into instruction_ingredient_refs (${cols.join(',')}) values ${chunk
-        .map(() => tuple)
-        .join(',')} on conflict do nothing`,
-      params,
-    );
-  }
-}
-
 /**
  * Normalize an array-ish column value to JSON text suitable for a
  * local SQLite TEXT column. Accepts an already-stringified JSON blob
@@ -1179,6 +815,21 @@ function toJsonText(val: unknown): string | null {
   if (typeof val === 'string') return val.length > 0 ? val : null;
   if (Array.isArray(val)) return val.length > 0 ? JSON.stringify(val) : null;
   return null;
+}
+
+/** Parse an array-ish JSON column (native array from jsonb, or JSON text from
+ *  the local mirror) into a plain array. Empty / malformed → []. */
+function parseJsonArray(val: unknown): unknown[] {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string' && val.length > 0) {
+    try {
+      const p: unknown = JSON.parse(val);
+      return Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 export async function softDeleteCollection(id: string): Promise<void> {
@@ -1197,19 +848,7 @@ export async function softDeleteRecipe(id: string): Promise<void> {
 export async function purgeCollection(id: string): Promise<void> {
   const db = await getLocalDb();
   await db.tx(async (tx) => {
-    const recipeIds = (await tx.execO<{ id: string }>(
-      `select id from recipes where collection_id = ?`,
-      [id],
-    )) as { id: string }[];
-    for (const r of recipeIds) {
-      await tx.exec(
-        `delete from instruction_ingredient_refs
-         where instruction_id in (select id from instructions where recipe_id = ?)`,
-        [r.id],
-      );
-      await tx.exec(`delete from ingredients where recipe_id = ?`, [r.id]);
-      await tx.exec(`delete from instructions where recipe_id = ?`, [r.id]);
-    }
+    // Children ride as JSON on the recipe row — deleting the recipes is enough.
     await tx.exec(`delete from recipes where collection_id = ?`, [id]);
     await tx.exec(`delete from recipe_collections where id = ?`, [id]);
   });
@@ -1217,16 +856,7 @@ export async function purgeCollection(id: string): Promise<void> {
 
 export async function purgeRecipe(id: string): Promise<void> {
   const db = await getLocalDb();
-  await db.tx(async (tx) => {
-    await tx.exec(
-      `delete from instruction_ingredient_refs
-       where instruction_id in (select id from instructions where recipe_id = ?)`,
-      [id],
-    );
-    await tx.exec(`delete from ingredients where recipe_id = ?`, [id]);
-    await tx.exec(`delete from instructions where recipe_id = ?`, [id]);
-    await tx.exec(`delete from recipes where id = ?`, [id]);
-  });
+  await db.exec(`delete from recipes where id = ?`, [id]);
 }
 
 // ------------- Domain-facing repositories -------------
@@ -1326,9 +956,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
          left join (
            select r.collection_id, count(*) as cnt
              from recipes r
-             where r.deleted = 0
-               and (exists (select 1 from ingredients where recipe_id = r.id)
-                    or exists (select 1 from instructions where recipe_id = r.id))
+             where r.deleted = 0 and r.has_content = 1
              group by r.collection_id
          ) fc on fc.collection_id = c.id
         where c.owner_id = ? and c.deleted = 0
@@ -1565,23 +1193,16 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       page_numbers: string | null;
       sort_order: number;
       starred: number | boolean;
-      ing_count: number;
-      ins_count: number;
+      ingredients: string | null;
+      instructions: string | null;
       ingredient_names: string;
     }>(
       `select r.id, r.title, r.cover_image_path, r.page_numbers, r.sort_order, r.starred,
-              (select count(*) from ingredients i where i.recipe_id = r.id) as ing_count,
-              (select count(*) from instructions s where s.recipe_id = r.id) as ins_count,
-              coalesce(
-                (select group_concat(lower(i.name), char(10))
-                   from ingredients i where i.recipe_id = r.id),
-                ''
-              ) as ingredient_names
+              r.has_content, r.ingredients, r.instructions,
+              coalesce(r.ingredients_text, '') as ingredient_names
          from recipes r
         where r.collection_id = ? and r.deleted = 0
-        order by ((select count(*) from ingredients i where i.recipe_id = r.id) > 0
-               or (select count(*) from instructions s where s.recipe_id = r.id) > 0) desc,
-                 r.sort_order asc`,
+        order by r.has_content desc, r.sort_order asc`,
       [collectionId],
     )) as Array<{
       id: string;
@@ -1590,8 +1211,8 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       page_numbers: string | null;
       sort_order: number;
       starred: number | boolean;
-      ing_count: number;
-      ins_count: number;
+      ingredients: string | null;
+      instructions: string | null;
       ingredient_names: string;
     }>;
     return rows.map((r) => {
@@ -1611,8 +1232,8 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
         pageNumbers,
         sortOrder: Number(r.sort_order),
         starred: r.starred === true || r.starred === 1,
-        ingredientCount: Number(r.ing_count),
-        instructionCount: Number(r.ins_count),
+        ingredientCount: parseJsonArray(r.ingredients).length,
+        instructionCount: parseJsonArray(r.instructions).length,
         ingredientNames: r.ingredient_names,
       };
     });
@@ -1636,8 +1257,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     if (q) {
       const like = `%${escapeLike(q)}%`;
       filter = ` and (lower(r.title) like ? escape '\\'
-                 or exists (select 1 from ingredients i
-                            where i.recipe_id = r.id and lower(i.name) like ? escape '\\'))`;
+                 or r.ingredients_text like ? escape '\\')`;
       params.push(like, like);
     }
     const rows = (await db.execO<{
@@ -1650,8 +1270,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
     }>(
       `select r.id, r.title, r.collection_id,
               c.title as collection_title, c.source_type,
-              (exists (select 1 from ingredients where recipe_id = r.id)
-               or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+              r.has_content
          from recipes r
          join recipe_collections c on c.id = r.collection_id
         where r.deleted = 0 and c.deleted = 0
@@ -2380,113 +1999,39 @@ export async function isLocalLibraryEmpty(): Promise<boolean> {
 }
 
 /**
- * Hydrate every recipe in a collection with a *fixed* number of child
- * queries (three) instead of three-per-recipe.
- *
- * `hydrateRecipe` issues one ingredients + one instructions + one refs
- * query per recipe. Looping it (the old `recipeRows.map(hydrateRecipe)`)
- * was a textbook N+1: a 100-recipe cookbook fired ~300 reads that all
- * serialize on the single cr-sqlite connection. When a cookbook grew —
- * e.g. after approving a Table-of-Contents import that mints dozens of
- * placeholder recipes — that read storm starved the outbox push's own
- * small reads/writes, so each `recipe_save` ballooned to many seconds
- * even for empty placeholders and the push cycle kept timing out.
- *
- * Here we fetch all children for the collection in three queries, scoped
- * by `recipe_id in (select id from recipes where collection_id = ?)` so
- * the reads ride the collection index rather than a giant IN-list, then
- * group in JS. `rowsToRecipe` already sorts ingredients by sort_order and
- * instructions by step_number, so no ORDER BY is needed here.
+ * Hydrate recipe rows into domain recipes. Children ride as JSON on each row,
+ * so this is a pure in-memory map with no child queries — what used to be a
+ * fixed-three-query (formerly N+1) child fetch is now zero queries.
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 async function hydrateRecipeRowsForCollection(
-  collectionId: string,
+  _collectionId: string,
   recipeRows: RecipeRow[],
 ): Promise<Recipe[]> {
-  if (recipeRows.length === 0) return [];
-  const db = await getLocalDb();
-  const inCollection = `recipe_id in (select id from recipes where collection_id = ? and deleted = 0)`;
-  const [ingredients, instructions, refs] = await Promise.all([
-    db.execO<IngredientRow>(`select * from ingredients where ${inCollection}`, [collectionId]),
-    db.execO<InstructionRow>(`select * from instructions where ${inCollection}`, [collectionId]),
-    // refs carry no recipe_id of their own — surface the parent recipe via
-    // the join so we can bucket them without a per-recipe query.
-    db.execO<InstructionRefRow & { recipe_id: string }>(
-      `select r.*, i.recipe_id
-         from instruction_ingredient_refs r
-         join instructions i on i.id = r.instruction_id
-         where i.${inCollection}`,
-      [collectionId],
-    ),
-  ]);
-  const bucket = <T extends { recipe_id: string }>(rows: T[]): Map<string, T[]> => {
-    const m = new Map<string, T[]>();
-    for (const r of rows) {
-      const list = m.get(r.recipe_id);
-      if (list) list.push(r);
-      else m.set(r.recipe_id, [r]);
-    }
-    return m;
-  };
-  const ingByRecipe = bucket(ingredients as Array<IngredientRow & { recipe_id: string }>);
-  const insByRecipe = bucket(instructions as Array<InstructionRow & { recipe_id: string }>);
-  const refsByRecipe = bucket(refs as Array<InstructionRefRow & { recipe_id: string }>);
-  return recipeRows.map((row) =>
-    rowsToRecipe(
-      row,
-      (ingByRecipe.get(row.id) ?? []) as IngredientRow[],
-      (insByRecipe.get(row.id) ?? []) as InstructionRow[],
-      (refsByRecipe.get(row.id) ?? []) as InstructionRefRow[],
-    ),
-  );
+  // Children ride as JSON on each recipe row — no child queries needed.
+  return recipeRows.map(rowToRecipe);
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await
 async function hydrateRecipe(row: RecipeRow): Promise<Recipe> {
-  const db = await getLocalDb();
-  const [ingredients, instructions, refs] = await Promise.all([
-    db.execO<IngredientRow>(
-      `select * from ingredients where recipe_id = ? order by sort_order asc`,
-      [row.id],
-    ),
-    db.execO<InstructionRow>(
-      `select * from instructions where recipe_id = ? order by step_number asc`,
-      [row.id],
-    ),
-    db.execO<InstructionRefRow>(
-      `select r.*
-       from instruction_ingredient_refs r
-       join instructions i on i.id = r.instruction_id
-       where i.recipe_id = ?`,
-      [row.id],
-    ),
-  ]);
-  return rowsToRecipe(row, ingredients, instructions, refs);
+  return rowToRecipe(row);
 }
 
 async function saveLocalRecipe(
   collectionId: string,
-  recipe: Recipe,
+  recipeIn: Recipe,
   sortOrder: number,
 ): Promise<void> {
+  // Resolve same-collection ingredient cross-reference links BEFORE persisting,
+  // so the link rides this recipe's first push (see applyLinksToRecipe).
+  const recipe = await applyLinksToRecipe(recipeIn, collectionId);
   const rInsert = recipeToInsert(recipe, collectionId, sortOrder);
   const recipeRow = {
     ...rInsert,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  } as RecipeRow;
-  const ingRows: IngredientRow[] = recipe.ingredients.map((ing, i) => {
-    const ins = ingredientToInsert(ing, recipe.id, i);
-    return { ...ins, id: ins.id! } as IngredientRow;
-  });
-  const stepRows: InstructionRow[] = recipe.instructions.map((s) => {
-    const ins = instructionToInsert(s, recipe.id);
-    return { ...ins, id: ins.id! } as InstructionRow;
-  });
-  const refRows: InstructionRefRow[] = recipe.instructions.flatMap((s) =>
-    s.ingredientRefs.map(
-      (r) => instructionRefToInsert(s.id, r.ingredientId, r.quantity) as InstructionRefRow,
-    ),
-  );
-  await upsertRecipeRow(recipeRow, ingRows, stepRows, refRows);
+  } as unknown as RecipeRow;
+  await upsertRecipeRow(recipeRow);
 }
 
 // ------------- Lineage lookups -------------
@@ -2508,6 +2053,29 @@ export async function getRecipeSummary(id: string): Promise<RecipeSummary | unde
   const row = rows[0];
   if (!row) return undefined;
   return { id: row.id, title: row.title, collectionId: row.collection_id };
+}
+
+/**
+ * Resolve ingredient cross-reference targets: for the given recipe ids that
+ * still exist locally, their collection + whether they're a placeholder
+ * (not-yet-OCR'd). A linked id absent from the result was deleted — the caller
+ * renders it as plain text (no dangling tap).
+ */
+export async function getRecipeLinkTargets(
+  ids: readonly string[],
+): Promise<Map<string, { collectionId: string; isPlaceholder: boolean }>> {
+  const out = new Map<string, { collectionId: string; isPlaceholder: boolean }>();
+  if (ids.length === 0) return out;
+  const db = await getLocalDb();
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = (await db.execO<{ id: string; collection_id: string; has_content: number }>(
+    `select id, collection_id, has_content from recipes where id in (${placeholders}) and deleted = 0`,
+    [...ids],
+  )) as { id: string; collection_id: string; has_content: number }[];
+  for (const r of rows) {
+    out.set(r.id, { collectionId: r.collection_id, isPlaceholder: r.has_content !== 1 });
+  }
+  return out;
 }
 
 /** Batched {@link getRecipeSummary}: title + collection for many ids in one query. */
@@ -2555,8 +2123,7 @@ export async function searchRecipesByTags(
   }>(
     `select distinct r.id, r.title, r.collection_id,
             c.title as collection_title, c.source_type,
-            (exists (select 1 from ingredients where recipe_id = r.id)
-             or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+            r.has_content
        from recipe_tags t
        join recipes r on r.id = t.recipe_id
        join recipe_collections c on c.id = r.collection_id
@@ -2605,43 +2172,12 @@ export async function getRecipesByIds(ids: readonly string[]): Promise<Recipe[]>
     args,
   );
   if (recipeRows.length === 0) return [];
-  const inIds = `recipe_id in (${ph})`;
-  const [ingredients, instructions, refs] = await Promise.all([
-    db.execO<IngredientRow>(`select * from ingredients where ${inIds}`, args),
-    db.execO<InstructionRow>(`select * from instructions where ${inIds}`, args),
-    db.execO<InstructionRefRow & { recipe_id: string }>(
-      `select r.*, i.recipe_id
-         from instruction_ingredient_refs r
-         join instructions i on i.id = r.instruction_id
-         where i.${inIds}`,
-      args,
-    ),
-  ]);
-  const bucket = <T extends { recipe_id: string }>(rows: T[]): Map<string, T[]> => {
-    const m = new Map<string, T[]>();
-    for (const r of rows) {
-      const list = m.get(r.recipe_id);
-      if (list) list.push(r);
-      else m.set(r.recipe_id, [r]);
-    }
-    return m;
-  };
-  const ingByRecipe = bucket(ingredients as Array<IngredientRow & { recipe_id: string }>);
-  const insByRecipe = bucket(instructions as Array<InstructionRow & { recipe_id: string }>);
-  const refsByRecipe = bucket(refs as Array<InstructionRefRow & { recipe_id: string }>);
-  // Preserve the caller's requested order.
+  // Children ride as JSON on the recipe row. Preserve the caller's order.
   const byId = new Map(recipeRows.map((r) => [r.id, r]));
   return ids
     .map((id) => byId.get(id))
     .filter((r): r is RecipeRow => r != null)
-    .map((row) =>
-      rowsToRecipe(
-        row,
-        (ingByRecipe.get(row.id) ?? []) as IngredientRow[],
-        (insByRecipe.get(row.id) ?? []) as InstructionRow[],
-        (refsByRecipe.get(row.id) ?? []) as InstructionRefRow[],
-      ),
-    );
+    .map(rowToRecipe);
 }
 
 /** List direct adaptations of a recipe, regardless of collection. */
@@ -2839,8 +2375,7 @@ export async function listSearchableEmbeddings(ownerId: string): Promise<Searcha
   }>(
     `select e.recipe_id, e.embedding, r.collection_id, r.title,
             c.title as collection_title, c.source_type,
-            (exists (select 1 from ingredients where recipe_id = r.id)
-             or exists (select 1 from instructions where recipe_id = r.id)) as has_content
+            r.has_content
        from recipe_embeddings e
        join recipes r on r.id = e.recipe_id and r.deleted = 0
        join recipe_collections c on c.id = r.collection_id and c.deleted = 0

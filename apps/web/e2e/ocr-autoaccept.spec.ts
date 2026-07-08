@@ -27,6 +27,20 @@ function highConfidenceDraft(title: string): FakeRecipeDraft {
   };
 }
 
+// Clears the bar with a single "combine everything" step — an assembly recipe
+// (market bowl, simple dressing). Locks in the instruction floor of 1.
+function assemblyDraft(title: string): FakeRecipeDraft {
+  return {
+    title,
+    ingredients: [
+      { type: 'MEASURED', name: 'greens', quantity: { type: 'EXACT', amount: 4, unit: 'cup' } },
+      { type: 'MEASURED', name: 'rice', quantity: { type: 'EXACT', amount: 2, unit: 'cup' } },
+      { type: 'VAGUE', name: 'dressing' },
+    ],
+    instructions: [{ stepNumber: 1, text: 'Pile everything into a bowl and serve.' }],
+  };
+}
+
 // Below the bar: only one ingredient → must stay in manual review.
 function lowConfidenceDraft(title: string): FakeRecipeDraft {
   return {
@@ -144,6 +158,92 @@ test.describe('OCR auto-accept', () => {
     await page.getByRole('link', { name: 'Library' }).click();
     await page.getByRole('link', { name: 'Undo Bakery' }).click();
     await expect(page.getByText('Plum Tart')).toHaveCount(0);
+  });
+
+  test('auto-accepts every clean recipe on a multi-recipe page, leaving the weak one', async ({
+    authedPage: page,
+  }) => {
+    await configureOcrKey(page, 'gemini');
+    await page.goto('/library');
+    await waitForSynced(page);
+    await page.getByRole('link', { name: 'New collection' }).click();
+    await page.getByLabel('Title').fill('Spread Bakery');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.getByRole('heading', { name: 'Spread Bakery' })).toBeVisible();
+    await waitForSynced(page);
+
+    await page.goto('/import/new');
+    await uploadTestImages(page, ['page1.png']);
+    await pickTargetCookbook(page, 'Spread Bakery');
+    await page.getByRole('button', { name: 'Start import' }).click();
+    await page.waitForURL(/\/import\/[0-9a-f-]+$/);
+    const batchId = await batchIdFromUrl(page);
+
+    // One page, three recipes: a full recipe, a single-step assembly recipe,
+    // and a murky fragment. The first two clear the per-draft bar; the murky
+    // one doesn't.
+    const items = await waitForBatchItemCount(batchId, 1);
+    await seedOcrFixture({
+      storagePath: items[0]!.storage_path,
+      kind: 'recipe',
+      drafts: [
+        highConfidenceDraft('Sesame Cookies'),
+        assemblyDraft('Four Star Market Bowl'),
+        lowConfidenceDraft('Murky Sidebar'),
+      ],
+    });
+    await pumpItemStatuses(batchId, (c) => c.ocrDone + c.reviewed >= 1, 30_000);
+
+    // Two recipes promoted from the one page; the item stays in review because
+    // the murky draft is still on it (banner counts recipes, not pages).
+    await expect(page.getByText(/2 recipes auto-accepted/)).toBeVisible({ timeout: 30_000 });
+    await waitForItemStatuses(batchId, (c) => c.reviewed === 0 && c.ocrDone === 1, 30_000);
+    await expect(page.getByRole('button', { name: /Needs review \(1\)/ })).toBeVisible();
+
+    // Both clean recipes are really in the cookbook; the murky one is not.
+    await waitForSynced(page);
+    await page.getByRole('link', { name: 'Library' }).click();
+    await page.getByRole('link', { name: 'Spread Bakery' }).click();
+    await expect(page.getByText('Sesame Cookies')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Four Star Market Bowl')).toBeVisible();
+    await expect(page.getByText('Murky Sidebar')).toHaveCount(0);
+  });
+
+  test('a page the model flags as incomplete is held for review, not auto-accepted', async ({
+    authedPage: page,
+  }) => {
+    await configureOcrKey(page, 'gemini');
+    await page.goto('/library');
+    await waitForSynced(page);
+    await page.getByRole('link', { name: 'New collection' }).click();
+    await page.getByLabel('Title').fill('Fragment Bakery');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page.getByRole('heading', { name: 'Fragment Bakery' })).toBeVisible();
+    await waitForSynced(page);
+
+    await page.goto('/import/new');
+    await uploadTestImages(page, ['page1.png']);
+    await pickTargetCookbook(page, 'Fragment Bakery');
+    await page.getByRole('button', { name: 'Start import' }).click();
+    await page.waitForURL(/\/import\/[0-9a-f-]+$/);
+    const batchId = await batchIdFromUrl(page);
+
+    // Structurally clean (title, 3 ingredients, 2 steps) but the model reports
+    // it as only part of a page — the recipe continues elsewhere.
+    const items = await waitForBatchItemCount(batchId, 1);
+    await seedOcrFixture({
+      storagePath: items[0]!.storage_path,
+      kind: 'recipe',
+      draft: { ...highConfidenceDraft('Half A Recipe'), complete: false },
+    });
+
+    await pumpItemStatuses(batchId, (c) => c.ocrDone === 1, 30_000);
+    // No auto-accept despite clearing the structural bar: it waits for a human.
+    await expect(page.getByText(/auto-accepted/)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Needs review \(1\)/ })).toBeVisible({
+      timeout: 15_000,
+    });
+    await waitForItemStatuses(batchId, (c) => c.ocrDone === 1 && c.reviewed === 0, 15_000);
   });
 
   test('turning auto-accept off leaves every page for manual review', async ({

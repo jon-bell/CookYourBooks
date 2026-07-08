@@ -7,7 +7,12 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import type { ImportItem } from './model.js';
-import { buildRecipeFromDraft, isAutoAcceptable, resolveTargetRecipe } from './promoteDraft.js';
+import {
+  autoAcceptableDraftIndices,
+  buildRecipeFromDraft,
+  isDraftAutoAcceptable,
+  resolveTargetRecipe,
+} from './promoteDraft.js';
 
 function makeDraft(over: Partial<ParsedRecipeDraft> = {}): ParsedRecipeDraft {
   return {
@@ -34,68 +39,101 @@ function makeItem(over: Partial<AcceptItem> = {}): AcceptItem {
   };
 }
 
-describe('isAutoAcceptable (Conservative bar)', () => {
-  const target = 'col-1';
+const oneStep = () => [
+  instruction({ stepNumber: 1, text: 'combine everything', ingredientRefs: [] }),
+];
 
-  it('accepts a clean single-recipe page with a batch target', () => {
-    expect(isAutoAcceptable(makeItem(), target)).toBe(true);
+describe('isDraftAutoAcceptable (per-draft bar)', () => {
+  it('accepts a clean draft', () => {
+    expect(isDraftAutoAcceptable(makeDraft())).toBe(true);
   });
 
-  it('accepts via the item-level collection even without a batch target', () => {
-    expect(isAutoAcceptable(makeItem({ assignedCollectionId: 'col-x' }), null)).toBe(true);
+  it('accepts a single-instruction assembly recipe (market bowl, simple sauce)', () => {
+    expect(isDraftAutoAcceptable(makeDraft({ instructions: oneStep() }))).toBe(true);
   });
 
-  it('rejects when there is nowhere to put the recipe', () => {
-    expect(isAutoAcceptable(makeItem(), null)).toBe(false);
+  it('holds a draft the model flagged as an incomplete page fragment', () => {
+    expect(isDraftAutoAcceptable(makeDraft({ complete: false }))).toBe(false);
   });
 
-  it('rejects items that are not OCR_DONE', () => {
-    expect(isAutoAcceptable(makeItem({ status: 'CLAIMED' }), target)).toBe(false);
-    expect(isAutoAcceptable(makeItem({ status: 'REVIEWED' }), target)).toBe(false);
+  it('accepts when complete is true or unreported (no signal)', () => {
+    expect(isDraftAutoAcceptable(makeDraft({ complete: true }))).toBe(true);
+    expect(isDraftAutoAcceptable(makeDraft({ complete: undefined }))).toBe(true);
   });
 
-  it('rejects table-of-contents pages', () => {
-    expect(isAutoAcceptable(makeItem({ kind: 'TOC' }), target)).toBe(false);
-  });
-
-  it('rejects notes pages (they auto-file as collection notes, not recipes)', () => {
-    expect(isAutoAcceptable(makeItem({ kind: 'NOTES' }), target)).toBe(false);
-  });
-
-  it('rejects pages with more than one recipe', () => {
-    expect(isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft(), makeDraft()] }), target)).toBe(
-      false,
-    );
+  it('rejects a draft with no instructions at all', () => {
+    expect(isDraftAutoAcceptable(makeDraft({ instructions: [] }))).toBe(false);
   });
 
   it('rejects a missing / blank title', () => {
-    expect(
-      isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft({ title: undefined })] }), target),
-    ).toBe(false);
-    expect(
-      isAutoAcceptable(makeItem({ parsedDrafts: [makeDraft({ title: '   ' })] }), target),
-    ).toBe(false);
+    expect(isDraftAutoAcceptable(makeDraft({ title: undefined }))).toBe(false);
+    expect(isDraftAutoAcceptable(makeDraft({ title: '   ' }))).toBe(false);
   });
 
   it('rejects fewer than 3 ingredients', () => {
-    const d = makeDraft({ ingredients: [vague({ name: 'a' }), vague({ name: 'b' })] });
-    expect(isAutoAcceptable(makeItem({ parsedDrafts: [d] }), target)).toBe(false);
-  });
-
-  it('rejects fewer than 2 instructions', () => {
-    const d = makeDraft({
-      instructions: [instruction({ stepNumber: 1, text: 'x', ingredientRefs: [] })],
-    });
-    expect(isAutoAcceptable(makeItem({ parsedDrafts: [d] }), target)).toBe(false);
+    expect(
+      isDraftAutoAcceptable(
+        makeDraft({ ingredients: [vague({ name: 'a' }), vague({ name: 'b' })] }),
+      ),
+    ).toBe(false);
   });
 
   it('rejects when the parser left anything unplaced', () => {
-    expect(
-      isAutoAcceptable(
-        makeItem({ parsedDrafts: [makeDraft({ leftover: ['??? 1 cup mystery'] })] }),
-        target,
-      ),
-    ).toBe(false);
+    expect(isDraftAutoAcceptable(makeDraft({ leftover: ['??? 1 cup mystery'] }))).toBe(false);
+  });
+});
+
+describe('autoAcceptableDraftIndices', () => {
+  const target = 'col-1';
+
+  it('accepts a clean single-recipe page with a batch target', () => {
+    expect(autoAcceptableDraftIndices(makeItem(), target)).toEqual([0]);
+  });
+
+  it('accepts via the item-level collection even without a batch target', () => {
+    expect(autoAcceptableDraftIndices(makeItem({ assignedCollectionId: 'col-x' }), null)).toEqual([
+      0,
+    ]);
+  });
+
+  it('rejects when there is nowhere to put the recipe', () => {
+    expect(autoAcceptableDraftIndices(makeItem(), null)).toEqual([]);
+  });
+
+  it('rejects items that are not OCR_DONE', () => {
+    expect(autoAcceptableDraftIndices(makeItem({ status: 'CLAIMED' }), target)).toEqual([]);
+    expect(autoAcceptableDraftIndices(makeItem({ status: 'REVIEWED' }), target)).toEqual([]);
+  });
+
+  it('rejects table-of-contents pages', () => {
+    expect(autoAcceptableDraftIndices(makeItem({ kind: 'TOC' }), target)).toEqual([]);
+  });
+
+  it('rejects notes pages (they auto-file as collection notes, not recipes)', () => {
+    expect(autoAcceptableDraftIndices(makeItem({ kind: 'NOTES' }), target)).toEqual([]);
+  });
+
+  it('accepts every clean recipe on a multi-recipe page', () => {
+    const item = makeItem({ parsedDrafts: [makeDraft(), makeDraft(), makeDraft()] });
+    expect(autoAcceptableDraftIndices(item, target)).toEqual([0, 1, 2]);
+  });
+
+  it('takes only the clean drafts on a mixed page, leaving weak ones for review', () => {
+    const item = makeItem({
+      parsedDrafts: [
+        makeDraft(), // clean
+        makeDraft({ leftover: ['??? mystery'] }), // weak
+        makeDraft(), // clean
+      ],
+    });
+    expect(autoAcceptableDraftIndices(item, target)).toEqual([0, 2]);
+  });
+
+  it('returns nothing when no draft on the page clears the bar', () => {
+    const item = makeItem({
+      parsedDrafts: [makeDraft({ title: undefined }), makeDraft({ instructions: [] })],
+    });
+    expect(autoAcceptableDraftIndices(item, target)).toEqual([]);
   });
 });
 

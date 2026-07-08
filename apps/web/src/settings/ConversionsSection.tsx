@@ -463,14 +463,26 @@ function useDistinctIngredientNames(): string[] {
     (async () => {
       try {
         const db = await getLocalDb();
-        const rows = (await db.execO<{ name: string }>(
-          `select distinct lower(name) as name
-             from ingredients
-            where name is not null and name != ''
-            order by name asc
-            limit 500`,
-        )) as { name: string }[];
-        if (!cancelled) setNames(rows.map((r) => r.name));
+        // Ingredients are folded into recipes.ingredients JSON; collect the
+        // distinct lowercased names for the conversion-rule autocomplete.
+        const rows = (await db.execO<{ ingredients: string | null }>(
+          `select ingredients from recipes where deleted = 0 and ingredients is not null`,
+        )) as { ingredients: string | null }[];
+        const set = new Set<string>();
+        for (const row of rows) {
+          if (!row.ingredients) continue;
+          try {
+            const arr: unknown = JSON.parse(row.ingredients);
+            if (!Array.isArray(arr)) continue;
+            for (const i of arr) {
+              const n = (i as { name?: unknown })?.name;
+              if (typeof n === 'string' && n.trim() !== '') set.add(n.toLowerCase().trim());
+            }
+          } catch {
+            /* skip malformed row */
+          }
+        }
+        if (!cancelled) setNames([...set].sort().slice(0, 500));
       } catch {
         /* local DB not ready yet */
       }

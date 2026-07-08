@@ -143,6 +143,7 @@ function buildDraft(raw: unknown, rawText: string | undefined): ParsedRecipeDraf
     ingredients,
     instructions,
     leftover,
+    complete: asBoolean(obj.complete),
     description: asTrimmedString(obj.description),
     timeEstimate: asTrimmedString(obj.timeEstimate),
     equipment,
@@ -322,6 +323,10 @@ function arrayOrEmpty(raw: unknown): unknown[] {
   return Array.isArray(raw) ? raw : [];
 }
 
+function asBoolean(raw: unknown): boolean | undefined {
+  return typeof raw === 'boolean' ? raw : undefined;
+}
+
 function asArray(raw: unknown): unknown[] | undefined {
   return Array.isArray(raw) ? raw : undefined;
 }
@@ -397,6 +402,35 @@ export function parseNotesJson(text: string): ParsedNote {
   };
   const body = pick(obj.body) ?? pick(obj.text);
   if (!body) throw new Error('Notes JSON missing body.');
+  return { title: pick(obj.title) ?? 'Note', body };
+}
+
+/** Extract the optional top-level `note` from a RECIPE-prompt response — set by
+ *  the model when a page is entirely prose (no recipe). Browser mirror of the
+ *  worker's parseLlmNote (supabase/functions/import-worker/parser.ts) — keep the
+ *  two in sync. Returns null (never throws) when there's no usable note, so the
+ *  caller falls back to the recipe path. */
+export function parseLlmNote(text: string): ParsedNote | null {
+  const cleaned = stripFences(text).trim();
+  let raw: unknown;
+  try {
+    raw = JSON.parse(cleaned);
+  } catch {
+    raw = tolerantJsonParse(cleaned);
+  }
+  if (raw === PARSE_FAILED || !raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const noteRaw = (raw as Record<string, unknown>).note;
+  if (!noteRaw || typeof noteRaw !== 'object' || Array.isArray(noteRaw)) return null;
+  const obj = noteRaw as Record<string, unknown>;
+  const pick = (v: unknown): string | undefined => {
+    if (typeof v !== 'string') return undefined;
+    const t = v.trim();
+    return t.length > 0 ? t : undefined;
+  };
+  const body = pick(obj.body) ?? pick(obj.text);
+  if (!body) return null;
   return { title: pick(obj.title) ?? 'Note', body };
 }
 

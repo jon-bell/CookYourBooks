@@ -11,7 +11,11 @@
 //
 // Progress is observable (subscribeBackfill) for the SchemaUpgradeOverlay.
 
+import { legacyChildRowsToStored, storedIngredientsSearchText } from '@cookyourbooks/db';
+
 import { getLocalDb } from './db.js';
+import { computeAndApplyLinks } from './ingredientLinks.js';
+import { enqueue } from './outbox.js';
 import { logSync } from './syncLog.js';
 
 const CHUNK = 200;
@@ -131,6 +135,104 @@ const REGISTRY: BackfillDef[] = [
         nextCursor: ids[ids.length - 1]!.id,
         scanned: ids.length,
         done: ids.length < chunkSize,
+      };
+    },
+  },
+  {
+    // Fold pre-2026-07-08 local child rows (ingredients / instructions /
+    // instruction_ingredient_refs) into the recipes.ingredients /
+    // recipes.instructions JSON columns. New pulls already carry the server
+    // JSON; this only fixes rows synced before the fold (ingredients IS NULL).
+    // On a fresh install the child tables exist but are empty and every recipe
+    // arrives with its JSON already set, so total() is 0 and it no-ops.
+    // Runs BEFORE ingredient_links_v1 so the link pass sees the folded JSON.
+    id: 'recipe_jsonb_v1',
+    async total() {
+      const db = await getLocalDb();
+      const hasChildren = (await db.execO<{ c: number }>(
+        `select count(*) as c from sqlite_master where type = 'table' and name = 'ingredients'`,
+      )) as { c: number }[];
+      if ((hasChildren[0]?.c ?? 0) === 0) return 0;
+      const rows = (await db.execO<{ c: number }>(
+        `select count(*) as c from recipes where deleted = 0 and ingredients is null`,
+      )) as { c: number }[];
+      return rows[0]?.c ?? 0;
+    },
+    async step(cursor, chunkSize) {
+      const db = await getLocalDb();
+      const ids = (await db.execO<{ id: string }>(
+        `select id from recipes
+          where deleted = 0 and ingredients is null and id > ?
+          order by id limit ?`,
+        [cursor, chunkSize],
+      )) as { id: string }[];
+      if (ids.length === 0) return { nextCursor: cursor, scanned: 0, done: true };
+      for (const { id } of ids) {
+        const [ings, insts, refs] = await Promise.all([
+          db.execO<Record<string, unknown>>(`select * from ingredients where recipe_id = ?`, [id]),
+          db.execO<Record<string, unknown>>(`select * from instructions where recipe_id = ?`, [id]),
+          db.execO<Record<string, unknown>>(
+            `select r.* from instruction_ingredient_refs r
+               join instructions i on i.id = r.instruction_id
+              where i.recipe_id = ?`,
+            [id],
+          ),
+        ]);
+        const { ingredients, instructions } = legacyChildRowsToStored(ings, insts, refs);
+        await db.exec(
+          `update recipes
+              set ingredients = ?, instructions = ?, ingredients_text = ?, has_content = ?
+            where id = ? and ingredients is null`,
+          [
+            JSON.stringify(ingredients),
+            JSON.stringify(instructions),
+            storedIngredientsSearchText(ingredients),
+            ingredients.length > 0 || instructions.length > 0 ? 1 : 0,
+            id,
+          ],
+        );
+      }
+      return {
+        nextCursor: ids[ids.length - 1]!.id,
+        scanned: ids.length,
+        done: ids.length < chunkSize,
+      };
+    },
+  },
+  {
+    // Auto-link ingredients that are themselves recipes in the same collection
+    // (component / sub-recipe cross-references). Fill mode: only sets links on
+    // ingredients that don't already have one, so a background pass on a
+    // partially-synced device can never clear a link another device set, and
+    // manual/dismissed rows are left alone. Re-running also links sub-recipes
+    // added since the last pass (reverse direction). Touched hosts enqueue a
+    // recipe_save so links reach the server. Idempotent: a host whose links
+    // don't change is neither rewritten nor re-pushed.
+    id: 'ingredient_links_v1',
+    async total() {
+      const db = await getLocalDb();
+      const rows = (await db.execO<{ c: number }>(
+        `select count(*) as c from recipes where deleted = 0`,
+      )) as { c: number }[];
+      return rows[0]?.c ?? 0;
+    },
+    async step(cursor, chunkSize) {
+      const db = await getLocalDb();
+      const rows = (await db.execO<{ id: string; title: string; collection_id: string }>(
+        `select id, title, collection_id from recipes where deleted = 0 and id > ? order by id limit ?`,
+        [cursor, chunkSize],
+      )) as { id: string; title: string; collection_id: string }[];
+      if (rows.length === 0) return { nextCursor: cursor, scanned: 0, done: true };
+      for (const r of rows) {
+        const changed = await computeAndApplyLinks(r.id, r.title, r.collection_id);
+        if (changed) {
+          await enqueue({ kind: 'recipe_save', entity_id: r.id, collection_id: r.collection_id });
+        }
+      }
+      return {
+        nextCursor: rows[rows.length - 1]!.id,
+        scanned: rows.length,
+        done: rows.length < chunkSize,
       };
     },
   },

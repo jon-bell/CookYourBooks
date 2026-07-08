@@ -27,8 +27,8 @@ import {
   isOcrInProgress,
 } from '../import/ocrStatus.js';
 import {
+  autoAcceptableDraftIndices,
   buildRecipeFromDraft,
-  isAutoAcceptable,
   resolveTargetRecipe,
 } from '../import/promoteDraft.js';
 import {
@@ -58,13 +58,19 @@ function writeAutoAcceptPref(on: boolean): void {
   }
 }
 
-/** A recipe the auto-accept pass created, retained so Undo can reverse it. */
+/**
+ * One item's auto-accept pass, retained so Undo can fully reverse it. A page
+ * can hold several clean recipes, so an entry may have created more than one —
+ * and may have left weak drafts behind (item still OCR_DONE).
+ */
 interface AutoAcceptedEntry {
   itemId: string;
-  recipeId: string;
-  collectionId: string;
-  /** The drafts that were on the item, restored to it on Undo. */
-  drafts: ParsedRecipeDraft[];
+  /** Recipes created from this item's drafts, with the collection each landed in. */
+  created: { recipeId: string; collectionId: string }[];
+  /** The item's pre-acceptance state, restored verbatim on Undo. */
+  prevDrafts: ParsedRecipeDraft[];
+  prevStatus: ImportItemStatus;
+  prevCreatedRecipeIds: string[];
 }
 
 /** Merge-absorbed pages are marked DISCARDED with their storage_path folded
@@ -95,10 +101,14 @@ function matchesFilter(item: ImportItem, filter: Filter): boolean {
     case 'DONE':
       return item.status === 'REVIEWED';
     case 'NEEDS_REVIEW':
+      // Filed notes (prose pages the worker auto-filed, or user-marked NOTES)
+      // live in the Notes tab, not the recipe review queue — they're already
+      // saved to the cookbook and need no per-recipe review.
       return (
-        item.status === 'OCR_DONE' ||
-        item.status === 'NEEDS_FALLBACK' ||
-        item.status === 'BAKEOFF_READY'
+        item.kind !== 'NOTES' &&
+        (item.status === 'OCR_DONE' ||
+          item.status === 'NEEDS_FALLBACK' ||
+          item.status === 'BAKEOFF_READY')
       );
     case 'FAILED':
       return item.status === 'OCR_FAILED';
@@ -192,22 +202,28 @@ export function ImportBatchPage() {
     if (batch && !editingName) setNameDraft(batch.name);
   }, [batch, editingName]);
 
-  // Auto-accept pass: promote obviously-good pages to recipes without a
-  // click (Conservative bar in `isAutoAcceptable`). Recipes are created in
-  // the browser anyway (local-first), so this just runs the same promote
-  // logic the manual path uses. Bakeoff batches are skipped — there the user
-  // is actively comparing variants. `runningRef` serializes; `processedRef`
-  // dedupes across the re-renders each promotion triggers.
+  // Auto-accept pass: promote obviously-good OCR drafts to recipes without a
+  // click (per-draft bar in `autoAcceptableDraftIndices`). Recipes are created
+  // in the browser anyway (local-first), so this just runs the same promote
+  // logic the manual path uses. A page with several clean recipes promotes
+  // each one; any weak siblings stay on the item (still OCR_DONE) for review.
+  // Bakeoff batches are skipped — there the user is actively comparing
+  // variants. `runningRef` serializes; `processedRef` dedupes across the
+  // re-renders each promotion triggers.
   useEffect(() => {
     if (!autoAcceptOn || !batch || !user) return;
     if (batch.batchKind !== 'STANDARD') return;
     if (runningRef.current) return;
-    const candidates = items.filter(
-      (i) => !processedRef.current.has(i.id) && isAutoAcceptable(i, batch.targetCollectionId),
-    );
+    const candidates = items
+      .filter((i) => !processedRef.current.has(i.id))
+      .map((item) => ({
+        item,
+        indices: autoAcceptableDraftIndices(item, batch.targetCollectionId),
+      }))
+      .filter((c) => c.indices.length > 0);
     if (candidates.length === 0) return;
     // Claim synchronously before any await so a re-render can't re-grab them.
-    for (const c of candidates) processedRef.current.add(c.id);
+    for (const c of candidates) processedRef.current.add(c.item.id);
     runningRef.current = true;
     const ownerId = user.id;
     const targetDefault = batch.targetCollectionId;
@@ -215,34 +231,43 @@ export function ImportBatchPage() {
       const collCache = new Map<string, RecipeCollection | undefined>();
       const accepted: AutoAcceptedEntry[] = [];
       try {
-        for (const it of candidates) {
+        for (const { item: it, indices } of candidates) {
           const targetId = it.assignedCollectionId ?? targetDefault!;
           if (!collCache.has(targetId)) {
             collCache.set(targetId, await collectionRepo(ownerId).get(targetId));
           }
           const collection = collCache.get(targetId);
-          const draft = it.parsedDrafts[0]!;
-          const { recipeId, overwriteTitle } = resolveTargetRecipe(draft, it, collection);
-          const recipe = buildRecipeFromDraft(draft, {
-            collectionTitle: collection?.title,
-            recipeId,
-            overwriteTitle,
-          });
-          await recipeRepo(targetId).save(recipe);
+          const accept = new Set(indices);
+          const created: { recipeId: string; collectionId: string }[] = [];
+          for (const idx of indices) {
+            const draft = it.parsedDrafts[idx]!;
+            const { recipeId, overwriteTitle } = resolveTargetRecipe(draft, it, collection);
+            const recipe = buildRecipeFromDraft(draft, {
+              collectionTitle: collection?.title,
+              recipeId,
+              overwriteTitle,
+            });
+            await recipeRepo(targetId).save(recipe);
+            created.push({ recipeId: recipe.id, collectionId: targetId });
+          }
+          // Keep the drafts we didn't take; the item only closes out (REVIEWED)
+          // once nothing is left to look at.
+          const remainingDrafts = it.parsedDrafts.filter((_, i) => !accept.has(i));
           await updateItem.mutateAsync({
             id: it.id,
             patch: {
-              parsedDrafts: [],
-              createdRecipeIds: [...(it.createdRecipeIds ?? []), recipe.id],
+              parsedDrafts: remainingDrafts,
+              createdRecipeIds: [...(it.createdRecipeIds ?? []), ...created.map((c) => c.recipeId)],
               assignedCollectionId: targetId,
-              status: 'REVIEWED',
+              status: remainingDrafts.length === 0 ? 'REVIEWED' : it.status,
             },
           });
           accepted.push({
             itemId: it.id,
-            recipeId: recipe.id,
-            collectionId: targetId,
-            drafts: it.parsedDrafts,
+            created,
+            prevDrafts: it.parsedDrafts,
+            prevStatus: it.status,
+            prevCreatedRecipeIds: it.createdRecipeIds,
           });
         }
         qc.invalidateQueries({ queryKey: ['collections', ownerId] });
@@ -258,6 +283,7 @@ export function ImportBatchPage() {
     })();
   }, [autoAcceptOn, batch, items, user, qc, syncNow, updateItem]);
 
+  const autoAcceptedRecipeCount = autoAccepted.reduce((n, e) => n + e.created.length, 0);
   const pendingCount = items.filter((i) => i.status === 'PENDING').length;
   const stalledCount = items.filter((i) => i.status === 'CLAIMED').length;
   const awaitingGroupingCount = items.filter((i) => i.status === 'AWAITING_GROUPING').length;
@@ -320,10 +346,10 @@ export function ImportBatchPage() {
     });
   }
 
-  // Reverse the auto-accepted recipes: delete each created recipe and put its
-  // item back in Needs review with its drafts restored. The items stay in
-  // `processedRef` so the pass doesn't immediately re-accept them — Undo
-  // means "I'll review these by hand".
+  // Reverse each auto-accepted item: delete every recipe it created and
+  // restore the item's exact pre-acceptance state (drafts, status, recipe
+  // ids). The items stay in `processedRef` so the pass doesn't immediately
+  // re-accept them — Undo means "I'll review these by hand".
   async function undoAutoAccepts() {
     const entries = autoAccepted;
     if (entries.length === 0) return;
@@ -331,14 +357,15 @@ export function ImportBatchPage() {
     setAutoAcceptError(undefined);
     try {
       for (const e of entries) {
-        await recipeRepo(e.collectionId).delete(e.recipeId);
-        const cur = items.find((i) => i.id === e.itemId);
+        for (const c of e.created) {
+          await recipeRepo(c.collectionId).delete(c.recipeId);
+        }
         await updateItem.mutateAsync({
           id: e.itemId,
           patch: {
-            parsedDrafts: e.drafts,
-            status: 'OCR_DONE',
-            createdRecipeIds: (cur?.createdRecipeIds ?? []).filter((id) => id !== e.recipeId),
+            parsedDrafts: e.prevDrafts,
+            status: e.prevStatus,
+            createdRecipeIds: e.prevCreatedRecipeIds,
           },
         });
       }
@@ -528,14 +555,15 @@ export function ImportBatchPage() {
         </div>
       )}
 
-      {autoAccepted.length > 0 && (
+      {autoAcceptedRecipeCount > 0 && (
         <div
           role="status"
           aria-live="polite"
           className="flex flex-wrap items-center gap-3 rounded-md border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 p-3 text-sm text-emerald-900 dark:text-emerald-200"
         >
           <span className="font-medium">
-            ✓ {autoAccepted.length} recipe{autoAccepted.length === 1 ? '' : 's'} auto-accepted
+            ✓ {autoAcceptedRecipeCount} recipe{autoAcceptedRecipeCount === 1 ? '' : 's'}{' '}
+            auto-accepted
           </span>
           <span className="text-emerald-800 dark:text-emerald-300">
             High-confidence pages were saved for you — only pages that need a look stay in “Needs
@@ -841,7 +869,7 @@ export function ImportBatchPage() {
         })}
         <label
           className="ml-auto flex items-center gap-1.5 text-xs text-stone-600 dark:text-stone-400"
-          title="Automatically save pages whose OCR result is unambiguous: a single recipe with a clear title, at least 3 ingredients and 2 steps, and nothing the parser couldn't read. You can Undo, or turn this off."
+          title="Automatically save recipes whose OCR result is unambiguous: a clear title, at least 3 ingredients and a step, nothing the parser couldn't read, and not flagged as a partial page. A page with several clean recipes saves each one; anything unsure stays for review. You can Undo, or turn this off."
         >
           <input
             type="checkbox"

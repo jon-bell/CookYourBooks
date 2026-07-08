@@ -173,10 +173,14 @@ export function ImportNewPage() {
 
   async function onTakePhotos() {
     try {
-      // This page batches files through its own review/PDF flow and doesn't
-      // use capture-time markers; take just the files.
       const captured = await scanPages();
-      if (captured.length > 0) addFiles(captured.map((p) => p.file));
+      if (captured.length > 0) {
+        // Camera scans are organized on the grouping screen (page type +
+        // multi-page stitching), same as the dedicated Scan-pages flow.
+        // Markers aren't carried here — grouping is decided on that screen.
+        setImportMode('group-first');
+        addFiles(captured.map((p) => p.file));
+      }
     } catch (e) {
       setError((e as Error).message);
     }

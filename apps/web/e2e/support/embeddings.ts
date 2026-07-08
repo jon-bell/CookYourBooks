@@ -52,6 +52,13 @@ export async function createUserRecipe(params: {
     ]);
   }
   const recipeId = crypto.randomUUID();
+  // Children fold into JSON on the recipe row (StoredIngredient shape).
+  const ings = (params.ingredients ?? []).map((name) => ({
+    id: crypto.randomUUID(),
+    type: 'MEASURED',
+    name,
+    quantity: { type: 'EXACT', amount: 1, unit: 'piece' },
+  }));
   await insert('recipes', [
     {
       id: recipeId,
@@ -59,24 +66,11 @@ export async function createUserRecipe(params: {
       title: params.recipeTitle,
       description: params.description ?? null,
       sort_order: 0,
+      ingredients: ings,
+      instructions: [],
+      has_content: ings.length > 0,
     },
   ]);
-  const ings = params.ingredients ?? [];
-  if (ings.length > 0) {
-    await insert(
-      'ingredients',
-      ings.map((name, j) => ({
-        id: crypto.randomUUID(),
-        recipe_id: recipeId,
-        sort_order: j,
-        type: 'MEASURED',
-        name,
-        quantity_type: 'EXACT',
-        quantity_amount: 1,
-        quantity_unit: 'piece',
-      })),
-    );
-  }
   return { collectionId, recipeId };
 }
 

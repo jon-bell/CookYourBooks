@@ -94,31 +94,51 @@ export function resolveTargetRecipe(
 }
 
 /**
- * Conservative auto-accept bar. A page is auto-acceptable only when the
- * OCR result is unambiguous enough that a human glance would rubber-stamp
- * it: a single recipe on the page, a real title, a plausible ingredient
- * and step count, nothing the parser couldn't place, and somewhere to put
- * it. Everything else routes to manual review.
- *
- * Bakeoff items are not special-cased here — they only reach OCR_DONE once
- * a winner is picked; callers gate the auto-run to STANDARD batches anyway.
+ * Per-draft auto-accept bar. A single OCR draft is auto-acceptable when it's
+ * unambiguous enough that a human glance would rubber-stamp it: a real title,
+ * a plausible ingredient and step count, and nothing the parser couldn't
+ * place. Evaluated per *draft* rather than per page, so a page holding several
+ * clean recipes — a sauces/dressings section, a two-up spread — promotes each
+ * one and leaves only the weak siblings behind for review.
  */
 export const AUTO_ACCEPT_MIN_INGREDIENTS = 3;
-export const AUTO_ACCEPT_MIN_INSTRUCTIONS = 2;
+// One clear "combine everything" step is a complete recipe (market bowls,
+// simple dressings/sauces), so the floor is a single instruction — the title,
+// ingredient-count, and empty-leftover guards still keep bare fragments out.
+export const AUTO_ACCEPT_MIN_INSTRUCTIONS = 1;
 
-export function isAutoAcceptable(
-  item: Pick<ImportItem, 'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'>,
-  batchTargetCollectionId: string | null,
-): boolean {
-  if (item.status !== 'OCR_DONE') return false;
-  // Only plain recipe pages auto-promote: TOC and NOTES have their own paths.
-  if (item.kind !== 'RECIPE') return false;
-  if (item.parsedDrafts.length !== 1) return false;
-  if (!(item.assignedCollectionId ?? batchTargetCollectionId)) return false;
-  const draft = item.parsedDrafts[0]!;
+export function isDraftAutoAcceptable(draft: ParsedRecipeDraft): boolean {
+  // The model flagged this as a page fragment (continues off-page / partial) —
+  // hold it for review. `undefined` (older OCR, or a prompt that doesn't report
+  // completeness) is treated as no signal, so structure alone decides.
+  if (draft.complete === false) return false;
   if (!draft.title || !draft.title.trim()) return false;
   if (draft.ingredients.length < AUTO_ACCEPT_MIN_INGREDIENTS) return false;
   if (draft.instructions.length < AUTO_ACCEPT_MIN_INSTRUCTIONS) return false;
   if (draft.leftover.length !== 0) return false;
   return true;
+}
+
+/**
+ * Which drafts on an item should auto-promote. Empty when the item itself is
+ * ineligible — not OCR_DONE, a TOC/NOTES page (those have their own paths), or
+ * nowhere to file the recipe — otherwise the indices of the drafts that clear
+ * the per-draft bar. The caller promotes those and leaves any remaining (weak)
+ * drafts on the item for manual review.
+ *
+ * Bakeoff items are not special-cased here — they only reach OCR_DONE once a
+ * winner is picked; callers gate the auto-run to STANDARD batches anyway.
+ */
+export function autoAcceptableDraftIndices(
+  item: Pick<ImportItem, 'status' | 'kind' | 'parsedDrafts' | 'assignedCollectionId'>,
+  batchTargetCollectionId: string | null,
+): number[] {
+  if (item.status !== 'OCR_DONE') return [];
+  if (item.kind !== 'RECIPE') return [];
+  if (!(item.assignedCollectionId ?? batchTargetCollectionId)) return [];
+  const out: number[] = [];
+  item.parsedDrafts.forEach((draft, i) => {
+    if (isDraftAutoAcceptable(draft)) out.push(i);
+  });
+  return out;
 }

@@ -136,38 +136,30 @@ export async function seedUserLibrary(params: {
   const [col] = (await colResp.json()) as { id: string }[];
   if (!col) throw new Error('seedUserLibrary: no collection returned');
 
-  // Mint UUIDs locally so we can stitch FK rows in one round-trip per table.
-  const recipes: { id: string; collection_id: string; title: string; sort_order: number }[] = [];
-  const ingredients: Record<string, unknown>[] = [];
-  const instructions: Record<string, unknown>[] = [];
+  // Children are folded into JSON on the recipe row (StoredIngredient /
+  // StoredInstruction shape), so one bulk insert into `recipes` seeds it all.
+  const recipes: Record<string, unknown>[] = [];
   for (let i = 0; i < params.recipeCount; i += 1) {
-    const recipeId = crypto.randomUUID();
+    const ingredients = Array.from({ length: ingPer }, (_, j) => ({
+      id: crypto.randomUUID(),
+      type: 'MEASURED',
+      name: `ingredient ${j + 1}`,
+      quantity: { type: 'EXACT', amount: j + 1, unit: 'piece' },
+    }));
+    const instructions = Array.from({ length: stepPer }, (_, j) => ({
+      id: crypto.randomUUID(),
+      stepNumber: j + 1,
+      text: `Step ${j + 1}: do the thing.`,
+    }));
     recipes.push({
-      id: recipeId,
+      id: crypto.randomUUID(),
       collection_id: col.id,
       title: `Perf Recipe ${i + 1}`,
       sort_order: i,
+      ingredients,
+      instructions,
+      has_content: ingredients.length > 0 || instructions.length > 0,
     });
-    for (let j = 0; j < ingPer; j += 1) {
-      ingredients.push({
-        id: crypto.randomUUID(),
-        recipe_id: recipeId,
-        sort_order: j,
-        type: 'MEASURED',
-        name: `ingredient ${j + 1}`,
-        quantity_type: 'EXACT',
-        quantity_amount: j + 1,
-        quantity_unit: 'piece',
-      });
-    }
-    for (let j = 0; j < stepPer; j += 1) {
-      instructions.push({
-        id: crypto.randomUUID(),
-        recipe_id: recipeId,
-        step_number: j + 1,
-        text: `Step ${j + 1}: do the thing.`,
-      });
-    }
   }
 
   const bulk = async (table: string, rows: unknown[]) => {
@@ -191,8 +183,6 @@ export async function seedUserLibrary(params: {
     }
   };
   await bulk('recipes', recipes);
-  await bulk('ingredients', ingredients);
-  await bulk('instructions', instructions);
 
   return { collectionId: col.id };
 }
@@ -317,59 +307,49 @@ export async function seedPublicCollection(params: {
   };
 
   if (params.recipes && params.recipes.length > 0) {
-    // Rich form: mint ids client-side so we can stitch ingredient/instruction
-    // refs in one round-trip per table.
+    // Rich form: children fold into JSON on each recipe row (StoredIngredient /
+    // StoredInstruction, refs nested per-instruction), so it's one insert.
     const recipeRows: Record<string, unknown>[] = [];
-    const ingredientRows: Record<string, unknown>[] = [];
-    const instructionRows: Record<string, unknown>[] = [];
-    const refRows: Record<string, unknown>[] = [];
 
     for (const spec of params.recipes) {
-      const recipeId = crypto.randomUUID();
+      const ings = (spec.ingredients ?? []).map((ing) => ({
+        id: crypto.randomUUID(),
+        type: 'MEASURED',
+        name: ing.name,
+        quantity: { type: 'EXACT', amount: 1, unit: 'piece' },
+      }));
+      const refsByStep = new Map<number, { ingredientId: string }[]>();
+      for (const ref of spec.refs ?? []) {
+        const ing = ings[ref.ingredientIndex];
+        if (!ing || ref.instructionIndex >= (spec.instructions ?? []).length) {
+          throw new Error(`seedPublicCollection: ref index out of range for "${spec.title}"`);
+        }
+        const list = refsByStep.get(ref.instructionIndex) ?? [];
+        list.push({ ingredientId: ing.id });
+        refsByStep.set(ref.instructionIndex, list);
+      }
+      const steps = (spec.instructions ?? []).map((step, idx) => {
+        const r: Record<string, unknown> = {
+          id: crypto.randomUUID(),
+          stepNumber: step.stepNumber,
+          text: step.text,
+        };
+        const refs = refsByStep.get(idx);
+        if (refs && refs.length > 0) r.ingredientRefs = refs;
+        return r;
+      });
       recipeRows.push({
-        id: recipeId,
+        id: crypto.randomUUID(),
         collection_id: col.id,
         title: spec.title,
         sort_order: spec.sortOrder,
+        ingredients: ings,
+        instructions: steps,
+        has_content: ings.length > 0 || steps.length > 0,
       });
-      const ingIds = (spec.ingredients ?? []).map((ing) => {
-        const id = crypto.randomUUID();
-        ingredientRows.push({
-          id,
-          recipe_id: recipeId,
-          sort_order: ing.sortOrder,
-          type: 'MEASURED',
-          name: ing.name,
-          quantity_type: 'EXACT',
-          quantity_amount: 1,
-          quantity_unit: 'piece',
-        });
-        return id;
-      });
-      const stepIds = (spec.instructions ?? []).map((step) => {
-        const id = crypto.randomUUID();
-        instructionRows.push({
-          id,
-          recipe_id: recipeId,
-          step_number: step.stepNumber,
-          text: step.text,
-        });
-        return id;
-      });
-      for (const ref of spec.refs ?? []) {
-        const instructionId = stepIds[ref.instructionIndex];
-        const ingredientId = ingIds[ref.ingredientIndex];
-        if (!instructionId || !ingredientId) {
-          throw new Error(`seedPublicCollection: ref index out of range for "${spec.title}"`);
-        }
-        refRows.push({ instruction_id: instructionId, ingredient_id: ingredientId });
-      }
     }
 
     await post('recipes', recipeRows);
-    await post('ingredients', ingredientRows);
-    await post('instructions', instructionRows);
-    await post('instruction_ingredient_refs', refRows);
   } else {
     for (let i = 0; i < (params.recipeTitles ?? []).length; i += 1) {
       const t = params.recipeTitles![i]!;
