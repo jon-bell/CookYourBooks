@@ -314,14 +314,21 @@ describe('parseLlmJson', () => {
     const mk = (complete: unknown) =>
       JSON.stringify({
         recipes: [
-          { title: 'T', complete, ingredients: [{ type: 'vague', name: 'salt' }], instructions: [] },
+          {
+            title: 'T',
+            complete,
+            ingredients: [{ type: 'vague', name: 'salt' }],
+            instructions: [],
+          },
         ],
       });
     expect(parseLlmJson(mk(true))[0]!.complete).toBe(true);
     expect(parseLlmJson(mk(false))[0]!.complete).toBe(false);
     // A non-boolean (or omitted) value is treated as "no signal", not false.
     expect(parseLlmJson(mk('yes'))[0]!.complete).toBeUndefined();
-    expect(parseLlmJson('{"recipes":[{"title":"T","ingredients":[],"instructions":[]}]}')[0]!.complete).toBeUndefined();
+    expect(
+      parseLlmJson('{"recipes":[{"title":"T","ingredients":[],"instructions":[]}]}')[0]!.complete,
+    ).toBeUndefined();
   });
 });
 

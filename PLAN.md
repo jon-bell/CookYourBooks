@@ -162,6 +162,13 @@ create table recipes (
   updated_at timestamptz default now()
 );
 
+-- NOTE (2026-07-08): the `ingredients`, `instructions`, and
+-- `instruction_ingredient_refs` tables below were FOLDED into JSONB columns on
+-- the recipe row (`recipes.ingredients`, `recipes.instructions` with refs
+-- nested inside each instruction) and dropped — see the "Recipe children are
+-- JSONB" note in CLAUDE.md and migration
+-- 20260708000000_recipe_children_to_jsonb.sql. The DDL below is retained as the
+-- historical relational design that predates the fold.
 create table ingredients (
   id uuid primary key default gen_random_uuid(),
   recipe_id uuid references recipes(id) on delete cascade not null,

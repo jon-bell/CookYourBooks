@@ -4,15 +4,9 @@ import {
   type Recipe,
   resolveIngredientLink,
 } from '@cookyourbooks/domain';
+import type { StoredIngredient } from '@cookyourbooks/db';
 
 import { getLocalDb } from './db.js';
-
-interface IngRow {
-  id: string;
-  name: string;
-  linked_recipe_id: string | null;
-  link_source: string | null;
-}
 
 interface TitleRow {
   id: string;
@@ -23,20 +17,19 @@ interface TitleRow {
 /**
  * Backfill pass: fill same-collection cross-reference links for one recipe's
  * currently-UNLINKED, auto-managed ingredients (see `@cookyourbooks/domain`
- * `resolveIngredientLink`) and persist them into the local `ingredients` rows.
- * Returns true if any link changed.
+ * `resolveIngredientLink`) and persist them into the recipe's folded
+ * `recipes.ingredients` JSON. Returns true if any link changed.
  *
- * Eligibility is deliberately "fill only" — `manual`/`dismissed` rows (user
- * intent) and rows that already carry a link are left untouched — so a
+ * Eligibility is deliberately "fill only" — `manual`/`dismissed` entries (user
+ * intent) and entries that already carry a link are left untouched — so a
  * background pass on a device with an incomplete mirror can never clear a link
  * another device set (no cross-device fight). Re-running still links
- * sub-recipes added since (they surface as newly-matchable unlinked rows).
+ * sub-recipes added since (they surface as newly-matchable unlinked entries).
  * Save-time forward-linking is handled instead by {@link applyLinksToRecipe},
  * which runs before the push so the link isn't lost to a pull.
  *
- * Writes the two columns directly on the CRR `ingredients` table (a targeted
- * update, like the `has_content` backfill). The CALLER must enqueue a
- * `recipe_save` so the change reaches Postgres via `save_recipes_graph`.
+ * Rewrites the `ingredients` JSON on the CRR `recipes` row. The CALLER must
+ * enqueue a `recipe_save` so the change reaches Postgres via `save_recipes_graph`.
  */
 export async function computeAndApplyLinks(
   recipeId: string,
@@ -44,16 +37,25 @@ export async function computeAndApplyLinks(
   collectionId: string,
 ): Promise<boolean> {
   const db = await getLocalDb();
-  const ings = await db.execO<IngRow>(
-    `select id, name, linked_recipe_id, link_source from ingredients where recipe_id = ?`,
+  const rows = await db.execO<{ ingredients: string | null }>(
+    `select ingredients from recipes where id = ?`,
     [recipeId],
   );
+  const raw = rows[0]?.ingredients;
+  if (!raw) return false;
+  let ings: StoredIngredient[];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return false;
+    ings = parsed as StoredIngredient[];
+  } catch {
+    return false;
+  }
 
-  const eligible = ings.filter(
-    (i) =>
-      i.linked_recipe_id == null && i.link_source !== 'manual' && i.link_source !== 'dismissed',
+  const hasEligible = ings.some(
+    (i) => i.linkedRecipeId == null && i.linkSource !== 'manual' && i.linkSource !== 'dismissed',
   );
-  if (eligible.length === 0) return false;
+  if (!hasEligible) return false;
 
   // Index the host recipe's OWN collection only — same-collection is enforced
   // structurally, so an auto-link can never cross books. Placeholder targets
@@ -67,21 +69,25 @@ export async function computeAndApplyLinks(
   );
 
   let changed = false;
-  for (const ing of eligible) {
+  const next = ings.map((ing) => {
+    if (
+      ing.linkedRecipeId != null ||
+      ing.linkSource === 'manual' ||
+      ing.linkSource === 'dismissed'
+    ) {
+      return ing;
+    }
     const match = resolveIngredientLink(ing.name, recipeId, recipeTitle, index);
-    const nextLinked = match?.recipeId ?? null;
-    const nextSource: string | null = match ? 'auto' : null;
-    const curLinked = ing.linked_recipe_id ?? null;
-    const curSource = ing.link_source ?? null;
-    if (nextLinked === curLinked && nextSource === curSource) continue;
-    await db.exec(`update ingredients set linked_recipe_id = ?, link_source = ? where id = ?`, [
-      nextLinked,
-      nextSource,
-      ing.id,
-    ]);
+    if (!match) return ing;
     changed = true;
-  }
-  return changed;
+    return { ...ing, linkedRecipeId: match.recipeId, linkSource: 'auto' as const };
+  });
+  if (!changed) return false;
+  await db.exec(`update recipes set ingredients = ? where id = ?`, [
+    JSON.stringify(next),
+    recipeId,
+  ]);
+  return true;
 }
 
 /**

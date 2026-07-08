@@ -5,7 +5,7 @@
 // integrity) but attach sentinel defaults that will always be overwritten
 // by real inserts/upserts — they only matter for cross-peer column adds.
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const SCHEMA_STATEMENTS: string[] = [
   `create table if not exists recipe_collections (
@@ -58,6 +58,9 @@ export const SCHEMA_STATEMENTS: string[] = [
     starred integer not null default 0,
     cover_image_path text,     -- storage path in the public covers bucket
     has_content integer not null default 0, -- 1 if recipe has >=1 ingredient/instruction; server-owned (see 20260629000000)
+    ingredients text,          -- JSON array of StoredIngredient (folded child, 2026-07-08)
+    instructions text,         -- JSON array of StoredInstruction (folded child)
+    ingredients_text text,     -- local-only lowercased ingredient names for search
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -465,12 +468,16 @@ export const SCHEMA_STATEMENTS: string[] = [
 ];
 
 // Tables to mark as conflict-free replicated relations.
+//
+// ingredients / instructions / instruction_ingredient_refs were folded into
+// the recipes.ingredients / recipes.instructions JSON columns (2026-07-08).
+// Their create-table DDL survives above so pre-existing on-device tables (and
+// the POST_SCHEMA_MIGRATIONS ALTERs) don't fault, but they're deliberately
+// dropped from CRR here — nothing reads or writes them anymore; the local
+// backfill (recipe_jsonb_v1) folds any pre-upgrade child rows into the JSON.
 export const CRR_TABLES = [
   'recipe_collections',
   'recipes',
-  'ingredients',
-  'instructions',
-  'instruction_ingredient_refs',
   'import_batches',
   'import_items',
   'import_item_attempts',
@@ -852,4 +859,14 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   // fresh DB), and existing on-device DBs gain them on upgrade here.
   `alter table ingredients add column linked_recipe_id text`,
   `alter table ingredients add column link_source text`,
+  // Children folded into JSON on the recipe row (2026-07-08). Stored as TEXT
+  // (JSON) locally, jsonb on Postgres — rides down on pull like equipment /
+  // page_numbers. ingredients_text is a LOCAL-ONLY lowercased, space-joined
+  // list of ingredient names backing the ingredient-name search (replaces the
+  // old correlated EXISTS over the `ingredients` table). Nullable → no
+  // cr-sqlite DEFAULT needed. Existing local child rows are folded in once by
+  // the recipe_jsonb_v1 backfill runner.
+  `alter table recipes add column ingredients text`,
+  `alter table recipes add column instructions text`,
+  `alter table recipes add column ingredients_text text`,
 ];

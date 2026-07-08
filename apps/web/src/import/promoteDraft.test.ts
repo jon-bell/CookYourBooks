@@ -39,7 +39,9 @@ function makeItem(over: Partial<AcceptItem> = {}): AcceptItem {
   };
 }
 
-const oneStep = () => [instruction({ stepNumber: 1, text: 'combine everything', ingredientRefs: [] })];
+const oneStep = () => [
+  instruction({ stepNumber: 1, text: 'combine everything', ingredientRefs: [] }),
+];
 
 describe('isDraftAutoAcceptable (per-draft bar)', () => {
   it('accepts a clean draft', () => {
@@ -70,7 +72,9 @@ describe('isDraftAutoAcceptable (per-draft bar)', () => {
 
   it('rejects fewer than 3 ingredients', () => {
     expect(
-      isDraftAutoAcceptable(makeDraft({ ingredients: [vague({ name: 'a' }), vague({ name: 'b' })] })),
+      isDraftAutoAcceptable(
+        makeDraft({ ingredients: [vague({ name: 'a' }), vague({ name: 'b' })] }),
+      ),
     ).toBe(false);
   });
 

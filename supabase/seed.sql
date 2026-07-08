@@ -44,37 +44,45 @@ values (
 )
 on conflict (id) do nothing;
 
-insert into public.recipes (id, collection_id, title, servings_amount, servings_description, sort_order)
+-- Children are stored inline as JSON on the recipe row (2026-07-08). The keys
+-- are the StoredIngredient / StoredInstruction contract (packages/db/src/recipeJson.ts).
+insert into public.recipes (
+  id, collection_id, title, servings_amount, servings_description, sort_order,
+  has_content, ingredients, instructions
+)
 values (
   '33333333-3333-3333-3333-333333333333',
   '22222222-2222-2222-2222-222222222222',
   'Chocolate Chip Cookies',
-  24, 'cookies', 0
+  24, 'cookies', 0,
+  true,
+  jsonb_build_array(
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'all-purpose flour',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 2.25, 'unit', 'cup')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'baking soda',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 1, 'unit', 'teaspoon')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'butter',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 1, 'unit', 'cup')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'brown sugar',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 0.75, 'unit', 'cup')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'granulated sugar',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 0.75, 'unit', 'cup')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'eggs',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 2, 'unit', 'piece')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'vanilla extract',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 1, 'unit', 'teaspoon')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'MEASURED', 'name', 'chocolate chips',
+      'quantity', jsonb_build_object('type', 'EXACT', 'amount', 2, 'unit', 'cup')),
+    jsonb_build_object('id', gen_random_uuid(), 'type', 'VAGUE', 'name', 'salt')
+  ),
+  jsonb_build_array(
+    jsonb_build_object('id', gen_random_uuid(), 'stepNumber', 1, 'text', 'Preheat oven to 375°F.'),
+    jsonb_build_object('id', gen_random_uuid(), 'stepNumber', 2, 'text', 'Cream butter and sugars until light.'),
+    jsonb_build_object('id', gen_random_uuid(), 'stepNumber', 3, 'text', 'Beat in eggs and vanilla.'),
+    jsonb_build_object('id', gen_random_uuid(), 'stepNumber', 4, 'text', 'Stir in flour, baking soda, and salt.'),
+    jsonb_build_object('id', gen_random_uuid(), 'stepNumber', 5, 'text', 'Fold in chocolate chips.'),
+    jsonb_build_object('id', gen_random_uuid(), 'stepNumber', 6, 'text', 'Drop rounded tablespoons onto ungreased baking sheets.'),
+    jsonb_build_object('id', gen_random_uuid(), 'stepNumber', 7, 'text', 'Bake 9 to 11 minutes until golden brown.')
+  )
 )
 on conflict (id) do nothing;
-
-insert into public.ingredients (recipe_id, sort_order, type, name, quantity_type, quantity_amount, quantity_unit)
-values
-  ('33333333-3333-3333-3333-333333333333', 0, 'MEASURED', 'all-purpose flour', 'EXACT', 2.25, 'cup'),
-  ('33333333-3333-3333-3333-333333333333', 1, 'MEASURED', 'baking soda', 'EXACT', 1, 'teaspoon'),
-  ('33333333-3333-3333-3333-333333333333', 2, 'MEASURED', 'butter', 'EXACT', 1, 'cup'),
-  ('33333333-3333-3333-3333-333333333333', 3, 'MEASURED', 'brown sugar', 'EXACT', 0.75, 'cup'),
-  ('33333333-3333-3333-3333-333333333333', 4, 'MEASURED', 'granulated sugar', 'EXACT', 0.75, 'cup'),
-  ('33333333-3333-3333-3333-333333333333', 5, 'MEASURED', 'eggs', 'EXACT', 2, 'piece'),
-  ('33333333-3333-3333-3333-333333333333', 6, 'MEASURED', 'vanilla extract', 'EXACT', 1, 'teaspoon'),
-  ('33333333-3333-3333-3333-333333333333', 7, 'MEASURED', 'chocolate chips', 'EXACT', 2, 'cup')
-on conflict do nothing;
-
-insert into public.ingredients (recipe_id, sort_order, type, name)
-values ('33333333-3333-3333-3333-333333333333', 8, 'VAGUE', 'salt')
-on conflict do nothing;
-
-insert into public.instructions (recipe_id, step_number, text) values
-  ('33333333-3333-3333-3333-333333333333', 1, 'Preheat oven to 375°F.'),
-  ('33333333-3333-3333-3333-333333333333', 2, 'Cream butter and sugars until light.'),
-  ('33333333-3333-3333-3333-333333333333', 3, 'Beat in eggs and vanilla.'),
-  ('33333333-3333-3333-3333-333333333333', 4, 'Stir in flour, baking soda, and salt.'),
-  ('33333333-3333-3333-3333-333333333333', 5, 'Fold in chocolate chips.'),
-  ('33333333-3333-3333-3333-333333333333', 6, 'Drop rounded tablespoons onto ungreased baking sheets.'),
-  ('33333333-3333-3333-3333-333333333333', 7, 'Bake 9 to 11 minutes until golden brown.')
-on conflict do nothing;

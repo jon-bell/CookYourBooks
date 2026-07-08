@@ -67,13 +67,23 @@ test.describe('MCP-backed RPCs', () => {
 
     const token = await mintToken(page);
 
-    // search_recipes (RPC: cli_search_recipes) — matches by title.
-    const hits = await callRpc<Array<{ recipe_id: string; recipe_title: string }>>(
-      page,
-      'cli_search_recipes',
-      { raw_token: token, query: 'sourdough' },
-    );
-    expect(hits.length).toBeGreaterThanOrEqual(1);
+    // search_recipes (RPC: cli_search_recipes) — matches by title. cli_search
+    // reads Postgres, so poll until the outbox has pushed the new recipe
+    // (rather than racing the first sync cycle).
+    let hits: Array<{ recipe_id: string; recipe_title: string }> = [];
+    await expect
+      .poll(
+        async () => {
+          hits = await callRpc<Array<{ recipe_id: string; recipe_title: string }>>(
+            page,
+            'cli_search_recipes',
+            { raw_token: token, query: 'sourdough' },
+          );
+          return hits.length;
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThanOrEqual(1);
     const hit = hits.find((h) => h.recipe_title === 'Sourdough Bread');
     expect(hit).toBeDefined();
 

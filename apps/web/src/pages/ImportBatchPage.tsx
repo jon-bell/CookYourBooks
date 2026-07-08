@@ -216,7 +216,10 @@ export function ImportBatchPage() {
     if (runningRef.current) return;
     const candidates = items
       .filter((i) => !processedRef.current.has(i.id))
-      .map((item) => ({ item, indices: autoAcceptableDraftIndices(item, batch.targetCollectionId) }))
+      .map((item) => ({
+        item,
+        indices: autoAcceptableDraftIndices(item, batch.targetCollectionId),
+      }))
       .filter((c) => c.indices.length > 0);
     if (candidates.length === 0) return;
     // Claim synchronously before any await so a re-render can't re-grab them.

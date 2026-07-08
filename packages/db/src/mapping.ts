@@ -3,35 +3,19 @@ import {
   createPersonalCollection,
   createRecipe,
   createWebCollection,
-  exact,
-  fractional,
-  type Ingredient,
-  type Instruction,
-  instruction,
-  type LinkSource,
-  measured,
-  type Quantity,
-  range,
   type Recipe,
   type RecipeCollection,
   servings as makeServings,
-  type SimplifiedStep,
-  vague,
 } from '@cookyourbooks/domain';
 
 import type { Database } from './database.types.js';
+import { deserializeChildren, serializeChildren } from './recipeJson.js';
 
 type Tables = Database['public']['Tables'];
 export type CollectionRow = Tables['recipe_collections']['Row'];
 export type CollectionInsert = Tables['recipe_collections']['Insert'];
 export type RecipeRow = Tables['recipes']['Row'];
 export type RecipeInsert = Tables['recipes']['Insert'];
-export type IngredientRow = Tables['ingredients']['Row'];
-export type IngredientInsert = Tables['ingredients']['Insert'];
-export type InstructionRow = Tables['instructions']['Row'];
-export type InstructionInsert = Tables['instructions']['Insert'];
-export type InstructionRefRow = Tables['instruction_ingredient_refs']['Row'];
-export type InstructionRefInsert = Tables['instruction_ingredient_refs']['Insert'];
 export type CookingEventRow = Tables['cooking_events']['Row'];
 export type CookingEventInsert = Tables['cooking_events']['Insert'];
 export type RecipeTagRow = Tables['recipe_tags']['Row'];
@@ -151,27 +135,17 @@ function numberArray(raw: unknown): number[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-export function rowsToRecipe(
-  row: RecipeRow,
-  ingredientRows: IngredientRow[],
-  instructionRows: InstructionRow[],
-  refRows: InstructionRefRow[] = [],
-): Recipe {
-  const ingredients = [...ingredientRows]
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .map(rowToIngredient);
-  // Index refs by instruction id, preserving any per-step consumed
-  // quantities. We pass the raw ref rows through so the instruction
-  // mapper can read the `consumed_quantity_*` columns.
-  const refsByInstruction = new Map<string, InstructionRefRow[]>();
-  for (const r of refRows) {
-    const list = refsByInstruction.get(r.instruction_id) ?? [];
-    list.push(r);
-    refsByInstruction.set(r.instruction_id, list);
-  }
-  const instructions = [...instructionRows]
-    .sort((a, b) => a.step_number - b.step_number)
-    .map((ins) => rowToInstruction(ins, refsByInstruction.get(ins.id) ?? []));
+function toBool(v: unknown): boolean {
+  return v === true || v === 1;
+}
+
+/**
+ * Build a domain Recipe from a recipe row. Children (`ingredients` /
+ * `instructions`) ride as JSON on the row itself — a native array from
+ * Postgres jsonb, or a JSON string from the local-SQLite mirror.
+ * `deserializeChildren` tolerates both and degrades malformed entries.
+ */
+export function rowToRecipe(row: RecipeRow): Recipe {
   const rowX = row as RecipeRow & {
     servings_amount_max?: number | null;
     description?: string | null;
@@ -183,7 +157,10 @@ export function rowsToRecipe(
     source_url?: string | null;
     starred?: boolean | number | null;
     cover_image_path?: string | null;
+    ingredients?: unknown;
+    instructions?: unknown;
   };
+  const { ingredients, instructions } = deserializeChildren(rowX.ingredients, rowX.instructions);
   return createRecipe({
     id: row.id,
     title: row.title,
@@ -215,11 +192,8 @@ export function rowsToRecipe(
   });
 }
 
-function toBool(v: unknown): boolean {
-  return v === true || v === 1;
-}
-
 export function recipeToInsert(recipe: Recipe, collectionId: string, sortOrder = 0): RecipeInsert {
+  const { ingredients, instructions } = serializeChildren(recipe);
   const base: RecipeInsert = {
     id: recipe.id,
     collection_id: collectionId,
@@ -244,313 +218,10 @@ export function recipeToInsert(recipe: Recipe, collectionId: string, sortOrder =
     source_url: recipe.sourceUrl ?? null,
     starred: recipe.starred === true,
     cover_image_path: recipe.coverImagePath ?? null,
-  };
-  return { ...base, ...extras };
-}
-
-// ---- Ingredient ----
-
-function rowToIngredient(row: IngredientRow): Ingredient {
-  const rowX = row as IngredientRow & { description?: string | null };
-  const description = rowX.description ?? undefined;
-  const linkedRecipeId = row.linked_recipe_id ?? undefined;
-  const linkSource = (row.link_source as LinkSource | null) ?? undefined;
-  if (row.type === 'MEASURED') {
-    const quantity = rowToQuantity(row);
-    if (!quantity) {
-      // Data integrity fallback: treat malformed measured rows as vague.
-      return vague({
-        id: row.id,
-        name: row.name,
-        preparation: row.preparation ?? undefined,
-        notes: row.notes ?? undefined,
-        description,
-        linkedRecipeId,
-        linkSource,
-      });
-    }
-    return measured({
-      id: row.id,
-      name: row.name,
-      quantity,
-      preparation: row.preparation ?? undefined,
-      notes: row.notes ?? undefined,
-      linkedRecipeId,
-      linkSource,
-    });
-  }
-  return vague({
-    id: row.id,
-    name: row.name,
-    preparation: row.preparation ?? undefined,
-    notes: row.notes ?? undefined,
-    description,
-    linkedRecipeId,
-    linkSource,
-  });
-}
-
-function rowToQuantity(row: IngredientRow): Quantity | undefined {
-  const unit = row.quantity_unit ?? '';
-  switch (row.quantity_type) {
-    case 'EXACT':
-      if (row.quantity_amount == null) return undefined;
-      return exact(row.quantity_amount, unit);
-    case 'FRACTIONAL':
-      if (
-        row.quantity_whole == null ||
-        row.quantity_numerator == null ||
-        row.quantity_denominator == null
-      )
-        return undefined;
-      return fractional(row.quantity_whole, row.quantity_numerator, row.quantity_denominator, unit);
-    case 'RANGE':
-      if (row.quantity_min == null || row.quantity_max == null) return undefined;
-      return range(row.quantity_min, row.quantity_max, unit);
-    default:
-      return undefined;
-  }
-}
-
-export function ingredientToInsert(
-  ing: Ingredient,
-  recipeId: string,
-  sortOrder: number,
-): IngredientInsert {
-  const base: IngredientInsert = {
-    id: ing.id,
-    recipe_id: recipeId,
-    sort_order: sortOrder,
-    type: ing.type,
-    name: ing.name,
-    preparation: ing.preparation ?? null,
-    notes: ing.notes ?? null,
-    description: ing.type === 'VAGUE' ? (ing.description ?? null) : null,
-    linked_recipe_id: ing.linkedRecipeId ?? null,
-    link_source: ing.linkSource ?? null,
-    quantity_type: null,
-    quantity_amount: null,
-    quantity_whole: null,
-    quantity_numerator: null,
-    quantity_denominator: null,
-    quantity_min: null,
-    quantity_max: null,
-    quantity_unit: null,
-  };
-  if (ing.type === 'MEASURED') {
-    switch (ing.quantity.type) {
-      case 'EXACT':
-        return {
-          ...base,
-          quantity_type: 'EXACT',
-          quantity_amount: ing.quantity.amount,
-          quantity_unit: ing.quantity.unit,
-        };
-      case 'FRACTIONAL':
-        return {
-          ...base,
-          quantity_type: 'FRACTIONAL',
-          quantity_whole: ing.quantity.whole,
-          quantity_numerator: ing.quantity.numerator,
-          quantity_denominator: ing.quantity.denominator,
-          quantity_unit: ing.quantity.unit,
-        };
-      case 'RANGE':
-        return {
-          ...base,
-          quantity_type: 'RANGE',
-          quantity_min: ing.quantity.min,
-          quantity_max: ing.quantity.max,
-          quantity_unit: ing.quantity.unit,
-        };
-    }
-  }
-  return base;
-}
-
-// ---- Instruction ----
-
-function refRowToQuantity(row: InstructionRefRow): Quantity | undefined {
-  const r = row as InstructionRefRow & {
-    consumed_quantity_type?: string | null;
-    consumed_quantity_amount?: number | null;
-    consumed_quantity_whole?: number | null;
-    consumed_quantity_numerator?: number | null;
-    consumed_quantity_denominator?: number | null;
-    consumed_quantity_min?: number | null;
-    consumed_quantity_max?: number | null;
-    consumed_quantity_unit?: string | null;
-  };
-  const unit = r.consumed_quantity_unit ?? '';
-  try {
-    switch (r.consumed_quantity_type) {
-      case 'EXACT':
-        if (r.consumed_quantity_amount == null) return undefined;
-        return exact(r.consumed_quantity_amount, unit);
-      case 'FRACTIONAL':
-        if (
-          r.consumed_quantity_whole == null ||
-          r.consumed_quantity_numerator == null ||
-          r.consumed_quantity_denominator == null
-        )
-          return undefined;
-        return fractional(
-          r.consumed_quantity_whole,
-          r.consumed_quantity_numerator,
-          r.consumed_quantity_denominator,
-          unit,
-        );
-      case 'RANGE':
-        if (r.consumed_quantity_min == null || r.consumed_quantity_max == null) return undefined;
-        return range(r.consumed_quantity_min, r.consumed_quantity_max, unit);
-      default:
-        return undefined;
-    }
-  } catch {
-    return undefined;
-  }
-}
-
-function simplifiedSteps(raw: unknown): SimplifiedStep[] | undefined {
-  const arr = jsonArray<unknown>(raw);
-  if (!arr) return undefined;
-  const out: SimplifiedStep[] = [];
-  for (const entry of arr) {
-    if (!entry || typeof entry !== 'object') continue;
-    const e = entry as Record<string, unknown>;
-    const text = typeof e.text === 'string' ? e.text.trim() : '';
-    if (!text) continue;
-    const step: {
-      text: string;
-      durationSec?: number;
-      temperature?: { value: number; unit: 'FAHRENHEIT' | 'CELSIUS' };
-      notes?: string;
-    } = { text };
-    if (typeof e.durationSec === 'number' && Number.isFinite(e.durationSec) && e.durationSec > 0) {
-      step.durationSec = Math.round(e.durationSec);
-    }
-    if (e.temperature && typeof e.temperature === 'object') {
-      const t = e.temperature as Record<string, unknown>;
-      const value = typeof t.value === 'number' ? t.value : null;
-      const unit = t.unit === 'FAHRENHEIT' || t.unit === 'CELSIUS' ? t.unit : null;
-      if (value != null && unit) step.temperature = { value, unit };
-    }
-    if (typeof e.notes === 'string' && e.notes.trim().length > 0) {
-      step.notes = e.notes.trim();
-    }
-    out.push(step);
-  }
-  // Distinguish "explicit empty array (user dismissed)" from "no rewrite yet":
-  // we preserve [] as a sentinel by returning an empty array in that case;
-  // a malformed payload that produced no usable steps also returns [],
-  // which matches the dismissal semantics. The LLM never returns an empty
-  // payload on success, so this collision is benign.
-  if (Array.isArray(arr) && arr.length === 0) return [];
-  return out.length > 0 ? out : undefined;
-}
-
-function rowToInstruction(row: InstructionRow, refRows: InstructionRefRow[] = []): Instruction {
-  const rowX = row as InstructionRow & {
-    temperature_value?: number | null;
-    temperature_unit?: string | null;
-    sub_instructions?: unknown;
-    simplified_steps?: unknown;
-    notes?: string | null;
-  };
-  const temperatureUnit: 'FAHRENHEIT' | 'CELSIUS' | undefined =
-    rowX.temperature_unit === 'FAHRENHEIT' || rowX.temperature_unit === 'CELSIUS'
-      ? rowX.temperature_unit
-      : undefined;
-  const temperature =
-    rowX.temperature_value != null && temperatureUnit != null
-      ? {
-          value: rowX.temperature_value,
-          unit: temperatureUnit,
-        }
-      : undefined;
-  const subInstructionsList = stringArray(rowX.sub_instructions);
-  const simplified = simplifiedSteps(rowX.simplified_steps);
-  return instruction({
-    id: row.id,
-    stepNumber: row.step_number,
-    text: row.text,
-    ingredientRefs: refRows.map((r) => ({
-      ingredientId: r.ingredient_id,
-      quantity: refRowToQuantity(r),
-    })),
-    temperature,
-    subInstructions: subInstructionsList,
-    simplifiedSteps: simplified,
-    notes: rowX.notes ?? undefined,
-  });
-}
-
-export function instructionRefToInsert(
-  instructionId: string,
-  ingredientId: string,
-  quantity: Quantity | undefined,
-): InstructionRefInsert {
-  const base: InstructionRefInsert = {
-    instruction_id: instructionId,
-    ingredient_id: ingredientId,
-    consumed_quantity_type: null,
-    consumed_quantity_amount: null,
-    consumed_quantity_whole: null,
-    consumed_quantity_numerator: null,
-    consumed_quantity_denominator: null,
-    consumed_quantity_min: null,
-    consumed_quantity_max: null,
-    consumed_quantity_unit: null,
-  };
-  if (!quantity) return base;
-  switch (quantity.type) {
-    case 'EXACT':
-      return {
-        ...base,
-        consumed_quantity_type: 'EXACT',
-        consumed_quantity_amount: quantity.amount,
-        consumed_quantity_unit: quantity.unit,
-      };
-    case 'FRACTIONAL':
-      return {
-        ...base,
-        consumed_quantity_type: 'FRACTIONAL',
-        consumed_quantity_whole: quantity.whole,
-        consumed_quantity_numerator: quantity.numerator,
-        consumed_quantity_denominator: quantity.denominator,
-        consumed_quantity_unit: quantity.unit,
-      };
-    case 'RANGE':
-      return {
-        ...base,
-        consumed_quantity_type: 'RANGE',
-        consumed_quantity_min: quantity.min,
-        consumed_quantity_max: quantity.max,
-        consumed_quantity_unit: quantity.unit,
-      };
-  }
-}
-
-export function instructionToInsert(step: Instruction, recipeId: string): InstructionInsert {
-  const base: InstructionInsert = {
-    id: step.id,
-    recipe_id: recipeId,
-    step_number: step.stepNumber,
-    text: step.text,
-  };
-  const extras: Record<string, unknown> = {
-    temperature_value: step.temperature?.value ?? null,
-    temperature_unit: step.temperature?.unit ?? null,
-    sub_instructions: step.subInstructions ? [...step.subInstructions] : null,
-    simplified_steps: step.simplifiedSteps
-      ? step.simplifiedSteps.map((s) => ({
-          text: s.text,
-          ...(s.durationSec != null ? { durationSec: s.durationSec } : {}),
-          ...(s.temperature ? { temperature: { ...s.temperature } } : {}),
-          ...(s.notes ? { notes: s.notes } : {}),
-        }))
-      : null,
-    notes: step.notes ?? null,
+    has_content: ingredients.length > 0 || instructions.length > 0,
+    // Folded children — jsonb in Postgres, JSON text in local SQLite.
+    ingredients,
+    instructions,
   };
   return { ...base, ...extras };
 }
