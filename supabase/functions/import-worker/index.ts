@@ -1340,16 +1340,36 @@ async function loadRecipeInstructions(
   recipeId: string,
   log: ReturnType<typeof makeLog>,
 ): Promise<RecipeInstructionRow[]> {
+  // Instructions are folded into recipes.instructions JSON (Stored shape:
+  // camelCase). Map them to the flat RecipeInstructionRow the prompt builder
+  // expects; the Stored `id` is preserved so rewrite_complete can patch the
+  // matching element back into the JSON array.
   const { data, error } = await supabase
-    .from('instructions')
-    .select('id, step_number, text, temperature_value, temperature_unit, sub_instructions')
-    .eq('recipe_id', recipeId)
-    .order('step_number', { ascending: true });
+    .from('recipes')
+    .select('instructions')
+    .eq('id', recipeId)
+    .maybeSingle();
   if (error) {
     log.error('load recipe instructions', { code: error.code, message: error.message });
     return [];
   }
-  return (data ?? []) as RecipeInstructionRow[];
+  const list = Array.isArray((data as { instructions?: unknown } | null)?.instructions)
+    ? ((data as { instructions: Record<string, unknown>[] }).instructions)
+    : [];
+  return list.map((s) => ({
+    id: String(s.id ?? ''),
+    step_number: typeof s.stepNumber === 'number' ? s.stepNumber : 0,
+    text: typeof s.text === 'string' ? s.text : '',
+    temperature_value:
+      s.temperature && typeof s.temperature === 'object'
+        ? ((s.temperature as { value?: number }).value ?? null)
+        : null,
+    temperature_unit:
+      s.temperature && typeof s.temperature === 'object'
+        ? ((s.temperature as { unit?: string }).unit ?? null)
+        : null,
+    sub_instructions: Array.isArray(s.subInstructions) ? (s.subInstructions as string[]) : null,
+  })) as RecipeInstructionRow[];
 }
 
 function buildRewriteUserPrompt(
@@ -2175,7 +2195,7 @@ async function processEmbedJob(
   // would 42703 and dead-letter every job.
   const { data: recipeRow, error: rErr } = await supabase
     .from('recipes')
-    .select('id, title, description, notes, book_title, equipment')
+    .select('id, title, description, notes, book_title, equipment, ingredients')
     .eq('id', job.recipe_id)
     .maybeSingle();
   if (rErr) {
@@ -2189,19 +2209,13 @@ async function processEmbedJob(
     await failEmbedJob(job, workerId, 'recipe missing', 'FAILED');
     return 'FAILED';
   }
-  const recipe = recipeRow as EmbedRecipeRow;
+  const recipe = recipeRow as EmbedRecipeRow & { ingredients?: unknown };
 
-  const { data: ingRows, error: iErr } = await supabase
-    .from('ingredients')
-    .select('recipe_id, name, preparation, description, type, sort_order')
-    .eq('recipe_id', job.recipe_id)
-    .order('sort_order', { ascending: true });
-  if (iErr) {
-    log.error('embed: load ingredients failed', { code: iErr.code, message: iErr.message });
-    await failEmbedJob(job, workerId, `load ingredients: ${iErr.message}`, 'PENDING');
-    return 'FAILED';
-  }
-  const ingredients = (ingRows ?? []) as EmbedIngredientRow[];
+  // Ingredients ride as recipes.ingredients JSON (Stored shape: camelCase
+  // name/preparation/description/type — the fields the embed text uses).
+  const ingredients = (
+    Array.isArray(recipe.ingredients) ? recipe.ingredients : []
+  ) as EmbedIngredientRow[];
 
   const embedInput: EmbedRecipeInput = {
     title: recipe.title,
@@ -2425,7 +2439,7 @@ async function processCoverJob(
   // recipe means it was deleted out from under us — dead-letter the job.
   const { data: recipeRow, error: rErr } = await supabase
     .from('recipes')
-    .select('id, title, cover_image_path')
+    .select('id, title, cover_image_path, ingredients, instructions')
     .eq('id', job.recipe_id)
     .maybeSingle();
   if (rErr) {
@@ -2436,23 +2450,26 @@ async function processCoverJob(
     await coverFail(job, workerId, 'recipe missing', 'FAILED');
     return 'FAILED';
   }
-  const recipe = recipeRow as { id: string; title: string; cover_image_path: string | null };
+  const recipe = recipeRow as {
+    id: string;
+    title: string;
+    cover_image_path: string | null;
+    ingredients?: unknown;
+    instructions?: unknown;
+  };
 
-  const { data: ingRows } = await supabase
-    .from('ingredients')
-    .select('name, sort_order')
-    .eq('recipe_id', job.recipe_id)
-    .order('sort_order', { ascending: true });
-  const { data: stepRows } = await supabase
-    .from('instructions')
-    .select('text, step_number')
-    .eq('recipe_id', job.recipe_id)
-    .order('step_number', { ascending: true });
+  // Ingredients / instructions ride as recipes JSON (Stored shape).
+  const ingNames = (Array.isArray(recipe.ingredients) ? recipe.ingredients : [])
+    .map((i) => (i as { name?: string }).name)
+    .filter((n): n is string => typeof n === 'string');
+  const stepTexts = (Array.isArray(recipe.instructions) ? recipe.instructions : [])
+    .map((s) => (s as { text?: string }).text)
+    .filter((t): t is string => typeof t === 'string');
 
   const prompt = buildCoverPrompt(template, {
     title: recipe.title,
-    ingredients: ((ingRows ?? []) as { name: string }[]).map((i) => i.name),
-    instructions: ((stepRows ?? []) as { text: string }[]).map((s) => s.text),
+    ingredients: ingNames,
+    instructions: stepTexts,
   });
 
   let gen;

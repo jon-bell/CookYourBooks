@@ -120,7 +120,7 @@ test.describe('Recipe Remix', () => {
         }
         const original = await sb
           .from('recipes')
-          .select('id, title, instructions(id)')
+          .select('id, title, instructions')
           .eq('id', src)
           .maybeSingle();
         const remixUsage = await sb

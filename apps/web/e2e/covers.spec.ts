@@ -79,13 +79,25 @@ test.describe('Cover images', () => {
     const [col] = (await colResp.json()) as { id: string }[];
     const importedId = crypto.randomUUID();
     const placeholderId = crypto.randomUUID();
+    // Only the imported recipe gets content (children fold into JSON). Keep both
+    // objects' keys uniform — PostgREST bulk insert rejects mismatched keys.
     await admin('recipes', [
-      { id: importedId, collection_id: col!.id, title: 'Imported Dish', sort_order: 0 },
-      { id: placeholderId, collection_id: col!.id, title: 'Placeholder Dish', sort_order: 1 },
-    ]);
-    // Only the imported recipe gets content.
-    await admin('instructions', [
-      { id: crypto.randomUUID(), recipe_id: importedId, step_number: 1, text: 'Cook it.' },
+      {
+        id: importedId,
+        collection_id: col!.id,
+        title: 'Imported Dish',
+        sort_order: 0,
+        instructions: [{ id: crypto.randomUUID(), stepNumber: 1, text: 'Cook it.' }],
+        has_content: true,
+      },
+      {
+        id: placeholderId,
+        collection_id: col!.id,
+        title: 'Placeholder Dish',
+        sort_order: 1,
+        instructions: [],
+        has_content: false,
+      },
     ]);
 
     // Enqueue covers for the whole library, as the user (auth.uid() + claim).

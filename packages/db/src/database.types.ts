@@ -1507,193 +1507,6 @@ export type Database = {
           },
         ]
       }
-      ingredients: {
-        Row: {
-          description: string | null
-          household_id: string | null
-          id: string
-          link_source: string | null
-          linked_recipe_id: string | null
-          name: string
-          notes: string | null
-          owner_id: string | null
-          preparation: string | null
-          quantity_amount: number | null
-          quantity_denominator: number | null
-          quantity_max: number | null
-          quantity_min: number | null
-          quantity_numerator: number | null
-          quantity_type: string | null
-          quantity_unit: string | null
-          quantity_whole: number | null
-          recipe_id: string
-          sort_order: number
-          type: string
-        }
-        Insert: {
-          description?: string | null
-          household_id?: string | null
-          id?: string
-          link_source?: string | null
-          linked_recipe_id?: string | null
-          name: string
-          notes?: string | null
-          owner_id?: string | null
-          preparation?: string | null
-          quantity_amount?: number | null
-          quantity_denominator?: number | null
-          quantity_max?: number | null
-          quantity_min?: number | null
-          quantity_numerator?: number | null
-          quantity_type?: string | null
-          quantity_unit?: string | null
-          quantity_whole?: number | null
-          recipe_id: string
-          sort_order: number
-          type: string
-        }
-        Update: {
-          description?: string | null
-          household_id?: string | null
-          id?: string
-          link_source?: string | null
-          linked_recipe_id?: string | null
-          name?: string
-          notes?: string | null
-          owner_id?: string | null
-          preparation?: string | null
-          quantity_amount?: number | null
-          quantity_denominator?: number | null
-          quantity_max?: number | null
-          quantity_min?: number | null
-          quantity_numerator?: number | null
-          quantity_type?: string | null
-          quantity_unit?: string | null
-          quantity_whole?: number | null
-          recipe_id?: string
-          sort_order?: number
-          type?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ingredients_recipe_id_fkey"
-            columns: ["recipe_id"]
-            isOneToOne: false
-            referencedRelation: "recipes"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      instruction_ingredient_refs: {
-        Row: {
-          consumed_quantity_amount: number | null
-          consumed_quantity_denominator: number | null
-          consumed_quantity_max: number | null
-          consumed_quantity_min: number | null
-          consumed_quantity_numerator: number | null
-          consumed_quantity_type: string | null
-          consumed_quantity_unit: string | null
-          consumed_quantity_whole: number | null
-          household_id: string | null
-          ingredient_id: string
-          instruction_id: string
-          owner_id: string | null
-        }
-        Insert: {
-          consumed_quantity_amount?: number | null
-          consumed_quantity_denominator?: number | null
-          consumed_quantity_max?: number | null
-          consumed_quantity_min?: number | null
-          consumed_quantity_numerator?: number | null
-          consumed_quantity_type?: string | null
-          consumed_quantity_unit?: string | null
-          consumed_quantity_whole?: number | null
-          household_id?: string | null
-          ingredient_id: string
-          instruction_id: string
-          owner_id?: string | null
-        }
-        Update: {
-          consumed_quantity_amount?: number | null
-          consumed_quantity_denominator?: number | null
-          consumed_quantity_max?: number | null
-          consumed_quantity_min?: number | null
-          consumed_quantity_numerator?: number | null
-          consumed_quantity_type?: string | null
-          consumed_quantity_unit?: string | null
-          consumed_quantity_whole?: number | null
-          household_id?: string | null
-          ingredient_id?: string
-          instruction_id?: string
-          owner_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "instruction_ingredient_refs_ingredient_id_fkey"
-            columns: ["ingredient_id"]
-            isOneToOne: false
-            referencedRelation: "ingredients"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "instruction_ingredient_refs_instruction_id_fkey"
-            columns: ["instruction_id"]
-            isOneToOne: false
-            referencedRelation: "instructions"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      instructions: {
-        Row: {
-          household_id: string | null
-          id: string
-          notes: string | null
-          owner_id: string | null
-          recipe_id: string
-          simplified_steps: Json | null
-          step_number: number
-          sub_instructions: Json | null
-          temperature_unit: string | null
-          temperature_value: number | null
-          text: string
-        }
-        Insert: {
-          household_id?: string | null
-          id?: string
-          notes?: string | null
-          owner_id?: string | null
-          recipe_id: string
-          simplified_steps?: Json | null
-          step_number: number
-          sub_instructions?: Json | null
-          temperature_unit?: string | null
-          temperature_value?: number | null
-          text: string
-        }
-        Update: {
-          household_id?: string | null
-          id?: string
-          notes?: string | null
-          owner_id?: string | null
-          recipe_id?: string
-          simplified_steps?: Json | null
-          step_number?: number
-          sub_instructions?: Json | null
-          temperature_unit?: string | null
-          temperature_value?: number | null
-          text?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "instructions_recipe_id_fkey"
-            columns: ["recipe_id"]
-            isOneToOne: false
-            referencedRelation: "recipes"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       misc_llm_usage: {
         Row: {
           completion_tokens: number
@@ -2371,6 +2184,8 @@ export type Database = {
           has_content: boolean
           household_id: string | null
           id: string
+          ingredients: Json | null
+          instructions: Json | null
           notes: string | null
           owner_id: string | null
           page_numbers: Json | null
@@ -2396,6 +2211,8 @@ export type Database = {
           has_content?: boolean
           household_id?: string | null
           id?: string
+          ingredients?: Json | null
+          instructions?: Json | null
           notes?: string | null
           owner_id?: string | null
           page_numbers?: Json | null
@@ -2421,6 +2238,8 @@ export type Database = {
           has_content?: boolean
           household_id?: string | null
           id?: string
+          ingredients?: Json | null
+          instructions?: Json | null
           notes?: string | null
           owner_id?: string | null
           page_numbers?: Json | null
@@ -2800,6 +2619,48 @@ export type Database = {
           },
         ]
       }
+      sync_transfer_events: {
+        Row: {
+          bytes: number
+          created_at: string
+          cycle_id: string
+          direction: string
+          duration_ms: number
+          household_id: string | null
+          id: string
+          owner_id: string
+          phase: string
+          requests: number
+          rows: number
+        }
+        Insert: {
+          bytes?: number
+          created_at?: string
+          cycle_id: string
+          direction: string
+          duration_ms?: number
+          household_id?: string | null
+          id?: string
+          owner_id: string
+          phase: string
+          requests?: number
+          rows?: number
+        }
+        Update: {
+          bytes?: number
+          created_at?: string
+          cycle_id?: string
+          direction?: string
+          duration_ms?: number
+          household_id?: string | null
+          id?: string
+          owner_id?: string
+          phase?: string
+          requests?: number
+          rows?: number
+        }
+        Relationships: []
+      }
       user_cover_prefs: {
         Row: {
           model: string
@@ -2978,6 +2839,48 @@ export type Database = {
           target_id: string | null
           target_kind: string | null
           updated_at: string | null
+        }
+        Relationships: []
+      }
+      data_transfer_report: {
+        Row: {
+          bytes: number | null
+          created_at: string | null
+          cycle_id: string | null
+          direction: string | null
+          duration_ms: number | null
+          household_id: string | null
+          id: string | null
+          owner_id: string | null
+          phase: string | null
+          requests: number | null
+          rows: number | null
+        }
+        Insert: {
+          bytes?: never
+          created_at?: string | null
+          cycle_id?: string | null
+          direction?: string | null
+          duration_ms?: never
+          household_id?: string | null
+          id?: string | null
+          owner_id?: string | null
+          phase?: string | null
+          requests?: never
+          rows?: never
+        }
+        Update: {
+          bytes?: never
+          created_at?: string | null
+          cycle_id?: string | null
+          direction?: string | null
+          duration_ms?: never
+          household_id?: string | null
+          id?: string | null
+          owner_id?: string | null
+          phase?: string | null
+          requests?: never
+          rows?: never
         }
         Relationships: []
       }
@@ -3259,6 +3162,17 @@ export type Database = {
       current_household_id: { Args: { p_user_id: string }; Returns: string }
       current_tos_version: { Args: never; Returns: number }
       custom_access_token_hook: { Args: { event: Json }; Returns: Json }
+      data_transfer_summary: {
+        Args: { p_from?: string; p_group_by?: string; p_to?: string }
+        Returns: {
+          bucket: string
+          bytes: number
+          duration_ms: number
+          event_count: number
+          requests: number
+          rows: number
+        }[]
+      }
       delete_household: { Args: { p_household_id: string }; Returns: undefined }
       delete_my_account: { Args: never; Returns: undefined }
       embed_claim_next: {
@@ -3458,18 +3372,7 @@ export type Database = {
         Args: { p_absorb_ids: string[]; p_primary_id: string }
         Returns: undefined
       }
-      import_reset_item: {
-        Args: {
-          p_item_id: string
-          p_provider?: string
-          p_model?: string
-          p_prompt?: string
-          p_fallback_provider?: string
-          p_fallback_model?: string
-          p_key_owner_id?: string
-        }
-        Returns: undefined
-      }
+      import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
       import_retry_recitation_failures: {
         Args: { p_batch_id: string }
         Returns: number
@@ -3631,6 +3534,10 @@ export type Database = {
           p_target_id: string
           p_target_type: string
         }
+        Returns: undefined
+      }
+      record_sync_transfer: {
+        Args: { p_cycle_id: string; p_events: Json }
         Returns: undefined
       }
       refresh_household_denorm: {

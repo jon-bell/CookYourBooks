@@ -1,6 +1,6 @@
 import type { Recipe } from '@cookyourbooks/domain';
 
-import { type InstructionRefRow, type InstructionRow, rowsToRecipe } from './mapping.js';
+import { rowToRecipe } from './mapping.js';
 import type { CookbooksClient } from './repositories.js';
 
 export interface SharedRecipeCollectionMeta {
@@ -38,35 +38,17 @@ export async function fetchSharedRecipe(
   if (error) throw error;
   if (!recipeRow) return null;
 
-  const [ings, inss, coll] = await Promise.all([
-    client.from('ingredients').select('*').eq('recipe_id', recipeId),
-    client.from('instructions').select('*').eq('recipe_id', recipeId),
-    client
-      .from('recipe_collections')
-      .select('id, title, source_type, author, site_name, is_public')
-      .eq('id', recipeRow.collection_id)
-      .maybeSingle(),
-  ]);
-  if (ings.error) throw ings.error;
-  if (inss.error) throw inss.error;
+  // Children ride as JSON on the recipe row; only the collection meta is a
+  // separate fetch now.
+  const coll = await client
+    .from('recipe_collections')
+    .select('id, title, source_type, author, site_name, is_public')
+    .eq('id', recipeRow.collection_id)
+    .maybeSingle();
   if (coll.error) throw coll.error;
 
-  const instructionRows = (inss.data ?? []) as InstructionRow[];
-  let refRows: InstructionRefRow[] = [];
-  if (instructionRows.length > 0) {
-    const refs = await client
-      .from('instruction_ingredient_refs')
-      .select('*')
-      .in(
-        'instruction_id',
-        instructionRows.map((i) => i.id),
-      );
-    if (refs.error) throw refs.error;
-    refRows = refs.data ?? [];
-  }
-
   return {
-    recipe: rowsToRecipe(recipeRow, ings.data ?? [], instructionRows, refRows),
+    recipe: rowToRecipe(recipeRow),
     collection: coll.data
       ? {
           id: coll.data.id,

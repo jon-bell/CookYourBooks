@@ -10,9 +10,9 @@
 // bodies arrive:
 //
 //   POST { stage: 'meta',   scope, householdId? }
-//     → { collections, recipes }  — full rows, no children
+//     → { collections, recipes }  — recipe CARDS (folded JSON stripped)
 //   POST { stage: 'bodies', scope, householdId? }
-//     → { ingredients, instructions, refs }
+//     → { recipeBodies }  — id + ingredients/instructions JSON per recipe
 //
 // `scope: 'own'` returns the caller's library (owner_id = me).
 // `scope: 'household'` returns co-members' shared content (household_id =
@@ -100,14 +100,14 @@ async function fetchAll(
   scope: Scope,
   userId: string,
   householdId: string | null,
+  columns = '*',
 ): Promise<Row[]> {
   const out: Row[] = [];
   let afterId: string | null = null;
-  // refs have no `id` column; key their keyset on instruction_id instead.
-  const idCol = table === 'instruction_ingredient_refs' ? 'instruction_id' : 'id';
+  const idCol = 'id';
   while (true) {
     let q = scopeFilter(
-      client.from(table).select('*'),
+      client.from(table).select(columns),
       scope,
       userId,
       householdId,
@@ -192,23 +192,30 @@ async function handle(req: Request): Promise<Response> {
       fetchAll(client, 'recipe_collections', scope, auth.userId, householdId),
       fetchAll(client, 'recipes', scope, auth.userId, householdId),
     ]);
+    // Strip the folded JSON so the meta stage stays a light recipe card and
+    // the grid renders before bodies stream in.
+    const cards = recipes.map((r) => {
+      const { ingredients: _i, instructions: _n, ...card } = r as Row;
+      return card;
+    });
     envelope = {
       schemaVersion: SCHEMA_VERSION,
       generatedAt: new Date().toISOString(),
       collections: encodeColumnar(collections),
-      recipes: encodeColumnar(recipes),
+      recipes: encodeColumnar(cards),
     };
   } else {
-    const [ingredients, instructions, refs] = await Promise.all([
-      fetchAll(client, 'ingredients', scope, auth.userId, householdId),
-      fetchAll(client, 'instructions', scope, auth.userId, householdId),
-      fetchAll(client, 'instruction_ingredient_refs', scope, auth.userId, householdId),
-    ]);
+    const recipeBodies = await fetchAll(
+      client,
+      'recipes',
+      scope,
+      auth.userId,
+      householdId,
+      'id,ingredients,instructions',
+    );
     envelope = {
       schemaVersion: SCHEMA_VERSION,
-      ingredients: encodeColumnar(ingredients),
-      instructions: encodeColumnar(instructions),
-      refs: encodeColumnar(refs),
+      recipeBodies: encodeColumnar(recipeBodies),
     };
   }
 

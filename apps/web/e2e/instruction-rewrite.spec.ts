@@ -45,11 +45,11 @@ test.describe('Instruction rewriting', () => {
       for (let i = 0; i < 30; i += 1) {
         const { data } = await sb
           .from('recipes')
-          .select('id, instructions(id, step_number, text)')
+          .select('id, instructions')
           .eq('title', 'Tempered Curry')
           .limit(1);
         const row = data?.[0] as
-          | { id: string; instructions?: Array<{ id: string; step_number: number; text: string }> }
+          | { id: string; instructions?: Array<{ id: string; stepNumber: number; text: string }> }
           | undefined;
         if (row && row.instructions && row.instructions.length > 0) {
           return { recipeId: row.id, instructionId: row.instructions[0]!.id };

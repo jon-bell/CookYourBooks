@@ -24,6 +24,7 @@ function stubClient(tables: Record<string, unknown>): CookbooksClient {
   return { from: chain } as unknown as CookbooksClient;
 }
 
+// Children ride as JSON on the recipe row now (Stored shape).
 const RECIPE_ROW = {
   id: 'r1',
   collection_id: 'c1',
@@ -35,24 +36,9 @@ const RECIPE_ROW = {
   sort_order: 0,
   created_at: '',
   updated_at: '',
+  ingredients: [{ id: 'i1', type: 'VAGUE', name: 'salt' }],
+  instructions: [{ id: 's1', stepNumber: 1, text: 'Simmer.' }],
 };
-
-const INGREDIENT_ROWS = [
-  {
-    id: 'i1',
-    recipe_id: 'r1',
-    kind: 'VAGUE',
-    name: 'salt',
-    preparation: null,
-    notes: null,
-    quantity_type: null,
-    sort_order: 0,
-  },
-];
-
-const INSTRUCTION_ROWS = [
-  { id: 's1', recipe_id: 'r1', step_number: 1, text: 'Simmer.', sort_order: 0 },
-];
 
 const COLLECTION_META = {
   id: 'c1',
@@ -64,13 +50,10 @@ const COLLECTION_META = {
 };
 
 describe('fetchSharedRecipe', () => {
-  it('maps the full graph through rowsToRecipe with collection meta', async () => {
+  it('maps the recipe (folded JSON) with collection meta', async () => {
     const client = stubClient({
       recipes: RECIPE_ROW,
-      ingredients: INGREDIENT_ROWS,
-      instructions: INSTRUCTION_ROWS,
       recipe_collections: COLLECTION_META,
-      instruction_ingredient_refs: [],
     });
     const result = await fetchSharedRecipe(client, 'r1');
     expect(result).not.toBeNull();
@@ -95,9 +78,7 @@ describe('fetchSharedRecipe', () => {
 
   it('tolerates a filtered collection row (renders without breadcrumb)', async () => {
     const client = stubClient({
-      recipes: RECIPE_ROW,
-      ingredients: [],
-      instructions: [],
+      recipes: { ...RECIPE_ROW, ingredients: [], instructions: [] },
       recipe_collections: null,
     });
     const result = await fetchSharedRecipe(client, 'r1');

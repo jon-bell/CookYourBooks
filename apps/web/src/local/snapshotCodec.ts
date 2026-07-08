@@ -52,7 +52,7 @@ export function decodeColumnar<T = Row>(table: ColumnarTable | undefined | null)
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
-/** `stage:'meta'` response — collections + full recipe rows (no children). */
+/** `stage:'meta'` response — collections + recipe cards (no folded JSON). */
 export interface SnapshotMeta {
   schemaVersion: number;
   generatedAt: string;
@@ -60,10 +60,9 @@ export interface SnapshotMeta {
   recipes: ColumnarTable;
 }
 
-/** `stage:'bodies'` response — the recipe children, keyed back by recipe_id locally. */
+/** `stage:'bodies'` response — each recipe's folded JSON (id + ingredients +
+ *  instructions), attached back onto the recipe rows locally by id. */
 export interface SnapshotBodies {
   schemaVersion: number;
-  ingredients: ColumnarTable;
-  instructions: ColumnarTable;
-  refs: ColumnarTable;
+  recipeBodies: ColumnarTable;
 }
