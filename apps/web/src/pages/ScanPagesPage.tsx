@@ -10,7 +10,7 @@ import type { ScannedPage } from '../import/pageMarker.js';
 import { scanPages } from '../import/scanPages.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
 import { useSync } from '../local/SyncProvider.js';
-import { resolveImportFallback } from '../settings/FallbackModelSection.js';
+import { reportError } from '../sentry.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
 type Phase = 'config' | 'scanning' | 'uploading';
@@ -74,14 +74,12 @@ export function ScanPagesPage() {
     setPhase('uploading');
     setError(undefined);
     try {
-      // Mirror ImportFromPhoto: own prefs+key, else the household's shared
-      // config (which carries its own fallback), else gemini defaults.
+      // own prefs+key, else the household's shared config, else gemini
+      // defaults. getEffectiveOcrConfig resolves the effective fallback
+      // (own → localStorage "Fallback model"; household → its own).
       const cfg = await getEffectiveOcrConfig().catch(() => null);
-      const localFallback = resolveImportFallback();
-      const fallbackProvider =
-        cfg?.source === 'household' ? cfg.fallbackProvider : localFallback.fallbackProvider;
-      const fallbackModel =
-        cfg?.source === 'household' ? cfg.fallbackModel : localFallback.fallbackModel;
+      const fallbackProvider = cfg?.fallbackProvider ?? null;
+      const fallbackModel = cfg?.fallbackModel ?? null;
       const defaultProvider = cfg?.provider ?? 'gemini';
       // Capture-time chaining (the camera's ⛓ toggle) is carried to the
       // organizer as an initial merge state — NOT folded at upload — so every
@@ -111,6 +109,7 @@ export function ScanPagesPage() {
       await syncNow();
       navigate(`/import/${batchId}/group`, { state: { initialMerges } });
     } catch (e) {
+      reportError(e, { operation: 'batch_upload', tags: { source: 'scan' } });
       setError((e as Error).message);
       setPhase('config');
     }

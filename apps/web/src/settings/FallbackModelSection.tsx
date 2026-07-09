@@ -1,57 +1,16 @@
 import { useEffect, useState } from 'react';
 
-import type { OcrProvider } from '../import/api.js';
+import type { FallbackPrefs } from './fallbackPrefs.js';
+import { loadFallbackPrefs, saveFallbackPrefs } from './fallbackPrefs.js';
 
-const KEY = 'cookyourbooks.ocr.fallback.v1';
-
-/** Snapshotted onto new import batches when the user hasn't saved fallback prefs. */
-export const DEFAULT_FALLBACK_PROVIDER: OcrProvider = 'openai-compatible';
-export const DEFAULT_FALLBACK_MODEL = 'gpt-5.4';
-
-interface FallbackPrefs {
-  provider: OcrProvider | '';
-  model: string;
-}
-
-function load(): FallbackPrefs {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) {
-      return { provider: DEFAULT_FALLBACK_PROVIDER, model: DEFAULT_FALLBACK_MODEL };
-    }
-    const parsed = JSON.parse(raw) as Partial<FallbackPrefs>;
-    return {
-      provider:
-        parsed.provider === 'gemini' || parsed.provider === 'openai-compatible'
-          ? parsed.provider
-          : '',
-      model: typeof parsed.model === 'string' ? parsed.model : '',
-    };
-  } catch {
-    return { provider: '', model: '' };
-  }
-}
-
-function save(prefs: FallbackPrefs): void {
-  localStorage.setItem(KEY, JSON.stringify(prefs));
-}
-
-export function loadFallbackPrefs(): FallbackPrefs {
-  return load();
-}
-
-/** Provider/model pair written onto a new import batch. */
-export function resolveImportFallback(): {
-  fallbackProvider: OcrProvider | null;
-  fallbackModel: string | null;
-} {
-  const prefs = loadFallbackPrefs();
-  if (!prefs.provider) {
-    return { fallbackProvider: null, fallbackModel: null };
-  }
-  const model = prefs.model.trim() || DEFAULT_FALLBACK_MODEL;
-  return { fallbackProvider: prefs.provider, fallbackModel: model };
-}
+// Re-exported for existing importers; the canonical (React-free) home is
+// ./fallbackPrefs.ts so data-layer modules can read them without a cycle.
+export {
+  DEFAULT_FALLBACK_MODEL,
+  DEFAULT_FALLBACK_PROVIDER,
+  loadFallbackPrefs,
+  resolveImportFallback,
+} from './fallbackPrefs.js';
 
 export function FallbackModelSection() {
   const [prefs, setPrefs] = useState<FallbackPrefs>(() => loadFallbackPrefs());
@@ -64,7 +23,7 @@ export function FallbackModelSection() {
   }, [savedFlash]);
 
   function onSave() {
-    save(prefs);
+    saveFallbackPrefs(prefs);
     setSavedFlash(true);
   }
 

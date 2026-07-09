@@ -12,6 +12,7 @@ import { isLiveViewfinderSupported, scanPages } from '../import/scanPages.js';
 import { readSharedFile } from '../import/sharedFile.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
 import { useSync } from '../local/SyncProvider.js';
+import { reportError } from '../sentry.js';
 import { DEFAULT_FALLBACK_MODEL, loadFallbackPrefs } from '../settings/FallbackModelSection.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
@@ -218,6 +219,7 @@ export function ImportNewPage() {
           : `/import/${result.batchId}`,
       );
     } catch (e) {
+      reportError(e, { operation: 'batch_upload', tags: { source: 'photos' } });
       setError((e as Error).message);
       setStep('settings');
     }

@@ -4,7 +4,6 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { useSync } from '../local/SyncProvider.js';
-import { resolveImportFallback } from '../settings/FallbackModelSection.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 import { getEffectiveOcrConfig, listOcrKeys } from './api.js';
 import { capturePhoto, pickPhoto } from './camera.js';
@@ -128,13 +127,10 @@ export function ImportFromPhoto({ collectionId }: { collectionId: string }) {
         type: photo.blob.type || 'image/jpeg',
       });
       const cfg = await getEffectiveOcrConfig().catch(() => null);
-      // Household config carries its own fallback; own config uses the
-      // localStorage fallback prefs.
-      const localFallback = resolveImportFallback();
-      const fallbackProvider =
-        cfg?.source === 'household' ? cfg.fallbackProvider : localFallback.fallbackProvider;
-      const fallbackModel =
-        cfg?.source === 'household' ? cfg.fallbackModel : localFallback.fallbackModel;
+      // getEffectiveOcrConfig resolves the effective fallback (own config →
+      // localStorage "Fallback model"; household config → its own).
+      const fallbackProvider = cfg?.fallbackProvider ?? null;
+      const fallbackModel = cfg?.fallbackModel ?? null;
       setProgress({ status: 'uploading' });
       const defaultProvider = cfg?.provider ?? 'gemini';
       const { batchId, itemIds } = await uploadBatch(

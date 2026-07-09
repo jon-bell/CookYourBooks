@@ -1,4 +1,5 @@
 import { pushImportBatchGraph } from '../local/sync.js';
+import { resolveImportFallback } from '../settings/fallbackPrefs.js';
 import { supabase } from '../supabase.js';
 
 // Typed wrappers around the user-facing bulk OCR RPCs. Anything that
@@ -417,14 +418,21 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
     getUserOcrPrefs().catch(() => null),
     listOcrKeys().catch(() => [] as OcrKeySummary[]),
   ]);
+  // Own-source config carries the user's localStorage "Fallback model"
+  // setting; only the household branch below overrides with its own. Kept
+  // here (not at call sites) so every caller — including Re-OCR — gets the
+  // fallback (previously three call sites forgot to merge it, so a
+  // recitation refusal on an own-key batch dead-ended at "Fallback model
+  // not configured").
+  const ownFallback = resolveImportFallback();
   const hasOwnKeyForPrefs = prefs != null && ownKeys.some((k) => k.provider === prefs.provider);
   if (prefs && hasOwnKeyForPrefs) {
     return {
       provider: prefs.provider,
       model: prefs.model,
       prompt: prefs.prompt,
-      fallbackProvider: null,
-      fallbackModel: null,
+      fallbackProvider: ownFallback.fallbackProvider,
+      fallbackModel: ownFallback.fallbackModel,
       source: 'own',
       keyOwnerId: null,
     };
@@ -450,8 +458,8 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
       provider: prefs.provider,
       model: prefs.model,
       prompt: prefs.prompt,
-      fallbackProvider: null,
-      fallbackModel: null,
+      fallbackProvider: ownFallback.fallbackProvider,
+      fallbackModel: ownFallback.fallbackModel,
       source: 'own',
       keyOwnerId: null,
     };
@@ -464,8 +472,8 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
       provider,
       model: '',
       prompt: null,
-      fallbackProvider: null,
-      fallbackModel: null,
+      fallbackProvider: ownFallback.fallbackProvider,
+      fallbackModel: ownFallback.fallbackModel,
       source: 'own',
       keyOwnerId: null,
     };
@@ -548,6 +556,38 @@ export async function setBatchFallback(
 export async function retryRecitationFailures(batchId: string): Promise<number> {
   const { data, error } = await supabase.rpc('import_retry_recitation_failures', {
     p_batch_id: batchId,
+  });
+  if (error) throw error;
+  return typeof data === 'number' ? data : 0;
+}
+
+/**
+ * Reset every OCR_FAILED item in a batch back to PENDING so the worker
+ * re-reads them — the batch board's "re-OCR all failures" action. Like
+ * {@link resetImportItem}, an optional `config` re-snapshots the caller's
+ * current OCR settings onto the batch first, so a bulk re-OCR honors a
+ * model / prompt the user changed in Settings after upload. Returns the
+ * number of items reset.
+ */
+export async function retryFailures(
+  batchId: string,
+  config?: Pick<
+    EffectiveOcrConfig,
+    'provider' | 'model' | 'prompt' | 'fallbackProvider' | 'fallbackModel' | 'keyOwnerId'
+  >,
+): Promise<number> {
+  const { data, error } = await supabase.rpc('import_retry_failures', {
+    p_batch_id: batchId,
+    ...(config
+      ? {
+          p_provider: config.provider,
+          p_model: config.model,
+          p_prompt: config.prompt ?? undefined,
+          p_fallback_provider: config.fallbackProvider ?? undefined,
+          p_fallback_model: config.fallbackModel ?? undefined,
+          p_key_owner_id: config.keyOwnerId ?? undefined,
+        }
+      : {}),
   });
   if (error) throw error;
   return typeof data === 'number' ? data : 0;
