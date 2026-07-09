@@ -553,6 +553,38 @@ export async function retryRecitationFailures(batchId: string): Promise<number> 
   return typeof data === 'number' ? data : 0;
 }
 
+/**
+ * Reset every OCR_FAILED item in a batch back to PENDING so the worker
+ * re-reads them — the batch board's "re-OCR all failures" action. Like
+ * {@link resetImportItem}, an optional `config` re-snapshots the caller's
+ * current OCR settings onto the batch first, so a bulk re-OCR honors a
+ * model / prompt the user changed in Settings after upload. Returns the
+ * number of items reset.
+ */
+export async function retryFailures(
+  batchId: string,
+  config?: Pick<
+    EffectiveOcrConfig,
+    'provider' | 'model' | 'prompt' | 'fallbackProvider' | 'fallbackModel' | 'keyOwnerId'
+  >,
+): Promise<number> {
+  const { data, error } = await supabase.rpc('import_retry_failures', {
+    p_batch_id: batchId,
+    ...(config
+      ? {
+          p_provider: config.provider,
+          p_model: config.model,
+          p_prompt: config.prompt ?? undefined,
+          p_fallback_provider: config.fallbackProvider ?? undefined,
+          p_fallback_model: config.fallbackModel ?? undefined,
+          p_key_owner_id: config.keyOwnerId ?? undefined,
+        }
+      : {}),
+  });
+  if (error) throw error;
+  return typeof data === 'number' ? data : 0;
+}
+
 export class OcrWorkerNotConfiguredError extends Error {
   constructor(message: string) {
     super(message);

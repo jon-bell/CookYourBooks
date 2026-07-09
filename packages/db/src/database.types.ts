@@ -3372,7 +3372,30 @@ export type Database = {
         Args: { p_absorb_ids: string[]; p_primary_id: string }
         Returns: undefined
       }
-      import_reset_item: { Args: { p_item_id: string }; Returns: undefined }
+      import_reset_item: {
+        Args: {
+          p_fallback_model?: string
+          p_fallback_provider?: string
+          p_item_id: string
+          p_key_owner_id?: string
+          p_model?: string
+          p_prompt?: string
+          p_provider?: string
+        }
+        Returns: undefined
+      }
+      import_retry_failures: {
+        Args: {
+          p_batch_id: string
+          p_fallback_model?: string
+          p_fallback_provider?: string
+          p_key_owner_id?: string
+          p_model?: string
+          p_prompt?: string
+          p_provider?: string
+        }
+        Returns: number
+      }
       import_retry_recitation_failures: {
         Args: { p_batch_id: string }
         Returns: number
@@ -3393,10 +3416,7 @@ export type Database = {
         Args: { p_batch_id: string; p_policy: string }
         Returns: undefined
       }
-      import_split_item: {
-        Args: { p_primary_id: string }
-        Returns: undefined
-      }
+      import_split_item: { Args: { p_primary_id: string }; Returns: undefined }
       import_variant_claim_next: {
         Args: {
           p_lease_seconds?: number

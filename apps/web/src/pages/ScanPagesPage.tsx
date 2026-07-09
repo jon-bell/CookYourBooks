@@ -10,6 +10,7 @@ import type { ScannedPage } from '../import/pageMarker.js';
 import { scanPages } from '../import/scanPages.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
 import { useSync } from '../local/SyncProvider.js';
+import { reportError } from '../sentry.js';
 import { resolveImportFallback } from '../settings/FallbackModelSection.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
@@ -111,6 +112,7 @@ export function ScanPagesPage() {
       await syncNow();
       navigate(`/import/${batchId}/group`, { state: { initialMerges } });
     } catch (e) {
+      reportError(e, { operation: 'batch_upload', tags: { source: 'scan' } });
       setError((e as Error).message);
       setPhase('config');
     }

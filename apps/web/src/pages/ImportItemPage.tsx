@@ -18,6 +18,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { LoadingState } from '../components/LoadingState.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
 import { useCollection, useCollectionPickerOptions, useSaveRecipe } from '../data/queries.js';
+import { reportError } from '../sentry.js';
 import {
   getEffectiveOcrConfig,
   kickOcr,
@@ -131,6 +132,14 @@ export function ImportItemPage() {
   );
   const nextItem = useMemo(
     () => (item ? findAdjacent(batchItems, item.id, 'next') : undefined),
+    [batchItems, item],
+  );
+  // The next page that still needs the user's attention — the batch board's
+  // NEEDS_REVIEW set plus failed pages (skips REVIEWED/DISCARDED, NOTES, and
+  // still-processing pages). Lets the reviewer jump straight to the next thing
+  // awaiting them instead of stepping sequentially through already-done pages.
+  const nextNeedsReview = useMemo(
+    () => (item ? findNextNeedsReview(batchItems, item.id) : undefined),
     [batchItems, item],
   );
   const pageNumberInBatch = useMemo(() => {
@@ -376,6 +385,10 @@ export function ImportItemPage() {
       const next = findReviewable(batchItems, item.id, 'next');
       navigate(next ? `/import/${batch.id}/items/${next.id}` : `/import/${batch.id}`);
     } catch (e) {
+      reportError(e, {
+        operation: 'import_item_toc_approve',
+        tags: { batchId: batch.id, itemId: item.id },
+      });
       setActionError(`Couldn't finish the table-of-contents review: ${(e as Error).message}`);
     }
   }
@@ -407,6 +420,10 @@ export function ImportItemPage() {
           : 'Unmarked — re-reading the page as a recipe…',
       );
     } catch (e) {
+      reportError(e, {
+        operation: 'import_item_toc_toggle',
+        tags: { batchId: batch.id, itemId: item.id },
+      });
       setActionError(`Couldn't re-OCR this page: ${(e as Error).message}`);
     } finally {
       setTogglingToc(false);
@@ -436,6 +453,10 @@ export function ImportItemPage() {
           : 'Unmarked — re-reading the page as a recipe…',
       );
     } catch (e) {
+      reportError(e, {
+        operation: 'import_item_notes_toggle',
+        tags: { batchId: batch.id, itemId: item.id },
+      });
       setActionError(`Couldn't re-OCR this page: ${(e as Error).message}`);
     } finally {
       setTogglingToc(false);
@@ -511,6 +532,10 @@ export function ImportItemPage() {
         navigate(`/import/${batch.id}`);
       }
     } catch (e) {
+      reportError(e, {
+        operation: 'import_item_save',
+        tags: { batchId: batch.id, itemId: item.id },
+      });
       setActionError(`Save failed: ${(e as Error).message}`);
     }
   }
@@ -540,6 +565,10 @@ export function ImportItemPage() {
         navigate(`/import/${batch.id}`);
       }
     } catch (e) {
+      reportError(e, {
+        operation: 'import_item_discard',
+        tags: { batchId: batch.id, itemId: item.id },
+      });
       setActionError(`Discard failed: ${(e as Error).message}`);
     }
   }
@@ -569,6 +598,10 @@ export function ImportItemPage() {
       }
       showToast(setToast, 'Reset for re-OCR — worker will pick it up shortly');
     } catch (e) {
+      reportError(e, {
+        operation: 'import_item_reocr',
+        tags: { batchId: batch.id, itemId: item.id },
+      });
       setActionError(`Re-OCR failed: ${(e as Error).message}`);
     }
   }
@@ -612,6 +645,7 @@ export function ImportItemPage() {
         batchId={batch.id}
         prevId={prevItem?.id}
         nextId={nextItem?.id}
+        nextNeedsReviewId={nextNeedsReview?.id}
         position={pageNumberInBatch}
         currentPageIndex={item.pageIndex + 1}
         save={
@@ -1258,6 +1292,7 @@ function NavBanner({
   batchId,
   prevId,
   nextId,
+  nextNeedsReviewId,
   position,
   currentPageIndex,
   save,
@@ -1266,6 +1301,7 @@ function NavBanner({
   batchId: string;
   prevId: string | undefined;
   nextId: string | undefined;
+  nextNeedsReviewId: string | undefined;
   position: { current: number; total: number } | undefined;
   currentPageIndex: number;
   save?: {
@@ -1299,7 +1335,7 @@ function NavBanner({
           <Link
             to={`/import/${batchId}/items/${prevId}`}
             className="rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
-            title="Previous reviewable (← or k)"
+            title="Previous page (← or k)"
           >
             ← Prev
           </Link>
@@ -1315,13 +1351,26 @@ function NavBanner({
           <Link
             to={`/import/${batchId}/items/${nextId}`}
             className="rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
-            title="Next reviewable (→ or j)"
+            title="Next page (→ or j)"
           >
             Next →
           </Link>
         ) : (
           <span className="rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400 dark:text-stone-500">
             Next →
+          </span>
+        )}
+        {nextNeedsReviewId ? (
+          <Link
+            to={`/import/${batchId}/items/${nextNeedsReviewId}`}
+            className="whitespace-nowrap rounded-md border border-amber-400 dark:border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-xs font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
+            title="Jump to the next page that still needs review"
+          >
+            ⚑ Next to review
+          </Link>
+        ) : (
+          <span className="whitespace-nowrap rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400 dark:text-stone-500">
+            ⚑ Next to review
           </span>
         )}
       </div>
@@ -1400,6 +1449,31 @@ function findReviewable<T extends { id: string; status: string; pageIndex: numbe
       i.status === 'NEEDS_FALLBACK' ||
       i.status === 'PENDING' ||
       i.status === 'CLAIMED',
+  );
+}
+
+/**
+ * Walk forward from the current item (wrapping around the batch) to the next
+ * page that still needs the user's attention: the batch board's NEEDS_REVIEW
+ * set (a non-NOTES page whose status is OCR_DONE / NEEDS_FALLBACK /
+ * BAKEOFF_READY) *plus* OCR_FAILED pages — a failed page needs a decision
+ * (re-OCR / discard) just as much as a reviewable one. Distinct from
+ * findReviewable, which also lands on still-processing PENDING/CLAIMED pages
+ * for post-save auto-advance. Returns undefined when nothing else needs review.
+ */
+function findNextNeedsReview<
+  T extends { id: string; status: string; pageIndex: number; kind: string },
+>(items: readonly T[], currentId: string): T | undefined {
+  const sorted = [...items].sort((a, b) => a.pageIndex - b.pageIndex);
+  const idx = sorted.findIndex((i) => i.id === currentId);
+  const ring = idx < 0 ? sorted : [...sorted.slice(idx + 1), ...sorted.slice(0, idx)];
+  return ring.find(
+    (i) =>
+      i.kind !== 'NOTES' &&
+      (i.status === 'OCR_DONE' ||
+        i.status === 'NEEDS_FALLBACK' ||
+        i.status === 'BAKEOFF_READY' ||
+        i.status === 'OCR_FAILED'),
   );
 }
 

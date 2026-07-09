@@ -8,9 +8,11 @@ import { LoadingState } from '../components/LoadingState.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
 import { collectionRepo, recipeRepo } from '../data/repos.js';
 import {
+  getEffectiveOcrConfig,
   kickOcr,
   mergeImportItems,
   OcrWorkerNotConfiguredError,
+  retryFailures,
   setBatchFallback,
   setImportItemToc,
 } from '../import/api.js';
@@ -37,6 +39,7 @@ import {
 } from '../import/queries.js';
 import { RecitationBanner } from '../import/RecitationBanner.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
+import { reportError } from '../sentry.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
 // Auto-accept of obviously-good OCR pages is on by default; power users can
@@ -140,6 +143,8 @@ export function ImportBatchPage() {
   }>({ provider: '', model: '' });
   const [fallbackBusy, setFallbackBusy] = useState(false);
   const [fallbackError, setFallbackError] = useState<string | undefined>();
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [retryError, setRetryError] = useState<string | undefined>();
 
   const qc = useQueryClient();
   // Auto-accept bookkeeping. `processedRef` is the set of item ids the pass
@@ -173,6 +178,7 @@ export function ImportBatchPage() {
   const recitationFailedCount = items.filter(
     (i) => i.status === 'OCR_FAILED' && (i.lastError ?? '').toLowerCase().includes('recitation'),
   ).length;
+  const failedCount = items.filter((i) => i.status === 'OCR_FAILED').length;
 
   const { itemsPerMin, eta } = useMemo(() => {
     const cutoff = Date.now() - 60_000;
@@ -281,6 +287,7 @@ export function ImportBatchPage() {
         await syncNow();
         if (accepted.length > 0) setAutoAccepted((prev) => [...prev, ...accepted]);
       } catch (e) {
+        reportError(e, { operation: 'import_auto_accept', tags: { batchId: batch?.id } });
         setAutoAcceptError((e as Error).message);
       } finally {
         runningRef.current = false;
@@ -442,6 +449,7 @@ export function ImportBatchPage() {
       });
       setEditingFallback(false);
     } catch (e) {
+      reportError(e, { operation: 'import_set_fallback', tags: { batchId: batch.id } });
       setFallbackError((e as Error).message);
     } finally {
       setFallbackBusy(false);
@@ -461,10 +469,46 @@ export function ImportBatchPage() {
           'OCR worker is not configured for this Supabase project. See CLAUDE.md → "Setting up the OCR worker".',
         );
       } else {
+        reportError(e, { operation: 'import_kick_worker', tags: { batchId: batch.id } });
         setKickError((e as Error).message);
       }
     } finally {
       setKickBusy(false);
+    }
+  }
+
+  // Blunt catch-all retry: reset every OCR_FAILED page in the batch back to
+  // PENDING so the worker re-reads them. Distinct from the RecitationBanner's
+  // targeted retry (which also flips the batch to the fallback model). Re-runs
+  // OCR, so it's confirm-gated — it can spend the user's API credits.
+  async function retryAllFailures() {
+    if (!batch || failedCount === 0) return;
+    if (
+      !confirm(
+        `Re-OCR ${failedCount} failed page${failedCount === 1 ? '' : 's'}? This re-runs OCR and may use your API credits.`,
+      )
+    ) {
+      return;
+    }
+    setRetryBusy(true);
+    setRetryError(undefined);
+    try {
+      // Re-snapshot the caller's current OCR settings onto the batch (same as
+      // single-item Re-OCR) so a model / prompt changed in Settings since
+      // upload is honored on the retry.
+      const cfg = await getEffectiveOcrConfig().catch(() => null);
+      await retryFailures(batch.id, cfg ?? undefined);
+      try {
+        await kickOcr(batch.id);
+      } catch {
+        // pg_cron / the next kick will pick up the reset items.
+      }
+      await syncNow();
+    } catch (e) {
+      reportError(e, { operation: 'import_retry_failures', tags: { batchId: batch.id } });
+      setRetryError(`Re-OCR failed: ${(e as Error).message}`);
+    } finally {
+      setRetryBusy(false);
     }
   }
 
@@ -578,6 +622,30 @@ export function ImportBatchPage() {
         recitationFailedCount={recitationFailedCount}
         onEditFallback={openFallbackEditor}
       />
+
+      {failedCount > 0 && (
+        <div className="rounded-md border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/40 p-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-red-800 dark:text-red-200">
+              {failedCount} page{failedCount === 1 ? '' : 's'} failed OCR.
+            </span>
+            <button
+              type="button"
+              onClick={retryAllFailures}
+              disabled={retryBusy}
+              title="Reset every failed page to re-run OCR with your current settings"
+              className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-60 dark:bg-red-600 dark:hover:bg-red-500"
+            >
+              {retryBusy
+                ? 'Re-OCR…'
+                : `Re-OCR ${failedCount === 1 ? 'the failed page' : 'all failed pages'}`}
+            </button>
+          </div>
+          {retryError && (
+            <div className="mt-2 text-xs text-red-800 dark:text-red-200">{retryError}</div>
+          )}
+        </div>
+      )}
 
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0 space-y-2">
@@ -843,6 +911,7 @@ export function ImportBatchPage() {
                   }
                   setSelected(new Set());
                 } catch (e) {
+                  reportError(e, { operation: 'import_merge', tags: { batchId: batch.id } });
                   alert(`Merge failed: ${(e as Error).message}`);
                 }
               }}
