@@ -86,7 +86,7 @@ async function clearVariantLocalStorage(page: import('@playwright/test').Page): 
  *
  * The bakeoff page defaults to `group-first` mode, so every run
  * lands at `/import/{id}/group` first and the user must click
- * "Start OCR on N recipe" to advance to OCR.
+ * "Start OCR on N page groups" to advance to OCR.
  */
 async function runBakeoffAndConfirmGrouping(
   page: import('@playwright/test').Page,
@@ -95,7 +95,7 @@ async function runBakeoffAndConfirmGrouping(
   // First stop: the grouping page. URL has /group on the end.
   await expect(page).toHaveURL(/\/import\/[0-9a-f-]+\/group$/, { timeout: 60_000 });
   // Confirm the default grouping (one recipe per page) and kick OCR.
-  await page.getByRole('button', { name: /Start OCR on \d+ recipe/ }).click();
+  await page.getByRole('button', { name: /Start OCR on \d+ page group/ }).click();
   // Second stop: the batch board. Strip the trailing /group.
   await expect(page).toHaveURL(/\/import\/[0-9a-f-]+$/, { timeout: 60_000 });
   const m = page.url().match(/\/import\/([0-9a-f-]+)$/);

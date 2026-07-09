@@ -86,6 +86,7 @@ test.describe('OCR notes pages', () => {
     // SPA nav + waitForSynced only waits for an idle indicator, not a new pull).
     await page.reload();
     await waitForSynced(page);
+    await page.getByRole('tab', { name: /Notes/ }).click();
     await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible({
       timeout: 15_000,
     });
@@ -142,6 +143,7 @@ test.describe('OCR notes pages', () => {
     await page.getByRole('link', { name: 'Essay Cookbook' }).click();
     await page.reload();
     await waitForSynced(page);
+    await page.getByRole('tab', { name: /Notes/ }).click();
     await expect(page.getByText('Our Grandmother’s Kitchen')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('A memory of winters spent baking together.')).toBeVisible();
   });
@@ -199,6 +201,7 @@ test.describe('OCR notes pages', () => {
     await page.getByRole('link', { name: 'ReNote Cookbook' }).click();
     await page.reload();
     await waitForSynced(page);
+    await page.getByRole('tab', { name: /Notes/ }).click();
     // Exactly one note, with the new content; the recipe never landed.
     await expect(page.getByText('Chapter Intro')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText('On the philosophy of bread.')).toBeVisible();

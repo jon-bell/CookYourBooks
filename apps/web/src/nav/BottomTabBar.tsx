@@ -114,6 +114,14 @@ export function BottomTabBar() {
   const location = useLocation();
   const { open, setOpen } = useMobileNav();
 
+  // Hide on focused/immersive flows that own the bottom of the screen — every
+  // import sub-flow has its own sticky action bar (the organizer's "Start OCR",
+  // the batch queue footer) and cook mode is full-screen. Otherwise the fixed
+  // bar would sit on top of those controls.
+  if (/^\/import\/.+/.test(location.pathname) || /\/cook$/.test(location.pathname)) {
+    return null;
+  }
+
   return (
     <nav
       aria-label="Primary"

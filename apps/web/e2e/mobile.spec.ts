@@ -173,7 +173,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
 
     // Two pages → two recipes by default; confirm to release them to OCR and
     // land on the batch board.
-    await page.getByRole('button', { name: /Start OCR on 2 recipes/ }).click();
+    await page.getByRole('button', { name: /Start OCR on 2 page groups/ }).click();
     await page.waitForURL(/\/import\/[0-9a-f-]+$/, { timeout: 30_000 });
 
     // Two captured frames → two import items. Seed a fixture per actual
