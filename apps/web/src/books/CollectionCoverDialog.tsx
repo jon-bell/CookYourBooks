@@ -142,7 +142,7 @@ export function CollectionCoverDialog({
       onClick={() => !busy && onClose()}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-4 overflow-hidden rounded-lg bg-white dark:bg-stone-900 p-5 shadow-lg"
+        className="flex max-h-[90dvh] w-full max-w-2xl flex-col gap-4 overflow-hidden rounded-lg bg-white dark:bg-stone-900 p-5 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="collection-cover-title" className="shrink-0 text-lg font-semibold">

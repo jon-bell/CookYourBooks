@@ -28,6 +28,7 @@ async function addNote(
   title: string,
   body: string,
 ): Promise<void> {
+  await page.getByRole('tab', { name: /Notes/ }).click();
   await page.getByRole('button', { name: 'Add note' }).click();
   await page.getByLabel('Note title').fill(title);
   await page.getByLabel('Note text').fill(body);
@@ -65,6 +66,8 @@ test.describe('Collection notes household sharing', () => {
         await pageB.goto('/');
         await waitForSynced(pageB);
         await pageB.goto(`/collections/${collectionId}`);
+        // Notes live under their own tab now — open it before reading.
+        await pageB.getByRole('tab', { name: /Notes/ }).click();
         // Scope to the notes section so the collection-level "Delete" button
         // (collection delete) doesn't satisfy the read-only assertions.
         const notes = pageB.getByRole('region', { name: 'Collection notes' });

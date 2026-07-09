@@ -92,7 +92,7 @@ test.describe('Scan → organize into recipes', () => {
     const batchId = batchIdFromUrl(page);
 
     // The chain marker pre-merged pages 1+2 → two recipes from three pages.
-    const startBtn = page.getByRole('button', { name: /Start OCR on 2 recipes/ });
+    const startBtn = page.getByRole('button', { name: /Start OCR on 2 page groups/ });
     await expect(startBtn).toBeVisible();
     await startBtn.click();
 
@@ -129,9 +129,9 @@ test.describe('Scan → organize into recipes', () => {
     const batchId = batchIdFromUrl(page);
 
     // Two pages arrive as two separate recipes; merge them into one.
-    await expect(page.getByRole('button', { name: /Start OCR on 2 recipes/ })).toBeVisible();
-    await page.getByRole('button', { name: 'Merge with next recipe' }).first().click();
-    await page.getByRole('button', { name: /Start OCR on 1 recipe/ }).click();
+    await expect(page.getByRole('button', { name: /Start OCR on 2 page groups/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Merge with next group' }).first().click();
+    await page.getByRole('button', { name: /Start OCR on 1 page group/ }).click();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+$/, { timeout: 30_000 });
 
@@ -158,7 +158,7 @@ test.describe('Scan → organize into recipes', () => {
 
     // Choose the "Contents" page type on the single recipe card.
     await page.getByRole('radio', { name: 'Table of contents page' }).click();
-    await page.getByRole('button', { name: /Start OCR on 1 recipe/ }).click();
+    await page.getByRole('button', { name: /Start OCR on 1 page group/ }).click();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+$/, { timeout: 30_000 });
     const item = (await listBatchItems(batchId))[0]!;
@@ -191,10 +191,10 @@ test.describe('Scan → organize into recipes', () => {
 
     // Reorganize mode renders the FULL organizer over the OCR'd pages — NOT the
     // "Nothing to organize" empty state. Three standalone recipes from 3 pages.
-    await expect(page.getByRole('heading', { name: 'Organize into recipes' })).toBeVisible({
+    await expect(page.getByRole('heading', { name: 'Organize into page groups' })).toBeVisible({
       timeout: 20_000,
     });
-    const dividers = page.getByRole('button', { name: 'Merge with next recipe' });
+    const dividers = page.getByRole('button', { name: 'Merge with next group' });
     await expect(dividers).toHaveCount(2);
     // No changes yet → the confirm button is a plain "Done".
     await expect(page.getByRole('button', { name: 'Done', exact: true })).toBeVisible();

@@ -235,7 +235,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-lg ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-700"
+        className="flex max-h-[90dvh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-lg ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-700"
       >
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 px-5 py-3 dark:border-stone-700">
           <h2 className="text-base font-semibold">Sync diagnostics</h2>

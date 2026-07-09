@@ -8,6 +8,7 @@ import { EditBookDetailsDialog } from '../books/EditBookDetailsDialog.js';
 import { CollectionNotesSection } from '../components/CollectionNotesSection.js';
 import { CollectionRecipeBrowser } from '../components/CollectionRecipeBrowser.js';
 import { CoverImageEditor } from '../components/CoverImageEditor.js';
+import { DuplicateRecipesTool } from '../components/DuplicateRecipesTool.js';
 import { GenerateCoversButton } from '../components/GenerateCoversButton.js';
 import { LoadingState } from '../components/LoadingState.js';
 import { MakePublicDialog } from '../components/MakePublicDialog.js';
@@ -23,6 +24,7 @@ import {
 import { CollectionShareSection } from '../household/CollectionShareSection.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
 import { findOpenPlannerSession } from '../import/localRepos.js';
+import { useCollectionNotes } from '../notes/queries.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
 export function CollectionPage() {
@@ -31,6 +33,7 @@ export function CollectionPage() {
   const { user } = useAuth();
   const { data: collection, isLoading, error } = useCollectionMeta(collectionId);
   const { data: recipeSummaries } = useCollectionRecipeSummaries(collectionId);
+  const { data: notes } = useCollectionNotes(collectionId);
   const deleteCollection = useDeleteCollection();
   const saveCollection = useSaveCollection();
   const reorderRecipes = useReorderRecipes(collectionId ?? '');
@@ -39,6 +42,7 @@ export function CollectionPage() {
   const [editingDetails, setEditingDetails] = useState(false);
   const [generatingCover, setGeneratingCover] = useState(false);
   const [hasOpenSession, setHasOpenSession] = useState(false);
+  const [tab, setTab] = useState<'recipes' | 'notes'>('recipes');
 
   // Cheap one-shot probe so the CTA can say "resume" when applicable.
   // Re-runs whenever the collection's recipe list changes (which is also
@@ -64,6 +68,7 @@ export function CollectionPage() {
 
   const c = collection;
   const recipes = recipeSummaries ?? [];
+  const noteCount = notes?.length ?? 0;
   // Hard rule mirrored at the DB layer: a PUBLISHED_BOOK with an ISBN
   // contains copyrighted material and can never be public.
   const isbnBlocksPublic = c.sourceType === 'PUBLISHED_BOOK' && !!c.isbn && c.isbn.trim() !== '';
@@ -239,18 +244,51 @@ export function CollectionPage() {
         </Link>
       )}
 
-      <CollectionNotesSection collectionId={c.id} />
+      <DuplicateRecipesTool collectionId={c.id} recipes={recipes} />
 
-      {recipes.length === 0 ? (
-        <p className="text-stone-600 dark:text-stone-400">No recipes yet.</p>
-      ) : (
-        <CollectionRecipeBrowser
-          collectionId={c.id}
-          recipes={recipes}
-          onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
-          onToggleStar={onToggleStar}
-        />
-      )}
+      {/* Notes get their own tab so a cookbook with many multi-page notes
+          doesn't bury the recipe grid (they used to stack above it). */}
+      <div className="space-y-4">
+        <div
+          role="tablist"
+          aria-label="Collection contents"
+          className="flex gap-1 border-b border-stone-200 dark:border-stone-700"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'recipes'}
+            onClick={() => setTab('recipes')}
+            className={tabClass(tab === 'recipes')}
+          >
+            Recipes{recipes.length > 0 ? ` (${recipes.length})` : ''}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'notes'}
+            onClick={() => setTab('notes')}
+            className={tabClass(tab === 'notes')}
+          >
+            Notes{noteCount > 0 ? ` (${noteCount})` : ''}
+          </button>
+        </div>
+
+        {tab === 'recipes' ? (
+          recipes.length === 0 ? (
+            <p className="text-stone-600 dark:text-stone-400">No recipes yet.</p>
+          ) : (
+            <CollectionRecipeBrowser
+              collectionId={c.id}
+              recipes={recipes}
+              onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
+              onToggleStar={onToggleStar}
+            />
+          )
+        ) : (
+          <CollectionNotesSection collectionId={c.id} />
+        )}
+      </div>
       {c.sourceType === 'PUBLISHED_BOOK' && (
         <EditBookDetailsDialog
           cookbook={c}
@@ -267,6 +305,15 @@ export function CollectionPage() {
       />
     </div>
   );
+}
+
+function tabClass(active: boolean): string {
+  return [
+    '-mb-px border-b-2 px-3 py-2 text-sm font-medium',
+    active
+      ? 'border-stone-900 text-stone-900 dark:border-stone-100 dark:text-stone-100'
+      : 'border-transparent text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-200',
+  ].join(' ');
 }
 
 function subtitle(c: RecipeCollection): string {

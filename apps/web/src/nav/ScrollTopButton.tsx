@@ -45,7 +45,7 @@ export function ScrollTopButton() {
       aria-label="Scroll to top"
       data-testid="scroll-top-button"
       onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-      className="fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white/90 text-lg text-stone-700 shadow-lg backdrop-blur dark:border-stone-600 dark:bg-stone-900/90 dark:text-stone-200"
+      className="fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-stone-300 bg-white/90 text-lg text-stone-700 shadow-lg backdrop-blur md:bottom-[max(1.25rem,env(safe-area-inset-bottom))] dark:border-stone-600 dark:bg-stone-900/90 dark:text-stone-200"
     >
       <span aria-hidden>↑</span>
     </button>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SAFE_BOTTOM, SAFE_TOP, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
+import { shutterHaptic } from './cameraFeedback.js';
 
 export type MultiShotCameraDialogProps = {
   maxShots: number;
@@ -27,6 +28,18 @@ export function MultiShotCameraDialog({
   const [retakeId, setRetakeId] = useState<string | undefined>();
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const autoFiredRef = useRef(false);
+  const stripRef = useRef<HTMLOListElement>(null);
+
+  // Visual + tactile confirmation when a shot lands back from the OS camera.
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(false), 140);
+    return () => clearTimeout(t);
+  }, [flash]);
+  useEffect(() => {
+    stripRef.current?.scrollTo({ left: stripRef.current.scrollWidth, behavior: 'smooth' });
+  }, [shots.length]);
 
   const urlsRef = useRef<string[]>([]);
   useEffect(() => {
@@ -68,6 +81,8 @@ export function MultiShotCameraDialog({
       } else {
         setShots((prev) => [...prev, { id: crypto.randomUUID(), file, url }]);
       }
+      setFlash(true);
+      void shutterHaptic();
     } catch (err) {
       setError((err as Error).message ?? 'Failed to capture photo.');
     } finally {
@@ -187,7 +202,7 @@ export function MultiShotCameraDialog({
         {shots.length === 0 ? (
           <p className="text-center text-xs text-stone-500 dark:text-stone-400">No photos yet.</p>
         ) : (
-          <ol className="flex gap-2 overflow-x-auto pb-1">
+          <ol ref={stripRef} className="flex gap-2 overflow-x-auto pb-1">
             {shots.map((s, i) => {
               const isRetake = retakeId === s.id;
               return (
@@ -223,6 +238,13 @@ export function MultiShotCameraDialog({
           </ol>
         )}
       </div>
+
+      {/* Shutter flash confirmation (inline style dodges the dark-mode guard). */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-20 transition-opacity duration-150"
+        style={{ backgroundColor: 'white', opacity: flash ? 0.6 : 0 }}
+      />
     </div>
   );
 }
