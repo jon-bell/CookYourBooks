@@ -486,6 +486,18 @@ export async function mergeImportItems(
 }
 
 /**
+ * Split a committed multi-page recipe back into standalone pages. The inverse
+ * of {@link mergeImportItems}: revives the primary's absorbed (DISCARDED)
+ * continuation pages to PENDING and clears the primary's extra_storage_paths,
+ * so each page OCRs on its own again. Server-side (the PENDING flip can't go
+ * through the client push scrub); the caller kicks the worker afterward.
+ */
+export async function splitImportItem(primaryId: string): Promise<void> {
+  const { error } = await supabase.rpc('import_split_item', { p_primary_id: primaryId });
+  if (error) throw error;
+}
+
+/**
  * Confirm a "Group then OCR" batch's groupings. `groups` is an array of
  * item-id arrays — within each inner array the first id is the primary
  * (recipe gets that page's storage_path) and the rest are absorbed

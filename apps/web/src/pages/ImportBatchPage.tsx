@@ -803,6 +803,12 @@ export function ImportBatchPage() {
             …
           </summary>
           <div className="absolute right-0 mt-1 w-64 rounded-md border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-1 text-sm shadow-md">
+            <Link
+              to={`/import/${batch.id}/group`}
+              className="block w-full rounded px-3 py-1.5 text-left hover:bg-stone-100 dark:hover:bg-stone-800"
+            >
+              Organize / rotate pages
+            </Link>
             <button
               type="button"
               onClick={() =>

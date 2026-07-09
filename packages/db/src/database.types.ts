@@ -3393,6 +3393,10 @@ export type Database = {
         Args: { p_batch_id: string; p_policy: string }
         Returns: undefined
       }
+      import_split_item: {
+        Args: { p_primary_id: string }
+        Returns: undefined
+      }
       import_variant_claim_next: {
         Args: {
           p_lease_seconds?: number
