@@ -67,7 +67,10 @@ export function OcrModelPromptSection() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
+    <form
+      onSubmit={onSubmit}
+      className="space-y-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5"
+    >
       <div>
         <h2 className="text-lg font-semibold">Default model + prompt</h2>
         <p className="mt-1 text-sm text-stone-600">

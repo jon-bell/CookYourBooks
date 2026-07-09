@@ -32,7 +32,10 @@ export function RequireAdmin({ children }: { children: React.ReactNode }) {
 
 export function AdminTabs() {
   return (
-    <nav aria-label="Admin sections" className="flex gap-3 border-b border-stone-200 dark:border-stone-700 text-sm">
+    <nav
+      aria-label="Admin sections"
+      className="flex gap-3 border-b border-stone-200 dark:border-stone-700 text-sm"
+    >
       <AdminTabLink to="/admin">Moderation</AdminTabLink>
       <AdminTabLink to="/admin/global-toc">Global ToC</AdminTabLink>
       <AdminTabLink to="/admin/global-toc/import">Import from library</AdminTabLink>

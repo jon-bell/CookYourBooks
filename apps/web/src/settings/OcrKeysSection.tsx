@@ -107,7 +107,10 @@ export function OcrKeysSection() {
           const current = keyByProvider.get(p);
           const entry = draft[p];
           return (
-            <li key={p} className="space-y-2 rounded-md border border-stone-200 dark:border-stone-700 p-3">
+            <li
+              key={p}
+              className="space-y-2 rounded-md border border-stone-200 dark:border-stone-700 p-3"
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium">{LABELS[p]}</div>

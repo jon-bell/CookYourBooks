@@ -17,11 +17,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
-import {
-  useCollection,
-  useCollectionPickerOptions,
-  useSaveRecipe,
-} from '../data/queries.js';
+import { useCollection, useCollectionPickerOptions, useSaveRecipe } from '../data/queries.js';
 import {
   getEffectiveOcrConfig,
   kickOcr,
@@ -751,7 +747,9 @@ export function ImportItemPage() {
                 onChange={() => void toggleIsToc()}
               />
               <span>This is a Table of Contents page</span>
-              {togglingToc && <Spinner className="text-stone-400 dark:text-stone-500" label="Re-reading page…" />}
+              {togglingToc && (
+                <Spinner className="text-stone-400 dark:text-stone-500" label="Re-reading page…" />
+              )}
             </label>
             <p className="mt-1 pl-6 text-xs text-stone-500 dark:text-stone-400">
               Toggling re-runs OCR on this page with the matching prompt — the table-of-contents
@@ -1844,7 +1842,9 @@ function EquipmentRow({
       </h3>
       <div className="flex flex-wrap items-center gap-1.5">
         {items.length === 0 && (
-          <span className="text-xs text-stone-400 dark:text-stone-500">(none — add what the recipe needs)</span>
+          <span className="text-xs text-stone-400 dark:text-stone-500">
+            (none — add what the recipe needs)
+          </span>
         )}
         {items.map((item, i) => (
           <span

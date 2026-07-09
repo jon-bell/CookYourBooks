@@ -112,9 +112,10 @@ export function ImportGroupingPage() {
   // signed-URL cache is busted inside rotateImportItemImage).
   const [rotatingId, setRotatingId] = useState<string | null>(null);
   const [rotatingAll, setRotatingAll] = useState(false);
-  const [rotateAllProgress, setRotateAllProgress] = useState<{ done: number; total: number } | null>(
-    null,
-  );
+  const [rotateAllProgress, setRotateAllProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const [rotationVersion, setRotationVersion] = useState<Map<string, number>>(() => new Map());
   const [rotateError, setRotateError] = useState<string | undefined>();
   // Adjustable thumbnail size (1a). Lazy-read from localStorage on mount.

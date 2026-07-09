@@ -348,7 +348,9 @@ export function ImportNewPage() {
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
           className={`space-y-4 rounded-lg transition ${
-            dragOver ? 'bg-stone-50 dark:bg-stone-900 ring-2 ring-stone-900 dark:ring-stone-100' : ''
+            dragOver
+              ? 'bg-stone-50 dark:bg-stone-900 ring-2 ring-stone-900 dark:ring-stone-100'
+              : ''
           }`}
         >
           <div className="flex items-center justify-between">
@@ -552,7 +554,9 @@ function ModeOption({
   return (
     <label
       className={`flex cursor-pointer items-start gap-2 rounded-md border p-3 text-sm ${
-        checked ? 'border-stone-900 dark:border-stone-100 bg-stone-50 dark:bg-stone-900' : 'border-stone-200 dark:border-stone-700 hover:border-stone-400 dark:hover:border-stone-500'
+        checked
+          ? 'border-stone-900 dark:border-stone-100 bg-stone-50 dark:bg-stone-900'
+          : 'border-stone-200 dark:border-stone-700 hover:border-stone-400 dark:hover:border-stone-500'
       }`}
     >
       <input

@@ -176,7 +176,7 @@ test.describe('Scan → organize into recipes', () => {
     await waitForItemStatuses(batchId, (c) => c.ocrDone === 1, 45_000);
   });
 
-  test('reorganize an already-OCR\'d batch: merging two pages re-OCRs them into one', async ({
+  test("reorganize an already-OCR'd batch: merging two pages re-OCRs them into one", async ({
     page,
     user,
   }) => {

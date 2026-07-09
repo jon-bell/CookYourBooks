@@ -113,7 +113,9 @@ test.describe('dark mode', () => {
         r !== undefined && g !== undefined && b !== undefined,
         `could not parse RGB from "${bg ?? 'null'}"`,
       ).toBe(true);
-      expect(r! + g! + b!, `NavBanner background "${bg ?? 'null'}" should be dark`).toBeLessThan(360);
+      expect(r! + g! + b!, `NavBanner background "${bg ?? 'null'}" should be dark`).toBeLessThan(
+        360,
+      );
     } finally {
       await u.cleanup();
     }
