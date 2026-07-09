@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
 import { getEffectiveOcrConfig } from '../import/api.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { CollectionPicker } from '../import/CollectionPicker.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 import type { ScannedPage } from '../import/pageMarker.js';
 import { scanPages } from '../import/scanPages.js';
@@ -165,7 +165,7 @@ export function ScanPagesPage() {
         <span className="block text-sm font-medium text-stone-700 dark:text-stone-300">
           Target cookbook (optional)
         </span>
-        <CookbookCombobox
+        <CollectionPicker
           options={pickerOptions}
           value={targetCollectionId}
           onChange={setTargetCollectionId}

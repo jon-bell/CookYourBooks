@@ -74,7 +74,7 @@ export function OcrKeysSection() {
   const keyByProvider = new Map<string, OcrKeySummary>((keys ?? []).map((k) => [k.provider, k]));
 
   return (
-    <section className="space-y-4 rounded-lg border border-stone-200 bg-white p-5">
+    <section className="space-y-4 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-5">
       <div>
         <h2 className="text-lg font-semibold">OCR keys</h2>
         <p className="mt-1 text-sm text-stone-600">
@@ -107,7 +107,10 @@ export function OcrKeysSection() {
           const current = keyByProvider.get(p);
           const entry = draft[p];
           return (
-            <li key={p} className="space-y-2 rounded-md border border-stone-200 p-3">
+            <li
+              key={p}
+              className="space-y-2 rounded-md border border-stone-200 dark:border-stone-700 p-3"
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm font-medium">{LABELS[p]}</div>
@@ -142,7 +145,7 @@ export function OcrKeysSection() {
                     setDraft((cur) => ({ ...cur, [p]: { ...cur[p], key: e.target.value } }))
                   }
                   placeholder={current ? 'Rotate: paste new key' : 'Paste API key'}
-                  className="w-full rounded border border-stone-300 px-3 py-2 font-mono text-xs"
+                  className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-xs"
                 />
                 <button
                   type="button"
@@ -160,7 +163,7 @@ export function OcrKeysSection() {
                     setDraft((cur) => ({ ...cur, [p]: { ...cur[p], baseUrl: e.target.value } }))
                   }
                   placeholder="Base URL (optional, defaults to https://api.openai.com/v1)"
-                  className="w-full rounded border border-stone-300 px-3 py-2 text-xs"
+                  className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 text-xs"
                 />
               )}
             </li>

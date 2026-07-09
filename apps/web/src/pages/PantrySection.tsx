@@ -152,7 +152,9 @@ export function PantrySection() {
                 checked={item.checked}
                 onChange={() => void toggle(item)}
               />
-              <span className={`flex-1 ${item.checked ? 'text-stone-400 line-through' : ''}`}>
+              <span
+                className={`flex-1 ${item.checked ? 'text-stone-400 dark:text-stone-500 line-through' : ''}`}
+              >
                 {item.quantity_text && <span className="font-medium">{item.quantity_text} </span>}
                 {item.name}
                 {item.note && (

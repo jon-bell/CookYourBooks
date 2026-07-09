@@ -136,7 +136,9 @@ export function ShoppingListPage() {
                         checked={isChecked}
                         onChange={() => toggleCheck(key)}
                       />
-                      <span className={`flex-1 ${isChecked ? 'text-stone-400 line-through' : ''}`}>
+                      <span
+                        className={`flex-1 ${isChecked ? 'text-stone-400 dark:text-stone-500 line-through' : ''}`}
+                      >
                         <span className="font-medium">{item.quantityText}</span> {item.name}
                       </span>
                       {item.aggregated && (
@@ -164,7 +166,9 @@ export function ShoppingListPage() {
                         checked={isChecked}
                         onChange={() => toggleCheck(key)}
                       />
-                      <span className={`flex-1 ${isChecked ? 'text-stone-400 line-through' : ''}`}>
+                      <span
+                        className={`flex-1 ${isChecked ? 'text-stone-400 dark:text-stone-500 line-through' : ''}`}
+                      >
                         {item.name}
                       </span>
                     </li>

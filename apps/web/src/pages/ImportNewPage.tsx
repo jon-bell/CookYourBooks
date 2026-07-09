@@ -2,12 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
-import { type BookForm, emptyBookForm } from '../books/bookForm.js';
-import { BookMetadataFields } from '../books/BookMetadataFields.js';
-import { buildCookbookFromForm } from '../books/buildCookbook.js';
-import { useCollectionPickerOptions, useSaveCollection } from '../data/queries.js';
+import { useCollectionPickerOptions } from '../data/queries.js';
 import { getEffectiveOcrConfig } from '../import/api.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { CollectionPicker } from '../import/CollectionPicker.js';
 import { isMultiShotAvailable } from '../import/multiShotShim.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 import { useOcrKeys } from '../import/queries.js';
@@ -30,7 +27,6 @@ export function ImportNewPage() {
   const sharedFileRan = useRef(false);
   const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
   const { data: ocrKeys = [] } = useOcrKeys();
-  const saveCollection = useSaveCollection();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,8 +40,6 @@ export function ImportNewPage() {
   // each group OCRs as one call. Default stays 'ocr-first' so existing
   // flows are untouched.
   const [importMode, setImportMode] = useState<'ocr-first' | 'group-first'>('ocr-first');
-  const [creatingCookbook, setCreatingCookbook] = useState(false);
-  const [newBook, setNewBook] = useState<BookForm>(emptyBookForm);
   const [provider, setProvider] = useState<'gemini' | 'openai-compatible'>('gemini');
   const [model, setModel] = useState('');
   const [fallbackProvider, setFallbackProvider] = useState<'' | 'gemini' | 'openai-compatible'>(
@@ -192,19 +186,6 @@ export function ImportNewPage() {
     addFiles(e.dataTransfer.files);
   }
 
-  async function onCreateCookbook() {
-    if (!newBook.title.trim() || !user) return;
-    try {
-      const cookbook = await buildCookbookFromForm(newBook, { userId: user.id, seedToc: true });
-      await saveCollection.mutateAsync(cookbook);
-      setTargetCollectionId(cookbook.id);
-      setCreatingCookbook(false);
-      setNewBook(emptyBookForm());
-    } catch (e) {
-      setError(`Could not create cookbook: ${(e as Error).message}`);
-    }
-  }
-
   async function startImport() {
     if (!user) return;
     if (files.length === 0) return;
@@ -313,8 +294,8 @@ export function ImportNewPage() {
             onDrop={onDrop}
             className={`rounded-lg border-2 border-dashed p-8 text-center transition ${
               dragOver
-                ? 'border-stone-900 bg-stone-50'
-                : 'border-stone-300 bg-white hover:bg-stone-50'
+                ? 'border-stone-900 dark:border-stone-100 bg-stone-50 dark:bg-stone-900'
+                : 'border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-50 dark:hover:bg-stone-900'
             }`}
           >
             <p className="text-sm text-stone-700 dark:text-stone-300">
@@ -367,7 +348,9 @@ export function ImportNewPage() {
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
           className={`space-y-4 rounded-lg transition ${
-            dragOver ? 'bg-stone-50 ring-2 ring-stone-900' : ''
+            dragOver
+              ? 'bg-stone-50 dark:bg-stone-900 ring-2 ring-stone-900 dark:ring-stone-100'
+              : ''
           }`}
         >
           <div className="flex items-center justify-between">
@@ -414,7 +397,7 @@ export function ImportNewPage() {
                   type="button"
                   aria-label={`Remove ${f.name}`}
                   onClick={() => setFiles((cur) => cur.filter((_, idx) => idx !== i))}
-                  className="absolute right-1 top-1 rounded-full bg-white/90 px-1.5 text-xs leading-tight text-stone-700 dark:text-stone-300 shadow"
+                  className="absolute right-1 top-1 rounded-full bg-white/90 dark:bg-stone-900/90 px-1.5 text-xs leading-tight text-stone-700 dark:text-stone-300 shadow"
                 >
                   ×
                 </button>
@@ -451,45 +434,16 @@ export function ImportNewPage() {
               />
             </Field>
             <Field label="Target cookbook">
-              {creatingCookbook ? (
-                <div className="space-y-3 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-3">
-                  <BookMetadataFields value={newBook} onChange={setNewBook} />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={onCreateCookbook}
-                      disabled={!newBook.title.trim() || saveCollection.isPending}
-                      className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
-                    >
-                      {saveCollection.isPending ? 'Creating…' : 'Create'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCreatingCookbook(false);
-                        setNewBook(emptyBookForm());
-                      }}
-                      className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <CookbookCombobox
-                    options={pickerOptions}
-                    value={targetCollectionId}
-                    onChange={setTargetCollectionId}
-                    onCreateNew={() => setCreatingCookbook(true)}
-                    loading={pickerLoading}
-                  />
-                  {!pickerLoading && pickerOptions.length === 0 && (
-                    <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-                      No cookbooks yet — pick "Create new cookbook" above or leave unassigned.
-                    </p>
-                  )}
-                </>
+              <CollectionPicker
+                options={pickerOptions}
+                value={targetCollectionId}
+                onChange={setTargetCollectionId}
+                loading={pickerLoading}
+              />
+              {!pickerLoading && pickerOptions.length === 0 && (
+                <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                  No cookbooks yet — pick "Create new cookbook" above or leave unassigned.
+                </p>
               )}
             </Field>
             <Field label="Default provider">
@@ -600,7 +554,9 @@ function ModeOption({
   return (
     <label
       className={`flex cursor-pointer items-start gap-2 rounded-md border p-3 text-sm ${
-        checked ? 'border-stone-900 bg-stone-50' : 'border-stone-200 hover:border-stone-400'
+        checked
+          ? 'border-stone-900 dark:border-stone-100 bg-stone-50 dark:bg-stone-900'
+          : 'border-stone-200 dark:border-stone-700 hover:border-stone-400 dark:hover:border-stone-500'
       }`}
     >
       <input

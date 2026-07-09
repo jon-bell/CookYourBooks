@@ -155,7 +155,7 @@ function SortableRow({
       <button
         type="button"
         aria-label={`Reorder ${recipe.title}`}
-        className="flex h-12 w-8 shrink-0 cursor-grab items-center justify-center text-stone-400 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-500 active:cursor-grabbing"
+        className="flex h-12 w-8 shrink-0 cursor-grab items-center justify-center text-stone-400 dark:text-stone-500 hover:text-stone-700 dark:hover:text-stone-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-500 active:cursor-grabbing"
         {...attributes}
         {...listeners}
       >

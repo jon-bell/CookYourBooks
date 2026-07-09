@@ -69,7 +69,7 @@ export function DraftPreview({
         {(draft.timeEstimate || h.timeEstimate !== 'same') && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
             <span className="inline-flex items-baseline gap-1">
-              <span className="text-stone-400">time</span>
+              <span className="text-stone-400 dark:text-stone-500">time</span>
               {wrapHighlight(h.timeEstimate, side, <span>{draft.timeEstimate ?? '(time)'}</span>)}
             </span>
           </div>
@@ -149,7 +149,7 @@ export function DraftPreview({
                 data-diff-kind={kind !== 'same' ? kind : undefined}
                 data-diff-line={instructionLine(step)}
               >
-                <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
+                <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400 dark:text-stone-500">
                   {i + 1}.
                 </span>
                 <div className="flex-1 whitespace-pre-wrap">{step.text}</div>

@@ -45,13 +45,13 @@ export function ImportThumb({ path, alt, className }: Props) {
   if (!path || errored) {
     return (
       <div
-        className={`flex items-center justify-center bg-stone-100 text-xs text-stone-500 ${className ?? ''}`}
+        className={`flex items-center justify-center bg-stone-100 dark:bg-stone-800 text-xs text-stone-500 dark:text-stone-400 ${className ?? ''}`}
       >
         no preview
       </div>
     );
   }
-  if (!url) return <div className={`bg-stone-100 ${className ?? ''}`} />;
+  if (!url) return <div className={`bg-stone-100 dark:bg-stone-800 ${className ?? ''}`} />;
   return <img src={url} alt={alt ?? ''} loading="lazy" className={className} />;
 }
 

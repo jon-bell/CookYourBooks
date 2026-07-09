@@ -55,7 +55,7 @@ export function ShareToGlobalButton({ cookbook }: { cookbook: Cookbook }) {
       <button
         onClick={onClick}
         disabled={share.isPending}
-        className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100 disabled:opacity-60"
+        className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-60"
         title={
           alreadyShared
             ? 'Already in the global catalog — click to push your latest titles + metadata'
@@ -99,7 +99,7 @@ function ConfirmDialog({
       onClick={onCancel}
     >
       <div
-        className="w-full max-w-md space-y-3 rounded-lg bg-white p-5 shadow-lg"
+        className="w-full max-w-md space-y-3 rounded-lg bg-white dark:bg-stone-900 p-5 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="share-global-title" className="text-lg font-semibold">
@@ -117,7 +117,7 @@ function ConfirmDialog({
         <div className="flex justify-end gap-2 pt-2">
           <button
             onClick={onCancel}
-            className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+            className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
           >
             Cancel
           </button>

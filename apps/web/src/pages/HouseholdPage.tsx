@@ -388,7 +388,7 @@ function HouseholdView({
                     <span>
                       <code className="text-xs">{inv.token.slice(0, 8)}…</code>
                       <span className="ml-2 text-stone-500">{status}</span>
-                      <span className="ml-2 text-xs text-stone-400">
+                      <span className="ml-2 text-xs text-stone-400 dark:text-stone-500">
                         expires {new Date(inv.expires_at).toLocaleString()}
                       </span>
                     </span>

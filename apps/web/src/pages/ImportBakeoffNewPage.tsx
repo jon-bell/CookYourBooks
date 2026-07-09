@@ -6,7 +6,7 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
 import { kickOcr, seedBakeoffBatch } from '../import/api.js';
 import { BakeoffVariantEditor, useBakeoffVariantState } from '../import/BakeoffVariantEditor.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { CollectionPicker } from '../import/CollectionPicker.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 import { useOcrKeys } from '../import/queries.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
@@ -158,14 +158,14 @@ export function ImportBakeoffNewPage() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Choose images
             </button>
             <button
               type="button"
               onClick={() => pdfInputRef.current?.click()}
-              className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+              className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
             >
               Upload PDF
             </button>
@@ -198,17 +198,17 @@ export function ImportBakeoffNewPage() {
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded border border-stone-300 px-2 py-1 text-sm"
+                className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
               />
             </Field>
             <Field label="Target cookbook">
-              <CookbookCombobox
+              <CollectionPicker
                 options={pickerOptions}
                 value={targetCollectionId}
                 onChange={setTargetCollectionId}
               />
             </Field>
-            <fieldset className="rounded-lg border border-stone-200 p-3">
+            <fieldset className="rounded-lg border border-stone-200 dark:border-stone-700 p-3">
               <legend className="px-1 text-sm font-medium">Page grouping</legend>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <label className="flex gap-2 text-sm">

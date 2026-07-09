@@ -155,7 +155,7 @@ export function GlobalCookbookImport() {
       {error && <p className="text-red-700">{error.message}</p>}
 
       {data && merged.length === 0 && (
-        <p className="rounded-md border border-stone-200 bg-stone-50 dark:bg-stone-900 p-4 text-stone-600 dark:text-stone-400">
+        <p className="rounded-md border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-900 p-4 text-stone-600 dark:text-stone-400">
           Nothing to import — every user cookbook with an ISBN is already in the catalog.
         </p>
       )}

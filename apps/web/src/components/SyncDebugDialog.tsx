@@ -436,7 +436,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                           : 'text-stone-700 dark:text-stone-300'
                     }
                   >
-                    <span className="text-stone-400">#{op.id}</span>{' '}
+                    <span className="text-stone-400 dark:text-stone-500">#{op.id}</span>{' '}
                     <span className="uppercase">[{op.state}]</span> {relMs(op.ageMs)}{' '}
                     <span className="text-stone-500">{op.label}</span>
                   </li>
@@ -547,7 +547,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
                           : 'text-stone-700 dark:text-stone-300'
                     }
                   >
-                    <span className="text-stone-400">{new Date(e.at).toLocaleTimeString()} </span>
+                    <span className="text-stone-400 dark:text-stone-500">
+                      {new Date(e.at).toLocaleTimeString()}{' '}
+                    </span>
                     {e.message}
                     {e.data && Object.keys(e.data).length > 0 ? (
                       <span className="text-stone-500"> {JSON.stringify(e.data)}</span>

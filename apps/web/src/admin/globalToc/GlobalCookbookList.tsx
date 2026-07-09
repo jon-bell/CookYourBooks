@@ -68,7 +68,7 @@ export function GlobalCookbookList() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search title, author, or ISBN"
-          className="flex-1 min-w-[14rem] rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+          className="flex-1 min-w-[14rem] rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
         />
         <button
           onClick={() => create.mutate()}
@@ -93,7 +93,10 @@ export function GlobalCookbookList() {
       {data && data.length > 0 && (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {data.map((c) => (
-            <li key={c.id} className="flex gap-3 rounded-lg border border-stone-200 bg-white p-3">
+            <li
+              key={c.id}
+              className="flex gap-3 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 p-3"
+            >
               <CoverImage
                 path={c.cover_image_path ?? undefined}
                 className="h-20 w-14 flex-shrink-0 rounded"

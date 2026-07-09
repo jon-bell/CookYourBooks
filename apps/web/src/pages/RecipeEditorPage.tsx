@@ -400,8 +400,8 @@ function RecipeEditorForm({
                             aria-pressed={selected}
                             className={`rounded-full border px-2 py-0.5 text-xs transition ${
                               selected
-                                ? 'border-stone-900 bg-stone-900 text-white'
-                                : 'border-stone-300 bg-stone-50 text-stone-700 hover:border-stone-400'
+                                ? 'border-stone-900 dark:border-stone-100 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900'
+                                : 'border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 text-stone-700 dark:text-stone-300 hover:border-stone-400 dark:hover:border-stone-500'
                             }`}
                           >
                             {ing.name || '(unnamed)'}

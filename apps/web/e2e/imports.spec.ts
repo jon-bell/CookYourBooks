@@ -1,3 +1,4 @@
+import { adminGet } from './support/admin.js';
 import { expect, test, waitForSynced } from './support/fixtures.js';
 import {
   configureOcrKey,
@@ -119,6 +120,46 @@ test.describe('bulk OCR imports', () => {
     await page.getByRole('link', { name: 'Library' }).click();
     await page.getByRole('link', { name: 'Bulk Bakery' }).click();
     await expect(page.getByText('Imported Recipe 1')).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('inline "create cookbook" from the picker captures an ISBN and selects it', async ({
+    authedPage: page,
+    user,
+  }) => {
+    // The shared CollectionPicker gives every import picker a full
+    // create-cookbook flow (with ISBN), replacing the old title-only create.
+    await configureOcrKey(page, 'gemini');
+    await page.goto('/import/new');
+    await uploadTestImages(page, ['page1.png']);
+
+    // Open the target-cookbook picker → "Create new cookbook…".
+    await page.getByLabel('Target cookbook').click();
+    const listbox = page.getByRole('listbox');
+    await expect(listbox).toBeVisible();
+    await listbox.getByRole('option', { name: /Create new cookbook/ }).click();
+
+    // Fill the BookMetadataFields form (title first so an ISBN autofill can't
+    // clobber it) and create. The metadata fields nest inside the outer
+    // "Target cookbook" <label>, so target inputs by placeholder / label-span
+    // sibling rather than getByLabel.
+    const title = 'Isbn Picker Cookbook';
+    const isbn = '9781566199094';
+    await page.locator('span:text-is("Title") + input').fill(title);
+    await page.getByPlaceholder('ISBN-10 or ISBN-13 (optional)').fill(isbn);
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
+
+    // The new cookbook becomes the selected target (shown in the picker button)…
+    await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 });
+
+    // …and persisted as a PUBLISHED_BOOK carrying the ISBN.
+    const cols = await adminGet<{ id: string; isbn: string | null; source_type: string }[]>(
+      `/rest/v1/recipe_collections?owner_id=eq.${user.id}&title=eq.${encodeURIComponent(
+        title,
+      )}&select=id,isbn,source_type`,
+    );
+    expect(cols.length).toBe(1);
+    expect(cols[0]!.source_type).toBe('PUBLISHED_BOOK');
+    expect(cols[0]!.isbn).toBe(isbn);
   });
 
   test('a 3-page PDF splits into three ordered items and all reach OCR_DONE', async ({

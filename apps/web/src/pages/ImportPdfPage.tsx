@@ -6,7 +6,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
 import { collectionRepo, recipeRepo } from '../data/repos.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { CollectionPicker } from '../import/CollectionPicker.js';
 import { withFreshIds } from '../import/draftToRecipe.js';
 import { renderPdfToJpegs } from '../import/imageProcessing.js';
 import { extractRecipeFromPdf, PdfImportError, type PdfImportResult } from '../import/pdfImport.js';
@@ -210,7 +210,7 @@ export function ImportPdfPage() {
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium">Save to collection</label>
-            <CookbookCombobox
+            <CollectionPicker
               options={pickerOptions}
               value={destId}
               onChange={setDestId}
