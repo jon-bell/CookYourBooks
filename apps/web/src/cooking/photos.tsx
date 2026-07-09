@@ -99,7 +99,7 @@ export function CookingPhotoThumb({ path, className }: { path: string; className
   if (errored) {
     return (
       <div
-        className={`flex items-center justify-center bg-stone-100 text-xs text-stone-400 dark:bg-stone-800 ${className ?? ''}`}
+        className={`flex items-center justify-center bg-stone-100 text-xs text-stone-400 dark:text-stone-500 dark:bg-stone-800 ${className ?? ''}`}
       >
         ✕
       </div>

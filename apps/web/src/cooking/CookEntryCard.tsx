@@ -33,7 +33,7 @@ export function CookEntryCard({
             <span className="font-medium text-stone-900 dark:text-stone-100">
               {formatEventDate(event.eventDate)}
             </span>
-            <span className="text-stone-400">·</span>
+            <span className="text-stone-400 dark:text-stone-500">·</span>
             <span className="text-stone-500">{attributedTo}</span>
             {event.mealSlot && (
               <span className="rounded-full bg-sky-100 dark:bg-sky-900/50 px-2 py-0.5 text-xs text-sky-800 dark:text-sky-200">

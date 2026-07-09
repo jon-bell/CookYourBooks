@@ -754,7 +754,7 @@ export function ImportItemPage() {
                 onChange={() => void toggleIsToc()}
               />
               <span>This is a Table of Contents page</span>
-              {togglingToc && <Spinner className="text-stone-400" label="Re-reading page…" />}
+              {togglingToc && <Spinner className="text-stone-400 dark:text-stone-500" label="Re-reading page…" />}
             </label>
             <p className="mt-1 pl-6 text-xs text-stone-500 dark:text-stone-400">
               Toggling re-runs OCR on this page with the matching prompt — the table-of-contents
@@ -1212,8 +1212,8 @@ function MergedPagesStrip({
             onClick={() => onPick(p)}
             className={`relative shrink-0 overflow-hidden rounded border ${
               activeUrl?.includes(p.split('/').pop() ?? '__none__')
-                ? 'border-stone-900 ring-2 ring-stone-900'
-                : 'border-stone-200 hover:border-stone-400'
+                ? 'border-stone-900 ring-2 ring-stone-900 dark:border-stone-100 dark:ring-stone-100'
+                : 'border-stone-200 hover:border-stone-400 dark:border-stone-700 dark:hover:border-stone-500'
             }`}
             title={i === 0 ? 'Primary' : `Merged page ${i}`}
           >
@@ -1263,7 +1263,7 @@ function NavBanner({
   };
 }) {
   return (
-    <div className="sticky top-0 z-20 -mx-4 flex items-center gap-3 border-b border-stone-200 dark:border-stone-700 bg-white/95 px-4 py-2 text-sm backdrop-blur">
+    <div className="sticky top-0 z-20 -mx-4 flex items-center gap-3 border-b border-stone-200 dark:border-stone-700 bg-white/95 dark:bg-stone-900/95 px-4 py-2 text-sm backdrop-blur">
       <Link
         to={`/import/${batchId}`}
         className="truncate text-stone-700 dark:text-stone-300 hover:text-stone-900 dark:hover:text-stone-100"
@@ -1291,7 +1291,7 @@ function NavBanner({
             ← Prev
           </Link>
         ) : (
-          <span className="rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400">
+          <span className="rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400 dark:text-stone-500">
             ← Prev
           </span>
         )}
@@ -1307,7 +1307,7 @@ function NavBanner({
             Next →
           </Link>
         ) : (
-          <span className="rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400">
+          <span className="rounded-md border border-stone-200 dark:border-stone-700 px-2 py-1 text-xs text-stone-400 dark:text-stone-500">
             Next →
           </span>
         )}
@@ -1534,7 +1534,7 @@ function DraftEditor({
             />
           ))}
           <li className="flex gap-3">
-            <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
+            <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400 dark:text-stone-500">
               {draft.instructions.length + 1}.
             </span>
             <EditableText
@@ -1542,7 +1542,7 @@ function DraftEditor({
               value=""
               placeholder="+ Add step"
               onCommit={(v) => addInstruction(v)}
-              className="flex-1 text-stone-400"
+              className="flex-1 text-stone-400 dark:text-stone-500"
             />
           </li>
         </ol>
@@ -1745,7 +1745,7 @@ function InstructionRow({
 
   return (
     <li className="group flex gap-3 text-sm leading-relaxed text-stone-800 dark:text-stone-200">
-      <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400">
+      <span className="w-6 shrink-0 pt-0.5 text-right text-xs font-medium text-stone-400 dark:text-stone-500">
         {index + 1}.
       </span>
       <div className="flex-1 space-y-1.5">
@@ -1768,7 +1768,7 @@ function InstructionRow({
                 className="inline-flex items-center gap-1 rounded-full bg-stone-100 dark:bg-stone-800 px-2 py-0.5 text-xs text-stone-700 dark:text-stone-300 hover:bg-red-50 dark:hover:bg-red-950/40 hover:text-red-700"
               >
                 <span>{ing?.name ?? '(missing)'}</span>
-                <span className="text-stone-400">×</span>
+                <span className="text-stone-400 dark:text-stone-500">×</span>
               </button>
             );
           })}
@@ -1847,7 +1847,7 @@ function EquipmentRow({
       </h3>
       <div className="flex flex-wrap items-center gap-1.5">
         {items.length === 0 && (
-          <span className="text-xs text-stone-400">(none — add what the recipe needs)</span>
+          <span className="text-xs text-stone-400 dark:text-stone-500">(none — add what the recipe needs)</span>
         )}
         {items.map((item, i) => (
           <span
@@ -1864,7 +1864,7 @@ function EquipmentRow({
               type="button"
               onClick={() => remove(i)}
               aria-label="Remove equipment"
-              className="text-stone-400 hover:text-red-700"
+              className="text-stone-400 dark:text-stone-500 hover:text-red-700"
             >
               ×
             </button>
@@ -1924,7 +1924,7 @@ function EditableText({
         className={`group rounded text-left hover:bg-stone-100 focus:bg-stone-100 focus:outline-none ${className}`}
       >
         {empty ? (
-          <span className="text-stone-400">{placeholder}</span>
+          <span className="text-stone-400 dark:text-stone-500">{placeholder}</span>
         ) : (
           <span className="whitespace-pre-wrap">{value}</span>
         )}
@@ -1946,7 +1946,7 @@ function EditableText({
           }
         }}
         rows={Math.max(2, Math.ceil(Math.max(draft.length, value.length) / 60))}
-        className={`rounded border border-stone-300 bg-white px-2 py-1 outline-none focus:border-stone-500 ${className}`}
+        className={`rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 outline-none focus:border-stone-500 ${className}`}
       />
     );
   }
@@ -1966,7 +1966,7 @@ function EditableText({
           cancel();
         }
       }}
-      className={`rounded border border-stone-300 bg-white px-2 py-1 outline-none focus:border-stone-500 ${className}`}
+      className={`rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-2 py-1 outline-none focus:border-stone-500 ${className}`}
     />
   );
 }
@@ -1974,7 +1974,7 @@ function EditableText({
 function Inline({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-baseline gap-1">
-      <span className="text-stone-400">{label}</span>
+      <span className="text-stone-400 dark:text-stone-500">{label}</span>
       {children}
     </span>
   );

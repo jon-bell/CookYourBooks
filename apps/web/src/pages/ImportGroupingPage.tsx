@@ -521,7 +521,7 @@ function PageThumb({
         <span className="text-[11px] leading-tight text-stone-600 dark:text-stone-400">
           Page {item.pageIndex + 1}
           {groupSize > 1 && (
-            <span className="ml-1 text-stone-400">
+            <span className="ml-1 text-stone-400 dark:text-stone-500">
               ({pageInGroup}/{groupSize})
             </span>
           )}
@@ -578,7 +578,7 @@ function SplitControl({ onClick }: { onClick: () => void }) {
       aria-label="Split into a new recipe here"
       className="mx-0.5 flex shrink-0 items-stretch"
     >
-      <span className="flex min-h-[44px] items-center self-stretch rounded bg-stone-100 px-1 text-stone-400 hover:bg-red-100 hover:text-red-600 dark:bg-stone-800 dark:hover:bg-red-950/40">
+      <span className="flex min-h-[44px] items-center self-stretch rounded bg-stone-100 px-1 text-stone-400 dark:text-stone-500 hover:bg-red-100 hover:text-red-600 dark:bg-stone-800 dark:hover:bg-red-950/40">
         <span aria-hidden className="text-xs">
           ✂
         </span>

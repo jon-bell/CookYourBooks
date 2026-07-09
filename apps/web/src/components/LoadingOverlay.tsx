@@ -79,7 +79,7 @@ export function LoadingOverlay({
               <p className="mt-3 text-sm text-stone-700 dark:text-stone-300">
                 {step}
                 {pct != null && (
-                  <span className="ml-1 tabular-nums text-stone-400">
+                  <span className="ml-1 tabular-nums text-stone-400 dark:text-stone-500">
                     {progress!.processed.toLocaleString()} / {progress!.total.toLocaleString()}
                   </span>
                 )}
@@ -108,7 +108,7 @@ export function LoadingOverlay({
                 Retry
               </button>
             )}
-            <p className="mt-2 text-xs text-stone-400">
+            <p className="mt-2 text-xs text-stone-400 dark:text-stone-500">
               Still working on it — you can keep waiting too.
             </p>
           </div>

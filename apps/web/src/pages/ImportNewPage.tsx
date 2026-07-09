@@ -313,8 +313,8 @@ export function ImportNewPage() {
             onDrop={onDrop}
             className={`rounded-lg border-2 border-dashed p-8 text-center transition ${
               dragOver
-                ? 'border-stone-900 bg-stone-50'
-                : 'border-stone-300 bg-white hover:bg-stone-50'
+                ? 'border-stone-900 dark:border-stone-100 bg-stone-50 dark:bg-stone-900'
+                : 'border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-50 dark:hover:bg-stone-900'
             }`}
           >
             <p className="text-sm text-stone-700 dark:text-stone-300">
@@ -367,7 +367,7 @@ export function ImportNewPage() {
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
           className={`space-y-4 rounded-lg transition ${
-            dragOver ? 'bg-stone-50 ring-2 ring-stone-900' : ''
+            dragOver ? 'bg-stone-50 dark:bg-stone-900 ring-2 ring-stone-900 dark:ring-stone-100' : ''
           }`}
         >
           <div className="flex items-center justify-between">
@@ -414,7 +414,7 @@ export function ImportNewPage() {
                   type="button"
                   aria-label={`Remove ${f.name}`}
                   onClick={() => setFiles((cur) => cur.filter((_, idx) => idx !== i))}
-                  className="absolute right-1 top-1 rounded-full bg-white/90 px-1.5 text-xs leading-tight text-stone-700 dark:text-stone-300 shadow"
+                  className="absolute right-1 top-1 rounded-full bg-white/90 dark:bg-stone-900/90 px-1.5 text-xs leading-tight text-stone-700 dark:text-stone-300 shadow"
                 >
                   ×
                 </button>
@@ -600,7 +600,7 @@ function ModeOption({
   return (
     <label
       className={`flex cursor-pointer items-start gap-2 rounded-md border p-3 text-sm ${
-        checked ? 'border-stone-900 bg-stone-50' : 'border-stone-200 hover:border-stone-400'
+        checked ? 'border-stone-900 dark:border-stone-100 bg-stone-50 dark:bg-stone-900' : 'border-stone-200 dark:border-stone-700 hover:border-stone-400 dark:hover:border-stone-500'
       }`}
     >
       <input

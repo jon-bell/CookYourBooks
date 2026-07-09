@@ -859,8 +859,8 @@ export function ImportBatchPage() {
               onClick={() => setFilter(key)}
               className={`rounded-full border px-3 py-1 text-xs ${
                 filter === key
-                  ? 'border-stone-900 bg-stone-900 text-white'
-                  : 'border-stone-300 text-stone-700 hover:bg-stone-100'
+                  ? 'border-stone-900 dark:border-stone-100 bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900'
+                  : 'border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800'
               }`}
             >
               {label} <span className="opacity-70">({count})</span>
@@ -1003,7 +1003,7 @@ export function ImportBatchPage() {
           return (
             <li key={item.id} className="relative">
               <label
-                className="absolute left-1.5 top-1.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-stone-300 dark:border-stone-600 bg-white/95 shadow-sm hover:border-stone-500"
+                className="absolute left-1.5 top-1.5 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-stone-300 dark:border-stone-600 bg-white/95 dark:bg-stone-900/95 shadow-sm hover:border-stone-500"
                 title="Select for bulk action"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -1027,9 +1027,9 @@ export function ImportBatchPage() {
                 onClick={(e) => toggleSelect(item.id, e)}
                 className={`block overflow-hidden rounded-lg border ${
                   isSelected
-                    ? 'border-stone-900 ring-2 ring-stone-900'
-                    : 'border-stone-200 hover:border-stone-400'
-                } bg-white`}
+                    ? 'border-stone-900 dark:border-stone-100 ring-2 ring-stone-900 dark:ring-stone-100'
+                    : 'border-stone-200 dark:border-stone-700 hover:border-stone-400 dark:hover:border-stone-500'
+                } bg-white dark:bg-stone-900`}
               >
                 <ImportThumb
                   path={item.thumbPath}
@@ -1107,7 +1107,7 @@ export function ImportBatchPage() {
         <p className="text-stone-600 dark:text-stone-400">No items match this filter.</p>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 border-t border-stone-200 dark:border-stone-700 bg-white/95 px-4 py-2 backdrop-blur">
+      <div className="fixed inset-x-0 bottom-0 border-t border-stone-200 dark:border-stone-700 bg-white/95 dark:bg-stone-900/95 px-4 py-2 backdrop-blur">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 text-xs text-stone-600 dark:text-stone-400">
           <span>
             Total cost: <strong>${totalCost.toFixed(2)}</strong>

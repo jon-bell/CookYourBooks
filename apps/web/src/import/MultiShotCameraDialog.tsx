@@ -158,7 +158,7 @@ export function MultiShotCameraDialog({
         </button>
       </header>
 
-      <div className="flex-1 px-4 py-2 text-center text-sm text-stone-400">
+      <div className="flex-1 px-4 py-2 text-center text-sm text-stone-400 dark:text-stone-500">
         {error ? (
           <span className="text-red-300">{error}</span>
         ) : retakeId ? (

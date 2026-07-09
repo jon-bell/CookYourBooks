@@ -235,7 +235,7 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
                 </h3>
                 <p className="mt-1 text-sm text-stone-700 dark:text-stone-300">{step.body}</p>
               </div>
-              <div className="flex h-20 w-40 items-center justify-center rounded-md border border-dashed border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 text-[10px] text-stone-400">
+              <div className="flex h-20 w-40 items-center justify-center rounded-md border border-dashed border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 text-[10px] text-stone-400 dark:text-stone-500">
                 {step.placeholder}
               </div>
             </li>

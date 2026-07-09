@@ -140,10 +140,10 @@ function ReportCard({ report }: { report: Report }) {
         <span
           className={`ml-auto rounded px-2 py-0.5 font-medium ${
             report.status === 'OPEN'
-              ? 'bg-amber-50 text-amber-700'
+              ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
               : report.status === 'ACTIONED'
-                ? 'bg-emerald-50 text-emerald-700'
-                : 'bg-stone-100 text-stone-600'
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                : 'bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400'
           }`}
         >
           {report.status}

@@ -85,7 +85,7 @@ export function CalendarMonth({
                 'flex min-h-14 flex-col items-center rounded-md border p-1 text-sm',
                 inMonth
                   ? 'border-stone-200 dark:border-stone-700'
-                  : 'border-transparent text-stone-400',
+                  : 'border-transparent text-stone-400 dark:text-stone-500',
                 isSelected
                   ? 'bg-stone-100 dark:bg-stone-800'
                   : 'hover:bg-stone-50 dark:hover:bg-stone-900',

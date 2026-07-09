@@ -91,7 +91,7 @@ export function SearchPage() {
                       · {hit.collectionTitle}
                     </span>
                   </span>
-                  <span className="shrink-0 text-sm text-stone-400">→</span>
+                  <span className="shrink-0 text-sm text-stone-400 dark:text-stone-500">→</span>
                 </Link>
               </li>
             ))}

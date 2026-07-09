@@ -302,7 +302,7 @@ function UsageRow({ row, who }: { row: LlmUsageRow; who: string }) {
 }
 
 function Produced({ kind, reference }: { kind: string | null; reference: string | null }) {
-  if (!kind) return <span className="text-stone-400">—</span>;
+  if (!kind) return <span className="text-stone-400 dark:text-stone-500">—</span>;
   if (kind === 'VIDEO_URL' && reference) {
     return (
       <a

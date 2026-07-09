@@ -159,7 +159,7 @@ function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved
             <input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+              className="w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
             />
           </Field>
           <Field label="ISBN">
@@ -168,13 +168,13 @@ function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved
                 value={form.isbn}
                 onChange={(e) => setForm({ ...form, isbn: e.target.value })}
                 placeholder="ISBN-10 or ISBN-13"
-                className="flex-1 rounded-md border border-stone-300 px-3 py-1.5 text-sm font-mono"
+                className="flex-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm font-mono"
               />
               <button
                 type="button"
                 onClick={() => fetchOl.mutate()}
                 disabled={fetchOl.isPending || !form.isbn.trim()}
-                className="rounded-md border border-stone-300 px-3 py-1.5 text-sm font-medium hover:bg-stone-100 disabled:opacity-60"
+                className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm font-medium hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-60"
               >
                 {fetchOl.isPending ? 'Fetching…' : 'Fetch from Open Library'}
               </button>
@@ -189,14 +189,14 @@ function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved
           <input
             value={form.author}
             onChange={(e) => setForm({ ...form, author: e.target.value })}
-            className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+            className="w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
           />
         </Field>
         <Field label="Publisher">
           <input
             value={form.publisher}
             onChange={(e) => setForm({ ...form, publisher: e.target.value })}
-            className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+            className="w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
           />
         </Field>
         <Field label="Year">
@@ -205,7 +205,7 @@ function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved
             onChange={(e) =>
               setForm({ ...form, publication_year: e.target.value.replace(/[^\d]/g, '') })
             }
-            className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+            className="w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
           />
         </Field>
         <Field label="Cover storage path">
@@ -213,7 +213,7 @@ function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved
             value={form.cover_image_path}
             onChange={(e) => setForm({ ...form, cover_image_path: e.target.value })}
             placeholder="global/<id>.jpg"
-            className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm font-mono"
+            className="w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm font-mono"
           />
         </Field>
       </div>
@@ -223,7 +223,7 @@ function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved
           value={form.notes}
           onChange={(e) => setForm({ ...form, notes: e.target.value })}
           rows={3}
-          className="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+          className="w-full rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm"
         />
       </Field>
 
@@ -240,7 +240,7 @@ function CookbookForm({ cookbook, onSaved }: { cookbook: GlobalCookbook; onSaved
         )}
       </div>
 
-      <hr className="border-stone-200" />
+      <hr className="border-stone-200 dark:border-stone-700" />
 
       <TocEditor cookbookId={cookbook.id} />
     </div>
@@ -357,13 +357,13 @@ function TocEditor({ cookbookId }: { cookbookId: string }) {
               value={r.title}
               onChange={(e) => update(i, { title: e.target.value })}
               placeholder="Recipe title"
-              className="flex-1 rounded-md border border-stone-300 px-2 py-1 text-sm"
+              className="flex-1 rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
             />
             <input
               value={r.page}
               onChange={(e) => update(i, { page: e.target.value.replace(/[^\d]/g, '') })}
               placeholder="Page"
-              className="w-16 rounded-md border border-stone-300 px-2 py-1 text-sm font-mono"
+              className="w-16 rounded-md border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm font-mono"
             />
             <button
               onClick={() => move(i, -1)}
@@ -395,7 +395,7 @@ function TocEditor({ cookbookId }: { cookbookId: string }) {
       <div className="flex gap-2">
         <button
           onClick={add}
-          className="rounded-md border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100"
+          className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
         >
           + Add entry
         </button>

@@ -245,7 +245,7 @@ function EligibleBookRow({
             {starred} starred{hasOpen && ' · resume'}
           </span>
         </span>
-        <span aria-hidden className="text-stone-400">
+        <span aria-hidden className="text-stone-400 dark:text-stone-500">
           →
         </span>
       </button>

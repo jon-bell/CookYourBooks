@@ -143,7 +143,7 @@ export function CookbookCombobox({
             </span>
           )}
         </span>
-        <svg viewBox="0 0 12 8" className="ml-2 h-2.5 w-2.5 fill-current text-stone-400">
+        <svg viewBox="0 0 12 8" className="ml-2 h-2.5 w-2.5 fill-current text-stone-400 dark:text-stone-500">
           <path d="M0 0h12L6 8z" />
         </svg>
       </button>
@@ -184,14 +184,14 @@ export function CookbookCombobox({
                   aria-selected={value === ''}
                   onMouseEnter={() => setActiveIdx(unassignedIdx)}
                   onClick={() => pickIdx(unassignedIdx)}
-                  className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-stone-700 ${
-                    activeIdx === unassignedIdx ? 'bg-stone-100' : 'hover:bg-stone-50'
+                  className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-stone-700 dark:text-stone-300 ${
+                    activeIdx === unassignedIdx ? 'bg-stone-100 dark:bg-stone-800' : 'hover:bg-stone-50 dark:hover:bg-stone-900'
                   }`}
                 >
                   <span className="italic text-stone-500 dark:text-stone-400">
                     {unassignedLabel}
                   </span>
-                  {value === '' && <span className="text-xs text-stone-400">current</span>}
+                  {value === '' && <span className="text-xs text-stone-400 dark:text-stone-500">current</span>}
                 </button>
               </li>
             )}
@@ -208,7 +208,7 @@ export function CookbookCombobox({
                     onMouseEnter={() => setActiveIdx(idx)}
                     onClick={() => pickIdx(idx)}
                     className={`flex w-full items-baseline justify-between gap-3 px-3 py-1.5 text-left ${
-                      isActive ? 'bg-stone-100' : 'hover:bg-stone-50'
+                      isActive ? 'bg-stone-100 dark:bg-stone-800' : 'hover:bg-stone-50 dark:hover:bg-stone-900'
                     }`}
                   >
                     <span className="flex min-w-0 flex-col">
@@ -223,7 +223,7 @@ export function CookbookCombobox({
                     </span>
                     <span className="flex shrink-0 items-center gap-2 text-[11px] text-stone-500 dark:text-stone-400">
                       <span>{pickerCountLabel(opt)}</span>
-                      {isCurrent && <span className="text-stone-400">· current</span>}
+                      {isCurrent && <span className="text-stone-400 dark:text-stone-500">· current</span>}
                     </span>
                   </button>
                 </li>
@@ -236,8 +236,8 @@ export function CookbookCombobox({
                   role="option"
                   onMouseEnter={() => setActiveIdx(createIdx)}
                   onClick={() => pickIdx(createIdx)}
-                  className={`w-full px-3 py-1.5 text-left font-medium text-stone-700 ${
-                    activeIdx === createIdx ? 'bg-stone-100' : 'hover:bg-stone-50'
+                  className={`w-full px-3 py-1.5 text-left font-medium text-stone-700 dark:text-stone-300 ${
+                    activeIdx === createIdx ? 'bg-stone-100 dark:bg-stone-800' : 'hover:bg-stone-50 dark:hover:bg-stone-900'
                   }`}
                 >
                   + Create new cookbook…

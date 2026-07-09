@@ -28,8 +28,8 @@ export function OcrStatusBanner({
       role="status"
       className={`rounded-md border p-3 text-sm ${
         processing
-          ? 'border-blue-200 bg-blue-50 text-blue-900'
-          : 'border-stone-300 bg-stone-50 text-stone-800'
+          ? 'border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200'
+          : 'border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 text-stone-800 dark:text-stone-200'
       }`}
     >
       <div className="flex items-center gap-2 font-medium">
