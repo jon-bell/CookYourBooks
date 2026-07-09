@@ -310,6 +310,42 @@ describe('parseLlmJson', () => {
     expect(d.sourceImageText).toContain('crushed ice.');
   });
 
+  it('recovers when a thinking model drops the final closing brace (STOP but under-closed)', () => {
+    // gemini-3.5-flash occasionally returns structurally-complete *content* but
+    // omits the top-level `}` — finishReason is STOP, yet strict JSON.parse
+    // dies with "Unexpected end of JSON input". Bracket completion appends the
+    // one missing closer. (Inverse of the stray-doubled-brace case above.)
+    // Synthetic recipe — no copyrighted source text.
+    const text =
+      '{\n  "recipes": [\n    {\n      "title": "Garden Herb Focaccia",\n      "pageNumbers": [212],\n      "ingredients": [\n        { "type": "measured", "name": "bread flour", "quantity": { "type": "exact", "value": 500.0, "unit": "GRAM" } },\n        { "type": "vague", "name": "flaky salt", "description": "for the top" }\n      ],\n      "instructions": [\n        { "stepNumber": 1, "text": "Dimple the dough and drizzle with oil." }\n      ]\n    }\n  ],\n  "rawText": "212 . SAMPLE BOOK .\\n\\nGarden Herb Focaccia\\n500g bread flour\\n\\u2022 Dimple the dough and drizzle with oil."';
+    // Precondition: the raw answer is genuinely unparseable as-is.
+    expect(() => JSON.parse(text)).toThrow();
+    const d = parseLlmJson(text)[0]!;
+    expect(d.title).toBe('Garden Herb Focaccia');
+    expect(d.ingredients).toHaveLength(2);
+    expect(d.leftover).toEqual([]);
+    expect(d.instructions).toHaveLength(1);
+    // The whole rawText tail survives — no content was truncated.
+    expect(d.sourceImageText).toContain('drizzle with oil.');
+  });
+
+  it('closes several dropped trailing brackets in nesting order', () => {
+    // Both the instructions array and the enclosing recipe/recipes/root are
+    // left open; completion appends `] } ] }`.
+    const text =
+      '{"recipes":[{"title":"Two Closers Missing","ingredients":[],"instructions":[{"stepNumber":1,"text":"Mix."}';
+    const d = parseLlmJson(text)[0]!;
+    expect(d.title).toBe('Two Closers Missing');
+    expect(d.instructions).toHaveLength(1);
+  });
+
+  it('does not fabricate a close when truncation lands inside a string', () => {
+    // Cut off mid-string there is no safe completion, so we let it fail rather
+    // than invent recipe content out of a partial value.
+    const text = '{"recipes":[{"title":"Cut Off Mid Ti';
+    expect(() => parseLlmJson(text)).toThrow(/Could not parse/);
+  });
+
   it('carries the model’s per-recipe `complete` flag through (true / false / absent)', () => {
     const mk = (complete: unknown) =>
       JSON.stringify({
