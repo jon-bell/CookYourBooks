@@ -410,7 +410,7 @@ export function ImportGroupingPage() {
           : `Apply & re-OCR ${reorgChangeCount} ${reorgChangeCount === 1 ? 'page' : 'pages'}`
       : confirming
         ? 'Starting OCR…'
-        : `Start OCR on ${recipeCount} ${recipeCount === 1 ? 'recipe' : 'recipes'}`;
+        : `Start OCR on ${recipeCount} ${recipeCount === 1 ? 'page group' : 'page groups'}`;
 
   return (
     <div className="space-y-4">
@@ -419,10 +419,10 @@ export function ImportGroupingPage() {
         <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
           {batch.name} · organize
         </div>
-        <h1 className="text-xl font-semibold">Organize into recipes</h1>
+        <h1 className="text-xl font-semibold">Organize into page groups</h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
           <span>
-            <strong>{recipeCount}</strong> {recipeCount === 1 ? 'recipe' : 'recipes'} from{' '}
+            <strong>{recipeCount}</strong> {recipeCount === 1 ? 'page group' : 'page groups'} from{' '}
             <strong>{totalPages}</strong> {totalPages === 1 ? 'page' : 'pages'}
             {multiPageGroups > 0 && (
               <span className="text-stone-500 dark:text-stone-400">
@@ -444,7 +444,7 @@ export function ImportGroupingPage() {
               onClick={mergeAll}
               className={`rounded-md border border-stone-300 dark:border-stone-600 bg-white px-2 py-1 hover:bg-stone-100 dark:bg-stone-900 dark:hover:bg-stone-800 ${TAP_TARGET}`}
             >
-              One recipe
+              One group
             </button>
           </span>
         </div>
@@ -494,10 +494,11 @@ export function ImportGroupingPage() {
           </>
         ) : (
           <>
-            Each page is its own recipe by default. Tap a page to view it fullscreen. Use{' '}
-            <span className="font-medium">Merge with next recipe</span> to join two pages into one
-            recipe, or the <span className="font-medium">✂</span> between pages to split them apart.
-            Set a recipe's type with the Recipe / Contents / Notes toggle.
+            Each page is its own page group by default. Tap a page to view it fullscreen. Use{' '}
+            <span className="font-medium">Merge with next group</span> to join two pages into one
+            group, or the <span className="font-medium">✂</span> between pages to split them apart.
+            Mixed a recipe with intro/contents pages? Split them, then set each group's type with
+            the Recipe / Contents / Notes toggle.
           </>
         )}
       </p>
@@ -967,10 +968,10 @@ function MergeDivider({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      aria-label="Merge with next recipe"
+      aria-label="Merge with next group"
       className={`flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-stone-300 py-2 text-xs font-medium text-stone-500 hover:border-sky-400 hover:text-sky-600 dark:border-stone-600 dark:text-stone-400 dark:hover:text-sky-300 ${TAP_TARGET}`}
     >
-      <span aria-hidden>⛓</span> Merge with next recipe
+      <span aria-hidden>⛓</span> Merge with next group
     </button>
   );
 }
@@ -1117,68 +1118,65 @@ function PagePreviewOverlay({
       </div>
 
       <div
-        className={`flex shrink-0 flex-col gap-2 border-t border-white/10 px-4 py-3 text-sm text-white/90 ${SAFE_BOTTOM}`}
+        className={`flex shrink-0 flex-col gap-2 border-t border-white/10 px-3 py-2 text-sm text-white/90 ${SAFE_BOTTOM}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex flex-wrap items-center gap-3">
-          <span>
-            Page {item.pageIndex + 1} · {index + 1} of {total}
-          </span>
-          {membership && (
-            <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs">
-              Recipe {membership.recipeNumber} of {membership.totalRecipes}
-              {membership.groupSize > 1 &&
-                ` · page ${membership.pageInGroup} of ${membership.groupSize}`}
-            </span>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs uppercase tracking-wide text-white/50">Type</span>
+        {/* One compact, horizontally-scrollable control row — never wraps, so
+            the image + its controls always fit a single viewport (no hunting
+            for buttons below the fold). */}
+        <div className="flex items-center gap-2 overflow-x-auto">
           <ModeToggle value={leaderKind} onChange={onSetMode} tone="dark" />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs uppercase tracking-wide text-white/50">Rotate</span>
+          <span className="h-6 shrink-0 border-l border-white/20" aria-hidden />
           <RotateButton dir="ccw" size="lg" disabled={rotating} onClick={() => onRotate(-1)} />
           <RotateButton dir="cw" size="lg" disabled={rotating} onClick={() => onRotate(1)} />
-          {rotating && <span className="text-xs text-white/60">Rotating…</span>}
-
           {index > 0 && (
             <button
               type="button"
               onClick={() => onToggleSplit(index - 1)}
-              className="rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
+              className="shrink-0 whitespace-nowrap rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
             >
-              {removedSplits.has(index - 1)
-                ? 'Split from previous page'
-                : 'Merge with previous page'}
+              {removedSplits.has(index - 1) ? 'Split ◀ prev' : 'Merge ◀ prev'}
             </button>
           )}
           {index < total - 1 && (
             <button
               type="button"
               onClick={() => onToggleSplit(index)}
-              className="rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
+              className="shrink-0 whitespace-nowrap rounded-md border border-white/20 px-3 py-1.5 text-xs hover:bg-white/10"
             >
-              {removedSplits.has(index) ? 'Split from next page' : 'Merge with next page'}
+              {removedSplits.has(index) ? 'Split ▶ next' : 'Merge ▶ next'}
             </button>
           )}
-
-          <span className="ml-auto flex gap-2">
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 truncate text-xs text-white/70">
+            Page {item.pageIndex + 1} · {index + 1}/{total}
+            {membership &&
+              ` · Recipe ${membership.recipeNumber}/${membership.totalRecipes}${
+                membership.groupSize > 1
+                  ? ` (pg ${membership.pageInGroup}/${membership.groupSize})`
+                  : ''
+              }`}
+            {rotating && ' · Rotating…'}
+          </span>
+          <span className="ml-auto flex shrink-0 gap-1.5">
             <button
               type="button"
+              aria-label="Previous page"
               disabled={index === 0}
               onClick={() => onNavigate(index - 1)}
               className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
             >
-              ← Prev
+              ←
             </button>
             <button
               type="button"
+              aria-label="Next page"
               disabled={index >= total - 1}
               onClick={() => onNavigate(index + 1)}
               className="rounded-md border border-white/20 px-3 py-1.5 hover:bg-white/10 disabled:opacity-40"
             >
-              Next →
+              →
             </button>
             <button
               type="button"

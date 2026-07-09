@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SAFE_BOTTOM, SAFE_TOP, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
-import { DEFAULT_MARKER, type PageMarker, type ScannedPage } from './pageMarker.js';
-import { plannerHapticTick } from './plannerCapture.js';
+import { shutterHaptic } from './cameraFeedback.js';
+import { DEFAULT_MARKER, type PageKind, type PageMarker, type ScannedPage } from './pageMarker.js';
+import { subscribeVolumeButton } from './volumeButton.js';
 
 const DEFAULT_MAX_SHOTS = 200;
 const DEFAULT_JPEG_QUALITY = 0.85;
@@ -24,6 +25,7 @@ type Status = 'starting' | 'live' | 'denied' | 'no-camera' | 'error';
 /** Screen-reader label for a thumbnail — the corner badges are visual-only. */
 function ariaForShot(index: number, m: PageMarker): string {
   const parts = [`Page ${index + 1}`];
+  if (m.kind === 'TOC') parts.push('table of contents');
   if (m.joinsPrevious && index > 0) parts.push('joins previous page');
   return `${parts.join(', ')}. Tap × to remove.`;
 }
@@ -67,6 +69,7 @@ export function CameraScanner({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const stripRef = useRef<HTMLOListElement>(null);
   const lastShotAt = useRef(0);
 
   const [shots, setShots] = useState<Shot[]>([]);
@@ -75,10 +78,19 @@ export function CameraScanner({
   const [busy, setBusy] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
-  // Chain mode: while on, each new shot continues the previous shot's recipe.
-  // The marker is carried through to the organizer, which pre-merges these
-  // pages (and lets the user un-merge them). One tap per multi-page recipe.
-  const [chainNext, setChainNext] = useState(false);
+  // Brief white flash + shutter pulse on each capture — a clear visual
+  // confirmation the shot landed (pairs with the haptic).
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(false), 140);
+    return () => clearTimeout(t);
+  }, [flash]);
+
+  // Keep the newest captured thumbnail in view as the strip grows.
+  useEffect(() => {
+    stripRef.current?.scrollTo({ left: stripRef.current.scrollWidth, behavior: 'smooth' });
+  }, [shots.length]);
 
   // Revoke object URLs on unmount.
   const urlsRef = useRef<string[]>([]);
@@ -183,33 +195,54 @@ export function CameraScanner({
     });
   }, [status, jpegQuality, shots.length]);
 
-  const onShutter = useCallback(async () => {
-    const now = Date.now();
-    if (busy || now - lastShotAt.current < SHUTTER_DEBOUNCE_MS) return;
-    if (shots.length >= maxShots) {
-      setErrorMsg(`Maximum ${maxShots} pages reached.`);
-      return;
-    }
-    lastShotAt.current = now;
-    setBusy(true);
-    try {
-      const file = await captureFrame();
-      if (!file) return;
-      const url = URL.createObjectURL(file);
-      setShots((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          file,
-          url,
-          marker: { ...DEFAULT_MARKER, joinsPrevious: chainNext && prev.length > 0 },
-        },
-      ]);
-      void plannerHapticTick();
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, shots.length, maxShots, captureFrame, chainNext]);
+  const capture = useCallback(
+    async (opts: { join?: boolean; kind?: PageKind } = {}) => {
+      const now = Date.now();
+      if (busy || now - lastShotAt.current < SHUTTER_DEBOUNCE_MS) return;
+      if (shots.length >= maxShots) {
+        setErrorMsg(`Maximum ${maxShots} pages reached.`);
+        return;
+      }
+      lastShotAt.current = now;
+      setBusy(true);
+      try {
+        const file = await captureFrame();
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        setShots((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            file,
+            url,
+            marker: {
+              kind: opts.kind ?? DEFAULT_MARKER.kind,
+              // A leading join (no predecessor) is meaningless; planPageGroups
+              // makes it its own leader anyway, but keep the flag honest.
+              joinsPrevious: !!opts.join && prev.length > 0,
+            },
+          },
+        ]);
+        setFlash(true);
+        void shutterHaptic();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, shots.length, maxShots, captureFrame],
+  );
+
+  // Hardware volume buttons fire the default shutter on iOS. Subscribe once
+  // while the camera is live; a ref carries the latest `capture` so a new shot
+  // doesn't re-subscribe (which would churn the native audio session).
+  const captureRef = useRef(capture);
+  useEffect(() => {
+    captureRef.current = capture;
+  }, [capture]);
+  useEffect(() => {
+    if (status !== 'live') return;
+    return subscribeVolumeButton(() => void captureRef.current());
+  }, [status]);
 
   const remove = useCallback((id: string) => {
     setShots((prev) => {
@@ -330,15 +363,13 @@ export function CameraScanner({
           </button>
         )}
 
-        {/* Chain-on hint — an overlay so toggling it never reflows the column. */}
-        {chainNext && (
-          <div
-            className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-sky-600/90 px-3 py-1 text-center text-xs"
-            aria-live="polite"
-          >
-            ⛓ Chain on — next photo joins this recipe
-          </div>
-        )}
+        {/* Shutter flash — inline style keeps the white out of the dark-mode
+            class guard while still fading via the transition. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-20 transition-opacity duration-150"
+          style={{ backgroundColor: 'white', opacity: flash ? 0.7 : 0 }}
+        />
 
         {/* Captured-pages strip — overlaid along the bottom of the preview so
             it doesn't consume column height. Tap × to remove a shot. */}
@@ -346,14 +377,15 @@ export function CameraScanner({
           <div
             className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-stone-950/80 to-transparent px-2 pb-2 pt-8 ${SAFE_X}`}
           >
-            <ol className="flex gap-2 overflow-x-auto">
+            <ol ref={stripRef} className="flex gap-2 overflow-x-auto">
               {shots.map((s, i) => {
                 const isCont = s.marker.joinsPrevious && i > 0;
+                const isToc = s.marker.kind === 'TOC';
                 return (
                   <li key={s.id} className="relative shrink-0 pr-1 pt-1">
                     <div
                       className={`h-16 w-12 overflow-hidden rounded ring-2 ${
-                        isCont ? 'ring-sky-500' : 'ring-white/40'
+                        isToc ? 'ring-amber-400' : isCont ? 'ring-sky-500' : 'ring-white/40'
                       }`}
                     >
                       <img
@@ -363,14 +395,21 @@ export function CameraScanner({
                         draggable={false}
                       />
                     </div>
-                    {isCont && (
+                    {isCont ? (
                       <span
                         className="absolute left-0 top-1 bg-sky-600/90 px-1 text-[10px] leading-tight"
                         aria-hidden
                       >
                         ⛓
                       </span>
-                    )}
+                    ) : isToc ? (
+                      <span
+                        className="absolute left-0 top-1 bg-amber-500/90 px-1 text-[10px] leading-tight"
+                        aria-hidden
+                      >
+                        ▤
+                      </span>
+                    ) : null}
                     <span className="absolute bottom-0 left-0 right-1 bg-stone-950/70 text-center text-[10px] leading-tight text-stone-100">
                       {i + 1}
                     </span>
@@ -391,28 +430,42 @@ export function CameraScanner({
       </div>
 
       <div className={`grid shrink-0 grid-cols-3 items-center py-3 ${SAFE_BOTTOM} ${SAFE_X}`}>
+        {/* Variant: capture + continue the previous recipe (multi-page). */}
+        <div className="flex flex-col items-center gap-1 justify-self-start">
+          <button
+            type="button"
+            onClick={() => void capture({ join: true })}
+            disabled={!isLive || busy || shots.length === 0}
+            aria-label="Capture and join to the previous page"
+            className={`inline-flex items-center justify-center rounded-full border-2 border-sky-400/70 bg-stone-800/70 text-lg text-white disabled:opacity-30 ${TAP_TARGET}`}
+          >
+            <span aria-hidden>⛓</span>
+          </button>
+          <span className="text-[10px] text-white/70">Join</span>
+        </div>
+        {/* Default shutter: a new recipe page. */}
         <button
           type="button"
-          role="switch"
-          aria-checked={chainNext}
-          aria-label="Chain mode: each new photo continues the previous recipe"
-          onClick={() => setChainNext((v) => !v)}
-          className={`inline-flex items-center justify-center justify-self-start rounded-full ${TAP_TARGET} ${
-            chainNext ? 'bg-sky-600 text-white' : 'bg-stone-800 text-stone-300'
-          }`}
-        >
-          <span aria-hidden className="text-lg">
-            ⛓
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={onShutter}
+          onClick={() => void capture()}
           disabled={!isLive || busy}
           aria-label="Capture page"
-          className="h-16 w-16 justify-self-center rounded-full border-4 border-white bg-white/90 shadow-lg disabled:opacity-40 sm:h-20 sm:w-20"
+          className={`h-16 w-16 justify-self-center rounded-full border-4 border-white bg-white/90 shadow-lg transition-transform active:scale-95 disabled:opacity-40 sm:h-20 sm:w-20 ${
+            flash ? 'scale-90' : 'scale-100'
+          }`}
         />
-        <span aria-hidden />
+        {/* Variant: capture + mark as a table-of-contents page. */}
+        <div className="flex flex-col items-center gap-1 justify-self-end">
+          <button
+            type="button"
+            onClick={() => void capture({ kind: 'TOC' })}
+            disabled={!isLive || busy}
+            aria-label="Capture as a table-of-contents page"
+            className={`inline-flex items-center justify-center rounded-full border-2 border-amber-400/70 bg-stone-800/70 text-lg text-white disabled:opacity-30 ${TAP_TARGET}`}
+          >
+            <span aria-hidden>▤</span>
+          </button>
+          <span className="text-[10px] text-white/70">Contents</span>
+        </div>
       </div>
     </div>
   );

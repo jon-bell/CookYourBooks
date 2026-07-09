@@ -41,6 +41,7 @@ import {
   useImportTocEntries,
   useUpdateImportItem,
 } from '../import/queries.js';
+import { RecitationBanner } from '../import/RecitationBanner.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
 import { TocReviewPanel } from '../import/TocReviewPanel.js';
 import type { CollectionPickerOption } from '../local/repositories.js';
@@ -579,6 +580,16 @@ export function ImportItemPage() {
     navigate(`/import/${batch!.id}`);
   }
 
+  // Copyright-recitation state, batch-wide, so the banner can offer to retry
+  // "this and all others needing it" from the single page-group view.
+  const recitationFailedCount = batchItems.filter(
+    (i) => i.status === 'OCR_FAILED' && (i.lastError ?? '').toLowerCase().includes('recitation'),
+  ).length;
+  const needsFallbackCount = batchItems.filter((i) => i.status === 'NEEDS_FALLBACK').length;
+  const thisItemRecitation =
+    item.status === 'NEEDS_FALLBACK' ||
+    (item.status === 'OCR_FAILED' && (item.lastError ?? '').toLowerCase().includes('recitation'));
+
   return (
     <div className="space-y-4 pb-12">
       {toast && <ToastBanner message={toast} />}
@@ -587,6 +598,13 @@ export function ImportItemPage() {
           src={imgUrl}
           alt={`Page ${item.pageIndex + 1}`}
           onClose={() => setFullscreen(false)}
+        />
+      )}
+      {thisItemRecitation && (
+        <RecitationBanner
+          batch={batch}
+          needsFallbackCount={needsFallbackCount}
+          recitationFailedCount={recitationFailedCount}
         />
       )}
       <NavBanner

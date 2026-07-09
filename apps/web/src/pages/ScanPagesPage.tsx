@@ -156,7 +156,10 @@ export function ScanPagesPage() {
       <h1 className="text-2xl font-semibold">Scan pages</h1>
       <p className="text-sm text-stone-600 dark:text-stone-400">
         Point your camera at a cookbook and tap the shutter for each page — no need to stop between
-        shots. When you're done, we'll OCR every page into recipes.
+        shots. Use the <span className="font-medium">⛓ Join</span> shutter to continue a multi-page
+        recipe and the <span className="font-medium">▤ Contents</span> shutter for a
+        table-of-contents page. When you're done, you'll group the pages into recipes on the next
+        screen.
       </p>
 
       {needsSetup && <OcrSetupGuide />}

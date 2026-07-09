@@ -60,7 +60,7 @@ export function EditBookDetailsDialog({
     >
       <form
         onSubmit={onSubmit}
-        className="max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-lg bg-white dark:bg-stone-900 p-5 shadow-lg"
+        className="max-h-[90dvh] w-full max-w-lg space-y-4 overflow-y-auto rounded-lg bg-white dark:bg-stone-900 p-5 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="edit-book-title" className="text-lg font-semibold">

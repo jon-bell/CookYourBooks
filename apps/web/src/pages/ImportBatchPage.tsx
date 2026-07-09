@@ -11,10 +11,8 @@ import {
   kickOcr,
   mergeImportItems,
   OcrWorkerNotConfiguredError,
-  retryRecitationFailures,
   setBatchFallback,
   setImportItemToc,
-  setRecitationPolicy,
 } from '../import/api.js';
 import { CollectionPicker } from '../import/CollectionPicker.js';
 import { deleteOcrStorage } from '../import/deleteStorage.js';
@@ -37,6 +35,7 @@ import {
   useUpdateImportBatch,
   useUpdateImportItem,
 } from '../import/queries.js';
+import { RecitationBanner } from '../import/RecitationBanner.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
@@ -132,7 +131,6 @@ export function ImportBatchPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
-  const [recitationBusy, setRecitationBusy] = useState(false);
   const [kickBusy, setKickBusy] = useState(false);
   const [kickError, setKickError] = useState<string | undefined>();
   const [editingFallback, setEditingFallback] = useState(false);
@@ -142,8 +140,6 @@ export function ImportBatchPage() {
   }>({ provider: '', model: '' });
   const [fallbackBusy, setFallbackBusy] = useState(false);
   const [fallbackError, setFallbackError] = useState<string | undefined>();
-  const [retryBusy, setRetryBusy] = useState(false);
-  const [retryToast, setRetryToast] = useState<string | undefined>();
 
   const qc = useQueryClient();
   // Auto-accept bookkeeping. `processedRef` is the set of item ids the pass
@@ -203,13 +199,22 @@ export function ImportBatchPage() {
   }, [batch, editingName]);
 
   // Auto-accept pass: promote obviously-good OCR drafts to recipes without a
-  // click (per-draft bar in `autoAcceptableDraftIndices`). Recipes are created
-  // in the browser anyway (local-first), so this just runs the same promote
-  // logic the manual path uses. A page with several clean recipes promotes
-  // each one; any weak siblings stay on the item (still OCR_DONE) for review.
-  // Bakeoff batches are skipped — there the user is actively comparing
-  // variants. `runningRef` serializes; `processedRef` dedupes across the
-  // re-renders each promotion triggers.
+  // click (per-draft bar in `autoAcceptableDraftIndices`). A page with several
+  // clean recipes promotes each one; any weak siblings stay on the item (still
+  // OCR_DONE) for review. Bakeoff batches are skipped — there the user is
+  // actively comparing variants. `runningRef` serializes; `processedRef`
+  // dedupes across the re-renders each promotion triggers.
+  //
+  // Why this lives client-side, not a server hook that fires when the worker
+  // finishes a page group: recipes are LOCAL-FIRST. There is no server-side
+  // recipe-creation path — a recipe is built in the browser
+  // (`buildRecipeFromDraft`), written to cr-sqlite, and only then pushed via
+  // the outbox. The accept criteria run over the in-memory draft objects, the
+  // on/off switch is a per-device localStorage pref, and Undo needs the
+  // pre-accept snapshot — none of which the server has. It DOES still run "as
+  // pages finish": this effect re-fires on every realtime OCR_DONE (through the
+  // `items` dep) while the board is open, so freshly-processed pages promote on
+  // their own.
   useEffect(() => {
     if (!autoAcceptOn || !batch || !user) return;
     if (batch.batchKind !== 'STANDARD') return;
@@ -404,31 +409,6 @@ export function ImportBatchPage() {
     }
   }
 
-  async function applyRecitation(policy: 'FALLBACK' | 'FAIL') {
-    if (!batch) return;
-    setRecitationBusy(true);
-    try {
-      await setRecitationPolicy(batch.id, policy);
-      await updateBatch.mutateAsync({
-        id: batch.id,
-        patch: { recitationPolicy: policy },
-      });
-      // FALLBACK moves the parked items back to PENDING server-side.
-      // Kick the worker so they're picked up immediately instead of
-      // waiting for the next 30s pg_cron tick. (FAIL drops them to
-      // OCR_FAILED — no point kicking.)
-      if (policy === 'FALLBACK') {
-        try {
-          await kickOcr(batch.id);
-        } catch {
-          // Cron will catch up if the kick fails.
-        }
-      }
-    } finally {
-      setRecitationBusy(false);
-    }
-  }
-
   function openFallbackEditor() {
     if (!batch) return;
     setFallbackError(undefined);
@@ -465,36 +445,6 @@ export function ImportBatchPage() {
       setFallbackError((e as Error).message);
     } finally {
       setFallbackBusy(false);
-    }
-  }
-
-  async function retryFailedWithFallback() {
-    if (!batch) return;
-    setRetryBusy(true);
-    setRetryToast(undefined);
-    try {
-      const n = await retryRecitationFailures(batch.id);
-      // Mirror policy locally so the FAIL→FALLBACK transition is
-      // visible before the next pull.
-      await updateBatch.mutateAsync({
-        id: batch.id,
-        patch: { recitationPolicy: 'FALLBACK' },
-      });
-      try {
-        await kickOcr(batch.id);
-      } catch {
-        /* cron will catch up */
-      }
-      await syncNow();
-      setRetryToast(
-        n === 0
-          ? 'No recitation-failed items to retry.'
-          : `Retrying ${n} item${n === 1 ? '' : 's'} with fallback model.`,
-      );
-    } catch (e) {
-      setRetryToast(`Retry failed: ${(e as Error).message}`);
-    } finally {
-      setRetryBusy(false);
     }
   }
 
@@ -622,61 +572,12 @@ export function ImportBatchPage() {
         </div>
       )}
 
-      {recitationFailedCount > 0 && batch.recitationPolicy !== 'ASK' && (
-        <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
-          <div className="font-medium">
-            {recitationFailedCount} item{recitationFailedCount === 1 ? '' : 's'} failed on
-            recitation.
-          </div>
-          <div className="mt-1">
-            {batch.fallbackProvider && batch.fallbackModel ? (
-              <>Retry with fallback model ({batch.fallbackModel})?</>
-            ) : (
-              <>Set a fallback model above first, then retry.</>
-            )}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void retryFailedWithFallback()}
-              disabled={retryBusy || !batch.fallbackProvider || !batch.fallbackModel}
-              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
-            >
-              {retryBusy ? 'Retrying…' : 'Retry with fallback'}
-            </button>
-            {retryToast && <span className="self-center text-xs">{retryToast}</span>}
-          </div>
-        </div>
-      )}
-
-      {needsFallbackCount > 0 && batch.recitationPolicy === 'ASK' && (
-        <div className="sticky top-0 z-10 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
-          <div className="font-medium">
-            {needsFallbackCount} item{needsFallbackCount === 1 ? '' : 's'} hit copyright recitation.
-          </div>
-          <div className="mt-1">
-            Use fallback model{batch.fallbackModel ? ` (${batch.fallbackModel})` : ''}?
-          </div>
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              onClick={() => applyRecitation('FALLBACK')}
-              disabled={recitationBusy}
-              className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
-            >
-              Yes, use fallback
-            </button>
-            <button
-              type="button"
-              onClick={() => applyRecitation('FAIL')}
-              disabled={recitationBusy}
-              className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-xs font-medium hover:bg-stone-100 dark:hover:bg-stone-800 disabled:opacity-60"
-            >
-              No, mark them failed
-            </button>
-          </div>
-        </div>
-      )}
+      <RecitationBanner
+        batch={batch}
+        needsFallbackCount={needsFallbackCount}
+        recitationFailedCount={recitationFailedCount}
+        onEditFallback={openFallbackEditor}
+      />
 
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0 space-y-2">
@@ -875,7 +776,7 @@ export function ImportBatchPage() {
         })}
         <label
           className="ml-auto flex items-center gap-1.5 text-xs text-stone-600 dark:text-stone-400"
-          title="Automatically save recipes whose OCR result is unambiguous: a clear title, at least 3 ingredients and a step, nothing the parser couldn't read, and not flagged as a partial page. A page with several clean recipes saves each one; anything unsure stays for review. You can Undo, or turn this off."
+          title="Automatically save recipes whose OCR result is unambiguous: a clear title, at least 3 ingredients and a step, nothing the parser couldn't read, and not flagged as a partial page. Runs on this device as pages finish processing (recipes are saved locally first, then synced). A page with several clean recipes saves each one; anything unsure stays for review. You can Undo, or turn this off."
         >
           <input
             type="checkbox"

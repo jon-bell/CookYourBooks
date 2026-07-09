@@ -10,6 +10,9 @@ class ViewController: CAPBridgeViewController {
         // ingest it. App-local plugins aren't in capacitor.config.json's
         // auto-register list, so register the instance explicitly here.
         bridge?.registerPluginInstance(CybFilePlugin())
+        // CybVolumeButton turns the hardware volume buttons into a camera
+        // shutter while the in-app scanner is open (see CybVolumeButtonPlugin).
+        bridge?.registerPluginInstance(CybVolumeButtonPlugin())
         // Edge-swipe back/forward navigates the WKWebView back-forward list,
         // which includes SPA pushState entries — React Router receives the
         // resulting popstate (and the web layer's scroll restoration treats
