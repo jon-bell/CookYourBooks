@@ -1,4 +1,5 @@
 import { pushImportBatchGraph } from '../local/sync.js';
+import { resolveImportFallback } from '../settings/fallbackPrefs.js';
 import { supabase } from '../supabase.js';
 
 // Typed wrappers around the user-facing bulk OCR RPCs. Anything that
@@ -417,14 +418,21 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
     getUserOcrPrefs().catch(() => null),
     listOcrKeys().catch(() => [] as OcrKeySummary[]),
   ]);
+  // Own-source config carries the user's localStorage "Fallback model"
+  // setting; only the household branch below overrides with its own. Kept
+  // here (not at call sites) so every caller — including Re-OCR — gets the
+  // fallback (previously three call sites forgot to merge it, so a
+  // recitation refusal on an own-key batch dead-ended at "Fallback model
+  // not configured").
+  const ownFallback = resolveImportFallback();
   const hasOwnKeyForPrefs = prefs != null && ownKeys.some((k) => k.provider === prefs.provider);
   if (prefs && hasOwnKeyForPrefs) {
     return {
       provider: prefs.provider,
       model: prefs.model,
       prompt: prefs.prompt,
-      fallbackProvider: null,
-      fallbackModel: null,
+      fallbackProvider: ownFallback.fallbackProvider,
+      fallbackModel: ownFallback.fallbackModel,
       source: 'own',
       keyOwnerId: null,
     };
@@ -450,8 +458,8 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
       provider: prefs.provider,
       model: prefs.model,
       prompt: prefs.prompt,
-      fallbackProvider: null,
-      fallbackModel: null,
+      fallbackProvider: ownFallback.fallbackProvider,
+      fallbackModel: ownFallback.fallbackModel,
       source: 'own',
       keyOwnerId: null,
     };
@@ -464,8 +472,8 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
       provider,
       model: '',
       prompt: null,
-      fallbackProvider: null,
-      fallbackModel: null,
+      fallbackProvider: ownFallback.fallbackProvider,
+      fallbackModel: ownFallback.fallbackModel,
       source: 'own',
       keyOwnerId: null,
     };
