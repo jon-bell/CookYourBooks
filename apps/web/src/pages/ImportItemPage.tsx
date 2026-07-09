@@ -1,5 +1,4 @@
 import {
-  createCookbook,
   exact,
   formatQuantity,
   type Ingredient,
@@ -10,7 +9,6 @@ import {
   type ParsedRecipeDraft,
   parseIngredientLine,
   type Quantity,
-  type RecipeCollection,
   Units,
   vague,
 } from '@cookyourbooks/domain';
@@ -22,7 +20,6 @@ import { PinchPanImage } from '../components/PinchPanImage.js';
 import {
   useCollection,
   useCollectionPickerOptions,
-  useSaveCollection,
   useSaveRecipe,
 } from '../data/queries.js';
 import {
@@ -33,7 +30,7 @@ import {
   setImportItemToc,
 } from '../import/api.js';
 import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { CollectionPicker } from '../import/CollectionPicker.js';
 import { deleteOcrStorage } from '../import/deleteStorage.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import { NotesReviewPanel } from '../import/NotesReviewPanel.js';
@@ -2047,78 +2044,12 @@ function CookbookField({
   loading?: boolean;
   matchedExistingTitle?: string;
 }) {
-  const saveCollection = useSaveCollection();
-  const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState('');
-  const [author, setAuthor] = useState('');
-  const [error, setError] = useState<string | undefined>();
-
-  if (creating) {
-    return (
-      <div className="space-y-2 rounded border border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 p-2">
-        <input
-          autoFocus
-          placeholder="Cookbook title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-        />
-        <input
-          placeholder="Author (optional)"
-          value={author}
-          onChange={(e) => setAuthor(e.target.value)}
-          className="w-full rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-sm"
-        />
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={async () => {
-              const t = title.trim();
-              if (!t) return;
-              const cookbook: RecipeCollection = createCookbook({
-                title: t,
-                author: author.trim() || undefined,
-              });
-              try {
-                await saveCollection.mutateAsync(cookbook);
-                onChange(cookbook.id);
-                setCreating(false);
-                setTitle('');
-                setAuthor('');
-                setError(undefined);
-              } catch (err) {
-                setError((err as Error).message);
-              }
-            }}
-            disabled={!title.trim() || saveCollection.isPending}
-            className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-50"
-          >
-            {saveCollection.isPending ? 'Creating…' : 'Create'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setCreating(false);
-              setTitle('');
-              setAuthor('');
-            }}
-            className="rounded-md px-3 py-1 text-xs text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100"
-          >
-            Cancel
-          </button>
-        </div>
-        {error && <p className="text-xs text-red-700 dark:text-red-300">{error}</p>}
-      </div>
-    );
-  }
-
   return (
     <>
-      <CookbookCombobox
+      <CollectionPicker
         options={options}
         value={value}
         onChange={onChange}
-        onCreateNew={() => setCreating(true)}
         loading={loading}
         matchedExistingTitle={matchedExistingTitle}
       />

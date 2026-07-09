@@ -16,7 +16,7 @@ import {
   setImportItemToc,
   setRecitationPolicy,
 } from '../import/api.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { CollectionPicker } from '../import/CollectionPicker.js';
 import { deleteOcrStorage } from '../import/deleteStorage.js';
 import { ImportThumb } from '../import/ImportThumb.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
@@ -719,7 +719,7 @@ export function ImportBatchPage() {
           <div className="flex flex-wrap items-center gap-2 text-sm text-stone-600 dark:text-stone-400">
             <span className="text-sm">Target cookbook:</span>
             <div className="min-w-[18rem]">
-              <CookbookCombobox
+              <CollectionPicker
                 options={pickerOptions}
                 value={batch.targetCollectionId ?? ''}
                 onChange={(id) =>

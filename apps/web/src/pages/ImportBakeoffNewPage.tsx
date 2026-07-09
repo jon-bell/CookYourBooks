@@ -6,7 +6,7 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
 import { kickOcr, seedBakeoffBatch } from '../import/api.js';
 import { BakeoffVariantEditor, useBakeoffVariantState } from '../import/BakeoffVariantEditor.js';
-import { CookbookCombobox } from '../import/CookbookCombobox.js';
+import { CollectionPicker } from '../import/CollectionPicker.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
 import { useOcrKeys } from '../import/queries.js';
 import { uploadBatch, type UploadProgress } from '../import/uploadBatch.js';
@@ -202,7 +202,7 @@ export function ImportBakeoffNewPage() {
               />
             </Field>
             <Field label="Target cookbook">
-              <CookbookCombobox
+              <CollectionPicker
                 options={pickerOptions}
                 value={targetCollectionId}
                 onChange={setTargetCollectionId}
