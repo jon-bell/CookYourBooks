@@ -145,13 +145,13 @@ export function CollectionCoverDialog({
         className="flex max-h-[90vh] w-full max-w-2xl flex-col gap-4 overflow-hidden rounded-lg bg-white dark:bg-stone-900 p-5 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="collection-cover-title" className="text-lg font-semibold">
+        <h2 id="collection-cover-title" className="shrink-0 text-lg font-semibold">
           Generate a cover for “{collectionTitle}”
         </h2>
 
         <div
           role="tablist"
-          className="inline-flex self-start overflow-hidden rounded-md border border-stone-300 dark:border-stone-600 text-sm"
+          className="inline-flex shrink-0 self-start overflow-hidden rounded-md border border-stone-300 dark:border-stone-600 text-sm"
         >
           {(['collage', 'ai'] as const).map((m) => (
             <button
@@ -270,9 +270,9 @@ export function CollectionCoverDialog({
           </div>
         )}
 
-        {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
+        {error && <p className="shrink-0 text-sm text-red-700 dark:text-red-300">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex shrink-0 justify-end gap-2 pt-1">
           <button
             onClick={onClose}
             disabled={busy}
