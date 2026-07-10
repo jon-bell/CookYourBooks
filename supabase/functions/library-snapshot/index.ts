@@ -9,14 +9,17 @@
 // browser land it in two stages so the grid renders before the recipe
 // bodies arrive:
 //
-//   POST { stage: 'meta',   scope, householdId? }
+//   POST { stage: 'meta',   scope, householdId?, coMemberIds? }
 //     → { collections, recipes }  — recipe CARDS (folded JSON stripped)
-//   POST { stage: 'bodies', scope, householdId? }
+//   POST { stage: 'bodies', scope, householdId?, coMemberIds? }
 //     → { recipeBodies }  — id + ingredients/instructions JSON per recipe
 //
 // `scope: 'own'` returns the caller's library (owner_id = me).
 // `scope: 'household'` returns co-members' shared content (household_id =
-// my claim AND owner_id <> me) — same filter as pullHouseholdSharedContent.
+// my claim AND owner_id = ANY(coMemberIds)) — same filter as
+// pullHouseholdSharedContent. `coMemberIds` (the sharing co-members) makes the
+// owner filter an indexable equality; without it we fall back to `owner_id <>
+// me`, which seq-scans. RLS enforces visibility regardless.
 //
 // SECURITY: unlike import-worker (service role, woken by pg_net), this is
 // called from the browser and reads under the CALLER'S RLS. We validate
@@ -81,12 +84,24 @@ const SCHEMA_VERSION = 1;
 type Scope = 'own' | 'household';
 
 /** Apply the scope filter to a query builder, mirroring the sync engine. */
-function scopeFilter(q: any, scope: Scope, userId: string, householdId: string | null): any {
+function scopeFilter(
+  q: any,
+  scope: Scope,
+  userId: string,
+  householdId: string | null,
+  coMemberIds: string[] | null,
+): any {
   if (scope === 'household') {
-    // RLS already narrows to (own OR household-claim); excluding our own
-    // rows leaves exactly the co-members' shared content. Filtering on the
-    // indexed household_id keeps it precise + fast.
-    let out = q.neq('owner_id', userId);
+    // Prefer filtering on the co-member ids (`owner_id = ANY`): a btree can seek
+    // an equality but not `<>`, so `owner_id <> me` seq-scanned the caller's
+    // entire library to return zero rows when they own the whole household's
+    // content. Fall back to the anti-filter for older clients that don't send
+    // ids. RLS (own OR household-claim) is the real gate either way; the
+    // indexed household_id keeps it precise.
+    let out =
+      coMemberIds && coMemberIds.length > 0
+        ? q.in('owner_id', coMemberIds)
+        : q.neq('owner_id', userId);
     if (householdId) out = out.eq('household_id', householdId);
     return out;
   }
@@ -100,6 +115,7 @@ async function fetchAll(
   scope: Scope,
   userId: string,
   householdId: string | null,
+  coMemberIds: string[] | null,
   columns = '*',
 ): Promise<Row[]> {
   const out: Row[] = [];
@@ -111,6 +127,7 @@ async function fetchAll(
       scope,
       userId,
       householdId,
+      coMemberIds,
     ).order(idCol, { ascending: true }).limit(PAGE_SIZE);
     if (afterId) q = q.gt(idCol, afterId);
     const { data, error } = await q;
@@ -178,6 +195,9 @@ async function handle(req: Request): Promise<Response> {
   const stage = body.stage === 'bodies' ? 'bodies' : 'meta';
   const scope: Scope = body.scope === 'household' ? 'household' : 'own';
   const householdId = typeof body.householdId === 'string' ? body.householdId : null;
+  const coMemberIds = Array.isArray(body.coMemberIds)
+    ? (body.coMemberIds as unknown[]).filter((x): x is string => typeof x === 'string')
+    : null;
 
   // Run all reads under the caller's JWT so RLS (own / household claim)
   // enforces visibility.
@@ -189,8 +209,8 @@ async function handle(req: Request): Promise<Response> {
   let envelope: Record<string, unknown>;
   if (stage === 'meta') {
     const [collections, recipes] = await Promise.all([
-      fetchAll(client, 'recipe_collections', scope, auth.userId, householdId),
-      fetchAll(client, 'recipes', scope, auth.userId, householdId),
+      fetchAll(client, 'recipe_collections', scope, auth.userId, householdId, coMemberIds),
+      fetchAll(client, 'recipes', scope, auth.userId, householdId, coMemberIds),
     ]);
     // Strip the folded JSON so the meta stage stays a light recipe card and
     // the grid renders before bodies stream in.
@@ -211,6 +231,7 @@ async function handle(req: Request): Promise<Response> {
       scope,
       auth.userId,
       householdId,
+      coMemberIds,
       'id,ingredients,instructions',
     );
     envelope = {
