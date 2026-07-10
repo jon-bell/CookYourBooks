@@ -17,7 +17,13 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
-import { useCollection, useCollectionPickerOptions, useSaveRecipe } from '../data/queries.js';
+import {
+  useCollection,
+  useCollectionPickerOptions,
+  useDeleteRecipe,
+  useRecipeSummaries,
+  useSaveRecipe,
+} from '../data/queries.js';
 import { reportError } from '../sentry.js';
 import {
   getEffectiveOcrConfig,
@@ -45,7 +51,7 @@ import {
 import { RecitationBanner } from '../import/RecitationBanner.js';
 import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
 import { TocReviewPanel } from '../import/TocReviewPanel.js';
-import type { CollectionPickerOption } from '../local/repositories.js';
+import type { CollectionPickerOption, RecipeSummary } from '../local/repositories.js';
 import { useSync } from '../local/SyncProvider.js';
 
 export function ImportItemPage() {
@@ -118,6 +124,22 @@ export function ImportItemPage() {
   const drafts = useMemo<ParsedRecipeDraft[]>(() => item?.parsedDrafts ?? [], [item]);
   const currentDraft: ParsedRecipeDraft | undefined =
     draftPatches[activeDraft] ?? drafts[activeDraft];
+
+  // Recipes already committed from this page. A draft is consumed into
+  // createdRecipeIds on "Save as recipe", so these no longer appear as
+  // drafts — surface them here so they can be re-edited or deleted without
+  // hunting through the library. getRecipeSummaries filters deleted rows, so
+  // anything removed elsewhere silently drops out (and stale ids are pruned
+  // on delete below).
+  const createdRecipeIds = useMemo<string[]>(() => item?.createdRecipeIds ?? [], [item]);
+  const savedSummariesQuery = useRecipeSummaries(createdRecipeIds);
+  const savedSummaries = useMemo<RecipeSummary[]>(
+    () =>
+      createdRecipeIds
+        .map((id) => savedSummariesQuery.data?.get(id))
+        .filter((s): s is RecipeSummary => !!s),
+    [createdRecipeIds, savedSummariesQuery.data],
+  );
 
   // Prev / next neighbour in the batch by page_index — used by the
   // keyboard shortcuts and the nav banner. Intentionally NOT filtered
@@ -941,11 +963,11 @@ export function ImportItemPage() {
                 <p className="text-sm text-red-700 dark:text-red-300">
                   OCR failed{item.lastError ? `: ${item.lastError}` : '.'} Use Re-OCR to try again.
                 </p>
-              ) : (
+              ) : savedSummaries.length === 0 ? (
                 <p className="text-sm text-stone-600 dark:text-stone-400">
                   No drafts yet — OCR results will appear here.
                 </p>
-              )}
+              ) : null}
 
               {plannedRecipe && targetCollection && (
                 <div className="rounded-md border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 px-3 py-2 text-xs text-indigo-900 dark:text-indigo-200">
@@ -1031,6 +1053,12 @@ export function ImportItemPage() {
                   {actionError ?? (saveRecipe.error as Error).message}
                 </div>
               )}
+
+              <SavedRecipesSection
+                summaries={savedSummaries}
+                itemId={item.id}
+                createdRecipeIds={createdRecipeIds}
+              />
             </>
           )}
         </div>
@@ -2201,5 +2229,108 @@ function ItemDeleteStorageButton({ itemId, hasImage }: { itemId: string; hasImag
       </button>
       {error && <span className="text-xs text-red-700 dark:text-red-300">{error}</span>}
     </>
+  );
+}
+
+/**
+ * Recipes already committed from this page (item.createdRecipeIds, resolved
+ * to titles + collections by the parent). Lets the user jump to a saved
+ * recipe, open it in the full editor, or permanently delete it — the affordances
+ * that vanished once its draft was consumed on save. Self-hides when empty.
+ */
+function SavedRecipesSection({
+  summaries,
+  itemId,
+  createdRecipeIds,
+}: {
+  summaries: readonly RecipeSummary[];
+  itemId: string;
+  createdRecipeIds: readonly string[];
+}) {
+  if (summaries.length === 0) return null;
+  return (
+    <div className="space-y-2 border-t border-stone-200 dark:border-stone-700 pt-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
+        Recipes saved from this page
+      </h3>
+      <ul data-testid="saved-recipes" className="space-y-1">
+        {summaries.map((s) => (
+          <SavedRecipeRow
+            key={s.id}
+            summary={s}
+            itemId={itemId}
+            createdRecipeIds={createdRecipeIds}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * One saved-recipe row: view link, Edit (existing recipe editor), Delete.
+ * Delete binds to this recipe's own collection (recipes from one page can be
+ * filed to different cookbooks), so useDeleteRecipe is called per row rather
+ * than in a loop in the parent. On delete we also prune the id from the item's
+ * createdRecipeIds so the page + the batch board's recipe count stay honest.
+ */
+function SavedRecipeRow({
+  summary,
+  itemId,
+  createdRecipeIds,
+}: {
+  summary: RecipeSummary;
+  itemId: string;
+  createdRecipeIds: readonly string[];
+}) {
+  const deleteRecipe = useDeleteRecipe(summary.collectionId);
+  const updateItem = useUpdateImportItem();
+  const [error, setError] = useState<string | null>(null);
+  const busy = deleteRecipe.isPending || updateItem.isPending;
+
+  async function onDelete() {
+    if (
+      !confirm(
+        `Delete "${summary.title || 'Untitled recipe'}"? This permanently removes the recipe from your library.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    try {
+      await deleteRecipe.mutateAsync(summary.id);
+      await updateItem.mutateAsync({
+        id: itemId,
+        patch: { createdRecipeIds: createdRecipeIds.filter((x) => x !== summary.id) },
+      });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-2 rounded border border-stone-200 dark:border-stone-700 px-2 py-1.5 text-sm">
+      <Link
+        to={`/collections/${summary.collectionId}/recipes/${summary.id}`}
+        className="min-w-0 flex-1 truncate font-medium text-stone-900 dark:text-stone-100 hover:underline"
+      >
+        {summary.title || 'Untitled recipe'}
+      </Link>
+      <Link
+        to={`/collections/${summary.collectionId}/recipes/${summary.id}/edit`}
+        className="rounded border border-stone-300 dark:border-stone-600 px-2 py-1 text-xs hover:bg-stone-100 dark:hover:bg-stone-800"
+      >
+        Edit
+      </Link>
+      <button
+        type="button"
+        onClick={() => void onDelete()}
+        disabled={busy}
+        className="rounded px-2 py-1 text-xs text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-60"
+      >
+        {busy ? 'Deleting…' : 'Delete'}
+      </button>
+      {error && <span className="w-full text-xs text-red-700 dark:text-red-300">{error}</span>}
+    </li>
   );
 }
