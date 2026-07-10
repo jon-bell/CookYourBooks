@@ -70,7 +70,10 @@ export function App() {
   usePullToRefresh();
   return (
     <MobileNavProvider>
-      <div className="min-h-full flex flex-col">
+      {/* min-h-dvh (not min-h-full): the layout minimum tracks the dynamic
+          viewport after rotation/keyboard, independent of any body-height
+          adjustments the Capacitor Keyboard plugin makes. */}
+      <div className="min-h-dvh flex flex-col">
         <ShareIntentListener />
         <a
           href="#main"

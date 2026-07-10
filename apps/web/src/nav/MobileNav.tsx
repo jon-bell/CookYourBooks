@@ -5,6 +5,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider.js';
 import { SAFE_TOP } from '../components/mobileSafeArea.js';
 import { SyncBadge } from '../components/SyncBadge.js';
+import { useScrollLock } from '../components/useScrollLock.js';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
 import { ThemePicker } from '../theme/ThemePicker.js';
 import { ACCOUNT_NAV, ADMIN_NAV, PRIMARY_NAV } from './navItems.js';
@@ -51,6 +52,9 @@ function MobileNavSheet({ open, setOpen }: { open: boolean; setOpen: (v: boolean
   const location = useLocation();
   const closeRef = useRef<HTMLButtonElement>(null);
 
+  // The page behind the sheet must not scroll on touch-drag (iOS).
+  useScrollLock(open);
+
   // Any route change dismisses the sheet (covers link taps + keyboard chords).
   useEffect(() => {
     setOpen(false);
@@ -79,7 +83,7 @@ function MobileNavSheet({ open, setOpen }: { open: boolean; setOpen: (v: boolean
         id="mobile-nav-sheet"
         aria-label="Mobile"
         onClick={(e) => e.stopPropagation()}
-        className={`absolute inset-x-0 top-0 max-h-[90dvh] overflow-y-auto border-b border-stone-200 bg-white px-4 pb-4 shadow-lg dark:border-stone-700 dark:bg-stone-900 ${SAFE_TOP}`}
+        className={`absolute inset-x-0 top-0 max-h-[90dvh] overflow-y-auto overscroll-contain border-b border-stone-200 bg-white px-4 pb-4 shadow-lg dark:border-stone-700 dark:bg-stone-900 ${SAFE_TOP}`}
       >
         <div className="flex items-center justify-between py-2">
           <span className="text-lg font-semibold tracking-tight">CookYourBooks</span>
