@@ -11,6 +11,9 @@ export type RecitationPolicy = 'FALLBACK' | 'FAIL';
 
 export interface OcrKeySummary {
   provider: string;
+  /** Named endpoint slug ('default' for the primary key; 'openrouter' etc.
+   *  for extra OpenAI-compatible endpoints, each with its own key). */
+  endpoint: string;
   key_fingerprint: string;
   base_url: string | null;
   rotated_at: string;
@@ -20,17 +23,22 @@ export async function setOcrKey(
   provider: OcrProvider,
   rawKey: string,
   baseUrl?: string,
+  endpoint = 'default',
 ): Promise<void> {
   const { error } = await supabase.rpc('ocr_key_set', {
     p_provider: provider,
     p_raw_key: rawKey,
     p_base_url: baseUrl ?? undefined,
+    p_endpoint: endpoint,
   });
   if (error) throw error;
 }
 
-export async function deleteOcrKey(provider: OcrProvider): Promise<void> {
-  const { error } = await supabase.rpc('ocr_key_delete', { p_provider: provider });
+export async function deleteOcrKey(provider: OcrProvider, endpoint = 'default'): Promise<void> {
+  const { error } = await supabase.rpc('ocr_key_delete', {
+    p_provider: provider,
+    p_endpoint: endpoint,
+  });
   if (error) throw error;
 }
 
@@ -89,8 +97,21 @@ export async function resetImportItem(
   itemId: string,
   config?: Pick<
     EffectiveOcrConfig,
-    'provider' | 'model' | 'prompt' | 'fallbackProvider' | 'fallbackModel' | 'keyOwnerId'
+    | 'provider'
+    | 'model'
+    | 'endpoint'
+    | 'prompt'
+    | 'fallbackProvider'
+    | 'fallbackModel'
+    | 'fallbackEndpoint'
+    | 'keyOwnerId'
   >,
+  opts?: {
+    /** Reset the item with needs_fallback=true so the worker runs it against
+     *  the batch's FALLBACK config — the per-item "retry with the model I
+     *  just picked" path (write the pick via setBatchFallback first). */
+    useFallback?: boolean;
+  },
 ): Promise<void> {
   const { error } = await supabase.rpc('import_reset_item', {
     p_item_id: itemId,
@@ -98,12 +119,15 @@ export async function resetImportItem(
       ? {
           p_provider: config.provider,
           p_model: config.model,
+          p_endpoint: config.endpoint ?? undefined,
           p_prompt: config.prompt ?? undefined,
           p_fallback_provider: config.fallbackProvider ?? undefined,
           p_fallback_model: config.fallbackModel ?? undefined,
+          p_fallback_endpoint: config.fallbackEndpoint ?? undefined,
           p_key_owner_id: config.keyOwnerId ?? undefined,
         }
       : {}),
+    ...(opts?.useFallback ? { p_use_fallback: true } : {}),
   });
   if (error) throw error;
 }
@@ -395,9 +419,12 @@ export async function setHouseholdOcrConfig(params: {
 export interface EffectiveOcrConfig {
   provider: OcrProvider;
   model: string;
+  /** Named endpoint the default leg runs against; null = 'default'. */
+  endpoint: string | null;
   prompt: string | null;
   fallbackProvider: OcrProvider | null;
   fallbackModel: string | null;
+  fallbackEndpoint: string | null;
   /** Where the config came from. 'household' drives the onboarding shortcut. */
   source: 'own' | 'household';
   /** For household source: the member whose key/account is borrowed. */
@@ -430,9 +457,11 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
     return {
       provider: prefs.provider,
       model: prefs.model,
+      endpoint: null,
       prompt: prefs.prompt,
       fallbackProvider: ownFallback.fallbackProvider,
       fallbackModel: ownFallback.fallbackModel,
+      fallbackEndpoint: ownFallback.fallbackEndpoint,
       source: 'own',
       keyOwnerId: null,
     };
@@ -443,9 +472,12 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
     return {
       provider: household.provider,
       model: household.model,
+      // Household sharing is deliberately single-endpoint ('default').
+      endpoint: null,
       prompt: household.prompt,
       fallbackProvider: household.fallback_provider,
       fallbackModel: household.fallback_model,
+      fallbackEndpoint: null,
       source: 'household',
       keyOwnerId: household.key_owner_id,
     };
@@ -457,9 +489,11 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
     return {
       provider: prefs.provider,
       model: prefs.model,
+      endpoint: null,
       prompt: prefs.prompt,
       fallbackProvider: ownFallback.fallbackProvider,
       fallbackModel: ownFallback.fallbackModel,
+      fallbackEndpoint: ownFallback.fallbackEndpoint,
       source: 'own',
       keyOwnerId: null,
     };
@@ -471,9 +505,11 @@ export async function getEffectiveOcrConfig(): Promise<EffectiveOcrConfig | null
     return {
       provider,
       model: '',
+      endpoint: null,
       prompt: null,
       fallbackProvider: ownFallback.fallbackProvider,
       fallbackModel: ownFallback.fallbackModel,
+      fallbackEndpoint: ownFallback.fallbackEndpoint,
       source: 'own',
       keyOwnerId: null,
     };
@@ -542,6 +578,7 @@ export async function setBatchFallback(
   batchId: string,
   provider: OcrProvider | null,
   model: string | null,
+  endpoint?: string | null,
 ): Promise<void> {
   const { error } = await supabase.rpc('import_set_batch_fallback', {
     p_batch_id: batchId,
@@ -549,13 +586,30 @@ export async function setBatchFallback(
     // generated type alias erroneously narrows these to required text.
     p_provider: provider as unknown as string,
     p_model: model as unknown as string,
+    p_endpoint: endpoint ?? undefined,
   });
   if (error) throw error;
 }
 
-export async function retryRecitationFailures(batchId: string): Promise<number> {
+/**
+ * Retry every recitation/content-filter casualty in the batch against the
+ * fallback config. `override` is the "retry with the model I picked" path:
+ * it overwrites the batch fallback (provider/endpoint/model) before the
+ * reset; the bare call requires a fallback to already be configured.
+ */
+export async function retryRecitationFailures(
+  batchId: string,
+  override?: { provider: OcrProvider; model: string; endpoint: string | null },
+): Promise<number> {
   const { data, error } = await supabase.rpc('import_retry_recitation_failures', {
     p_batch_id: batchId,
+    ...(override
+      ? {
+          p_fallback_provider: override.provider,
+          p_fallback_model: override.model,
+          p_fallback_endpoint: override.endpoint ?? undefined,
+        }
+      : {}),
   });
   if (error) throw error;
   return typeof data === 'number' ? data : 0;
@@ -573,7 +627,14 @@ export async function retryFailures(
   batchId: string,
   config?: Pick<
     EffectiveOcrConfig,
-    'provider' | 'model' | 'prompt' | 'fallbackProvider' | 'fallbackModel' | 'keyOwnerId'
+    | 'provider'
+    | 'model'
+    | 'endpoint'
+    | 'prompt'
+    | 'fallbackProvider'
+    | 'fallbackModel'
+    | 'fallbackEndpoint'
+    | 'keyOwnerId'
   >,
 ): Promise<number> {
   const { data, error } = await supabase.rpc('import_retry_failures', {
@@ -582,9 +643,11 @@ export async function retryFailures(
       ? {
           p_provider: config.provider,
           p_model: config.model,
+          p_endpoint: config.endpoint ?? undefined,
           p_prompt: config.prompt ?? undefined,
           p_fallback_provider: config.fallbackProvider ?? undefined,
           p_fallback_model: config.fallbackModel ?? undefined,
+          p_fallback_endpoint: config.fallbackEndpoint ?? undefined,
           p_key_owner_id: config.keyOwnerId ?? undefined,
         }
       : {}),
@@ -618,9 +681,57 @@ export async function listOcrKeys(): Promise<OcrKeySummary[]> {
   // safe-to-display fields explicitly rather than using `select('*')`.
   const { data, error } = await supabase
     .from('user_ocr_keys')
-    .select('provider, key_fingerprint, base_url, rotated_at');
+    .select('provider, endpoint, key_fingerprint, base_url, rotated_at');
   if (error) throw error;
   return data ?? [];
+}
+
+// ---------- saved models (the retry picker's dropdown) ----------
+
+export interface SavedOcrModel {
+  id: string;
+  provider: OcrProvider;
+  /** Named endpoint slug; 'default' = the provider's primary key. */
+  endpoint: string;
+  model: string;
+  label: string | null;
+  sort_index: number;
+}
+
+export { formatSavedModel } from './savedModelFormat.js';
+
+export async function listSavedOcrModels(): Promise<SavedOcrModel[]> {
+  const { data, error } = await supabase
+    .from('user_ocr_models')
+    .select('id, provider, endpoint, model, label, sort_index')
+    .order('sort_index', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as SavedOcrModel[];
+}
+
+export async function addSavedOcrModel(input: {
+  provider: OcrProvider;
+  endpoint: string;
+  model: string;
+  label?: string;
+}): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser();
+  const ownerId = userData.user?.id;
+  if (!ownerId) throw new Error('Sign in required');
+  const { error } = await supabase.from('user_ocr_models').insert({
+    owner_id: ownerId,
+    provider: input.provider,
+    endpoint: input.endpoint,
+    model: input.model.trim(),
+    label: input.label?.trim() || null,
+  });
+  if (error) throw error;
+}
+
+export async function deleteSavedOcrModel(id: string): Promise<void> {
+  const { error } = await supabase.from('user_ocr_models').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // ---------- instruction rewrites ----------

@@ -2,8 +2,8 @@
 // apps/mobile/ios/App/App/CybVolumeButtonPlugin.swift), mirroring the
 // `CybFile` bridge in sharedFile.ts. The plugin observes hardware
 // volume-button presses (via AVAudioSession output-volume KVO) while the
-// camera is open and emits a `volumePressed` event so the shutter can fire
-// without touching the screen.
+// camera is open and emits a `volumePressed` event — carrying the press
+// direction — so the shutter can fire without touching the screen.
 //
 // Feature-detected: returns a no-op unsubscribe on the web, on Android, and on
 // any native build where the plugin isn't registered — so callers can wire it
@@ -11,6 +11,14 @@
 
 interface PluginListenerHandle {
   remove: () => void | Promise<void>;
+}
+
+export type VolumeDirection = 'up' | 'down';
+
+/** Event payload from the native plugin. `direction` is absent on a native
+ *  binary older than the direction-aware plugin — see subscribeVolumeButton. */
+interface VolumePressedEvent {
+  direction?: VolumeDirection;
 }
 
 interface VolumeButtonPlugin {
@@ -24,7 +32,7 @@ interface VolumeButtonPlugin {
   // thenable — see subscribeVolumeButton.
   addListener: (
     eventName: 'volumePressed',
-    listener: () => void,
+    listener: (event: VolumePressedEvent) => void,
   ) => PluginListenerHandle | Promise<PluginListenerHandle>;
 }
 
@@ -52,17 +60,29 @@ function removeHandle(handle: PluginListenerHandle | undefined): void {
     .catch(() => {});
 }
 
+/** True when the native volume-button plugin is present (used to gate the
+ *  hardware-shutter section of the scanner tutorial). */
+export function isVolumeButtonAvailable(): boolean {
+  return volumePlugin() !== undefined;
+}
+
 /**
- * Subscribe to hardware volume-button presses. Returns an unsubscribe function
- * that stops the native observer. No-op (returns a no-op cleanup) when the
- * native plugin is unavailable.
+ * Subscribe to hardware volume-button presses. `onPress` receives the press
+ * direction; an event from an old native binary (no direction field) defaults
+ * to `'down'` — the plain shutter, i.e. exactly the pre-direction behavior.
+ * Returns an unsubscribe function that stops the native observer. No-op
+ * (returns a no-op cleanup) when the native plugin is unavailable.
  */
-export function subscribeVolumeButton(onPress: () => void): () => void {
+export function subscribeVolumeButton(onPress: (direction: VolumeDirection) => void): () => void {
   const plugin = volumePlugin();
   if (!plugin) return () => {};
 
   let removed = false;
   let handle: PluginListenerHandle | undefined;
+
+  // Defensive about the payload: an old native binary emits no data at all.
+  const listener = (event?: VolumePressedEvent) =>
+    onPress(event?.direction === 'up' ? 'up' : 'down');
 
   void plugin.startListening().catch(() => {});
   // `addListener` may return the handle synchronously (legacy
@@ -70,7 +90,7 @@ export function subscribeVolumeButton(onPress: () => void): () => void {
   // `Promise.resolve` — calling `.then` on the bare handle threw
   // "addListener(...).then is not a function" and crashed the scanner the
   // instant the camera went live (CYB-CAPACITOR-1Q).
-  void Promise.resolve(plugin.addListener('volumePressed', onPress))
+  void Promise.resolve(plugin.addListener('volumePressed', listener))
     .then((h) => {
       handle = h;
       // If we were torn down before the listener resolved, remove it now.

@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { getSignedImportUrl } from '../import/ImportThumb.js';
 import type { ImportItem } from '../import/model.js';
 import { PinchPanImage } from './PinchPanImage.js';
+import { useScrollLock } from './useScrollLock.js';
 
 /**
  * Lightbox view of the original scanned page(s) that produced a
@@ -21,6 +22,8 @@ export function RecipeScanDialog({
   items: readonly ImportItem[];
   onClose: () => void;
 }) {
+  // The page behind the dialog must not scroll on touch-drag (iOS).
+  useScrollLock(true);
   // Flatten primary + extra storage paths per item, preserving page
   // order. Each entry also remembers which item it came from so we
   // can offer a "open in review" link per page.

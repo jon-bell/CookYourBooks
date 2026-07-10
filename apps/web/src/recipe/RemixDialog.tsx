@@ -2,6 +2,7 @@ import type { ParsedRecipeDraft, Recipe } from '@cookyourbooks/domain';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 
+import { useScrollLock } from '../components/useScrollLock.js';
 import { useCollectionPickerOptions, useSaveRecipe } from '../data/queries.js';
 import {
   cancelRemix,
@@ -53,6 +54,8 @@ export function RemixDialog({
   onClose: () => void;
   onSaved: (newRecipeId: string, destCollectionId: string) => void;
 }) {
+  // The page behind the dialog must not scroll on touch-drag (iOS).
+  useScrollLock(true);
   const qc = useQueryClient();
   const [instruction, setInstruction] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);

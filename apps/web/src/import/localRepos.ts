@@ -22,6 +22,8 @@ interface ImportBatchSqlRow {
   default_provider: string;
   fallback_model: string | null;
   fallback_provider: string | null;
+  default_endpoint: string | null;
+  fallback_endpoint: string | null;
   recitation_policy: string;
   status: string;
   total_items: number;
@@ -99,6 +101,8 @@ function rowToBatch(row: ImportBatchSqlRow): ImportBatch {
     targetCollectionId: row.target_collection_id,
     defaultModel: row.default_model,
     defaultProvider: row.default_provider === 'openai-compatible' ? 'openai-compatible' : 'gemini',
+    defaultEndpoint: row.default_endpoint ?? null,
+    fallbackEndpoint: row.fallback_endpoint ?? null,
     fallbackModel: row.fallback_model,
     fallbackProvider:
       row.fallback_provider === 'openai-compatible'
@@ -114,7 +118,6 @@ function rowToBatch(row: ImportBatchSqlRow): ImportBatch {
           : 'ASK',
     status: row.status === 'ARCHIVED' ? 'ARCHIVED' : 'OPEN',
     totalItems: row.total_items,
-    isPlanner: row.is_planner === 1,
     updatedAt: row.updated_at,
   };
 }
@@ -164,7 +167,6 @@ function rowToItem(row: ImportItemSqlRow): ImportItem {
     sourcePdfPage: row.source_pdf_page,
     assignedCollectionId: row.assigned_collection_id,
     assignedPageNumber: row.assigned_page_number,
-    assignedRecipeId: row.assigned_recipe_id,
     isToc: row.is_toc === 1,
     // is_toc wins so an existing ToC row (kind defaulted to 'RECIPE' before the
     // server backfill lands) still reads as TOC; otherwise trust `kind`.
@@ -254,8 +256,10 @@ export class LocalImportBatchRepository {
         | 'status'
         | 'defaultModel'
         | 'defaultProvider'
+        | 'defaultEndpoint'
         | 'fallbackModel'
         | 'fallbackProvider'
+        | 'fallbackEndpoint'
       >
     >,
   ): Promise<void> {
@@ -267,7 +271,8 @@ export class LocalImportBatchRepository {
     await db.exec(
       `update import_batches set
          name = ?, target_collection_id = ?, recitation_policy = ?, status = ?,
-         default_model = ?, default_provider = ?, fallback_model = ?, fallback_provider = ?,
+         default_model = ?, default_provider = ?, default_endpoint = ?,
+         fallback_model = ?, fallback_provider = ?, fallback_endpoint = ?,
          updated_at = ?
        where id = ? and owner_id = ?`,
       [
@@ -277,8 +282,10 @@ export class LocalImportBatchRepository {
         next.status,
         next.defaultModel,
         next.defaultProvider,
+        next.defaultEndpoint,
         next.fallbackModel,
         next.fallbackProvider,
+        next.fallbackEndpoint,
         ts,
         id,
         this.ownerId,
@@ -362,7 +369,6 @@ export class LocalImportItemRepository {
         ImportItem,
         | 'assignedCollectionId'
         | 'assignedPageNumber'
-        | 'assignedRecipeId'
         | 'kind'
         | 'status'
         | 'createdRecipeIds'
@@ -377,14 +383,13 @@ export class LocalImportItemRepository {
     const ts = Date.now();
     await db.exec(
       `update import_items set
-         assigned_collection_id = ?, assigned_page_number = ?, assigned_recipe_id = ?,
+         assigned_collection_id = ?, assigned_page_number = ?,
          is_toc = ?, kind = ?, status = ?, parsed_drafts_json = ?, created_recipe_ids = ?,
          updated_at = ?
        where id = ? and owner_id = ?`,
       [
         next.assignedCollectionId,
         next.assignedPageNumber,
-        next.assignedRecipeId,
         next.kind === 'TOC' ? 1 : 0,
         next.kind,
         next.status,
@@ -424,7 +429,7 @@ export class LocalImportItemRepository {
         item.sourcePdfPage,
         item.assignedCollectionId,
         item.assignedPageNumber,
-        item.assignedRecipeId,
+        null,
         item.kind === 'TOC' ? 1 : 0,
         item.kind,
         item.status,
@@ -445,129 +450,6 @@ export class LocalImportItemRepository {
   }
 }
 
-/**
- * Locate the user's active Speed Importer session for a given cookbook,
- * if any. A session is the most recently-updated planner batch (status
- * OPEN, deleted=0) that still has at least one item in AWAITING_GROUPING
- * — i.e. the user has captured something but not yet hit "Start OCR".
- *
- * Returning `undefined` is the "no session yet, create one on first
- * shutter" signal for SpeedImporterPage.
- */
-export async function findOpenPlannerSession(
-  ownerId: string,
-  collectionId: string,
-): Promise<ImportBatch | undefined> {
-  const db = await getLocalDb();
-  const rows = await db.execO<ImportBatchSqlRow>(
-    `select b.*
-       from import_batches b
-      where b.owner_id = ?
-        and b.target_collection_id = ?
-        and b.is_planner = 1
-        and b.status = 'OPEN'
-        and b.deleted = 0
-        and exists (
-          select 1 from import_items i
-           where i.batch_id = b.id
-             and i.status = 'AWAITING_GROUPING'
-             and i.deleted = 0
-        )
-      order by b.updated_at desc
-      limit 1`,
-    [ownerId, collectionId],
-  );
-  const row = rows[0];
-  return row ? rowToBatch(row) : undefined;
-}
-
-/**
- * One-shot batch insert for the planner's lazy "create on first
- * shutter" path. Mirrors the inline insert in uploadBatch.ts but lets
- * the planner own the row up front so it can stash the batch id before
- * any storage upload happens.
- */
-export async function insertLocalPlannerBatch(batch: ImportBatch): Promise<void> {
-  const db = await getLocalDb();
-  await db.exec(
-    `insert into import_batches
-       (id, owner_id, name, batch_kind, source_kind, target_collection_id,
-        default_model, default_provider, fallback_model, fallback_provider,
-        recitation_policy, status, total_items, is_planner, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
-    [
-      batch.id,
-      batch.ownerId,
-      batch.name,
-      batch.batchKind,
-      batch.sourceKind,
-      batch.targetCollectionId,
-      batch.defaultModel,
-      batch.defaultProvider,
-      batch.fallbackModel,
-      batch.fallbackProvider,
-      batch.recitationPolicy,
-      batch.status,
-      batch.totalItems,
-      batch.isPlanner ? 1 : 0,
-      batch.updatedAt,
-    ],
-  );
-  await enqueue({ kind: 'import_batch_insert', entity_id: batch.id });
-}
-
-/**
- * Insert a planner-minted import_items row representing one captured
- * shot. Mirrors the inline insert in uploadBatch.ts but accepts the
- * pre-binding fields (assignedRecipeId / Collection / PageNumber) that
- * the planner sets at capture time, and unconditionally lands in
- * AWAITING_GROUPING so the worker doesn't claim the row before the
- * user has confirmed the session.
- */
-export async function insertLocalPlannerItem(item: ImportItem): Promise<void> {
-  const db = await getLocalDb();
-  await db.exec(
-    `insert into import_items
-       (id, batch_id, owner_id, page_index, storage_path, thumb_path,
-        source_pdf_path, source_pdf_page,
-        assigned_collection_id, assigned_page_number, assigned_recipe_id,
-        is_toc, kind, status, claim_expires_at, attempts, last_error,
-        parsed_drafts_json, model_used, prompt_tokens, completion_tokens,
-        cost_usd_micros, created_recipe_ids, needs_fallback,
-        extra_storage_paths, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
-    [
-      item.id,
-      item.batchId,
-      item.ownerId,
-      item.pageIndex,
-      item.storagePath,
-      item.thumbPath,
-      item.sourcePdfPath,
-      item.sourcePdfPage,
-      item.assignedCollectionId,
-      item.assignedPageNumber,
-      item.assignedRecipeId,
-      item.kind === 'TOC' ? 1 : 0,
-      item.kind,
-      item.status,
-      item.claimExpiresAt ?? 0,
-      item.attempts,
-      item.lastError,
-      null,
-      null,
-      0,
-      0,
-      0,
-      JSON.stringify(item.createdRecipeIds ?? []),
-      0,
-      JSON.stringify(item.extraStoragePaths ?? []),
-      item.updatedAt,
-    ],
-  );
-  await enqueue({ kind: 'import_item_insert', entity_id: item.id });
-}
-
 /** Insert a batch row locally — used by the new-batch wizard before
  *  the server-side row arrives via realtime. Also enqueues a push so
  *  the user-editable fields (name, target collection) reach the server.
@@ -577,9 +459,10 @@ export async function insertLocalBatch(batch: ImportBatch): Promise<void> {
   await db.exec(
     `insert into import_batches
        (id, owner_id, name, source_kind, target_collection_id,
-        default_model, default_provider, fallback_model, fallback_provider,
+        default_model, default_provider, default_endpoint, fallback_model,
+        fallback_provider, fallback_endpoint,
         recitation_policy, status, total_items, is_planner, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
     [
       batch.id,
       batch.ownerId,
@@ -588,12 +471,14 @@ export async function insertLocalBatch(batch: ImportBatch): Promise<void> {
       batch.targetCollectionId,
       batch.defaultModel,
       batch.defaultProvider,
+      batch.defaultEndpoint,
       batch.fallbackModel,
       batch.fallbackProvider,
+      batch.fallbackEndpoint,
       batch.recitationPolicy,
       batch.status,
       batch.totalItems,
-      batch.isPlanner ? 1 : 0,
+      0,
       batch.updatedAt,
     ],
   );

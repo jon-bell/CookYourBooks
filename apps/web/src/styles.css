@@ -8,6 +8,15 @@ body,
   height: 100%;
 }
 
+/* iOS: horizontal rubber-banding shows a white void beyond the document and
+   can leave the page sitting shifted. Vertical bounce must STAY enabled —
+   the native pull-to-refresh (usePullToRefresh) hangs a UIRefreshControl
+   off the scroll-view bounce. */
+html,
+body {
+  overscroll-behavior-x: none;
+}
+
 /* Form fields inherit the browser default (white) in both modes. The
    per-component classNames flip borders for dark mode but leave the
    field's interior alone, which leads to white-on-white once the

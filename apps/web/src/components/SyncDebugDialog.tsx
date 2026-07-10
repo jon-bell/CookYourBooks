@@ -8,6 +8,7 @@ import { clearSyncLog, getSyncLog, subscribeSyncLog, type SyncLogEntry } from '.
 import { useSync } from '../local/SyncProvider.js';
 import { forceReelect, queryLeaderLockState, releaseLeadership } from '../local/tabLeader.js';
 import { getSentryStatus, Sentry } from '../sentry.js';
+import { useScrollLock } from './useScrollLock.js';
 
 interface DbOpView {
   id: number;
@@ -57,6 +58,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
     | { state: 'sent'; eventId: string }
     | { state: 'error'; message: string }
   >({ state: 'idle' });
+
+  // The page behind the dialog must not scroll on touch-drag (iOS).
+  useScrollLock(open);
 
   useEffect(() => {
     if (!open) return;
@@ -230,7 +234,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
       role="dialog"
       aria-modal="true"
       aria-label="Sync diagnostics"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4"
+      // z-[60]: must clear the mobile-nav sheet (z-50), which now hosts the
+      // SyncBadge that opens this dialog on phones.
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-900/40 p-4"
       onClick={onClose}
     >
       <div
@@ -305,7 +311,7 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
           </div>
         </header>
 
-        <div className="grid min-w-0 flex-1 grid-cols-1 gap-4 overflow-y-auto overflow-x-hidden p-5 md:grid-cols-2">
+        <div className="grid min-w-0 flex-1 grid-cols-1 gap-4 overflow-y-auto overflow-x-hidden overscroll-contain p-5 md:grid-cols-2">
           <Section title="Status">
             <KV k="state" v={status} />
             <KV k="tab role" v={tabRole} />

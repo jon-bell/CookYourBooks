@@ -1,3 +1,4 @@
+import { useScrollLock } from '../components/useScrollLock.js';
 import type { Shortcut } from './shortcuts.js';
 
 export function HelpDialog({
@@ -9,6 +10,8 @@ export function HelpDialog({
   onClose: () => void;
   shortcuts: readonly Shortcut[];
 }) {
+  // The page behind the dialog must not scroll on touch-drag (iOS).
+  useScrollLock(open);
   if (!open) return null;
   return (
     <div

@@ -32,10 +32,13 @@ export async function rotateImportItemImage(
   if (!resp.ok) throw new Error(`Couldn't fetch page image (${resp.status})`);
   const current = await resp.blob();
   const rotated = await rotateImageBlob(current, quarterTurns);
-  await uploadBlob(item.storagePath, rotated.fullJpeg);
-  bustSignedUrl(item.storagePath);
-  if (item.thumbPath) {
-    await uploadBlob(item.thumbPath, rotated.thumbJpeg);
-    bustSignedUrl(item.thumbPath);
-  }
+  // Page + thumb hit distinct storage keys — upload them concurrently, each
+  // busting its own signed-URL cache entry as soon as its bytes land.
+  const thumbPath = item.thumbPath;
+  await Promise.all([
+    uploadBlob(item.storagePath, rotated.fullJpeg).then(() => bustSignedUrl(item.storagePath)),
+    thumbPath
+      ? uploadBlob(thumbPath, rotated.thumbJpeg).then(() => bustSignedUrl(thumbPath))
+      : undefined,
+  ]);
 }

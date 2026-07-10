@@ -1,6 +1,6 @@
 /**
- * A recipe tag — a per-user organizing label, distinct from the overloaded
- * `recipes.starred` flag (which is reserved for the Speed Importer queue).
+ * A recipe tag — a per-user organizing label, distinct from the boolean
+ * `recipes.starred` favorite flag (the heart).
  *
  * A tag is a (recipe, label) pair owned by one user. `label` is always
  * normalized (trimmed + lowercased) before persistence so "Weeknight" and

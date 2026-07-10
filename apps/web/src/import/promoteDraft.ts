@@ -56,31 +56,24 @@ export function buildRecipeFromDraft(draft: ParsedRecipeDraft, ctx: PromoteConte
     bookTitle: ctx.collectionTitle ?? draft.bookTitle,
     pageNumbers,
     sourceImageText: draft.sourceImageText,
-    // Filling a placeholder clears its planner star — the wish is granted.
+    // New imports are never favorites; a fresh scan starts unmarked.
     starred: false,
   });
 }
 
 /**
  * Resolve whether this draft should overwrite an existing recipe rather
- * than create a new one. Mirrors ImportItemPage's plannedRecipe +
- * matchedExisting precedence:
- *   1. Planner pre-binding (`item.assignedRecipeId`) always wins.
- *   2. Otherwise a tight (0.85) fuzzy title match against the target
- *      cookbook folds OCR-cleanup variants ("Garam Masala" vs "garam
- *      masala") into the placeholder instead of duplicating it.
+ * than create a new one. Mirrors ImportItemPage's matchedExisting logic:
+ * a tight (0.85) fuzzy title match against the target cookbook folds
+ * OCR-cleanup variants ("Garam Masala" vs "garam masala") into the
+ * placeholder instead of duplicating it.
  */
 export function resolveTargetRecipe(
   draft: ParsedRecipeDraft,
-  item: Pick<ImportItem, 'assignedRecipeId'>,
   collection: RecipeCollection | undefined,
 ): { recipeId?: string; overwriteTitle?: string } {
   if (!collection) return {};
   const recipes = collection.recipes ?? [];
-  if (item.assignedRecipeId) {
-    const r = recipes.find((rr) => rr.id === item.assignedRecipeId);
-    if (r) return { recipeId: r.id, overwriteTitle: r.title };
-  }
   const title = draft.title?.trim();
   if (!title) return {};
   let best: { id: string; title: string; score: number } | undefined;

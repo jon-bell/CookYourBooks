@@ -1,9 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { SAFE_TOP } from '../components/mobileSafeArea.js';
+import { SyncBadge } from '../components/SyncBadge.js';
+import { useScrollLock } from '../components/useScrollLock.js';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
 import { ThemePicker } from '../theme/ThemePicker.js';
 import { ACCOUNT_NAV, ADMIN_NAV, PRIMARY_NAV } from './navItems.js';
@@ -19,9 +21,9 @@ interface MobileNavCtx {
 const Ctx = createContext<MobileNavCtx | null>(null);
 
 /**
- * Shared state for the sub-`md` navigation sheet so BOTH entry points — the
- * header hamburger ({@link MobileNav}) and the bottom tab bar's "More" button —
- * open the one sheet. The provider renders the single {@link MobileNavSheet}.
+ * Shared state for the sub-`md` navigation sheet, opened by the bottom tab
+ * bar's "More" button (the header — and its old hamburger — are hidden below
+ * `md`). The provider renders the single {@link MobileNavSheet}.
  */
 export function MobileNavProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -40,40 +42,6 @@ export function useMobileNav(): MobileNavCtx {
 }
 
 /**
- * The header hamburger (sub-`md`). Below the `md` breakpoint the desktop inline
- * nav + account menu are hidden (see App.tsx); this and the bottom tab bar are
- * the ways to reach every route.
- */
-export function MobileNav() {
-  const { open, setOpen } = useMobileNav();
-  return (
-    <div className="md:hidden">
-      <button
-        type="button"
-        aria-label="Open menu"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls="mobile-nav-sheet"
-        onClick={() => setOpen(true)}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-500"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          className="h-5 w-5"
-          aria-hidden="true"
-        >
-          <path d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
-    </div>
-  );
-}
-
-/**
  * The full-width top sheet. Closes on Escape, on a backdrop tap, on any link
  * tap, and on route change. Focus moves into the sheet on open and back to the
  * previously-focused element (the hamburger or the "More" tab) on close.
@@ -83,6 +51,9 @@ function MobileNavSheet({ open, setOpen }: { open: boolean; setOpen: (v: boolean
   const { isAdmin } = useIsAdmin();
   const location = useLocation();
   const closeRef = useRef<HTMLButtonElement>(null);
+
+  // The page behind the sheet must not scroll on touch-drag (iOS).
+  useScrollLock(open);
 
   // Any route change dismisses the sheet (covers link taps + keyboard chords).
   useEffect(() => {
@@ -112,7 +83,7 @@ function MobileNavSheet({ open, setOpen }: { open: boolean; setOpen: (v: boolean
         id="mobile-nav-sheet"
         aria-label="Mobile"
         onClick={(e) => e.stopPropagation()}
-        className={`absolute inset-x-0 top-0 max-h-[90dvh] overflow-y-auto border-b border-stone-200 bg-white px-4 pb-4 shadow-lg dark:border-stone-700 dark:bg-stone-900 ${SAFE_TOP}`}
+        className={`absolute inset-x-0 top-0 max-h-[90dvh] overflow-y-auto overscroll-contain border-b border-stone-200 bg-white px-4 pb-4 shadow-lg dark:border-stone-700 dark:bg-stone-900 ${SAFE_TOP}`}
       >
         <div className="flex items-center justify-between py-2">
           <span className="text-lg font-semibold tracking-tight">CookYourBooks</span>
@@ -178,6 +149,14 @@ function MobileNavSheet({ open, setOpen }: { open: boolean; setOpen: (v: boolean
           </Link>
         )}
 
+        {user && (
+          <div className="mt-3 flex items-center gap-2 px-2">
+            <span className="text-sm text-stone-500 dark:text-stone-400">Sync</span>
+            {/* The full badge (with the diagnostics dialog behind it) — the
+                tab bar only shows a status dot now that the header is gone. */}
+            <SyncBadge />
+          </div>
+        )}
         <div className="mt-3 flex items-center gap-2 px-2">
           <span className="text-sm text-stone-500 dark:text-stone-400">Theme</span>
           <ThemePicker />

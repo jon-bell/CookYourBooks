@@ -1,10 +1,10 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useLastMadeByRecipe } from '../cooking/queries.js';
 import type { CollectionRecipeSummary } from '../local/repositories.js';
 import { EmptyMadeHint } from './EmptyMadeHint.js';
-import { RecipeGalleryGrid } from './RecipeGalleryGrid.js';
+import { type GalleryCard, RecipeGalleryGrid } from './RecipeGalleryGrid.js';
 import {
   formatPages,
   isRecipeSortMode,
@@ -43,14 +43,15 @@ export function CollectionRecipeBrowser({
   collectionId,
   recipes,
   onReorder,
-  onToggleStar,
+  onToggleFavorite,
 }: {
   collectionId: string;
   recipes: readonly CollectionRecipeSummary[];
   onReorder: (orderedIds: string[]) => Promise<void> | void;
-  onToggleStar?: (recipeId: string) => Promise<void> | void;
+  onToggleFavorite?: (recipeId: string) => Promise<void> | void;
 }) {
   const [filterQuery, setFilterQuery] = useState('');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'index' | 'gallery'>('gallery');
   // Persisted per-surface (one preference for all collections, not per-id).
   const [sortMode, setSortMode] = usePersistedState<RecipeSortMode>(
@@ -66,15 +67,15 @@ export function CollectionRecipeBrowser({
   const q = deferredQuery.trim().toLowerCase();
   const isFiltering = q !== '';
 
-  const filtered = useMemo(
-    () => (isFiltering ? recipes.filter((r) => recipeMatches(r, q)) : recipes),
-    [recipes, q, isFiltering],
-  );
+  const filtered = useMemo(() => {
+    const base = isFiltering ? recipes.filter((r) => recipeMatches(r, q)) : recipes;
+    return favoritesOnly ? base.filter((r) => r.starred) : base;
+  }, [recipes, q, isFiltering, favoritesOnly]);
 
   // A filtered subset has no contiguous order to persist, so suppress manual
   // drag while filtering (name order is stable + takes the read-only branch).
   const effectiveSortMode: RecipeSortMode =
-    isFiltering && sortMode === 'manual' ? 'name' : sortMode;
+    (isFiltering || favoritesOnly) && sortMode === 'manual' ? 'name' : sortMode;
 
   const countLabel = `${recipes.length} ${recipes.length === 1 ? 'recipe' : 'recipes'}`;
 
@@ -121,6 +122,18 @@ export function CollectionRecipeBrowser({
             );
           })}
         </div>
+        <button
+          type="button"
+          aria-pressed={favoritesOnly}
+          onClick={() => setFavoritesOnly((v) => !v)}
+          className={`rounded-md border px-2.5 py-1.5 text-sm ${
+            favoritesOnly
+              ? 'border-rose-600 bg-rose-600 text-white dark:border-rose-500 dark:bg-rose-500'
+              : 'border-stone-300 text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800'
+          }`}
+        >
+          <span aria-hidden>♥</span> Favorites
+        </button>
         <label htmlFor="recipe-sort" className="sr-only">
           Sort
         </label>
@@ -140,7 +153,9 @@ export function CollectionRecipeBrowser({
       {sortMode === 'made' && (lastMade?.size ?? 0) === 0 && <EmptyMadeHint />}
 
       <div className="flex flex-wrap items-center justify-between gap-x-3 text-xs text-stone-400 dark:text-stone-500">
-        <span>{isFiltering ? `${filtered.length} of ${countLabel}` : countLabel}</span>
+        <span>
+          {isFiltering || favoritesOnly ? `${filtered.length} of ${countLabel}` : countLabel}
+        </span>
         {viewMode === 'list' && effectiveSortMode !== 'manual' && (
           <span>Drag-to-reorder is available in Manual order with no active filter.</span>
         )}
@@ -148,10 +163,16 @@ export function CollectionRecipeBrowser({
 
       {filtered.length === 0 ? (
         <p className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-4 py-6 text-center text-sm text-stone-500 dark:text-stone-400">
-          No recipes match &ldquo;{filterQuery.trim()}&rdquo;.
+          {favoritesOnly && !isFiltering
+            ? 'No favorites yet — tap the ♡ on a recipe to add one.'
+            : `No recipes match “${filterQuery.trim()}”.`}
         </p>
       ) : viewMode === 'gallery' ? (
-        <RecipeGallery collectionId={collectionId} recipes={sorted} />
+        <RecipeGallery
+          collectionId={collectionId}
+          recipes={sorted}
+          onToggleFavorite={onToggleFavorite}
+        />
       ) : viewMode === 'index' ? (
         <RecipeIndex collectionId={collectionId} recipes={sorted} />
       ) : (
@@ -159,7 +180,7 @@ export function CollectionRecipeBrowser({
           collectionId={collectionId}
           recipes={filtered}
           onReorder={onReorder}
-          onToggleStar={onToggleStar}
+          onToggleFavorite={onToggleFavorite}
           sortMode={effectiveSortMode}
           lastMade={lastMade}
         />
@@ -191,6 +212,11 @@ function RecipeIndex({
               }`}
             >
               <span className={`line-clamp-1 ${isPlaceholder ? '' : 'font-medium'}`}>
+                {r.starred && (
+                  <span aria-label="Favorite" className="mr-1 text-rose-600 dark:text-rose-400">
+                    ♥
+                  </span>
+                )}
                 {r.title}
               </span>
               {pages ? (
@@ -215,9 +241,11 @@ function RecipeIndex({
 function RecipeGallery({
   collectionId,
   recipes,
+  onToggleFavorite,
 }: {
   collectionId: string;
   recipes: readonly CollectionRecipeSummary[];
+  onToggleFavorite?: (recipeId: string) => Promise<void> | void;
 }) {
   // Covers first, preserving the caller's chosen sort within each group.
   const items = useMemo(
@@ -229,10 +257,21 @@ function RecipeGallery({
           coverImagePath: r.coverImagePath,
           pageNumbers: r.pageNumbers,
           collectionId,
+          starred: r.starred,
           // No collectionTitle on purpose — we're already inside the collection.
         }),
       ),
     [recipes, collectionId],
   );
-  return <RecipeGalleryGrid items={items} />;
+  // Stable identity so the memoized card cells don't all re-render per keystroke.
+  const onCardFavorite = useCallback(
+    (card: GalleryCard) => void onToggleFavorite?.(card.id),
+    [onToggleFavorite],
+  );
+  return (
+    <RecipeGalleryGrid
+      items={items}
+      onToggleFavorite={onToggleFavorite ? onCardFavorite : undefined}
+    />
+  );
 }

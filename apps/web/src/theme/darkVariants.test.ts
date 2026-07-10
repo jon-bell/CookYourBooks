@@ -74,6 +74,16 @@ const ALLOWLIST: { file: string; needle: string; why: string }[] = [
     why: 'Caption bar of the original-scan lightbox, which is unconditionally dark (the dialog root is `fixed inset-0 … bg-stone-950/90`).',
   },
   {
+    file: 'import/ScannerHelpModal.tsx',
+    needle: 'rounded p-1 text-stone-400',
+    why: 'Close button of the scanner tutorial, which is unconditionally dark to match the camera chrome (modal root is `bg-stone-900`).',
+  },
+  {
+    file: 'import/ScannerHelpModal.tsx',
+    needle: 'mt-4 text-xs text-stone-400',
+    why: 'Footnote of the scanner tutorial — same unconditionally-dark surface.',
+  },
+  {
     file: 'import/CameraScanner.tsx',
     needle: 'bg-white px-4 py-2 font-medium text-stone-950',
     why: '"Use the system camera" fallback button layered over the (dark) camera surface — a white chip on video, correct in both themes.',

@@ -3,7 +3,8 @@ import { expect, type Page } from '@playwright/test';
 import { waitForSynced } from './fixtures.js';
 
 /** Open the recipe page's "⋯ More" actions menu (Improve / Adapt / Remix /
- *  Star / Export / Delete live in there now, as role=menuitem). */
+ *  Export / Delete live in there now, as role=menuitem; Favorite is a
+ *  standalone heart button in the toolbar). */
 export async function openRecipeMoreMenu(page: Page): Promise<void> {
   await page.getByTestId('recipe-more-menu').click();
 }

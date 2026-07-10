@@ -2,6 +2,7 @@ import type { MealSlot, Recipe, RecipeAdjustment } from '@cookyourbooks/domain';
 import { useEffect, useState } from 'react';
 import CreatableSelect from 'react-select/creatable';
 
+import { useScrollLock } from '../components/useScrollLock.js';
 import { AdjustmentsEditor } from './AdjustmentsEditor.js';
 import { todayISO } from './dateGrid.js';
 import { MEAL_SLOT_OPTIONS } from './format.js';
@@ -38,6 +39,8 @@ export function LogCookDialog({
   onClose: () => void;
   busy?: boolean;
 }) {
+  // The page behind the dialog must not scroll on touch-drag (iOS).
+  useScrollLock(true);
   const [date, setDate] = useState(initialDate ?? todayISO());
   const [mealSlot, setMealSlot] = useState<MealSlot | null>(null);
   const [occasionNote, setOccasionNote] = useState('');

@@ -4,6 +4,7 @@ import { OcrKeysSection } from '../settings/OcrKeysSection.js';
 import { OcrModelPromptSection } from '../settings/OcrModelPromptSection.js';
 import { RemixSettingsSection } from '../settings/RemixSettingsSection.js';
 import { RewriteSettingsSection } from '../settings/RewriteSettingsSection.js';
+import { SavedModelsSection } from '../settings/SavedModelsSection.js';
 import { SettingsLayout } from '../settings/SettingsTabs.js';
 
 /**
@@ -22,6 +23,7 @@ export function SettingsLlmPage() {
       </p>
       <OcrKeysSection />
       <FallbackModelSection />
+      <SavedModelsSection />
       <OcrModelPromptSection />
       <RewriteSettingsSection />
       <RemixSettingsSection />

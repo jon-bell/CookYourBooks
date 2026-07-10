@@ -1,14 +1,17 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
+import { useAuth } from '../auth/AuthProvider.js';
 import { SAFE_X } from '../components/mobileSafeArea.js';
+import { useSync } from '../local/SyncProvider.js';
 import { useMobileNav } from './MobileNav.js';
 
 /**
- * Native-style bottom tab bar for the sub-`md` (phone) layout. The header
- * scrolls with the page, so this is the always-visible primary nav — the top
- * handful of `PRIMARY_NAV` destinations plus a "More" button that opens the
- * full {@link MobileNav} sheet (account nav, admin, theme, sign-out).
+ * Native-style bottom tab bar for the sub-`md` (phone) layout. The header is
+ * hidden entirely below `md`, so this is THE primary nav — the top handful of
+ * `PRIMARY_NAV` destinations plus a "More" button that opens the nav sheet
+ * (account nav, admin, sync badge, theme, sign-out) and carries the sync
+ * status dot.
  *
  * `fixed` at the bottom above the home indicator; `<main>` carries matching
  * bottom padding (App.tsx) so content never hides behind it.
@@ -110,9 +113,19 @@ function tabClass(active: boolean): string {
   ].join(' ');
 }
 
+/** Dot color per sync status. `idle`/`initializing` draw nothing — the dot
+ *  is an attention signal, not a steady-state indicator. */
+const SYNC_DOT: Partial<Record<string, string>> = {
+  syncing: 'bg-amber-500 animate-pulse',
+  error: 'bg-red-500',
+  offline: 'bg-stone-400',
+};
+
 export function BottomTabBar() {
   const location = useLocation();
   const { open, setOpen } = useMobileNav();
+  const { user } = useAuth();
+  const { status } = useSync();
 
   // Hide on focused/immersive flows that own the bottom of the screen — every
   // import sub-flow has its own sticky action bar (the organizer's "Start OCR",
@@ -122,9 +135,12 @@ export function BottomTabBar() {
     return null;
   }
 
+  const dot = user ? SYNC_DOT[status] : undefined;
+
   return (
     <nav
       aria-label="Primary"
+      data-sync-state={status}
       className="fixed inset-x-0 bottom-0 z-40 border-t border-stone-200 bg-white/95 backdrop-blur dark:border-stone-700 dark:bg-stone-900/95 md:hidden"
     >
       <ul className={`grid grid-cols-5 pb-[env(safe-area-inset-bottom)] ${SAFE_X}`}>
@@ -154,18 +170,30 @@ export function BottomTabBar() {
             onClick={() => setOpen(true)}
             className={`w-full ${tabClass(false)}`}
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              className={ICON}
-              aria-hidden="true"
-            >
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            </svg>
+            {/* The sync dot rides the More icon: the header (and its full
+                SyncBadge) is hidden on phones; the badge itself lives in the
+                sheet this button opens. */}
+            <span className="relative">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                className={ICON}
+                aria-hidden="true"
+              >
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+              {dot && (
+                <span
+                  aria-hidden
+                  className={`absolute -right-1 -top-0.5 h-2 w-2 rounded-full ${dot}`}
+                />
+              )}
+            </span>
             <span>More</span>
+            {user && <span className="sr-only">Sync status: {status}</span>}
           </button>
         </li>
       </ul>

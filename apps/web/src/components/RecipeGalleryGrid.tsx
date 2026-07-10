@@ -13,6 +13,9 @@ export interface GalleryCard {
   coverImagePath?: string | null;
   pageNumbers?: readonly number[];
   collectionId: string;
+  /** Favorite heart state (backed by `recipes.starred`). Only rendered when
+   *  the grid is given an `onToggleFavorite` handler. */
+  starred?: boolean;
   /** When set, the card shows a secondary link to the owning collection.
    *  The in-collection browser omits it — the context is already the
    *  collection. */
@@ -21,7 +24,13 @@ export interface GalleryCard {
 
 /** Memoized single card cell — prevents re-rendering unaffected cards when
  *  the parent list reference changes (e.g. after a sort or filter). */
-const GalleryCardCell = memo(function GalleryCardCell({ item }: { item: GalleryCard }) {
+const GalleryCardCell = memo(function GalleryCardCell({
+  item,
+  onToggleFavorite,
+}: {
+  item: GalleryCard;
+  onToggleFavorite?: (card: GalleryCard) => void;
+}) {
   const pages = formatPages(item.pageNumbers);
   return (
     <li className="gallery-card relative overflow-hidden rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
@@ -40,8 +49,26 @@ const GalleryCardCell = memo(function GalleryCardCell({ item }: { item: GalleryC
         </div>
       </Link>
       {/* Sibling of the recipe Link, not nested inside it — nested anchors
-          are invalid HTML (same pattern as the row star in
+          are invalid HTML (same pattern as the row favorite in
           SortableRecipeList). */}
+      {onToggleFavorite && (
+        <button
+          type="button"
+          aria-pressed={item.starred === true}
+          aria-label={
+            item.starred === true ? `Remove ${item.title} from favorites` : `Favorite ${item.title}`
+          }
+          title={item.starred === true ? 'Remove favorite' : 'Favorite'}
+          onClick={() => onToggleFavorite(item)}
+          className={`absolute right-1.5 top-1.5 flex h-11 w-11 items-center justify-center rounded-full text-xl leading-none drop-shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-500 ${
+            item.starred === true
+              ? 'text-rose-500 hover:text-rose-400'
+              : 'text-white/80 hover:text-rose-400'
+          }`}
+        >
+          <span aria-hidden>{item.starred === true ? '♥' : '♡'}</span>
+        </button>
+      )}
       {item.collectionTitle && (
         <div className="px-3 pb-3 pt-0.5">
           <Link
@@ -60,13 +87,20 @@ const GalleryCardCell = memo(function GalleryCardCell({ item }: { item: GalleryC
  * A responsive grid of 3:2 cover cards, each linking to its recipe. Renders
  * items in the order given — sorting/partitioning is the caller's job (the
  * collection browser leads with covers; the Recipes page leads with most-viewed).
- * Cover-less recipes fall back to CoverImage's gradient placeholder.
+ * Cover-less recipes fall back to CoverImage's gradient placeholder. Pass
+ * `onToggleFavorite` to overlay a heart toggle on each card's cover corner.
  */
-export function RecipeGalleryGrid({ items }: { items: readonly GalleryCard[] }) {
+export function RecipeGalleryGrid({
+  items,
+  onToggleFavorite,
+}: {
+  items: readonly GalleryCard[];
+  onToggleFavorite?: (card: GalleryCard) => void;
+}) {
   return (
     <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {items.map((r) => (
-        <GalleryCardCell key={r.id} item={r} />
+        <GalleryCardCell key={r.id} item={r} onToggleFavorite={onToggleFavorite} />
       ))}
     </ul>
   );

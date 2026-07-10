@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
 import { SAFE_BOTTOM, TAP_TARGET } from '../components/mobileSafeArea.js';
@@ -14,6 +14,7 @@ import {
   setImportItemKind,
   splitImportItem,
 } from '../import/api.js';
+import { mapWithConcurrency } from '../import/concurrency.js';
 import {
   buildFinalizePayload,
   deriveGroups,
@@ -202,22 +203,33 @@ export function ImportGroupingPage() {
     }
   }
 
-  // Rotate EVERY page by the same amount (1c). Sequential so the single
-  // cr-sqlite/storage pipeline isn't hammered; shows running progress.
+  // Rotate EVERY page by the same amount (1c). Items rotate concurrently —
+  // each touches only its own storage keys. Capped at 4 in flight: every
+  // rotation holds a decoded full-res frame + canvas, and iOS Safari's
+  // canvas-memory budget makes more risky, while below ~3 the network
+  // round-trips (download + 2 uploads per page) dominate.
   async function rotateAll(quarterTurns: number) {
     if (rotatingAll || rotatingId) return;
     setRotatingAll(true);
     setRotateError(undefined);
-    setRotateAllProgress({ done: 0, total: groupable.length });
+    const total = groupable.length;
+    setRotateAllProgress({ done: 0, total });
     try {
-      for (let i = 0; i < groupable.length; i += 1) {
-        const it = groupable[i]!;
-        await rotateImportItemImage(it, quarterTurns);
-        bumpRotation(it.id);
-        setRotateAllProgress({ done: i + 1, total: groupable.length });
+      const failures = await mapWithConcurrency(
+        groupable,
+        4,
+        (it) => rotateImportItemImage(it, quarterTurns),
+        ({ item, error }) => {
+          if (!error) bumpRotation(item.id);
+          // Completions arrive out of order — functional update, don't index.
+          setRotateAllProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+        },
+      );
+      if (failures.length > 0) {
+        setRotateError(
+          `Couldn't rotate ${failures.length} of ${total} page${total === 1 ? '' : 's'}: ${failures[0]!.error.message}`,
+        );
       }
-    } catch (e) {
-      setRotateError(`Couldn't rotate all pages: ${(e as Error).message}`);
     } finally {
       setRotatingAll(false);
       setRotateAllProgress(null);
@@ -417,7 +429,10 @@ export function ImportGroupingPage() {
       {/* Sticky summary — stays on screen while the cards scroll. */}
       <div className="sticky top-0 z-10 -mx-4 border-b border-stone-200 dark:border-stone-800 bg-white/95 px-4 py-3 backdrop-blur dark:bg-stone-950/95">
         <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-          {batch.name} · organize
+          <Link to={`/import/${batch.id}`} className="underline-offset-2 hover:underline">
+            ← {batch.name}
+          </Link>{' '}
+          · organize
         </div>
         <h1 className="text-xl font-semibold">Organize into page groups</h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">

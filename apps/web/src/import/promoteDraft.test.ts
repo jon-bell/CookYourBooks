@@ -186,34 +186,17 @@ describe('resolveTargetRecipe', () => {
     ],
   } as unknown as RecipeCollection;
 
-  it('honors a planner pre-binding above any fuzzy match', () => {
-    const out = resolveTargetRecipe(
-      makeDraft({ title: 'Apple Pie' }),
-      { assignedRecipeId: 'r-cake' },
-      collection,
-    );
-    expect(out.recipeId).toBe('r-cake');
-  });
-
   it('fuzzy-matches a near-identical title (OCR casing)', () => {
-    const out = resolveTargetRecipe(
-      makeDraft({ title: 'chocolate cake' }),
-      { assignedRecipeId: null },
-      collection,
-    );
+    const out = resolveTargetRecipe(makeDraft({ title: 'chocolate cake' }), collection);
     expect(out.recipeId).toBe('r-cake');
   });
 
   it('returns nothing when no recipe is close enough', () => {
-    const out = resolveTargetRecipe(
-      makeDraft({ title: 'Beef Wellington' }),
-      { assignedRecipeId: null },
-      collection,
-    );
+    const out = resolveTargetRecipe(makeDraft({ title: 'Beef Wellington' }), collection);
     expect(out.recipeId).toBeUndefined();
   });
 
   it('returns nothing without a collection', () => {
-    expect(resolveTargetRecipe(makeDraft(), { assignedRecipeId: null }, undefined)).toEqual({});
+    expect(resolveTargetRecipe(makeDraft(), undefined)).toEqual({});
   });
 });

@@ -925,6 +925,7 @@ export interface GalleryRecipeSummary {
   collectionId: string;
   collectionTitle: string;
   collectionAuthor: string | null;
+  starred: boolean;
   viewCount: number;
   lastViewedAt: number | null;
 }
@@ -1080,7 +1081,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       view_count: number;
       last_viewed: number | null;
     }>(
-      `select r.id, r.title, r.cover_image_path, r.page_numbers, r.collection_id,
+      `select r.id, r.title, r.cover_image_path, r.page_numbers, r.collection_id, r.starred,
               c.title as collection_title, c.author as collection_author,
               coalesce(v.cnt, 0) as view_count, v.last_viewed
          from recipes r
@@ -1101,6 +1102,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
       collection_id: string;
       collection_title: string;
       collection_author: string | null;
+      starred: number | boolean;
       view_count: number;
       last_viewed: number | null;
     }>;
@@ -1121,6 +1123,7 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
         collectionId: r.collection_id,
         collectionTitle: r.collection_title,
         collectionAuthor: r.collection_author,
+        starred: r.starred === 1 || r.starred === true,
         viewCount: Number(r.view_count),
         lastViewedAt: r.last_viewed,
       };

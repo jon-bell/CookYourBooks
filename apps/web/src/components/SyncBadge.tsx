@@ -28,6 +28,7 @@ export function SyncBadge() {
       <button
         onClick={() => setOpen(true)}
         title={lastError ?? 'Open sync diagnostics'}
+        data-sync-state={status}
         aria-live="polite"
         aria-label={`Sync status: ${text}${suffix ? `, ${suffix.replace(/^ · /, '')}` : ''}. Open diagnostics.`}
         className={`max-w-xs truncate rounded-full px-2.5 py-1 text-xs font-medium transition ${tone} hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600`}

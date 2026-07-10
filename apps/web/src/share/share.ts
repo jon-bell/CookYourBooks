@@ -6,6 +6,10 @@
 export interface ShareRecipePayload {
   title: string;
   markdown: string;
+  /** Canonical link to the recipe (see `shareUrl.ts`) — attached to the OS
+   *  share sheet / Web Share payload so recipients get an openable URL, not
+   *  just the Markdown text. */
+  url?: string;
   /** Filename for the download fallback; defaults to slugified title. */
   filename?: string;
 }
@@ -48,6 +52,7 @@ async function shareNative(payload: ShareRecipePayload): Promise<ShareOutcome> {
     await Share.share({
       title: payload.title,
       text: payload.markdown,
+      url: payload.url,
       dialogTitle: 'Share recipe',
     });
     return 'shared';
@@ -59,7 +64,7 @@ async function shareNative(payload: ShareRecipePayload): Promise<ShareOutcome> {
 
 async function shareViaWebApi(payload: ShareRecipePayload): Promise<ShareOutcome> {
   try {
-    await navigator.share({ title: payload.title, text: payload.markdown });
+    await navigator.share({ title: payload.title, text: payload.markdown, url: payload.url });
     return 'shared';
   } catch (err) {
     if (isCancellation(err)) return 'cancelled';

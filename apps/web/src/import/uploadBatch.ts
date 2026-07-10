@@ -13,11 +13,14 @@ export interface UploadBatchInput {
   targetCollectionId: string | null;
   defaultProvider: OcrProvider;
   defaultModel: string;
+  /** Named user_ocr_keys endpoint for the default leg; null = 'default'. */
+  defaultEndpoint?: string | null;
   /** Snapshotted onto the batch so the worker uses it instead of the
    *  built-in RECIPE_PROMPT. Null/empty => worker falls back to RECIPE_PROMPT. */
   defaultPrompt?: string | null;
   fallbackProvider: OcrProvider | null;
   fallbackModel: string | null;
+  fallbackEndpoint?: string | null;
   /** Set when the effective OCR config came from the household (the member
    *  whose Vault key/account is borrowed). Null => own key. */
   keyOwnerId?: string | null;
@@ -177,9 +180,10 @@ export async function uploadBatch(
   await db.exec(
     `insert into import_batches
        (id, owner_id, name, batch_kind, source_kind, target_collection_id,
-        default_model, default_provider, default_prompt, fallback_model, fallback_provider,
+        default_model, default_provider, default_endpoint, default_prompt,
+        fallback_model, fallback_provider, fallback_endpoint,
         key_owner_id, recitation_policy, status, total_items, is_planner, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
     [
       batchId,
       input.ownerId,
@@ -189,9 +193,11 @@ export async function uploadBatch(
       input.targetCollectionId,
       input.defaultModel,
       input.defaultProvider,
+      input.defaultEndpoint ?? null,
       input.defaultPrompt?.trim() || null,
       input.fallbackModel,
       input.fallbackProvider,
+      input.fallbackEndpoint ?? null,
       input.keyOwnerId ?? null,
       'ASK',
       'OPEN',

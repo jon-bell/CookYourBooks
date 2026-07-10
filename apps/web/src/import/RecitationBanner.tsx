@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useSync } from '../local/SyncProvider.js';
-import { kickOcr, retryRecitationFailures, setRecitationPolicy } from './api.js';
+import { kickOcr, retryRecitationFailures, setBatchFallback, setRecitationPolicy } from './api.js';
 import type { ImportBatch } from './model.js';
+import { type ModelChoice, ModelPicker } from './ModelPicker.js';
 import { useUpdateImportBatch } from './queries.js';
 
 /**
@@ -35,6 +36,9 @@ export function RecitationBanner({
   const [recitationBusy, setRecitationBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
   const [retryToast, setRetryToast] = useState<string | undefined>();
+  // A saved model picked for this retry; null = the batch's configured
+  // fallback. Picking one overwrites the batch fallback via the retry RPC.
+  const [choice, setChoice] = useState<ModelChoice | null>(null);
 
   const hasFallback = !!batch.fallbackProvider && !!batch.fallbackModel;
   const showAsk = needsFallbackCount > 0 && batch.recitationPolicy === 'ASK';
@@ -44,6 +48,19 @@ export function RecitationBanner({
   async function applyRecitation(policy: 'FALLBACK' | 'FAIL') {
     setRecitationBusy(true);
     try {
+      // A picked model becomes the batch fallback before the un-park, so the
+      // worker's FALLBACK pass runs against it.
+      if (policy === 'FALLBACK' && choice) {
+        await setBatchFallback(batch.id, choice.provider, choice.model, choice.endpoint);
+        await updateBatch.mutateAsync({
+          id: batch.id,
+          patch: {
+            fallbackProvider: choice.provider,
+            fallbackModel: choice.model,
+            fallbackEndpoint: choice.endpoint,
+          },
+        });
+      }
       await setRecitationPolicy(batch.id, policy);
       await updateBatch.mutateAsync({ id: batch.id, patch: { recitationPolicy: policy } });
       // FALLBACK moves the parked items back to PENDING server-side; kick the
@@ -64,8 +81,20 @@ export function RecitationBanner({
     setRetryBusy(true);
     setRetryToast(undefined);
     try {
-      const n = await retryRecitationFailures(batch.id);
-      await updateBatch.mutateAsync({ id: batch.id, patch: { recitationPolicy: 'FALLBACK' } });
+      const n = await retryRecitationFailures(batch.id, choice ?? undefined);
+      await updateBatch.mutateAsync({
+        id: batch.id,
+        patch: {
+          recitationPolicy: 'FALLBACK',
+          ...(choice
+            ? {
+                fallbackProvider: choice.provider,
+                fallbackModel: choice.model,
+                fallbackEndpoint: choice.endpoint,
+              }
+            : {}),
+        },
+      });
       try {
         await kickOcr(batch.id);
       } catch {
@@ -75,7 +104,7 @@ export function RecitationBanner({
       setRetryToast(
         n === 0
           ? 'No recitation-failed items to retry.'
-          : `Retrying ${n} item${n === 1 ? '' : 's'} with the fallback model.`,
+          : `Retrying ${n} item${n === 1 ? '' : 's'} with ${choice ? choice.model : 'the fallback model'}.`,
       );
     } catch (e) {
       setRetryToast(`Retry failed: ${(e as Error).message}`);
@@ -89,8 +118,8 @@ export function RecitationBanner({
       {showFail && (
         <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
-            {recitationFailedCount} page{recitationFailedCount === 1 ? '' : 's'} failed on
-            recitation.
+            {recitationFailedCount} page{recitationFailedCount === 1 ? '' : 's'} failed on a
+            copyright/content-filter refusal.
           </div>
           <div className="mt-1">
             {hasFallback ? (
@@ -110,7 +139,7 @@ export function RecitationBanner({
               </>
             )}
           </div>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             {!hasFallback && onEditFallback && (
               <button
                 type="button"
@@ -120,13 +149,24 @@ export function RecitationBanner({
                 Set fallback model
               </button>
             )}
+            <ModelPicker
+              value={choice}
+              onChange={setChoice}
+              fallbackLabel={
+                hasFallback ? `Configured fallback (${batch.fallbackModel})` : 'Configured fallback'
+              }
+            />
             <button
               type="button"
               onClick={() => void retryFailedWithFallback()}
-              disabled={retryBusy || !hasFallback}
+              disabled={retryBusy || (!hasFallback && !choice)}
               className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
-              {retryBusy ? 'Retrying…' : 'Retry with fallback'}
+              {retryBusy
+                ? 'Retrying…'
+                : choice
+                  ? `Retry with ${choice.model}`
+                  : 'Retry with fallback'}
             </button>
             {retryToast && <span className="self-center text-xs">{retryToast}</span>}
           </div>
@@ -136,20 +176,29 @@ export function RecitationBanner({
       {showAsk && (
         <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
-            {needsFallbackCount} page{needsFallbackCount === 1 ? '' : 's'} hit copyright recitation.
+            {needsFallbackCount} page{needsFallbackCount === 1 ? '' : 's'} hit a
+            copyright/content-filter refusal.
           </div>
           <div className="mt-1">
             Use the fallback model{batch.fallbackModel ? ` (${batch.fallbackModel})` : ''} for{' '}
-            {needsFallbackCount === 1 ? 'it' : 'them'} — and any others in this batch?
+            {needsFallbackCount === 1 ? 'it' : 'them'} — and any others in this batch? Or pick a
+            different saved model to try instead.
           </div>
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <ModelPicker
+              value={choice}
+              onChange={setChoice}
+              fallbackLabel={
+                hasFallback ? `Configured fallback (${batch.fallbackModel})` : 'Configured fallback'
+              }
+            />
             <button
               type="button"
               onClick={() => void applyRecitation('FALLBACK')}
-              disabled={recitationBusy}
+              disabled={recitationBusy || (!hasFallback && !choice)}
               className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
-              Yes, use fallback
+              {choice ? `Yes, use ${choice.model}` : 'Yes, use fallback'}
             </button>
             <button
               type="button"

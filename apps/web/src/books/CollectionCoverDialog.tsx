@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { CoverImage } from '../components/CoverImage.js';
+import { useScrollLock } from '../components/useScrollLock.js';
 import { enqueueCollectionCover } from '../recipe/coverApi.js';
 import { uploadCollectionCover } from './cover.js';
 import { buildCollectionCoverCollage } from './coverCollage.js';
@@ -82,6 +83,8 @@ export function CollectionCoverDialog({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, busy, onClose]);
 
+  // The page behind the dialog must not scroll on touch-drag (iOS).
+  useScrollLock(open);
   if (!open) return null;
 
   function toggleSelect(id: string) {

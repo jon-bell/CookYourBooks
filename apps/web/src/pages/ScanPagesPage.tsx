@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
@@ -18,10 +18,9 @@ type Phase = 'config' | 'scanning' | 'uploading';
 /**
  * Mobile-first "Scan pages" entry: pick an optional target cookbook, then
  * rapid-capture pages with the live viewfinder ({@link scanPages}) and feed
- * them straight into the standard OCR pipeline ({@link uploadBatch}). No
- * pre-starring of placeholder recipes required (unlike the Speed Importer),
- * and the OCR provider/model are resolved silently so there's no config form
- * on the phone.
+ * them straight into the standard OCR pipeline ({@link uploadBatch}). The
+ * OCR provider/model are resolved silently so there's no config form on the
+ * phone.
  */
 export function ScanPagesPage() {
   const { user } = useAuth();
@@ -96,9 +95,11 @@ export function ScanPagesPage() {
           targetCollectionId: targetCollectionId || null,
           defaultProvider,
           defaultModel: cfg?.model || DEFAULT_MODEL_BY_PROVIDER[defaultProvider],
+          defaultEndpoint: cfg?.endpoint ?? null,
           defaultPrompt: cfg?.prompt ?? null,
           fallbackProvider,
           fallbackModel,
+          fallbackEndpoint: cfg?.fallbackEndpoint ?? null,
           keyOwnerId: cfg?.source === 'household' ? cfg.keyOwnerId : null,
           sourceKind: 'IMAGES',
           files: pages.map((p) => p.file),
@@ -152,6 +153,12 @@ export function ScanPagesPage() {
 
   return (
     <div className="space-y-6">
+      <Link
+        to="/import"
+        className="inline-block text-sm text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
+      >
+        ← Imports
+      </Link>
       <h1 className="text-2xl font-semibold">Scan pages</h1>
       <p className="text-sm text-stone-600 dark:text-stone-400">
         Point your camera at a cookbook and tap the shutter for each page — no need to stop between

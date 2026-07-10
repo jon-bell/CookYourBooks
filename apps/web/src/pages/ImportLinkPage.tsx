@@ -161,6 +161,12 @@ export function ImportLinkPage() {
 
   return (
     <main className="mx-auto max-w-xl p-4">
+      <Link
+        to="/import"
+        className="mb-2 inline-block text-sm text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
+      >
+        ← Imports
+      </Link>
       <h1 className="mb-1 text-xl font-semibold">Import from a link</h1>
       <p className="mb-4 text-sm text-stone-600 dark:text-stone-400">
         Paste any recipe link — a YouTube, TikTok, or Instagram video, or a recipe website. We'll

@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { SAFE_BOTTOM, SAFE_TOP, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
 import { shutterHaptic } from './cameraFeedback.js';
 import { DEFAULT_MARKER, type PageKind, type PageMarker, type ScannedPage } from './pageMarker.js';
-import { subscribeVolumeButton } from './volumeButton.js';
+import { hasSeenScanTutorial, markScanTutorialSeen, ScannerHelpModal } from './ScannerHelpModal.js';
+import { isVolumeButtonAvailable, subscribeVolumeButton } from './volumeButton.js';
 
 const DEFAULT_MAX_SHOTS = 200;
 const DEFAULT_JPEG_QUALITY = 0.85;
@@ -232,17 +233,31 @@ export function CameraScanner({
     [busy, shots.length, maxShots, captureFrame],
   );
 
-  // Hardware volume buttons fire the default shutter on iOS. Subscribe once
-  // while the camera is live; a ref carries the latest `capture` so a new shot
-  // doesn't re-subscribe (which would churn the native audio session).
+  // Hardware volume buttons fire the shutter on iOS: volume-up captures AND
+  // chains to the last page (multi-page recipe), volume-down is the plain
+  // shutter. Subscribe once while the camera is live; a ref carries the latest
+  // `capture` so a new shot doesn't re-subscribe (which would churn the native
+  // audio session).
   const captureRef = useRef(capture);
   useEffect(() => {
     captureRef.current = capture;
   }, [capture]);
   useEffect(() => {
     if (status !== 'live') return;
-    return subscribeVolumeButton(() => void captureRef.current());
+    return subscribeVolumeButton((direction) =>
+      direction === 'up' ? void captureRef.current({ join: true }) : void captureRef.current(),
+    );
   }, [status]);
+
+  // First-launch tutorial: starts open on a fresh device (render is gated on
+  // the camera being live, so it never covers an error screen) and is marked
+  // seen on dismiss; the header's "?" button reopens it any time without
+  // re-arming the localStorage gate.
+  const [showHelp, setShowHelp] = useState(() => !hasSeenScanTutorial());
+  function dismissHelp() {
+    markScanTutorialSeen();
+    setShowHelp(false);
+  }
 
   const remove = useCallback((id: string) => {
     setShots((prev) => {
@@ -305,15 +320,31 @@ export function CameraScanner({
         <div className="text-stone-300" aria-live="polite">
           {shots.length} / {maxShots}
         </div>
-        <button
-          type="button"
-          onClick={done}
-          disabled={shots.length === 0}
-          className="rounded-md bg-amber-500 px-3 py-1.5 font-medium text-stone-950 disabled:opacity-40"
-        >
-          Done
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setShowHelp(true)}
+            aria-label="Scanner help"
+            className={`inline-flex items-center justify-center rounded-full text-stone-200 hover:bg-stone-800 ${TAP_TARGET}`}
+          >
+            <span aria-hidden className="text-lg leading-none">
+              ?
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={done}
+            disabled={shots.length === 0}
+            className="rounded-md bg-amber-500 px-3 py-1.5 font-medium text-stone-950 disabled:opacity-40"
+          >
+            Done
+          </button>
+        </div>
       </header>
+
+      {isLive && showHelp && (
+        <ScannerHelpModal showVolumeButtons={isVolumeButtonAvailable()} onDismiss={dismissHelp} />
+      )}
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <video

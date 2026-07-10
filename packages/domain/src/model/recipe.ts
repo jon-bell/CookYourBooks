@@ -41,10 +41,10 @@ export interface Recipe {
    */
   readonly sourceUrl?: string;
   /**
-   * "I want to import this." Set on ToC-seeded placeholder recipes by
-   * the user; consumed by the Speed Importer planner to build a
-   * page-ordered scan queue. Cleared automatically when the planner
-   * fills the placeholder with real OCR content.
+   * User favorite (the heart on recipe cards / the recipe page).
+   * Persisted as `recipes.starred`; formerly the Speed Importer
+   * scan-queue marker. `scaleRecipe` preserves it; `adaptRecipe`
+   * deliberately drops it (a variant starts unmarked).
    */
   readonly starred?: boolean;
   /**

@@ -21,6 +21,16 @@ const config: CapacitorConfig = {
       // Quality and permissions are configured per-capture via the plugin's
       // options object — no global overrides needed here.
     },
+    Keyboard: {
+      // Without the Keyboard plugin, iOS natively insets/scrolls the
+      // WKWebView's scroll view to reveal focused inputs and frequently
+      // fails to restore it after dismiss/rotation — the page sits shifted
+      // and "scrolls when it shouldn't". `resize: 'body'` deterministically
+      // resizes the body (and restores it on hide), keeping the fixed
+      // bottom tab bar attached to the visible viewport.
+      resize: 'body',
+      resizeOnFullScreen: true,
+    },
   },
 };
 

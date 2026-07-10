@@ -34,4 +34,24 @@ describe('shareUrl', () => {
       'https://cookyourbooks.app/r/11111111-2222-3333-4444-555555555555',
     );
   });
+
+  it('keeps http(s) browser origins as-is (dev + preview deploys)', () => {
+    vi.stubGlobal('window', { location: { origin: 'http://localhost:5173' } });
+    expect(absoluteUrl('/r/abc')).toBe('http://localhost:5173/r/abc');
+    vi.stubGlobal('window', { location: { origin: 'https://preview-42.vercel.app' } });
+    expect(absoluteUrl('/r/abc')).toBe('https://preview-42.vercel.app/r/abc');
+  });
+
+  it('mints canonical links from a non-http origin (Capacitor webview)', () => {
+    vi.stubGlobal('window', { location: { origin: 'capacitor://localhost' } });
+    expect(absoluteUrl('/r/abc')).toBe('https://cookyourbooks.app/r/abc');
+  });
+
+  it('mints canonical links on a native platform even when the origin looks https', () => {
+    // Android Capacitor serves https://localhost — an https origin nobody
+    // else can open. Native platform detection must win over the scheme.
+    vi.stubGlobal('window', { location: { origin: 'https://localhost' } });
+    vi.stubGlobal('Capacitor', { isNativePlatform: () => true });
+    expect(absoluteUrl('/r/abc')).toBe('https://cookyourbooks.app/r/abc');
+  });
 });
