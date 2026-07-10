@@ -15,13 +15,16 @@ export const DEFAULT_FALLBACK_MODEL = 'gpt-5.4';
 export interface FallbackPrefs {
   provider: OcrProvider | '';
   model: string;
+  /** Named OpenAI-compatible endpoint slug; '' / absent = 'default'.
+   *  Pre-endpoint localStorage blobs simply lack the field. */
+  endpoint: string;
 }
 
 export function loadFallbackPrefs(): FallbackPrefs {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) {
-      return { provider: DEFAULT_FALLBACK_PROVIDER, model: DEFAULT_FALLBACK_MODEL };
+      return { provider: DEFAULT_FALLBACK_PROVIDER, model: DEFAULT_FALLBACK_MODEL, endpoint: '' };
     }
     const parsed = JSON.parse(raw) as Partial<FallbackPrefs>;
     return {
@@ -30,9 +33,10 @@ export function loadFallbackPrefs(): FallbackPrefs {
           ? parsed.provider
           : '',
       model: typeof parsed.model === 'string' ? parsed.model : '',
+      endpoint: typeof parsed.endpoint === 'string' ? parsed.endpoint : '',
     };
   } catch {
-    return { provider: '', model: '' };
+    return { provider: '', model: '', endpoint: '' };
   }
 }
 
@@ -40,15 +44,20 @@ export function saveFallbackPrefs(prefs: FallbackPrefs): void {
   localStorage.setItem(KEY, JSON.stringify(prefs));
 }
 
-/** Provider/model pair written onto a new import batch. */
+/** Provider/endpoint/model triple written onto a new import batch. */
 export function resolveImportFallback(): {
   fallbackProvider: OcrProvider | null;
   fallbackModel: string | null;
+  fallbackEndpoint: string | null;
 } {
   const prefs = loadFallbackPrefs();
   if (!prefs.provider) {
-    return { fallbackProvider: null, fallbackModel: null };
+    return { fallbackProvider: null, fallbackModel: null, fallbackEndpoint: null };
   }
   const model = prefs.model.trim() || DEFAULT_FALLBACK_MODEL;
-  return { fallbackProvider: prefs.provider, fallbackModel: model };
+  const endpoint =
+    prefs.provider === 'openai-compatible' && prefs.endpoint.trim() !== ''
+      ? prefs.endpoint.trim()
+      : null;
+  return { fallbackProvider: prefs.provider, fallbackModel: model, fallbackEndpoint: endpoint };
 }

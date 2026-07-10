@@ -1014,9 +1014,11 @@ export type Database = {
         Row: {
           batch_kind: string
           created_at: string
+          default_endpoint: string | null
           default_model: string
           default_prompt: string | null
           default_provider: string
+          fallback_endpoint: string | null
           fallback_model: string | null
           fallback_provider: string | null
           id: string
@@ -1034,9 +1036,11 @@ export type Database = {
         Insert: {
           batch_kind?: string
           created_at?: string
+          default_endpoint?: string | null
           default_model?: string
           default_prompt?: string | null
           default_provider?: string
+          fallback_endpoint?: string | null
           fallback_model?: string | null
           fallback_provider?: string | null
           id?: string
@@ -1054,9 +1058,11 @@ export type Database = {
         Update: {
           batch_kind?: string
           created_at?: string
+          default_endpoint?: string | null
           default_model?: string
           default_prompt?: string | null
           default_provider?: string
+          fallback_endpoint?: string | null
           fallback_model?: string | null
           fallback_provider?: string | null
           id?: string
@@ -2689,6 +2695,7 @@ export type Database = {
         Row: {
           base_url: string | null
           created_at: string
+          endpoint: string
           key_fingerprint: string
           owner_id: string
           provider: string
@@ -2698,6 +2705,7 @@ export type Database = {
         Insert: {
           base_url?: string | null
           created_at?: string
+          endpoint?: string
           key_fingerprint: string
           owner_id: string
           provider: string
@@ -2707,6 +2715,7 @@ export type Database = {
         Update: {
           base_url?: string | null
           created_at?: string
+          endpoint?: string
           key_fingerprint?: string
           owner_id?: string
           provider?: string
@@ -2716,6 +2725,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "user_ocr_keys_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_ocr_models: {
+        Row: {
+          created_at: string
+          endpoint: string
+          id: string
+          label: string | null
+          model: string
+          owner_id: string
+          provider: string
+          sort_index: number
+        }
+        Insert: {
+          created_at?: string
+          endpoint?: string
+          id?: string
+          label?: string | null
+          model: string
+          owner_id: string
+          provider: string
+          sort_index?: number
+        }
+        Update: {
+          created_at?: string
+          endpoint?: string
+          id?: string
+          label?: string | null
+          model?: string
+          owner_id?: string
+          provider?: string
+          sort_index?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_ocr_models_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "profiles"
@@ -3374,6 +3424,8 @@ export type Database = {
       }
       import_reset_item: {
         Args: {
+          p_endpoint?: string
+          p_fallback_endpoint?: string
           p_fallback_model?: string
           p_fallback_provider?: string
           p_item_id: string
@@ -3381,12 +3433,15 @@ export type Database = {
           p_model?: string
           p_prompt?: string
           p_provider?: string
+          p_use_fallback?: boolean
         }
         Returns: undefined
       }
       import_retry_failures: {
         Args: {
           p_batch_id: string
+          p_endpoint?: string
+          p_fallback_endpoint?: string
           p_fallback_model?: string
           p_fallback_provider?: string
           p_key_owner_id?: string
@@ -3397,11 +3452,21 @@ export type Database = {
         Returns: number
       }
       import_retry_recitation_failures: {
-        Args: { p_batch_id: string }
+        Args: {
+          p_batch_id: string
+          p_fallback_endpoint?: string
+          p_fallback_model?: string
+          p_fallback_provider?: string
+        }
         Returns: number
       }
       import_set_batch_fallback: {
-        Args: { p_batch_id: string; p_model: string; p_provider: string }
+        Args: {
+          p_batch_id: string
+          p_endpoint?: string
+          p_model: string
+          p_provider: string
+        }
         Returns: undefined
       }
       import_set_item_kind: {
@@ -3517,14 +3582,22 @@ export type Database = {
       normalize_isbn: { Args: { raw: string }; Returns: string }
       nutrition_get_config: { Args: never; Returns: Json }
       nutrition_health: { Args: never; Returns: boolean }
-      ocr_key_delete: { Args: { p_provider: string }; Returns: undefined }
+      ocr_key_delete: {
+        Args: { p_endpoint?: string; p_provider: string }
+        Returns: undefined
+      }
       ocr_key_set: {
-        Args: { p_base_url?: string; p_provider: string; p_raw_key: string }
+        Args: {
+          p_base_url?: string
+          p_endpoint?: string
+          p_provider: string
+          p_raw_key: string
+        }
         Returns: undefined
       }
       ocr_kick: { Args: { p_batch_id?: string }; Returns: undefined }
       ocr_resolve_effective_key: {
-        Args: { p_owner_id: string; p_provider: string }
+        Args: { p_endpoint?: string; p_owner_id: string; p_provider: string }
         Returns: {
           api_key: string
           base_url: string
@@ -3532,7 +3605,7 @@ export type Database = {
         }[]
       }
       ocr_resolve_key: {
-        Args: { p_owner_id: string; p_provider: string }
+        Args: { p_endpoint?: string; p_owner_id: string; p_provider: string }
         Returns: {
           api_key: string
           base_url: string

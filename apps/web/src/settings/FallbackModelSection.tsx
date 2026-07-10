@@ -65,6 +65,22 @@ export function FallbackModelSection() {
             disabled={!prefs.provider}
           />
         </label>
+        {prefs.provider === 'openai-compatible' && (
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-stone-700 dark:text-stone-300">
+              Endpoint
+            </span>
+            <input
+              value={prefs.endpoint}
+              onChange={(e) => setPrefs((p) => ({ ...p, endpoint: e.target.value }))}
+              placeholder="default"
+              className="w-full rounded border border-stone-300 dark:border-stone-600 px-3 py-2 font-mono text-sm"
+            />
+            <span className="mt-1 block text-xs text-stone-500 dark:text-stone-400">
+              A named endpoint from OCR keys (blank = the default one).
+            </span>
+          </label>
+        )}
       </div>
       <div className="flex items-center gap-3">
         <button

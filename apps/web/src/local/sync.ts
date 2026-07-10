@@ -414,6 +414,8 @@ interface ImportBatchRow {
   default_prompt: string | null;
   fallback_model: string | null;
   fallback_provider: 'gemini' | 'openai-compatible' | null;
+  default_endpoint: string | null;
+  fallback_endpoint: string | null;
   key_owner_id: string | null;
   recitation_policy: 'ASK' | 'FALLBACK' | 'FAIL';
   status: 'OPEN' | 'ARCHIVED';
@@ -1471,6 +1473,8 @@ const IMPORT_BATCH_COLS = [
   'default_prompt',
   'fallback_model',
   'fallback_provider',
+  'default_endpoint',
+  'fallback_endpoint',
   'key_owner_id',
   'recitation_policy',
   'status',
@@ -1686,6 +1690,8 @@ function importBatchToParams(row: ImportBatchRow): readonly unknown[] {
     row.default_prompt ?? null,
     row.fallback_model,
     row.fallback_provider,
+    row.default_endpoint ?? null,
+    row.fallback_endpoint ?? null,
     row.key_owner_id ?? null,
     row.recitation_policy,
     row.status,
@@ -2407,8 +2413,9 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
     `insert into import_batches
        (id, owner_id, name, batch_kind, source_kind, target_collection_id,
         default_model, default_provider, fallback_model, fallback_provider,
+        default_endpoint, fallback_endpoint,
         recitation_policy, status, total_items, is_planner, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
      on conflict(id) do update set
        owner_id=excluded.owner_id,
        name=excluded.name,
@@ -2419,6 +2426,8 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
        default_provider=excluded.default_provider,
        fallback_model=excluded.fallback_model,
        fallback_provider=excluded.fallback_provider,
+       default_endpoint=excluded.default_endpoint,
+       fallback_endpoint=excluded.fallback_endpoint,
        recitation_policy=excluded.recitation_policy,
        status=excluded.status,
        total_items=excluded.total_items,
@@ -2437,6 +2446,8 @@ async function upsertImportBatchRow(row: ImportBatchRow): Promise<void> {
       row.default_provider,
       row.fallback_model,
       row.fallback_provider,
+      row.default_endpoint ?? null,
+      row.fallback_endpoint ?? null,
       row.recitation_policy,
       row.status,
       row.total_items,
@@ -3551,6 +3562,8 @@ async function pushImportBatchInsert(client: CookbooksClient, id: string): Promi
     default_prompt: (local.default_prompt as string | null) ?? null,
     fallback_model: (local.fallback_model as string | null) ?? null,
     fallback_provider: (local.fallback_provider as 'gemini' | 'openai-compatible' | null) ?? null,
+    default_endpoint: (local.default_endpoint as string | null) ?? null,
+    fallback_endpoint: (local.fallback_endpoint as string | null) ?? null,
     key_owner_id: (local.key_owner_id as string | null) ?? null,
     status: local.status as 'OPEN' | 'ARCHIVED',
     is_planner: local.is_planner === 1 || local.is_planner === true,
@@ -3647,6 +3660,8 @@ async function pushImportBatch(client: CookbooksClient, id: string): Promise<voi
     default_provider: local.default_provider as string,
     fallback_model: (local.fallback_model as string | null) ?? null,
     fallback_provider: (local.fallback_provider as string | null) ?? null,
+    default_endpoint: (local.default_endpoint as string | null) ?? null,
+    fallback_endpoint: (local.fallback_endpoint as string | null) ?? null,
   };
   const { error } = await client.from('import_batches').update(payload).eq('id', id);
   if (error) throw error;

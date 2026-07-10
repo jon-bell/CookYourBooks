@@ -21,6 +21,7 @@ import { deleteOcrStorage } from '../import/deleteStorage.js';
 import { ImportThumb } from '../import/ImportThumb.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
 import type { ImportItem, ImportItemStatus, OcrProvider } from '../import/model.js';
+import { type ModelChoice, ModelPicker } from '../import/ModelPicker.js';
 import {
   compactOcrQueueLabel,
   computeBatchQueueInfo,
@@ -145,6 +146,8 @@ export function ImportBatchPage() {
   const [fallbackError, setFallbackError] = useState<string | undefined>();
   const [retryBusy, setRetryBusy] = useState(false);
   const [retryError, setRetryError] = useState<string | undefined>();
+  // Saved-model override for "Re-OCR all failures"; null = current Settings.
+  const [retryChoice, setRetryChoice] = useState<ModelChoice | null>(null);
 
   const qc = useQueryClient();
   // Auto-accept bookkeeping. `processedRef` is the set of item ids the pass
@@ -495,9 +498,19 @@ export function ImportBatchPage() {
     try {
       // Re-snapshot the caller's current OCR settings onto the batch (same as
       // single-item Re-OCR) so a model / prompt changed in Settings since
-      // upload is honored on the retry.
+      // upload is honored on the retry. A picked saved model overrides the
+      // default leg (provider/endpoint/model) of that snapshot.
       const cfg = await getEffectiveOcrConfig().catch(() => null);
-      await retryFailures(batch.id, cfg ?? undefined);
+      const effective =
+        cfg && retryChoice
+          ? {
+              ...cfg,
+              provider: retryChoice.provider,
+              model: retryChoice.model,
+              endpoint: retryChoice.endpoint,
+            }
+          : (cfg ?? undefined);
+      await retryFailures(batch.id, effective ?? undefined);
       try {
         await kickOcr(batch.id);
       } catch {
@@ -637,16 +650,23 @@ export function ImportBatchPage() {
             <span className="text-red-800 dark:text-red-200">
               {failedCount} page{failedCount === 1 ? '' : 's'} failed OCR.
             </span>
+            <ModelPicker
+              value={retryChoice}
+              onChange={setRetryChoice}
+              fallbackLabel="Current settings"
+            />
             <button
               type="button"
               onClick={retryAllFailures}
               disabled={retryBusy}
-              title="Reset every failed page to re-run OCR with your current settings"
+              title="Reset every failed page to re-run OCR with your current settings (or the picked saved model)"
               className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-60 dark:bg-red-600 dark:hover:bg-red-500"
             >
               {retryBusy
                 ? 'Re-OCR…'
-                : `Re-OCR ${failedCount === 1 ? 'the failed page' : 'all failed pages'}`}
+                : retryChoice
+                  ? `Re-OCR with ${retryChoice.model}`
+                  : `Re-OCR ${failedCount === 1 ? 'the failed page' : 'all failed pages'}`}
             </button>
           </div>
           {retryError && (

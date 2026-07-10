@@ -203,6 +203,7 @@ export function ImportNewPage() {
           defaultPrompt: ocrPrompt,
           fallbackProvider: fallbackProvider || null,
           fallbackModel: fallbackProvider ? fallbackModel.trim() || DEFAULT_FALLBACK_MODEL : null,
+          fallbackEndpoint: fallbackProvider ? loadFallbackPrefs().endpoint.trim() || null : null,
           keyOwnerId,
           sourceKind,
           files,

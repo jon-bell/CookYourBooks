@@ -109,9 +109,12 @@ interface ImportBatch {
   owner_id: string;
   default_model: string;
   default_provider: Provider;
+  /** Named OpenAI-compatible endpoint (user_ocr_keys.endpoint); null = 'default'. */
+  default_endpoint: string | null;
   default_prompt: string | null;
   fallback_model: string | null;
   fallback_provider: Provider | null;
+  fallback_endpoint: string | null;
   recitation_policy: 'ASK' | 'FALLBACK' | 'FAIL';
 }
 
@@ -592,17 +595,18 @@ async function processItem(
   }
   const provider = useFallback ? batch.fallback_provider! : batch.default_provider;
   const model = useFallback ? batch.fallback_model! : batch.default_model;
+  const endpoint = useFallback ? batch.fallback_endpoint : batch.default_endpoint;
   if (!model) {
     log.error('no model configured on batch');
     await failItem(item, claimToken, mkAttempt(provider, model, 'OTHER', 'No model configured on batch.', '', 0, 0, 0), 'OCR_FAILED', log);
     return 'OCR_FAILED';
   }
-  log.info('resolved provider/model', { provider, model });
+  log.info('resolved provider/model', { provider, model, endpoint: endpoint ?? 'default' });
 
   // Key lookup.
   let key: UserKey | null = null;
   try {
-    key = await loadUserKey(item.owner_id, provider, log);
+    key = await loadUserKey(item.owner_id, provider, endpoint, log);
   } catch (err) {
     log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -788,7 +792,7 @@ async function handleRecitation(
     return 'OCR_FAILED';
   }
   log.info('retrying inline with fallback', { fb_provider: fbProvider, fb_model: fbModel });
-  const fbKey = await loadUserKey(item.owner_id, fbProvider, log);
+  const fbKey = await loadUserKey(item.owner_id, fbProvider, batch.fallback_endpoint, log);
   if (!fbKey && !MOCK_MODE) {
     log.error('no key for fallback provider', { fb_provider: fbProvider });
     await failItem(
@@ -1079,7 +1083,7 @@ async function processVariant(
   // with the bulk-import flow — no separate creds.
   let key: UserKey | null = null;
   try {
-    key = await loadUserKey(variant.owner_id, variant.provider, log);
+    key = await loadUserKey(variant.owner_id, variant.provider, null, log);
   } catch (err) {
     log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -1218,7 +1222,7 @@ async function processRewriteVariant(
   }
   let key: UserKey | null = null;
   try {
-    key = await loadUserKey(variant.owner_id, variant.provider, log);
+    key = await loadUserKey(variant.owner_id, variant.provider, null, log);
   } catch (err) {
     log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -1428,7 +1432,7 @@ async function processRewriteJob(
 
   let key: UserKey | null = null;
   try {
-    key = await loadUserKey(job.owner_id, job.provider, log);
+    key = await loadUserKey(job.owner_id, job.provider, null, log);
   } catch (err) {
     log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -1727,7 +1731,7 @@ async function processRemixJob(
 
   let key: UserKey | null = null;
   try {
-    key = await loadUserKey(job.owner_id, job.provider, log);
+    key = await loadUserKey(job.owner_id, job.provider, null, log);
   } catch (err) {
     log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -2007,7 +2011,7 @@ async function processImportVariantResult(
 
   let key: UserKey | null = null;
   try {
-    key = await loadUserKey(v.owner_id, v.provider, log);
+    key = await loadUserKey(v.owner_id, v.provider, null, log);
   } catch (err) {
     log.error('loadUserKey threw', { error: err instanceof Error ? err.message : String(err) });
   }
@@ -2940,7 +2944,7 @@ async function failItem(
 async function loadBatch(batchId: string, log: ReturnType<typeof makeLog>): Promise<ImportBatch | null> {
   const { data, error } = await supabase
     .from('import_batches')
-    .select('id, owner_id, default_model, default_provider, default_prompt, fallback_model, fallback_provider, recitation_policy')
+    .select('id, owner_id, default_model, default_provider, default_endpoint, default_prompt, fallback_model, fallback_provider, fallback_endpoint, recitation_policy')
     .eq('id', batchId)
     .maybeSingle();
   if (error) {
@@ -2953,17 +2957,20 @@ async function loadBatch(batchId: string, log: ReturnType<typeof makeLog>): Prom
 async function loadUserKey(
   ownerId: string,
   provider: Provider,
+  endpoint: string | null,
   log: ReturnType<typeof makeLog>,
 ): Promise<UserKey | null> {
   // The vault schema isn't exposed through PostgREST, so we tunnel the
   // decrypt through a security-definer RPC that lives in `public`.
-  // ocr_resolve_effective_key returns the member's own key, or — if they're
-  // in a household sharing OCR — the household key owner's key (constrained
-  // to the household's shared provider). key_owner_id tells us whose key/
+  // ocr_resolve_effective_key returns the member's own key (for the named
+  // endpoint; null = 'default'), or — if they're in a household sharing
+  // OCR — the household key owner's default-endpoint key (constrained to
+  // the household's shared provider). key_owner_id tells us whose key/
   // provider account is actually billed, for traceability.
   const { data, error } = await supabase.rpc('ocr_resolve_effective_key', {
     p_owner_id: ownerId,
     p_provider: provider,
+    p_endpoint: endpoint ?? undefined,
   });
   if (error) {
     log.error('ocr_resolve_effective_key', { code: error.code, message: error.message });

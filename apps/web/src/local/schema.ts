@@ -156,6 +156,8 @@ export const SCHEMA_STATEMENTS: string[] = [
     is_planner integer not null default 0,
     default_prompt text,
     key_owner_id text,
+    default_endpoint text,
+    fallback_endpoint text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -543,6 +545,8 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
     batch_kind text not null default 'STANDARD',
     default_prompt text,
     key_owner_id text,
+    default_endpoint text,
+    fallback_endpoint text,
     updated_at integer not null default 0,
     deleted integer not null default 0
   )`,
@@ -868,4 +872,10 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `alter table recipes add column ingredients text`,
   `alter table recipes add column instructions text`,
   `alter table recipes add column ingredients_text text`,
+  // Multi-endpoint OCR keys (2026-07-12): which named user_ocr_keys endpoint
+  // each leg of the batch runs against (null = 'default'). Rides down on
+  // pull; nullable → no cr-sqlite DEFAULT needed. Also in the CREATE above
+  // for fresh DBs.
+  `alter table import_batches add column default_endpoint text`,
+  `alter table import_batches add column fallback_endpoint text`,
 ];

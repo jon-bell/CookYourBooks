@@ -18,11 +18,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { LoadingState } from '../components/LoadingState.js';
 import { PinchPanImage } from '../components/PinchPanImage.js';
 import { useCollection, useCollectionPickerOptions, useSaveRecipe } from '../data/queries.js';
-import { reportError } from '../sentry.js';
 import {
   getEffectiveOcrConfig,
   kickOcr,
   resetImportItem,
+  setBatchFallback,
   setImportItemKind,
   setImportItemToc,
 } from '../import/api.js';
@@ -30,6 +30,7 @@ import { BakeoffItemReview } from '../import/BakeoffItemReview.js';
 import { CollectionPicker } from '../import/CollectionPicker.js';
 import { deleteOcrStorage } from '../import/deleteStorage.js';
 import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
+import { type ModelChoice, ModelPicker } from '../import/ModelPicker.js';
 import { NotesReviewPanel } from '../import/NotesReviewPanel.js';
 import { canReOcr } from '../import/ocrStatus.js';
 import { OcrStatusBanner } from '../import/OcrStatusBanner.js';
@@ -47,6 +48,7 @@ import { scoreTocMatch, suggestTocMatches } from '../import/tocMatch.js';
 import { TocReviewPanel } from '../import/TocReviewPanel.js';
 import type { CollectionPickerOption } from '../local/repositories.js';
 import { useSync } from '../local/SyncProvider.js';
+import { reportError } from '../sentry.js';
 
 export function ImportItemPage() {
   const { batchId, itemId } = useParams();
@@ -76,6 +78,8 @@ export function ImportItemPage() {
   const [showTocSuggestions, setShowTocSuggestions] = useState(false);
   const [draftPatches, setDraftPatches] = useState<Record<number, ParsedRecipeDraft>>({});
   const [actionError, setActionError] = useState<string | undefined>();
+  // Saved-model override for Re-OCR; null = current Settings.
+  const [reOcrChoice, setReOcrChoice] = useState<ModelChoice | null>(null);
   const [togglingToc, setTogglingToc] = useState(false);
   const viewerRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{
@@ -576,6 +580,21 @@ export function ImportItemPage() {
       // (same resolution the upload page uses) so re-OCR honors the
       // model/prompt the user has in Settings now, not the one frozen
       // when this batch was first uploaded.
+      //
+      // A picked saved model becomes the batch FALLBACK and the item is
+      // reset with needs_fallback=true — so just this page runs on the
+      // pick while the batch's other items keep the default config.
+      if (reOcrChoice) {
+        await setBatchFallback(batch.id, reOcrChoice.provider, reOcrChoice.model, reOcrChoice.endpoint);
+        await resetImportItem(item.id, undefined, { useFallback: true });
+        await syncNow();
+        try {
+          await kickOcr(batch.id);
+        } catch {
+          // pg_cron / next user kick will retry.
+        }
+        return;
+      }
       const cfg = await getEffectiveOcrConfig().catch(() => null);
       await resetImportItem(item.id, cfg ?? undefined);
       await syncNow();
@@ -977,6 +996,11 @@ export function ImportItemPage() {
                 >
                   Discard this draft
                 </button>
+                <ModelPicker
+                  value={reOcrChoice}
+                  onChange={setReOcrChoice}
+                  fallbackLabel="Current settings"
+                />
                 <button
                   type="button"
                   onClick={() => void reOcrWithFallback()}
@@ -988,7 +1012,7 @@ export function ImportItemPage() {
                   }
                   className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Re-OCR
+                  {reOcrChoice ? `Re-OCR with ${reOcrChoice.model}` : 'Re-OCR'}
                 </button>
                 <button
                   type="button"

@@ -29,8 +29,11 @@ export interface ImportBatch {
   targetCollectionId: string | null;
   defaultModel: string;
   defaultProvider: OcrProvider;
+  /** Named user_ocr_keys endpoint the default leg runs against; null = 'default'. */
+  defaultEndpoint: string | null;
   fallbackModel: string | null;
   fallbackProvider: OcrProvider | null;
+  fallbackEndpoint: string | null;
   recitationPolicy: RecitationPolicy;
   status: BatchStatus;
   totalItems: number;

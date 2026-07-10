@@ -22,6 +22,8 @@ interface ImportBatchSqlRow {
   default_provider: string;
   fallback_model: string | null;
   fallback_provider: string | null;
+  default_endpoint: string | null;
+  fallback_endpoint: string | null;
   recitation_policy: string;
   status: string;
   total_items: number;
@@ -99,6 +101,8 @@ function rowToBatch(row: ImportBatchSqlRow): ImportBatch {
     targetCollectionId: row.target_collection_id,
     defaultModel: row.default_model,
     defaultProvider: row.default_provider === 'openai-compatible' ? 'openai-compatible' : 'gemini',
+    defaultEndpoint: row.default_endpoint ?? null,
+    fallbackEndpoint: row.fallback_endpoint ?? null,
     fallbackModel: row.fallback_model,
     fallbackProvider:
       row.fallback_provider === 'openai-compatible'
@@ -252,8 +256,10 @@ export class LocalImportBatchRepository {
         | 'status'
         | 'defaultModel'
         | 'defaultProvider'
+        | 'defaultEndpoint'
         | 'fallbackModel'
         | 'fallbackProvider'
+        | 'fallbackEndpoint'
       >
     >,
   ): Promise<void> {
@@ -265,7 +271,8 @@ export class LocalImportBatchRepository {
     await db.exec(
       `update import_batches set
          name = ?, target_collection_id = ?, recitation_policy = ?, status = ?,
-         default_model = ?, default_provider = ?, fallback_model = ?, fallback_provider = ?,
+         default_model = ?, default_provider = ?, default_endpoint = ?,
+         fallback_model = ?, fallback_provider = ?, fallback_endpoint = ?,
          updated_at = ?
        where id = ? and owner_id = ?`,
       [
@@ -275,8 +282,10 @@ export class LocalImportBatchRepository {
         next.status,
         next.defaultModel,
         next.defaultProvider,
+        next.defaultEndpoint,
         next.fallbackModel,
         next.fallbackProvider,
+        next.fallbackEndpoint,
         ts,
         id,
         this.ownerId,
@@ -450,9 +459,10 @@ export async function insertLocalBatch(batch: ImportBatch): Promise<void> {
   await db.exec(
     `insert into import_batches
        (id, owner_id, name, source_kind, target_collection_id,
-        default_model, default_provider, fallback_model, fallback_provider,
+        default_model, default_provider, default_endpoint, fallback_model,
+        fallback_provider, fallback_endpoint,
         recitation_policy, status, total_items, is_planner, updated_at, deleted)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`,
     [
       batch.id,
       batch.ownerId,
@@ -461,8 +471,10 @@ export async function insertLocalBatch(batch: ImportBatch): Promise<void> {
       batch.targetCollectionId,
       batch.defaultModel,
       batch.defaultProvider,
+      batch.defaultEndpoint,
       batch.fallbackModel,
       batch.fallbackProvider,
+      batch.fallbackEndpoint,
       batch.recitationPolicy,
       batch.status,
       batch.totalItems,
