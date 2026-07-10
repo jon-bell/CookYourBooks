@@ -220,37 +220,61 @@ export function useDeleteRecipe(collectionId: string) {
 }
 
 /**
- * Flip a single recipe's `starred` flag (the Speed-Importer queue marker).
+ * Flip a single recipe's favorite heart (persisted as `recipes.starred`).
  * Reads the recipe via the local repo, constructs the new immutable instance,
- * and saves through the same path as {@link useSaveRecipe} (including the
- * embedding push), so the row's full graph is preserved. Invalidates the same
- * set as a recipe save plus the collection's lightweight card list.
+ * and saves through the same path as {@link useSaveRecipe}. Optimistically
+ * flips the flag in the cached card lists (collection cards + gallery) so the
+ * heart responds on the tap, rolling back if the save fails. No embedding
+ * push — the favorite flag isn't part of the recipe's semantic text.
+ *
+ * Not bound to one collection: pass `{ collectionId, recipeId }` per call so
+ * cross-collection surfaces (the home gallery) can share one instance.
  */
-export function useToggleRecipeStar(collectionId: string) {
+export function useToggleRecipeFavorite() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const { syncNow } = useSync();
   return useMutation({
-    mutationFn: async (recipeId: string) => {
+    mutationFn: async ({
+      collectionId,
+      recipeId,
+    }: {
+      collectionId: string;
+      recipeId: string;
+    }) => {
       const recipe = await recipeRepo(collectionId).get(recipeId);
       if (!recipe) return undefined;
       const next: Recipe = { ...recipe, starred: !(recipe.starred === true) };
       await recipeRepo(collectionId).save(next);
       return next;
     },
-    onSuccess: (recipe) => {
-      qc.invalidateQueries({ queryKey: ['collections', user?.id] });
-      qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
-      qc.invalidateQueries({ queryKey: ['collection', collectionId] });
-      qc.invalidateQueries({ queryKey: ['collection-recipes', collectionId] });
-      qc.invalidateQueries({ queryKey: ['recipe-search'] });
-      qc.invalidateQueries({ queryKey: ['recipes-by-ids'] });
+    onMutate: ({ collectionId, recipeId }) => {
+      const flip = <T extends { id: string; starred?: boolean }>(rows: T[] | undefined) =>
+        rows?.map((r) => (r.id === recipeId ? { ...r, starred: !(r.starred === true) } : r));
+      const cardKey = ['collection-recipes', collectionId];
+      const galleryKey = ['gallery-recipes', user?.id];
+      const prevCards = qc.getQueryData(cardKey);
+      const prevGallery = qc.getQueryData(galleryKey);
+      qc.setQueryData(cardKey, flip);
+      qc.setQueryData(galleryKey, flip);
+      return { cardKey, galleryKey, prevCards, prevGallery };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (!ctx) return;
+      qc.setQueryData(ctx.cardKey, ctx.prevCards);
+      qc.setQueryData(ctx.galleryKey, ctx.prevGallery);
+    },
+    onSuccess: (recipe, { collectionId }) => {
+      void qc.invalidateQueries({ queryKey: ['collections', user?.id] });
+      void qc.invalidateQueries({ queryKey: ['library-summaries', user?.id] });
+      void qc.invalidateQueries({ queryKey: ['collection', collectionId] });
+      void qc.invalidateQueries({ queryKey: ['collection-recipes', collectionId] });
+      void qc.invalidateQueries({ queryKey: ['gallery-recipes', user?.id] });
+      void qc.invalidateQueries({ queryKey: ['recipe-search'] });
+      void qc.invalidateQueries({ queryKey: ['recipes-by-ids'] });
       if (recipe) {
-        qc.invalidateQueries({ queryKey: ['recipe', collectionId, recipe.id] });
-        qc.invalidateQueries({ queryKey: ['recipe-summary', recipe.id] });
-        void embedAndPushRecipe(recipe).catch(() => {
-          // Recoverable: the worker recomputes the canonical vector.
-        });
+        void qc.invalidateQueries({ queryKey: ['recipe', collectionId, recipe.id] });
+        void qc.invalidateQueries({ queryKey: ['recipe-summary', recipe.id] });
       }
       void syncNow();
     },

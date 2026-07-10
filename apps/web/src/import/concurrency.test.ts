@@ -73,6 +73,7 @@ describe('mapWithConcurrency', () => {
   });
 
   it('wraps non-Error throws', async () => {
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the non-Error rejection is the case under test
     const failures = await mapWithConcurrency([1], 4, () => Promise.reject('raw string'));
     expect(failures[0]!.error).toBeInstanceOf(Error);
     expect(failures[0]!.error.message).toBe('raw string');

@@ -205,7 +205,7 @@ describe('Rich recipe metadata', () => {
   });
 });
 
-describe('Recipe.starred', () => {
+describe('Recipe.starred (favorite flag)', () => {
   it('round-trips through createRecipe', () => {
     const r = createRecipe({ title: 't', starred: true });
     expect(r.starred).toBe(true);
@@ -221,7 +221,7 @@ describe('Recipe.starred', () => {
     expect(scaleRecipe(r, 2).starred).toBe(true);
   });
 
-  it('does NOT propagate through adaptRecipe — adaptations start unstarred', () => {
+  it('does NOT propagate through adaptRecipe — adaptations start unfavorited', () => {
     const starred = createRecipe({ title: 't', starred: true });
     const adapted = adaptRecipe(starred);
     expect(adapted.starred).toBeUndefined();

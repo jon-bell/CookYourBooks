@@ -18,10 +18,9 @@ type Phase = 'config' | 'scanning' | 'uploading';
 /**
  * Mobile-first "Scan pages" entry: pick an optional target cookbook, then
  * rapid-capture pages with the live viewfinder ({@link scanPages}) and feed
- * them straight into the standard OCR pipeline ({@link uploadBatch}). No
- * pre-starring of placeholder recipes required (unlike the Speed Importer),
- * and the OCR provider/model are resolved silently so there's no config form
- * on the phone.
+ * them straight into the standard OCR pipeline ({@link uploadBatch}). The
+ * OCR provider/model are resolved silently so there's no config form on the
+ * phone.
  */
 export function ScanPagesPage() {
   const { user } = useAuth();

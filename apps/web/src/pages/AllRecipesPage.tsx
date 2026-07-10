@@ -1,12 +1,12 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useMemo, useState } from 'react';
 
 import { EmptyMadeHint } from '../components/EmptyMadeHint.js';
 import { LoadingState } from '../components/LoadingState.js';
-import { RecipeGalleryGrid } from '../components/RecipeGalleryGrid.js';
+import { type GalleryCard, RecipeGalleryGrid } from '../components/RecipeGalleryGrid.js';
 import { sortByLastMade } from '../components/SortableRecipeList.js';
 import { usePersistedState } from '../components/usePersistedState.js';
 import { useLastMadeByRecipe } from '../cooking/queries.js';
-import { useGalleryRecipes } from '../data/queries.js';
+import { useGalleryRecipes, useToggleRecipeFavorite } from '../data/queries.js';
 import { useSync } from '../local/SyncProvider.js';
 
 /** `views` is the query's native order (view count, then last viewed). */
@@ -33,8 +33,10 @@ export function AllRecipesPage() {
     isGallerySortMode,
   );
   const lastMade = useLastMadeByRecipe().data;
+  const toggleFavorite = useToggleRecipeFavorite();
 
   const [filterQuery, setFilterQuery] = useState('');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   // Defer the query so typing stays snappy on large libraries; the input is
   // bound to the immediate value so the field itself never lags.
   const deferredQuery = useDeferredValue(filterQuery);
@@ -42,14 +44,16 @@ export function AllRecipesPage() {
   const isFiltering = q !== '';
 
   const filtered = useMemo(() => {
-    if (!isFiltering) return recipes;
-    return recipes.filter(
-      (r) =>
-        r.title.toLowerCase().includes(q) ||
-        r.collectionTitle.toLowerCase().includes(q) ||
-        (r.collectionAuthor?.toLowerCase().includes(q) ?? false),
-    );
-  }, [recipes, q, isFiltering]);
+    const base = isFiltering
+      ? recipes.filter(
+          (r) =>
+            r.title.toLowerCase().includes(q) ||
+            r.collectionTitle.toLowerCase().includes(q) ||
+            (r.collectionAuthor?.toLowerCase().includes(q) ?? false),
+        )
+      : recipes;
+    return favoritesOnly ? base.filter((r) => r.starred) : base;
+  }, [recipes, q, isFiltering, favoritesOnly]);
 
   // 'views' keeps the query's native order; the other modes re-sort in JS.
   const sorted = useMemo(() => {
@@ -61,6 +65,14 @@ export function AllRecipesPage() {
     }
     return filtered;
   }, [filtered, sortMode, lastMade]);
+
+  // Stable identity so the memoized gallery cells don't all re-render
+  // (react-query's `mutate` is referentially stable; the mutation object isn't).
+  const mutateFavorite = toggleFavorite.mutate;
+  const onCardFavorite = useCallback(
+    (card: GalleryCard) => mutateFavorite({ collectionId: card.collectionId, recipeId: card.id }),
+    [mutateFavorite],
+  );
 
   const waitingForData = isLoading && recipes.length === 0;
   const awaitingFirstSync =
@@ -99,6 +111,18 @@ export function AllRecipesPage() {
               aria-label="Search recipes or cookbooks"
               className="min-w-0 flex-1 rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-1.5 text-sm"
             />
+            <button
+              type="button"
+              aria-pressed={favoritesOnly}
+              onClick={() => setFavoritesOnly((v) => !v)}
+              className={`rounded-md border px-2.5 py-1.5 text-sm ${
+                favoritesOnly
+                  ? 'border-rose-600 bg-rose-600 text-white dark:border-rose-500 dark:bg-rose-500'
+                  : 'border-stone-300 text-stone-600 hover:bg-stone-100 dark:border-stone-600 dark:text-stone-300 dark:hover:bg-stone-800'
+              }`}
+            >
+              <span aria-hidden>♥</span> Favorites
+            </button>
             <label htmlFor="gallery-sort" className="sr-only">
               Sort
             </label>
@@ -114,15 +138,17 @@ export function AllRecipesPage() {
             </select>
           </div>
           <div className="text-xs text-stone-400 dark:text-stone-500">
-            {isFiltering ? `${filtered.length} of ${countLabel}` : countLabel}
+            {isFiltering || favoritesOnly ? `${filtered.length} of ${countLabel}` : countLabel}
           </div>
           {sortMode === 'made' && (lastMade?.size ?? 0) === 0 && <EmptyMadeHint />}
           {filtered.length === 0 ? (
             <p className="rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 px-4 py-6 text-center text-sm text-stone-500 dark:text-stone-400">
-              No recipes match “{filterQuery.trim()}”.
+              {favoritesOnly && !isFiltering
+                ? 'No favorites yet — tap the ♡ on a recipe to add one.'
+                : `No recipes match “${filterQuery.trim()}”.`}
             </p>
           ) : (
-            <RecipeGalleryGrid items={sorted} />
+            <RecipeGalleryGrid items={sorted} onToggleFavorite={onCardFavorite} />
           )}
         </>
       )}

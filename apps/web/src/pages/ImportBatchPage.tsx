@@ -252,7 +252,7 @@ export function ImportBatchPage() {
           const created: { recipeId: string; collectionId: string }[] = [];
           for (const idx of indices) {
             const draft = it.parsedDrafts[idx]!;
-            const { recipeId, overwriteTitle } = resolveTargetRecipe(draft, it, collection);
+            const { recipeId, overwriteTitle } = resolveTargetRecipe(draft, collection);
             const recipe = buildRecipeFromDraft(draft, {
               collectionTitle: collection?.title,
               recipeId,

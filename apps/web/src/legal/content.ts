@@ -319,8 +319,10 @@ that data. We store only the structured recipe data that comes back.
 The Service stores data locally in your browser:
 
 - **IndexedDB** — your recipe library, synced from Supabase, for offline access.
-- **localStorage** — OCR settings (provider, model, prompt) under
-  \`cookyourbooks.ocr.v1\`; a debug flag under \`cookyourbooks.sync.consoleMirror\`.
+- **localStorage** — OCR fallback-model preference under
+  \`cookyourbooks.ocr.fallback.v1\`; UI preferences (sort modes, dismissed
+  onboarding) under other \`cookyourbooks.*\` keys; a debug flag under
+  \`cookyourbooks.sync.consoleMirror\`.
 - **Session storage / cookies** — your Supabase auth session token.
 
 No advertising or analytics cookies are used. The cookies we set are strictly

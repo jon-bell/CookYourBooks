@@ -629,12 +629,11 @@ export const POST_SCHEMA_MIGRATIONS: string[] = [
   `create index if not exists conversion_rules_owner_idx on conversion_rules(owner_id)`,
   // Free-form per-rule notes (added 2026-06-02).
   `alter table conversion_rules add column notes text`,
-  // Speed Importer additions (2026-06-03):
-  //  - recipes.starred: the planner queue derives from this column.
-  //  - import_items.assigned_recipe_id: pre-bind a scan to an existing
-  //    placeholder so the worker output updates it in place.
-  //  - import_batches.is_planner: lets the planner page find its own
-  //    open AWAITING_GROUPING session across app restarts.
+  // Originally Speed Importer additions (2026-06-03). The feature is gone
+  // (2026-07-12): recipes.starred now backs the user-facing "favorite"
+  // heart; assigned_recipe_id / is_planner are inert but the columns stay
+  // (migration strings are append-only, and the server keeps them for
+  // older-client sync compatibility).
   `alter table recipes add column starred integer not null default 0`,
   `alter table import_items add column assigned_recipe_id text`,
   `alter table import_batches add column is_planner integer not null default 0`,

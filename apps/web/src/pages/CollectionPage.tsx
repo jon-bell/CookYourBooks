@@ -1,5 +1,5 @@
 import type { RecipeCollection } from '@cookyourbooks/domain';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
@@ -19,11 +19,10 @@ import {
   useDeleteCollection,
   useReorderRecipes,
   useSaveCollection,
-  useToggleRecipeStar,
+  useToggleRecipeFavorite,
 } from '../data/queries.js';
 import { CollectionShareSection } from '../household/CollectionShareSection.js';
 import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
-import { findOpenPlannerSession } from '../import/localRepos.js';
 import { useCollectionNotes } from '../notes/queries.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
@@ -37,29 +36,11 @@ export function CollectionPage() {
   const deleteCollection = useDeleteCollection();
   const saveCollection = useSaveCollection();
   const reorderRecipes = useReorderRecipes(collectionId ?? '');
-  const toggleStar = useToggleRecipeStar(collectionId ?? '');
+  const toggleFavorite = useToggleRecipeFavorite();
   const [showPublishWarning, setShowPublishWarning] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
   const [generatingCover, setGeneratingCover] = useState(false);
-  const [hasOpenSession, setHasOpenSession] = useState(false);
   const [tab, setTab] = useState<'recipes' | 'notes'>('recipes');
-
-  // Cheap one-shot probe so the CTA can say "resume" when applicable.
-  // Re-runs whenever the collection's recipe list changes (which is also
-  // when the user might have started a session and come back).
-  useEffect(() => {
-    if (!user || !collection || collection.sourceType !== 'PUBLISHED_BOOK') {
-      setHasOpenSession(false);
-      return;
-    }
-    let cancelled = false;
-    void findOpenPlannerSession(user.id, collection.id).then((s) => {
-      if (!cancelled) setHasOpenSession(!!s);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [user, collection]);
 
   if (isLoading) return <LoadingState surface="collection" />;
   if (error) return <p className="text-red-700 dark:text-red-300">{error.message}</p>;
@@ -91,16 +72,10 @@ export function CollectionPage() {
     await saveCollection.mutateAsync({ ...c, coverImagePath: newPath });
   }
 
-  async function onToggleStar(recipeId: string) {
-    await toggleStar.mutateAsync(recipeId);
+  async function onToggleFavorite(recipeId: string) {
+    if (!collectionId) return;
+    await toggleFavorite.mutateAsync({ collectionId, recipeId });
   }
-
-  const starredCount = recipes.filter((r) => r.starred).length;
-  const starredPlaceholderCount = recipes.filter(
-    (r) => r.starred && r.ingredientCount === 0 && r.instructionCount === 0,
-  ).length;
-  const showSpeedImporterCta =
-    c.sourceType === 'PUBLISHED_BOOK' && (starredPlaceholderCount > 0 || hasOpenSession);
 
   return (
     <div className="space-y-6">
@@ -217,33 +192,6 @@ export function CollectionPage() {
         </button>
       </div>
 
-      {showSpeedImporterCta && (
-        <Link
-          to={`/import/speed?collection=${c.id}`}
-          className="flex items-center justify-between rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 px-4 py-3 text-sm hover:bg-indigo-100 dark:hover:bg-indigo-900/60"
-        >
-          <span className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200">
-            <span aria-hidden className="text-base">
-              ★
-            </span>
-            <span>
-              <strong>Speed Importer</strong>
-              {starredCount > 0 && (
-                <>
-                  {' '}
-                  · {starredCount} starred
-                  {starredPlaceholderCount > 0 &&
-                    starredPlaceholderCount !== starredCount &&
-                    ` (${starredPlaceholderCount} to scan)`}
-                </>
-              )}
-              {hasOpenSession && ' · resume'}
-            </span>
-          </span>
-          <span className="text-indigo-700 dark:text-indigo-300">→</span>
-        </Link>
-      )}
-
       <DuplicateRecipesTool collectionId={c.id} recipes={recipes} />
 
       {/* Notes get their own tab so a cookbook with many multi-page notes
@@ -282,7 +230,7 @@ export function CollectionPage() {
               collectionId={c.id}
               recipes={recipes}
               onReorder={(ids) => reorderRecipes.mutateAsync(ids)}
-              onToggleStar={onToggleStar}
+              onToggleFavorite={onToggleFavorite}
             />
           )
         ) : (

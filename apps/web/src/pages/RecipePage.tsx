@@ -32,6 +32,7 @@ import {
   useRecipe,
   useRecipeSummary,
   useSaveRecipe,
+  useToggleRecipeFavorite,
 } from '../data/queries.js';
 import { useMyHousehold } from '../household/queries.js';
 import {
@@ -79,6 +80,7 @@ export function RecipePage() {
   }, [recipeId, recordViewMutate]);
   const deleteRecipe = useDeleteRecipe(collectionId ?? '');
   const saveRecipe = useSaveRecipe(collectionId ?? '');
+  const toggleFavoriteMutation = useToggleRecipeFavorite();
   const { data: parent } = useRecipeSummary(recipe?.parentRecipeId);
   const { data: adaptations = [] } = useAdaptations(recipe?.id);
   // Resolve ingredient → recipe cross-reference links (keyed by stable
@@ -212,9 +214,9 @@ export function RecipePage() {
     navigate(`/collections/${collection!.id}/recipes/${clone.id}/edit`);
   }
 
-  async function toggleStar() {
-    if (!recipe) return;
-    await saveRecipe.mutateAsync({ ...recipe, starred: !(recipe.starred === true) });
+  function toggleFavorite() {
+    if (!recipe || !collectionId) return;
+    toggleFavoriteMutation.mutate({ collectionId, recipeId: recipe.id });
   }
 
   async function setCover(path: string | undefined) {
@@ -350,6 +352,21 @@ export function RecipePage() {
           )}
         </div>
         <div className="ml-auto flex gap-2">
+          <button
+            type="button"
+            onClick={toggleFavorite}
+            disabled={toggleFavoriteMutation.isPending}
+            aria-pressed={recipe.starred === true}
+            aria-label={recipe.starred === true ? 'Remove favorite' : 'Favorite this recipe'}
+            title={recipe.starred === true ? 'Remove favorite' : 'Favorite'}
+            className={`rounded-md px-2.5 py-1.5 text-lg leading-none hover:bg-stone-100 dark:hover:bg-stone-800 ${
+              recipe.starred === true
+                ? 'text-rose-600 dark:text-rose-400'
+                : 'text-stone-400 dark:text-stone-500'
+            }`}
+          >
+            <span aria-hidden>{recipe.starred === true ? '♥' : '♡'}</span>
+          </button>
           <Link
             to={`/collections/${collection.id}/recipes/${recipe.id}/cook`}
             className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
@@ -416,26 +433,6 @@ export function RecipePage() {
                   }}
                 >
                   Remix
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={saveRecipe.isPending}
-                  title={
-                    recipe.starred === true
-                      ? 'Unstar (remove from Speed Importer queue)'
-                      : 'Star this recipe so the Speed Importer queues it for scanning'
-                  }
-                  onSelect={() => {
-                    close();
-                    void toggleStar();
-                  }}
-                >
-                  <span
-                    aria-hidden
-                    className={recipe.starred === true ? 'text-amber-600 dark:text-amber-400' : ''}
-                  >
-                    {recipe.starred === true ? '★' : '☆'}
-                  </span>{' '}
-                  {recipe.starred === true ? 'Starred' : 'Star'}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   title="Export this recipe as Markdown / via the share sheet"

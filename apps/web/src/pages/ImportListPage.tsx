@@ -93,12 +93,6 @@ export function ImportListPage() {
           <span aria-hidden>📷</span> Scan pages
         </Link>
         <Link
-          to="/import/speed"
-          className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
-        >
-          ★ Speed Importer
-        </Link>
-        <Link
           to="/import/link"
           className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
         >
