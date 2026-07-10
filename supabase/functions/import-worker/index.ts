@@ -891,7 +891,12 @@ async function parseAndComplete(
       note: note ? 1 : 0,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    let msg = err instanceof Error ? err.message : String(err);
+    // A truncated completion (output budget exhausted) is the usual cause of
+    // an unparseable tail — say so instead of leading with raw JSON soup.
+    if (result.finishReason === 'length' || result.finishReason === 'MAX_TOKENS') {
+      msg = `Response hit the model's output limit (truncated). ${msg}`;
+    }
     const nextState: 'PENDING' | 'OCR_FAILED' =
       item.attempts < MAX_PARSE_RETRIES ? 'PENDING' : 'OCR_FAILED';
     log.warn('parse error', { message: msg, next_state: nextState, text_preview: text.slice(0, 200) });
@@ -3077,6 +3082,7 @@ interface OcrCallLike {
   completionTokens: number;
   errorMessage?: string;
   latencyMs: number;
+  finishReason?: string;
 }
 
 async function runOrMock(p: {

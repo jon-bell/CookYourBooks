@@ -89,8 +89,8 @@ export function RecitationBanner({
       {showFail && (
         <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
-            {recitationFailedCount} page{recitationFailedCount === 1 ? '' : 's'} failed on
-            recitation.
+            {recitationFailedCount} page{recitationFailedCount === 1 ? '' : 's'} failed on a
+            copyright/content-filter refusal.
           </div>
           <div className="mt-1">
             {hasFallback ? (
@@ -136,7 +136,8 @@ export function RecitationBanner({
       {showAsk && (
         <div className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="font-medium">
-            {needsFallbackCount} page{needsFallbackCount === 1 ? '' : 's'} hit copyright recitation.
+            {needsFallbackCount} page{needsFallbackCount === 1 ? '' : 's'} hit a
+            copyright/content-filter refusal.
           </div>
           <div className="mt-1">
             Use the fallback model{batch.fallbackModel ? ` (${batch.fallbackModel})` : ''} for{' '}

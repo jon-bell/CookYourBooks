@@ -22,6 +22,10 @@ export interface OcrCallResult {
   completionTokens: number;
   errorMessage?: string;
   latencyMs: number;
+  /** Provider finish reason (`STOP`/`MAX_TOKENS` for Gemini, `stop`/`length`/…
+   *  for OpenAI-compatible) so a downstream parse failure can say "the model
+   *  ran out of output budget" instead of showing raw JSON soup. */
+  finishReason?: string;
 }
 
 export interface OcrImage {
@@ -235,6 +239,7 @@ async function callGemini(
         ? `Gemini refused due to ${finish ?? 'recitation'} guardrail.`
         : 'Gemini returned no text part.',
       latencyMs,
+      finishReason: finish,
     };
   }
 
@@ -246,6 +251,7 @@ async function callGemini(
       completionTokens,
       errorMessage: `Gemini stopped early (${finish}).`,
       latencyMs,
+      finishReason: finish,
     };
   }
 
@@ -256,6 +262,7 @@ async function callGemini(
     promptTokens,
     completionTokens,
     latencyMs,
+    finishReason: finish,
   };
 }
 
@@ -345,6 +352,25 @@ async function callOpenAI(
   const promptTokens = parsed.usage?.prompt_tokens ?? 0;
   const completionTokens = parsed.usage?.completion_tokens ?? 0;
   const text = parsed.choices?.[0]?.message?.content;
+  const finish = parsed.choices?.[0]?.finish_reason;
+  const finishClass = classifyOpenAIFinish(finish);
+
+  // A guardrail stop (`content_filter` etc.) truncates the JSON mid-value —
+  // unrecoverable by the tolerant parser, so don't let it masquerade as a
+  // parse error. RECITATION routes it into the same needs_fallback / retry
+  // machinery as Gemini's recitation refusals. The message must contain the
+  // substring "recitation": the batch board detects these failures by it.
+  if (finishClass === 'refusal') {
+    return {
+      errorKind: 'RECITATION',
+      rawResponse: rawText,
+      promptTokens,
+      completionTokens,
+      errorMessage: `Model stopped early (finish_reason=${finish}) — content-filter/recitation refusal.`,
+      latencyMs,
+      finishReason: finish,
+    };
+  }
 
   if (!text) {
     return {
@@ -354,9 +380,13 @@ async function callOpenAI(
       completionTokens,
       errorMessage: 'OpenAI-compatible response had no content.',
       latencyMs,
+      finishReason: finish,
     };
   }
 
+  // `length` (truncated) still reaches the parser: an under-closed tail may
+  // be salvageable, and parseAndComplete prefixes the failure message with
+  // the truncation cause via `finishReason` when it isn't.
   return {
     errorKind: 'OK',
     rawResponse: rawText,
@@ -364,7 +394,20 @@ async function callOpenAI(
     promptTokens,
     completionTokens,
     latencyMs,
+    finishReason: finish,
   };
+}
+
+/**
+ * Classify an OpenAI-compatible `finish_reason`. `stop` (or absent) is a
+ * clean finish; `length` means the output budget truncated the JSON;
+ * anything else (`content_filter`, `tool_calls`, vendor-specific values)
+ * is treated as a refusal — the content is not trustworthy JSON.
+ */
+export function classifyOpenAIFinish(finish: string | undefined): 'ok' | 'truncated' | 'refusal' {
+  if (finish === undefined || finish === 'stop') return 'ok';
+  if (finish === 'length') return 'truncated';
+  return 'refusal';
 }
 
 function classifyHttp(status: number): ErrorKind {
