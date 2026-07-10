@@ -269,6 +269,9 @@ function RecipeGallery({
     [onToggleFavorite],
   );
   return (
-    <RecipeGalleryGrid items={items} onToggleFavorite={onToggleFavorite ? onCardFavorite : undefined} />
+    <RecipeGalleryGrid
+      items={items}
+      onToggleFavorite={onToggleFavorite ? onCardFavorite : undefined}
+    />
   );
 }

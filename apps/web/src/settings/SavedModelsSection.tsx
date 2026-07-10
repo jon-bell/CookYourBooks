@@ -42,7 +42,9 @@ export function SavedModelsSection() {
   }
   useEffect(() => void refresh(), []);
 
-  const oaiEndpoints = keys.filter((k) => k.provider === 'openai-compatible').map((k) => k.endpoint);
+  const oaiEndpoints = keys
+    .filter((k) => k.provider === 'openai-compatible')
+    .map((k) => k.endpoint);
 
   async function add() {
     if (!draft.model.trim()) return;

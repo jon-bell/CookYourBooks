@@ -11,7 +11,11 @@ describe('formatSavedModel', () => {
 
   it('labels OpenAI-compatible models by their endpoint slug', () => {
     expect(
-      formatSavedModel({ provider: 'openai-compatible', endpoint: 'openrouter', model: 'qwen3-vl' }),
+      formatSavedModel({
+        provider: 'openai-compatible',
+        endpoint: 'openrouter',
+        model: 'qwen3-vl',
+      }),
     ).toBe('openrouter · qwen3-vl');
     expect(
       formatSavedModel({ provider: 'openai-compatible', endpoint: 'default', model: 'gpt-5.4' }),

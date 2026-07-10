@@ -24,6 +24,10 @@
 
 alter table public.user_ocr_keys
   add column endpoint text not null default 'default';
+-- The original imports migration column-revoked vault_secret_id, which turns
+-- the table-level SELECT into per-column grants — a column added later is
+-- NOT covered and reads of it get "permission denied". Grant it explicitly.
+grant select (endpoint) on public.user_ocr_keys to authenticated;
 alter table public.user_ocr_keys
   add constraint user_ocr_keys_endpoint_slug
     check (endpoint ~ '^[a-z0-9][a-z0-9_-]{0,31}$');

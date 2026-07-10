@@ -162,7 +162,11 @@ export function RecitationBanner({
               disabled={retryBusy || (!hasFallback && !choice)}
               className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-xs font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200 disabled:opacity-60"
             >
-              {retryBusy ? 'Retrying…' : choice ? `Retry with ${choice.model}` : 'Retry with fallback'}
+              {retryBusy
+                ? 'Retrying…'
+                : choice
+                  ? `Retry with ${choice.model}`
+                  : 'Retry with fallback'}
             </button>
             {retryToast && <span className="self-center text-xs">{retryToast}</span>}
           </div>

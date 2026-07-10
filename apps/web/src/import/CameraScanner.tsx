@@ -3,11 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { SAFE_BOTTOM, SAFE_TOP, SAFE_X, TAP_TARGET } from '../components/mobileSafeArea.js';
 import { shutterHaptic } from './cameraFeedback.js';
 import { DEFAULT_MARKER, type PageKind, type PageMarker, type ScannedPage } from './pageMarker.js';
-import {
-  hasSeenScanTutorial,
-  markScanTutorialSeen,
-  ScannerHelpModal,
-} from './ScannerHelpModal.js';
+import { hasSeenScanTutorial, markScanTutorialSeen, ScannerHelpModal } from './ScannerHelpModal.js';
 import { isVolumeButtonAvailable, subscribeVolumeButton } from './volumeButton.js';
 
 const DEFAULT_MAX_SHOTS = 200;

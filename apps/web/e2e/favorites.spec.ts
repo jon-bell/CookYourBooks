@@ -6,7 +6,11 @@ import { expect, test, waitForSynced } from './support/fixtures.js';
  * persisted through the recipe save/sync path (survives a reload).
  */
 
-async function seedRecipe(page: import('@playwright/test').Page, collection: string, title: string) {
+async function seedRecipe(
+  page: import('@playwright/test').Page,
+  collection: string,
+  title: string,
+) {
   await page.goto('/library');
   await page.getByRole('link', { name: 'New collection' }).click();
   await page.getByLabel('Title').fill(collection);

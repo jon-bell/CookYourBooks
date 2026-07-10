@@ -56,9 +56,7 @@ const GalleryCardCell = memo(function GalleryCardCell({
           type="button"
           aria-pressed={item.starred === true}
           aria-label={
-            item.starred === true
-              ? `Remove ${item.title} from favorites`
-              : `Favorite ${item.title}`
+            item.starred === true ? `Remove ${item.title} from favorites` : `Favorite ${item.title}`
           }
           title={item.starred === true ? 'Remove favorite' : 'Favorite'}
           onClick={() => onToggleFavorite(item)}

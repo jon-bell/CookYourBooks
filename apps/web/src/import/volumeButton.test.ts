@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isVolumeButtonAvailable, subscribeVolumeButton, type VolumeDirection } from './volumeButton.js';
+import {
+  isVolumeButtonAvailable,
+  subscribeVolumeButton,
+  type VolumeDirection,
+} from './volumeButton.js';
 
 type Listener = (event?: { direction?: VolumeDirection }) => void;
 

@@ -151,13 +151,23 @@ test.describe('bulk OCR imports', () => {
     // The new cookbook becomes the selected target (shown in the picker button)…
     await expect(page.getByText(title)).toBeVisible({ timeout: 15_000 });
 
-    // …and persisted as a PUBLISHED_BOOK carrying the ISBN.
-    const cols = await adminGet<{ id: string; isbn: string | null; source_type: string }[]>(
-      `/rest/v1/recipe_collections?owner_id=eq.${user.id}&title=eq.${encodeURIComponent(
-        title,
-      )}&select=id,isbn,source_type`,
-    );
-    expect(cols.length).toBe(1);
+    // …and persisted as a PUBLISHED_BOOK carrying the ISBN. The write is
+    // local-first (outbox push in the background), so poll the server rather
+    // than asserting the instant the picker updates.
+    let cols: { id: string; isbn: string | null; source_type: string }[] = [];
+    await expect
+      .poll(
+        async () => {
+          cols = await adminGet<{ id: string; isbn: string | null; source_type: string }[]>(
+            `/rest/v1/recipe_collections?owner_id=eq.${user.id}&title=eq.${encodeURIComponent(
+              title,
+            )}&select=id,isbn,source_type`,
+          );
+          return cols.length;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(1);
     expect(cols[0]!.source_type).toBe('PUBLISHED_BOOK');
     expect(cols[0]!.isbn).toBe(isbn);
   });
@@ -246,7 +256,7 @@ test.describe('bulk OCR imports', () => {
 
     await page.reload();
     await waitForSynced(page);
-    await expect(page.getByText(/hit copyright recitation/)).toBeVisible({
+    await expect(page.getByText(/hit a copyright\/content-filter refusal/)).toBeVisible({
       timeout: 15_000,
     });
 
@@ -256,7 +266,7 @@ test.describe('bulk OCR imports', () => {
     // once setRecitationPolicy lands and the local DB syncs, it goes
     // away. Without this, triggerWorker below could race against the
     // policy update and find no PENDING items to claim yet.
-    await expect(page.getByText(/hit copyright recitation/)).toHaveCount(0, {
+    await expect(page.getByText(/hit a copyright\/content-filter refusal/)).toHaveCount(0, {
       timeout: 15_000,
     });
     await triggerWorker(batchId);

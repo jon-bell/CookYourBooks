@@ -585,7 +585,12 @@ export function ImportItemPage() {
       // reset with needs_fallback=true — so just this page runs on the
       // pick while the batch's other items keep the default config.
       if (reOcrChoice) {
-        await setBatchFallback(batch.id, reOcrChoice.provider, reOcrChoice.model, reOcrChoice.endpoint);
+        await setBatchFallback(
+          batch.id,
+          reOcrChoice.provider,
+          reOcrChoice.model,
+          reOcrChoice.endpoint,
+        );
         await resetImportItem(item.id, undefined, { useFallback: true });
         await syncNow();
         try {

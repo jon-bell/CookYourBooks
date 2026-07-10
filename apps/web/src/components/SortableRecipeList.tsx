@@ -160,7 +160,11 @@ function SortableRow({
       >
         <span aria-hidden>⋮⋮</span>
       </button>
-      <RecipeRowBody collectionId={collectionId} recipe={recipe} onToggleFavorite={onToggleFavorite} />
+      <RecipeRowBody
+        collectionId={collectionId}
+        recipe={recipe}
+        onToggleFavorite={onToggleFavorite}
+      />
     </li>
   );
 }
@@ -187,7 +191,9 @@ function RecipeRowBody({
       {onToggleFavorite && (
         <button
           type="button"
-          aria-label={starred ? `Remove ${recipe.title} from favorites` : `Favorite ${recipe.title}`}
+          aria-label={
+            starred ? `Remove ${recipe.title} from favorites` : `Favorite ${recipe.title}`
+          }
           aria-pressed={starred}
           onClick={(e) => {
             e.preventDefault();

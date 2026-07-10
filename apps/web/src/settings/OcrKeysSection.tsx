@@ -113,8 +113,8 @@ export function OcrKeysSection() {
           >
             Google AI Studio
           </a>
-          , or add any number of OpenAI-compatible endpoints (OpenAI, Groq, Together, OpenRouter…)
-          — each endpoint keeps its own key and base URL, so a retry can hop providers.
+          , or add any number of OpenAI-compatible endpoints (OpenAI, Groq, Together, OpenRouter…) —
+          each endpoint keeps its own key and base URL, so a retry can hop providers.
         </p>
       </div>
 

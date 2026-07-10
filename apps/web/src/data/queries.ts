@@ -235,13 +235,7 @@ export function useToggleRecipeFavorite() {
   const { user } = useAuth();
   const { syncNow } = useSync();
   return useMutation({
-    mutationFn: async ({
-      collectionId,
-      recipeId,
-    }: {
-      collectionId: string;
-      recipeId: string;
-    }) => {
+    mutationFn: async ({ collectionId, recipeId }: { collectionId: string; recipeId: string }) => {
       const recipe = await recipeRepo(collectionId).get(recipeId);
       if (!recipe) return undefined;
       const next: Recipe = { ...recipe, starred: !(recipe.starred === true) };

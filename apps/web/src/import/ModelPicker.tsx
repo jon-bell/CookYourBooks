@@ -58,7 +58,7 @@ export function ModelPicker({
           (m) =>
             m.provider === value.provider &&
             m.model === value.model &&
-            (m.endpoint === (value.endpoint ?? 'default'))
+            m.endpoint === (value.endpoint ?? 'default'),
         );
 
   return (
