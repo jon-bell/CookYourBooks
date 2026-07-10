@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { subscribeVolumeButton } from './volumeButton.js';
+import { isVolumeButtonAvailable, subscribeVolumeButton, type VolumeDirection } from './volumeButton.js';
 
-type Listener = () => void;
+type Listener = (event?: { direction?: VolumeDirection }) => void;
 
 type GlobalWithCapacitor = typeof globalThis & {
   Capacitor?: {
@@ -43,7 +43,7 @@ function installPlugin(handleMode: 'sync' | 'promise') {
     isNativePlatform: () => true,
     Plugins: { CybVolumeButton: plugin },
   };
-  return { plugin, remove, fire: () => captured?.() };
+  return { plugin, remove, fire: (event?: { direction?: VolumeDirection }) => captured?.(event) };
 }
 
 describe('subscribeVolumeButton', () => {
@@ -72,8 +72,36 @@ describe('subscribeVolumeButton', () => {
     const { fire } = installPlugin('sync');
     const onPress = vi.fn();
     subscribeVolumeButton(onPress);
-    fire();
+    fire({ direction: 'up' });
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes the press direction through', () => {
+    const { fire } = installPlugin('sync');
+    const onPress = vi.fn();
+    subscribeVolumeButton(onPress);
+    fire({ direction: 'up' });
+    fire({ direction: 'down' });
+    expect(onPress).toHaveBeenNthCalledWith(1, 'up');
+    expect(onPress).toHaveBeenNthCalledWith(2, 'down');
+  });
+
+  it("defaults a directionless event (old native binary) to 'down' — the plain shutter", () => {
+    const { fire } = installPlugin('sync');
+    const onPress = vi.fn();
+    subscribeVolumeButton(onPress);
+    fire(); // no payload at all
+    fire({}); // payload without direction
+    expect(onPress).toHaveBeenNthCalledWith(1, 'down');
+    expect(onPress).toHaveBeenNthCalledWith(2, 'down');
+  });
+
+  it('reports availability only when native with the plugin registered', () => {
+    expect(isVolumeButtonAvailable()).toBe(false);
+    g.Capacitor = { isNativePlatform: () => true, Plugins: {} };
+    expect(isVolumeButtonAvailable()).toBe(false);
+    installPlugin('sync');
+    expect(isVolumeButtonAvailable()).toBe(true);
   });
 
   it('removes the listener and stops listening on unsubscribe (sync handle)', async () => {
@@ -89,7 +117,7 @@ describe('subscribeVolumeButton', () => {
     const onPress = vi.fn();
     const unsub = subscribeVolumeButton(onPress);
     await flush();
-    fire();
+    fire({ direction: 'down' });
     expect(onPress).toHaveBeenCalledTimes(1);
     unsub();
     await flush();
