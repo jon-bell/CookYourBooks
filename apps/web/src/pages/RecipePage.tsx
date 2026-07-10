@@ -61,6 +61,7 @@ import {
 import { shareRecipe } from '../share/share.js';
 import { shareAudience } from '../share/shareAudience.js';
 import { ShareLinkButton } from '../share/ShareLinkButton.js';
+import { bareRecipeShareUrl } from '../share/shareUrl.js';
 export function RecipePage() {
   const { collectionId, recipeId } = useParams();
   const navigate = useNavigate();
@@ -202,7 +203,11 @@ export function RecipePage() {
     const md = recipeToMarkdown(scaled!);
     // shareRecipe picks the right surface: native share sheet on device,
     // Web Share API where supported, Markdown download on desktop browsers.
-    await shareRecipe({ title: recipe!.title, markdown: md });
+    await shareRecipe({
+      title: recipe!.title,
+      markdown: md,
+      url: bareRecipeShareUrl(recipe!.id),
+    });
   }
 
   async function adaptThisRecipe() {
