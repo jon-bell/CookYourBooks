@@ -122,6 +122,65 @@ test.describe('bulk OCR imports', () => {
     await expect(page.getByText('Imported Recipe 1')).toBeVisible({ timeout: 10_000 });
   });
 
+  test('a saved recipe stays on its import item page, editable and deletable', async ({
+    authedPage: page,
+  }) => {
+    await configureOcrKey(page, 'gemini');
+    await createCookbook(page, 'Saved Page Cookbook');
+
+    await page.goto('/import/new');
+    await uploadTestImages(page, ['page1.png']);
+    await page.getByLabel('Batch name').fill('Saved Page Batch');
+    await pickTargetCookbook(page, 'Saved Page Cookbook');
+    await page.getByRole('button', { name: 'Start import' }).click();
+
+    await page.waitForURL(/\/import\/[0-9a-f-]+$/);
+    const batchId = await batchIdFromUrl(page);
+
+    const items = await waitForBatchItemCount(batchId, 1);
+    const itemId = items[0]!.id;
+    await seedOcrFixture({
+      storagePath: items[0]!.storage_path,
+      kind: 'recipe',
+      draft: recipeDraft('Saved Page Recipe', 'flour'),
+    });
+    await pumpItemStatuses(batchId, (c) => c.ocrDone === 1, 45_000);
+
+    // Save the OCR draft as a recipe. This consumes the draft into
+    // createdRecipeIds — the crux of the feature: the recipe must remain
+    // visible on the item page afterwards.
+    await page.goto(`/import/${batchId}/items/${itemId}`);
+    await page.getByRole('button', { name: 'Save as recipe' }).first().click();
+    // The only item is now REVIEWED, so save auto-advances to the batch
+    // board. Anchor on that URL (no trailing /items/) so we actually wait
+    // for the save to commit before revisiting the item page.
+    await page.waitForURL(new RegExp(`/import/${batchId}$`));
+    await waitForSynced(page);
+
+    // Revisit the item page: the saved recipe shows under "Recipes saved
+    // from this page", with a view link, an Edit link to the full editor,
+    // and a Delete button.
+    await page.goto(`/import/${batchId}/items/${itemId}`);
+    const savedList = page.getByTestId('saved-recipes');
+    await expect(savedList).toBeVisible({ timeout: 15_000 });
+    await expect(savedList.getByRole('link', { name: 'Saved Page Recipe' })).toBeVisible();
+    await expect(savedList.getByRole('link', { name: 'Edit' })).toHaveAttribute(
+      'href',
+      /\/collections\/[0-9a-f-]+\/recipes\/[0-9a-f-]+\/edit$/,
+    );
+
+    // Delete permanently removes it from the library and drops it from the
+    // page's list (accept the confirm()).
+    page.once('dialog', (d) => void d.accept());
+    await savedList.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.getByTestId('saved-recipes')).toHaveCount(0, { timeout: 15_000 });
+    await waitForSynced(page);
+
+    await page.getByRole('link', { name: 'Library' }).click();
+    await page.getByRole('link', { name: 'Saved Page Cookbook' }).click();
+    await expect(page.getByText('Saved Page Recipe')).toHaveCount(0);
+  });
+
   test('inline "create cookbook" from the picker captures an ISBN and selects it', async ({
     authedPage: page,
     user,

@@ -381,6 +381,34 @@ async function getCurrentHouseholdId(client: CookbooksClient): Promise<string | 
   return claimsFromSession(data.session).householdId;
 }
 
+/**
+ * Active co-members (other than me) in the household who currently share their
+ * library. The household pulls filter co-members' content with `owner_id <> me`,
+ * but a btree can't satisfy `<>` with an index seek — so for a member who owns
+ * the household's whole library, Postgres seq-scans every shared table to return
+ * zero co-member rows on *every* poll (the `recipe_embeddings` scan alone was
+ * ~1.8s over 17k fat-vector rows, thousands of times — the bulk of the prod
+ * statement-timeouts / "pull timed out" stalls). Resolving the (≤5) co-member
+ * ids lets each pull use an indexable `owner_id = ANY(ids)` equality instead.
+ * An empty result means nobody else is sharing, so the caller skips the whole
+ * household pull. Membership is tiny (≤6 rows) and RLS-scoped to our household.
+ */
+async function getSharingCoMemberIds(
+  client: CookbooksClient,
+  ownerId: string,
+  householdId: string,
+): Promise<string[]> {
+  const { data, error } = await client
+    .from('household_members')
+    .select('user_id, library_shared')
+    .eq('household_id', householdId)
+    .is('left_at', null);
+  if (error) throw new Error(error.message, { cause: error });
+  return (data ?? [])
+    .filter((m) => m.user_id !== ownerId && m.library_shared)
+    .map((m) => m.user_id);
+}
+
 interface ConversionRuleRow {
   id: string;
   owner_id: string;
@@ -663,6 +691,10 @@ async function pullFullSnapshot(
   topics: SnapshotTopics,
   signal: AbortSignal | undefined,
   callbacks: PullCallbacks | undefined,
+  // Household scope only: the co-member ids to fetch. The function filters on
+  // these (`owner_id = ANY`) rather than `owner_id <> me` so it can't seq-scan
+  // the caller's own library to return zero rows (RLS is still the real gate).
+  coMemberIds?: string[],
 ): Promise<{ collections: number; recipes: number; ingredients: number; instructions: number }> {
   void ownerId; // scope is enforced by the Edge Function under the caller's RLS
   const fireCallbacks = scope === 'own';
@@ -673,6 +705,7 @@ async function pullFullSnapshot(
     stage: 'meta',
     scope,
     householdId,
+    coMemberIds,
   });
   if (meta.schemaVersion !== 1) {
     throw new Error(`library-snapshot: unsupported schemaVersion ${meta.schemaVersion}`);
@@ -711,6 +744,7 @@ async function pullFullSnapshot(
     stage: 'bodies',
     scope,
     householdId,
+    coMemberIds,
   });
   if (signal?.aborted) throw new Error('pullFullSnapshot aborted after bodies');
 
@@ -1062,6 +1096,12 @@ async function pullHouseholdSharedContent(
   const collectionTopic = `household_collections:${ownerId}:${householdId}`;
   const recipeTopic = `household_recipes:${ownerId}:${householdId}`;
 
+  // Co-members whose content we pull. Filtering on their ids (`owner_id = ANY`)
+  // is index-friendly; the old `owner_id <> me` anti-filter seq-scanned every
+  // shared table. Empty ⇒ nobody else is sharing ⇒ nothing to pull.
+  const coMemberIds = await getSharingCoMemberIds(client, ownerId, householdId);
+  if (coMemberIds.length === 0) return 0;
+
   const recipeCursor = await getRecipeCursor(recipeTopic);
   const fullPull = recipeCursor.id === '';
 
@@ -1083,6 +1123,7 @@ async function pullHouseholdSharedContent(
         { collectionTopic, recipeTopic },
         signal,
         undefined,
+        coMemberIds,
       );
       collectionCount = snap.collections;
       householdRecipesChanged = snap.recipes;
@@ -1103,7 +1144,7 @@ async function pullHouseholdSharedContent(
         .from('recipe_collections')
         .select('*')
         .eq('household_id', householdId)
-        .neq('owner_id', ownerId)
+        .in('owner_id', coMemberIds)
         .gte('updated_at', collectionsSince)
         .order('updated_at', { ascending: true })
         .order('id', { ascending: true })
@@ -1135,7 +1176,7 @@ async function pullHouseholdSharedContent(
             .from('recipes')
             .select('*')
             .eq('household_id', householdId)
-            .neq('owner_id', ownerId)
+            .in('owner_id', coMemberIds)
             .order('id', { ascending: true })
             .limit(PAGE_SIZE);
           if (afterId) q = q.gt('id', afterId);
@@ -1147,7 +1188,7 @@ async function pullHouseholdSharedContent(
               .from('recipes')
               .select('*')
               .eq('household_id', householdId)
-              .neq('owner_id', ownerId)
+              .in('owner_id', coMemberIds)
               .or(recipeKeysetOr(cur))
               .order('updated_at', { ascending: true })
               .order('id', { ascending: true })
@@ -1190,14 +1231,14 @@ async function pullHouseholdSharedContent(
   // still drives a UI invalidation (the caller gates invalidation on the total
   // — a recipe-only change wouldn't bump the collection count).
   const [eventsChanged, tagsChanged, notesChanged, embeddingsChanged] = [
-    await pullHouseholdCookingEvents(client, ownerId, householdId),
-    await pullHouseholdRecipeTags(client, ownerId, householdId),
-    await pullHouseholdCollectionNotes(client, ownerId, householdId),
+    await pullHouseholdCookingEvents(client, ownerId, householdId, coMemberIds),
+    await pullHouseholdRecipeTags(client, ownerId, householdId, coMemberIds),
+    await pullHouseholdCollectionNotes(client, ownerId, householdId, coMemberIds),
     // Co-members' recipe vectors, so household-shared recipes are semantically
     // searchable (not just literal-fallback). Tagged into the local mirror by
     // recipe_id; the collection's shared_with_household_id marker is what
     // listSearchableEmbeddings joins on to surface them.
-    await pullHouseholdEmbeddings(client, ownerId, householdId),
+    await pullHouseholdEmbeddings(client, ownerId, householdId, coMemberIds),
   ];
 
   // Total household rows that actually changed this pull (collections counted
@@ -1976,12 +2017,15 @@ async function pullHouseholdEmbeddings(
   client: CookbooksClient,
   ownerId: string,
   householdId: string,
+  coMemberIds: string[],
 ): Promise<number> {
   const topic = `household_embeddings:${ownerId}:${householdId}`;
   // Keyset like the owner pull — backed by recipe_embeddings_household_pull_idx
   // (20260626000400). resetHouseholdWatermarks deletes this whole sync_state
   // row, so a household change still forces a clean full re-pull from an empty
-  // keyset cursor.
+  // keyset cursor. Filter on the co-member ids (`owner_id = ANY`) rather than
+  // `owner_id <> me`: a btree can't seek `<>`, so the anti-filter seq-scanned
+  // the owner's entire 17k-row vector set to return 0 rows on every poll.
   const start = await getRecipeCursor(topic);
   const rows = await fetchAllByUpdatedKeyset<RecipeEmbeddingRow>(
     (cur) => {
@@ -1989,7 +2033,7 @@ async function pullHouseholdEmbeddings(
         .from('recipe_embeddings')
         .select('*')
         .eq('household_id', householdId)
-        .neq('owner_id', ownerId);
+        .in('owner_id', coMemberIds);
       if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'recipe_id'));
       return q
         .order('updated_at', { ascending: true })
@@ -2105,6 +2149,7 @@ async function pullHouseholdCookingEvents(
   client: CookbooksClient,
   ownerId: string,
   householdId: string,
+  coMemberIds: string[],
 ): Promise<number> {
   const topic = `household_cooking_events:${ownerId}:${householdId}`;
   const start = await getRecipeCursor(topic);
@@ -2113,7 +2158,7 @@ async function pullHouseholdCookingEvents(
       .from('cooking_events')
       .select('*')
       .eq('household_id', householdId)
-      .neq('owner_id', ownerId);
+      .in('owner_id', coMemberIds);
     if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
     return q
       .order('updated_at', { ascending: true })
@@ -2144,6 +2189,7 @@ async function pullHouseholdRecipeTags(
   client: CookbooksClient,
   ownerId: string,
   householdId: string,
+  coMemberIds: string[],
 ): Promise<number> {
   const topic = `household_recipe_tags:${ownerId}:${householdId}`;
   const start = await getRecipeCursor(topic);
@@ -2152,7 +2198,7 @@ async function pullHouseholdRecipeTags(
       .from('recipe_tags')
       .select('*')
       .eq('household_id', householdId)
-      .neq('owner_id', ownerId);
+      .in('owner_id', coMemberIds);
     if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
     return q
       .order('updated_at', { ascending: true })
@@ -2218,6 +2264,7 @@ async function pullHouseholdCollectionNotes(
   client: CookbooksClient,
   ownerId: string,
   householdId: string,
+  coMemberIds: string[],
 ): Promise<number> {
   const topic = `household_collection_notes:${ownerId}:${householdId}`;
   const start = await getRecipeCursor(topic);
@@ -2226,7 +2273,7 @@ async function pullHouseholdCollectionNotes(
       .from('collection_notes')
       .select('*')
       .eq('household_id', householdId)
-      .neq('owner_id', ownerId);
+      .in('owner_id', coMemberIds);
     if (cur.id !== '') q = q.or(updatedKeysetOr(cur, 'id'));
     return q
       .order('updated_at', { ascending: true })
