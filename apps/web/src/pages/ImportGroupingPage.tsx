@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
 import { SAFE_BOTTOM, TAP_TARGET } from '../components/mobileSafeArea.js';
@@ -14,6 +14,7 @@ import {
   setImportItemKind,
   splitImportItem,
 } from '../import/api.js';
+import { mapWithConcurrency } from '../import/concurrency.js';
 import {
   buildFinalizePayload,
   deriveGroups,
@@ -24,7 +25,6 @@ import { getSignedImportUrl, ImportThumb } from '../import/ImportThumb.js';
 import type { ImportItem } from '../import/model.js';
 import { KIND_OPTIONS, type PageKind } from '../import/pageMarker.js';
 import { useImportBatch, useImportItems, useUpdateImportItem } from '../import/queries.js';
-import { mapWithConcurrency } from '../import/concurrency.js';
 import { rotateImportItemImage } from '../import/rotateItemImage.js';
 import { useLocalQueryEnabled, useSync } from '../local/SyncProvider.js';
 
@@ -429,7 +429,10 @@ export function ImportGroupingPage() {
       {/* Sticky summary — stays on screen while the cards scroll. */}
       <div className="sticky top-0 z-10 -mx-4 border-b border-stone-200 dark:border-stone-800 bg-white/95 px-4 py-3 backdrop-blur dark:bg-stone-950/95">
         <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">
-          {batch.name} · organize
+          <Link to={`/import/${batch.id}`} className="underline-offset-2 hover:underline">
+            ← {batch.name}
+          </Link>{' '}
+          · organize
         </div>
         <h1 className="text-xl font-semibold">Organize into page groups</h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
@@ -151,6 +151,12 @@ export function ScanPagesPage() {
 
   return (
     <div className="space-y-6">
+      <Link
+        to="/import"
+        className="inline-block text-sm text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
+      >
+        ← Imports
+      </Link>
       <h1 className="text-2xl font-semibold">Scan pages</h1>
       <p className="text-sm text-stone-600 dark:text-stone-400">
         Point your camera at a cookbook and tap the shutter for each page — no need to stop between

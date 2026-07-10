@@ -230,7 +230,9 @@ export function SyncDebugDialog({ open, onClose }: { open: boolean; onClose: () 
       role="dialog"
       aria-modal="true"
       aria-label="Sync diagnostics"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4"
+      // z-[60]: must clear the mobile-nav sheet (z-50), which now hosts the
+      // SyncBadge that opens this dialog on phones.
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-900/40 p-4"
       onClick={onClose}
     >
       <div

@@ -32,7 +32,8 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
   });
 
   test('sync diagnostics modal fits the viewport', async ({ authedPage: page }) => {
-    // The authedPage fixture has already waited for the 'Synced' badge.
+    // No header on phones — the full sync badge lives in the More sheet.
+    await page.getByRole('button', { name: 'More' }).click();
     await page.getByRole('button', { name: /Sync status/ }).click();
     const dialog = page.getByRole('dialog', { name: 'Sync diagnostics' });
     await expect(dialog).toBeVisible();
@@ -65,12 +66,14 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
     await expectNoHorizontalOverflow(page);
   });
 
-  test('header collapses into a hamburger sheet that reaches every link', async ({
+  test('phones hide the header; the More tab opens a sheet that reaches every link', async ({
     authedPage: page,
   }) => {
-    const menuButton = page.getByRole('button', { name: 'Open menu' });
-    await expect(menuButton).toBeVisible();
-    await menuButton.click();
+    // The desktop header is gone below `md` — the tab bar is the only nav.
+    await expect(page.locator('header')).toBeHidden();
+    const moreButton = page.getByRole('button', { name: 'More' });
+    await expect(moreButton).toBeVisible();
+    await moreButton.click();
 
     const sheet = page.getByRole('navigation', { name: 'Mobile' });
     await expect(sheet).toBeVisible();

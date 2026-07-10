@@ -15,7 +15,7 @@ import { HelpDialog } from './keyboard/HelpDialog.js';
 import { APP_SHORTCUTS, useKeyboardShortcuts } from './keyboard/shortcuts.js';
 import { usePullToRefresh } from './native/usePullToRefresh.js';
 import { BottomTabBar } from './nav/BottomTabBar.js';
-import { MobileNav, MobileNavProvider } from './nav/MobileNav.js';
+import { MobileNavProvider } from './nav/MobileNav.js';
 import { PRIMARY_NAV } from './nav/navItems.js';
 import { ScrollTopButton } from './nav/ScrollTopButton.js';
 import { useHardwareBack } from './nav/useHardwareBack.js';
@@ -78,7 +78,10 @@ export function App() {
         >
           Skip to main content
         </a>
-        <header className="sticky top-0 z-40 border-b border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 pt-[env(safe-area-inset-top)]">
+        {/* Phones get no header at all — the bottom tab bar is the nav and
+            the sync dot lives on its More icon; the sheet keeps ThemePicker,
+            account nav, and the full SyncBadge. md+ keeps the desktop bar. */}
+        <header className="hidden md:block sticky top-0 z-40 border-b border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 pt-[env(safe-area-inset-top)]">
           <div className="mx-auto max-w-5xl py-3 flex flex-wrap items-center gap-x-6 gap-y-2 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
             <Link
               to="/"
@@ -103,26 +106,23 @@ export function App() {
             </nav>
             <div className="ml-auto flex items-center gap-3">
               {user && <SyncBadge />}
-              <div className="hidden items-center gap-3 md:flex">
-                <ThemePicker />
-                {user ? (
-                  <UserMenu />
-                ) : (
-                  <Link
-                    to="/sign-in"
-                    className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
-                  >
-                    Sign in
-                  </Link>
-                )}
-              </div>
-              <MobileNav />
+              <ThemePicker />
+              {user ? (
+                <UserMenu />
+              ) : (
+                <Link
+                  to="/sign-in"
+                  className="rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
+                >
+                  Sign in
+                </Link>
+              )}
             </div>
           </div>
         </header>
         <main
           id="main"
-          className="flex-1 mx-auto w-full max-w-5xl overflow-x-clip px-4 pt-6 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-6"
+          className="flex-1 mx-auto w-full max-w-5xl overflow-x-clip px-4 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-[calc(5rem+env(safe-area-inset-bottom))] md:pt-6 md:pb-6"
         >
           <Routes>
             <Route path="/sign-in" element={<SignInPage />} />

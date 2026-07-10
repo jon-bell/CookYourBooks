@@ -26,11 +26,16 @@ export async function signIn(page: Page, user: TestUser): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Recipes', exact: true })).toBeVisible();
 }
 
-/** Wait until the sync badge reaches the 'Synced' state. */
+/** Wait until sync reaches the idle ('Synced') state. Polls the
+ *  `data-sync-state` attribute (on the desktop header badge AND the mobile
+ *  tab bar — both render at every viewport, one visible each) rather than
+ *  badge text, since the header is hidden below the `md` breakpoint. */
 export async function waitForSynced(page: Page): Promise<void> {
-  await expect(page.locator('header button', { hasText: 'Synced' })).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(page.locator('[data-sync-state]').first()).toHaveAttribute(
+    'data-sync-state',
+    'idle',
+    { timeout: 15_000 },
+  );
 }
 
 interface Fixtures {

@@ -528,6 +528,14 @@ export function ImportBatchPage() {
 
   return (
     <div className="space-y-6 pb-20">
+      {/* Phones hide the header and the tab bar on import sub-routes — this
+          link is the escape hatch. */}
+      <Link
+        to="/import"
+        className="inline-block text-sm text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
+      >
+        ← Imports
+      </Link>
       {awaitingGroupingCount > 0 && (
         <div className="sticky top-0 z-10 rounded-md border border-violet-300 bg-violet-50 p-3 text-sm text-violet-900">
           <div className="font-medium">
