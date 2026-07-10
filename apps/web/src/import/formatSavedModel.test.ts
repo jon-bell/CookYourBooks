@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatSavedModel } from './api.js';
+import { formatSavedModel } from './savedModelFormat.js';
 
 describe('formatSavedModel', () => {
   it('labels gemini models by provider (single endpoint)', () => {

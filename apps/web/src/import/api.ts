@@ -698,18 +698,7 @@ export interface SavedOcrModel {
   sort_index: number;
 }
 
-/** "gemini · gemini-3.5-flash" / "openrouter · qwen3-vl" — the picker's
- *  option label. Pure + unit-tested. */
-export function formatSavedModel(m: {
-  provider: string;
-  endpoint: string;
-  model: string;
-  label?: string | null;
-}): string {
-  if (m.label && m.label.trim() !== '') return m.label;
-  const where = m.provider === 'gemini' ? 'gemini' : m.endpoint;
-  return `${where} · ${m.model}`;
-}
+export { formatSavedModel } from './savedModelFormat.js';
 
 export async function listSavedOcrModels(): Promise<SavedOcrModel[]> {
   const { data, error } = await supabase
