@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { flushSignals } from '../signals/capture.js';
-import { loadSignalsPref, saveSignalsPref, signalsEnabled } from '../signals/prefs.js';
+import { signalsEnabled } from '../signals/prefs.js';
+import { loadSignalsPref, saveSignalsPref } from '../signals/prefsApi.js';
 
 /**
  * Opt-out for interaction-signal capture (what you searched for and which

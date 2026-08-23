@@ -1,22 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SearchEventPayload, SuggestionEventPayload } from './api.js';
-import {
-  flushSignals,
-  recordOnce,
-  recordSearchEvent,
-  recordSuggestionEvent,
-  resetSignalsForTest,
-  setSignalTransport,
-} from './capture.js';
+import { createSignalCapture, type SignalCapture, type SignalTransport } from './buffer.js';
 import { primeSignalsPref, signalsEnabled } from './prefs.js';
+
+// Tests drive `buffer.ts` directly rather than the app's `capture.ts`
+// singleton: capture.ts binds the real Supabase-backed transport, and the
+// unit-test job has no credentials. Each case gets a fresh instance, so there
+// is no buffer state to reset between them.
 
 interface Captured {
   search: SearchEventPayload[][];
   suggestion: SuggestionEventPayload[][];
 }
 
-function fakeTransport(captured: Captured, fail = false) {
+function fakeTransport(captured: Captured, fail = false): SignalTransport {
   return {
     search: (events: readonly SearchEventPayload[]) => {
       captured.search.push([...events]);
@@ -30,19 +28,27 @@ function fakeTransport(captured: Captured, fail = false) {
 }
 
 let captured: Captured;
+let cap: SignalCapture;
+let recordSearchEvent: SignalCapture['recordSearchEvent'];
+let recordSuggestionEvent: SignalCapture['recordSuggestionEvent'];
+let flushSignals: SignalCapture['flushSignals'];
+let recordOnce: SignalCapture['recordOnce'];
+
+function useCapture(transport: SignalTransport): void {
+  cap = createSignalCapture(transport);
+  ({ recordSearchEvent, recordSuggestionEvent, flushSignals, recordOnce } = cap);
+}
 
 beforeEach(() => {
   // The account setting is fetched asynchronously in the app; here we set the
   // synchronous cache the enqueue gate actually reads.
   primeSignalsPref(true);
-  resetSignalsForTest();
   captured = { search: [], suggestion: [] };
-  setSignalTransport(fakeTransport(captured));
+  useCapture(fakeTransport(captured));
 });
 
 afterEach(() => {
-  setSignalTransport();
-  resetSignalsForTest();
+  primeSignalsPref(undefined);
   vi.useRealTimers();
 });
 
@@ -114,7 +120,7 @@ describe('opt-out', () => {
 
 describe('flushSignals', () => {
   it('never rejects when the transport fails, and does not re-send', async () => {
-    setSignalTransport(fakeTransport(captured, true));
+    useCapture(fakeTransport(captured, true));
     recordSearchEvent(aQuery);
 
     await expect(flushSignals()).resolves.toBeUndefined();
@@ -129,7 +135,7 @@ describe('flushSignals', () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    setSignalTransport({
+    useCapture({
       search: (events) => {
         captured.search.push([...events]);
         return gate;
@@ -143,8 +149,9 @@ describe('flushSignals', () => {
     release();
     await inFlight;
 
-    setSignalTransport(fakeTransport(captured));
-    await flushSignals();
+    // Same instance, working transport — the racing event must still be here,
+    // and must not have ridden along with the first batch.
+    await cap.flushSignals();
 
     expect(captured.search.map((batch) => batch.map((e) => e.query))).toEqual([
       ['salad'],

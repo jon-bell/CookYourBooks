@@ -1,22 +1,21 @@
-// The interaction-signal opt-out, stored on the account
-// (`profiles.share_interaction_signals`) so it follows the user across
-// devices.
+// The synchronous half of the interaction-signal opt-out: a cache and its
+// localStorage mirror. Deliberately free of any Supabase import — the network
+// half lives in `prefsApi.ts`, so the enqueue gate (and its unit tests) never
+// pull in a client that throws at module scope when unconfigured.
 //
-// Three layers, because the enqueue gate in capture.ts has to answer
+// Three layers overall, because the gate in capture.ts has to answer
 // "recording?" SYNCHRONOUSLY and cannot await a round trip on every keystroke:
 //
 //   1. `profiles.share_interaction_signals` — the source of truth, and the
 //      only one that binds: `record_search_events` / `record_suggestion_events`
 //      read it server-side and drop the batch when it's false. So a stale
 //      client can waste a request, but it cannot record against the user's
-//      wishes.
-//   2. A module-level cache — what the synchronous gate actually reads.
+//      wishes. Read/written by `prefsApi.ts`.
+//   2. The module cache below — what the synchronous gate actually reads.
 //   3. A localStorage mirror — seeds the cache before the profile fetch
 //      resolves, so a page load doesn't spend its first seconds capturing
 //      under the wrong assumption. It is a cache, not the setting; clearing it
 //      loses nothing but a round trip.
-
-import { supabase } from '../supabase.js';
 
 const MIRROR_KEY = 'cookyourbooks.signals.enabled.v1';
 
@@ -35,14 +34,6 @@ function readMirror(): boolean | undefined {
   }
 }
 
-function writeMirror(enabled: boolean): void {
-  try {
-    localStorage.setItem(MIRROR_KEY, enabled ? '1' : '0');
-  } catch {
-    // Nothing to do — we just pay a round trip on the next page load.
-  }
-}
-
 /**
  * Synchronous answer for the enqueue gate. Defaults to ON (matching the
  * column default) when we've never heard otherwise: the server enforces the
@@ -55,46 +46,20 @@ export function signalsEnabled(): boolean {
 }
 
 /**
- * Fetch the account setting and update the cache + mirror. Called once when a
- * session appears (SignalsPrefLoader in App.tsx). Best-effort: on failure the
- * cache keeps whatever the mirror said, and the server still enforces.
+ * Record a value we've confirmed against the account. Called by `prefsApi.ts`
+ * after a successful read or write — never speculatively, so the gate and the
+ * server can't drift.
  */
-export async function loadSignalsPref(): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('share_interaction_signals')
-    .maybeSingle();
-  if (error || !data) return signalsEnabled();
-  // The column is created by 20260715000000 but isn't in the checked-in
-  // generated Supabase types yet (regenerated out of band, like every new
-  // column) — same shim the other post-regen call sites use.
-  const enabled = (data as { share_interaction_signals?: boolean }).share_interaction_signals;
-  if (typeof enabled !== 'boolean') return signalsEnabled();
+export function applySignalsPref(enabled: boolean): void {
   cached = enabled;
-  writeMirror(enabled);
-  return enabled;
+  try {
+    localStorage.setItem(MIRROR_KEY, enabled ? '1' : '0');
+  } catch {
+    // Nothing to do — we just pay a round trip on the next page load.
+  }
 }
 
-/**
- * Persist the setting to the account. The cache + mirror are only updated
- * after the write lands, so a failed save leaves the UI and the gate agreeing
- * with the server rather than drifting from it.
- */
-export async function saveSignalsPref(enabled: boolean): Promise<void> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error('Sign in to change this setting.');
-  const { error } = await supabase
-    .from('profiles')
-    .update({ share_interaction_signals: enabled } as never)
-    .eq('id', user.id);
-  if (error) throw error;
-  cached = enabled;
-  writeMirror(enabled);
-}
-
-/** Test seam: set the cache directly, bypassing network and localStorage. */
+/** Test seam: set the cache directly, bypassing the mirror. */
 export function primeSignalsPref(enabled: boolean | undefined): void {
   cached = enabled;
 }

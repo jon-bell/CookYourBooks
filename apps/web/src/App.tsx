@@ -63,7 +63,7 @@ import { SettingsLlmPage } from './pages/SettingsLlmPage.js';
 import { SharedRecipePage } from './pages/SharedRecipePage.js';
 import { ShoppingListPage } from './pages/ShoppingListPage.js';
 import { TagBrowsePage } from './pages/TagBrowsePage.js';
-import { loadSignalsPref } from './signals/prefs.js';
+import { loadSignalsPref } from './signals/prefsApi.js';
 import { ThemePicker } from './theme/ThemePicker.js';
 
 export function App() {
