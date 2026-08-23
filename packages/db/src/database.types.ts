@@ -571,6 +571,51 @@ export type Database = {
           },
         ]
       }
+      feedback_reports: {
+        Row: {
+          body: string
+          created_at: string
+          household_id: string | null
+          id: string
+          kind: string
+          owner_id: string
+          payload: Json
+          platform: string | null
+          release: string | null
+          route: string | null
+          sentry_event_id: string | null
+          status: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          kind: string
+          owner_id: string
+          payload?: Json
+          platform?: string | null
+          release?: string | null
+          route?: string | null
+          sentry_event_id?: string | null
+          status?: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          household_id?: string | null
+          id?: string
+          kind?: string
+          owner_id?: string
+          payload?: Json
+          platform?: string | null
+          release?: string | null
+          route?: string | null
+          sentry_event_id?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
       global_conversions: {
         Row: {
           created_at: string
@@ -1827,6 +1872,7 @@ export type Database = {
           disabled_reason: string | null
           display_name: string | null
           id: string
+          share_interaction_signals: boolean
           tos_accepted_at: string | null
           tos_version: number
         }
@@ -1837,6 +1883,7 @@ export type Database = {
           disabled_reason?: string | null
           display_name?: string | null
           id: string
+          share_interaction_signals?: boolean
           tos_accepted_at?: string | null
           tos_version?: number
         }
@@ -1847,6 +1894,7 @@ export type Database = {
           disabled_reason?: string | null
           display_name?: string | null
           id?: string
+          share_interaction_signals?: boolean
           tos_accepted_at?: string | null
           tos_version?: number
         }
@@ -2574,6 +2622,60 @@ export type Database = {
         }
         Relationships: []
       }
+      search_events: {
+        Row: {
+          created_at: string
+          embedded_count: number
+          embedder_status: string
+          id: string
+          kind: string
+          mode: string
+          opened_rank: number | null
+          opened_recipe_id: string | null
+          opened_score: number | null
+          owner_id: string
+          query: string
+          query_id: string
+          result_count: number
+          source_filter: string
+          truncated: boolean
+        }
+        Insert: {
+          created_at?: string
+          embedded_count?: number
+          embedder_status?: string
+          id?: string
+          kind: string
+          mode?: string
+          opened_rank?: number | null
+          opened_recipe_id?: string | null
+          opened_score?: number | null
+          owner_id: string
+          query?: string
+          query_id: string
+          result_count?: number
+          source_filter?: string
+          truncated?: boolean
+        }
+        Update: {
+          created_at?: string
+          embedded_count?: number
+          embedder_status?: string
+          id?: string
+          kind?: string
+          mode?: string
+          opened_rank?: number | null
+          opened_recipe_id?: string | null
+          opened_score?: number | null
+          owner_id?: string
+          query?: string
+          query_id?: string
+          result_count?: number
+          source_filter?: string
+          truncated?: boolean
+        }
+        Relationships: []
+      }
       shopping_list_items: {
         Row: {
           checked: boolean
@@ -2624,6 +2726,45 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      suggestion_events: {
+        Row: {
+          action: string
+          candidates: Json
+          chosen_key: string
+          chosen_rank: number | null
+          created_at: string
+          id: string
+          input_text: string
+          owner_id: string
+          suggested_key: string
+          surface: string
+        }
+        Insert: {
+          action: string
+          candidates?: Json
+          chosen_key?: string
+          chosen_rank?: number | null
+          created_at?: string
+          id?: string
+          input_text?: string
+          owner_id: string
+          suggested_key?: string
+          surface: string
+        }
+        Update: {
+          action?: string
+          candidates?: Json
+          chosen_key?: string
+          chosen_rank?: number | null
+          created_at?: string
+          id?: string
+          input_text?: string
+          owner_id?: string
+          suggested_key?: string
+          surface?: string
+        }
+        Relationships: []
       }
       sync_transfer_events: {
         Row: {
@@ -3285,6 +3426,18 @@ export type Database = {
         Args: { p_recipe_id: string }
         Returns: undefined
       }
+      feedback_submit: {
+        Args: {
+          p_body: string
+          p_kind: string
+          p_payload?: Json
+          p_platform?: string
+          p_release?: string
+          p_route?: string
+          p_sentry_event_id?: string
+        }
+        Returns: string
+      }
       fork_collection: {
         Args: { source_collection_id: string }
         Returns: string
@@ -3623,6 +3776,14 @@ export type Database = {
           used: boolean
         }[]
       }
+      prune_cron_job_run_details: {
+        Args: { p_limit?: number; p_retain?: string }
+        Returns: number
+      }
+      prune_interaction_signals: {
+        Args: { p_before?: string }
+        Returns: number
+      }
       record_audit: {
         Args: {
           p_action: string
@@ -3633,6 +3794,8 @@ export type Database = {
         }
         Returns: undefined
       }
+      record_search_events: { Args: { p_events: Json }; Returns: undefined }
+      record_suggestion_events: { Args: { p_events: Json }; Returns: undefined }
       record_sync_transfer: {
         Args: { p_cycle_id: string; p_events: Json }
         Returns: undefined
@@ -3879,6 +4042,7 @@ export type Database = {
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      signals_enabled_for: { Args: { p_owner: string }; Returns: boolean }
       transfer_household_ownership: {
         Args: { p_new_owner_id: string }
         Returns: undefined
@@ -3900,6 +4064,7 @@ export type Database = {
         Returns: undefined
       }
       worker_has_pending_work: { Args: never; Returns: boolean }
+      worker_kick: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
