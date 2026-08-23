@@ -1,25 +1,91 @@
 import type { SourceType } from '@cookyourbooks/domain';
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
 import { useSearch } from '../search/useSearch.js';
 
 type Filter = '' | SourceType;
 
+const FILTERS: readonly Filter[] = ['', 'PERSONAL', 'PUBLISHED_BOOK', 'WEBSITE'];
+
+function normalizeFilter(value: string | null): Filter {
+  return FILTERS.includes(value as Filter) ? (value as Filter) : '';
+}
+
+/**
+ * Search state (query + collection filter) lives in the URL, not in component
+ * state. The router is declarative, so leaving /search for a recipe unmounts
+ * this page — with the query in `useState` a Back (on iOS, the native WKWebView
+ * edge-swipe) remounted it empty, throwing away the results and leaving the
+ * global scroll restoration nothing tall enough to scroll to.
+ *
+ * With the query in the URL, a POP remounts with the query already present, so
+ * `useSearch` re-fires on the same React Query key and — inside its 60s
+ * staleTime — serves the cached hits on the first render. Results are back
+ * before paint, which is exactly what `useScrollRestoration`'s rAF loop needs
+ * to land the saved offset instead of timing out against an empty page.
+ *
+ * Writes are always `replace`, never `push`: a keystroke must not become a
+ * back-stack entry.
+ */
 export function SearchPage() {
-  const [raw, setRaw] = useState('');
-  const [q, setQ] = useState('');
-  const [sourceType, setSourceType] = useState<Filter>('');
+  const [params, setParams] = useSearchParams();
+  const q = params.get('q') ?? '';
+  const sourceType = normalizeFilter(params.get('type'));
+
+  // The input stays local and uncommitted so typing is never debounced-laggy;
+  // only the settled value reaches the URL. Seeded from the URL so a restored
+  // search shows its own text.
+  const [raw, setRaw] = useState(q);
+
+  // Always the functional form, so a write never depends on a captured
+  // snapshot of the params. `setSearchParams` only changes identity when the
+  // location does, which the debounce effect already tracks via `q`.
+  const writeParams = useCallback(
+    (mutate: (next: URLSearchParams) => void) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          mutate(next);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
+
+  // Tells our own debounced write apart from an externally-driven URL change
+  // (Back/Forward, or a shared /search?q=… link) so the latter re-seeds the input.
+  const lastWritten = useRef(q);
+  useEffect(() => {
+    if (q !== lastWritten.current) {
+      lastWritten.current = q;
+      setRaw(q);
+    }
+  }, [q]);
 
   // Debounce keystrokes; semantic search costs a model inference per
   // query so we don't want one per keypress.
   useEffect(() => {
-    const id = setTimeout(() => setQ(raw), 250);
+    if (raw === q) return;
+    const id = setTimeout(() => {
+      lastWritten.current = raw;
+      writeParams((next) => {
+        if (raw) next.set('q', raw);
+        else next.delete('q');
+      });
+    }, 250);
     return () => clearTimeout(id);
-  }, [raw]);
+  }, [raw, q, writeParams]);
 
-  const { hits, isLoading, mode, embedderStatus, embeddedCount } = useSearch(q);
+  // Focus-on-arrival is for a fresh search, not a restored one: raising the iOS
+  // keyboard mid-restore would resize the body (Keyboard `resize: 'body'`) and
+  // move scrollY out from under the restoration loop.
+  const [autoFocusInput] = useState(() => q.length === 0);
+
+  const { hits, isLoading, mode, embedderStatus, embeddedCount, truncated } = useSearch(q);
 
   const filteredHits = useMemo(() => {
     if (!sourceType) return hits;
@@ -37,11 +103,17 @@ export function SearchPage() {
           onChange={(e) => setRaw(e.target.value)}
           placeholder="Search by recipe, ingredient, or idea (e.g. 'salad dressing')…"
           className="min-w-0 flex-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2"
-          autoFocus
+          autoFocus={autoFocusInput}
         />
         <select
           value={sourceType}
-          onChange={(e) => setSourceType(e.target.value as Filter)}
+          onChange={(e) => {
+            const next = normalizeFilter(e.target.value);
+            writeParams((p) => {
+              if (next) p.set('type', next);
+              else p.delete('type');
+            });
+          }}
           aria-label="Filter by collection type"
           className="rounded-md border border-stone-300 dark:border-stone-600 px-3 py-2 text-sm"
         >
@@ -61,7 +133,10 @@ export function SearchPage() {
       ) : (
         <>
           <div className="text-sm text-stone-600 dark:text-stone-400">
-            {filteredHits.length} {filteredHits.length === 1 ? 'result' : 'results'}
+            {/* Only claim "more than this" when the count is the unfiltered
+                cap — a source-type filter makes the total unknowable here. */}
+            {filteredHits.length}
+            {truncated && !sourceType ? '+' : ''} {filteredHits.length === 1 ? 'result' : 'results'}
             {mode === 'substring' && embedderStatus === 'ready' && hits.length > 0 && (
               <span> (semantic search found nothing — showing literal matches)</span>
             )}

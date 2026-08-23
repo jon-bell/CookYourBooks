@@ -38,6 +38,20 @@ function makeCanvas(width: number, height: number): HTMLCanvasElement | Offscree
   return c;
 }
 
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+/**
+ * Narrow the canvas before asking for its 2D context. On the bare
+ * `HTMLCanvasElement | OffscreenCanvas` union TypeScript stops matching the
+ * `'2d'` literal overload and falls back to the `string` one, widening the
+ * result to `RenderingContext` — which then rejects every 2D call. Whether it
+ * does that is sensitive to unrelated changes in the import graph, so narrow
+ * explicitly rather than relying on overload resolution luck.
+ */
+function get2d(canvas: HTMLCanvasElement | OffscreenCanvas): Ctx2D | null {
+  return 'convertToBlob' in canvas ? canvas.getContext('2d') : canvas.getContext('2d');
+}
+
 async function canvasToJpeg(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<Blob> {
   if (canvas instanceof OffscreenCanvas) {
     return canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
@@ -59,7 +73,7 @@ async function bitmapToJpeg(
   const width = Math.round(bitmap.width * scale);
   const height = Math.round(bitmap.height * scale);
   const canvas = makeCanvas(width, height);
-  const ctx = canvas.getContext('2d');
+  const ctx = get2d(canvas);
   if (!ctx) throw new Error('Could not acquire 2D canvas context');
   ctx.drawImage(bitmap, 0, 0, width, height);
   const blob = await canvasToJpeg(canvas);
@@ -85,7 +99,7 @@ async function bitmapToRotatedJpeg(
   const drawW = Math.round(bitmap.width * scale);
   const drawH = Math.round(bitmap.height * scale);
   const canvas = makeCanvas(outW, outH);
-  const ctx = canvas.getContext('2d');
+  const ctx = get2d(canvas);
   if (!ctx) throw new Error('Could not acquire 2D canvas context');
   ctx.translate(outW / 2, outH / 2);
   ctx.rotate((turns * Math.PI) / 2);
@@ -153,6 +167,8 @@ export async function renderPdfToJpegs(
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(scaled.width);
     canvas.height = Math.round(scaled.height);
+    // Plain HTMLCanvasElement here (not the union), and pdf.js wants the
+    // concrete 2D context type — no narrowing helper needed.
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Could not acquire 2D canvas context for PDF render');
     await page.render({ canvasContext: ctx, viewport: scaled }).promise;

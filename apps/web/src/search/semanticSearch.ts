@@ -1,8 +1,7 @@
 import { collectionRepo } from '../data/repos.js';
-import { listSearchableEmbeddings, type RecipeSearchHit } from '../local/repositories.js';
-import { embedText } from './embedder.js';
-// eslint-disable-next-line import/default
-import SearchWorker from './searchWorker.ts?worker';
+import { listSearchHitsByIds, type RecipeSearchHit } from '../local/repositories.js';
+import { createSearchTimer, nullSearchTimer, type SearchTimer } from './perf.js';
+import { queryVectors } from './workerClient.js';
 
 /** A search result row. Same shape the literal search returns
  *  (`RecipeSearchHit`, incl. the `isPlaceholder` "not imported" flag) plus an
@@ -12,10 +11,6 @@ export type SearchHit = RecipeSearchHit & {
   /** 0..1 cosine similarity for semantic hits, undefined for literal hits. */
   score?: number;
 };
-
-// gte-small dim. Hard-coded here too rather than imported from domain
-// so the worker file can stay framework-free.
-const DIM = 384;
 
 // Calibrated for gte-small. Its cosine distribution is compressed and
 // shifted high (very unlike bge's ~0.30–0.35 for unrelated text):
@@ -36,6 +31,9 @@ const DIM = 384;
 // exact-term matches all surface and rank first; this adaptive cut just
 // keeps the semantic *extras* below them from ballooning back into the
 // whole library.
+/** Most results the page will render. Both search paths cap here. */
+export const SEARCH_LIMIT = 200;
+
 const ABS_FLOOR = 0.78;
 const RELATIVE_WINDOW = 0.05;
 
@@ -72,107 +70,60 @@ export function mergeLiteralAndSemantic(
   return out;
 }
 
-// Singleton worker. Created lazily so /search-less sessions don't pay
-// for the worker boot, and reused across queries to avoid re-create
-// churn on every keystroke. Workers in Vite are module-scoped to the
-// dev server / dist bundle.
-let workerSingleton: Worker | undefined;
-let nextRequestId = 1;
-const pending = new Map<number, (scores: number[]) => void>();
-
-function getWorker(): Worker {
-  if (!workerSingleton) {
-    workerSingleton = new SearchWorker();
-    workerSingleton.onmessage = (e: MessageEvent<{ id: number; scores: number[] }>) => {
-      const resolve = pending.get(e.data.id);
-      if (resolve) {
-        pending.delete(e.data.id);
-        resolve(e.data.scores);
-      }
-    };
-  }
-  return workerSingleton;
-}
-
 /**
- * Score every candidate against the query vector off-thread. Posts the
- * embeddings as a flat Float32Array (`count * dim` floats) so the
- * buffer transfers in O(1) instead of being structured-cloned per
- * vector — matters once the library is in the thousands of recipes.
- */
-function scoreOffMainThread(
-  queryVec: Float32Array,
-  embeddings: Float32Array,
-  count: number,
-): Promise<number[]> {
-  return new Promise((resolve) => {
-    const id = nextRequestId++;
-    pending.set(id, resolve);
-    // The query vector is small (1.5 KB) — copy is fine. The flat
-    // embeddings buffer is transferred so we don't pay the
-    // structured-clone copy on the hot path.
-    getWorker().postMessage({ id, queryVec, embeddings, count, dim: DIM }, [embeddings.buffer]);
-  });
-}
-
-/**
- * Semantic search over the locally cached embeddings. Both sides are
- * L2-normalized at write time (recipe vectors via @huggingface/
- * transformers with `normalize: true`, query likewise), so the dot
- * product is the cosine similarity directly. The math runs in a Web
- * Worker so a 50k-recipe library doesn't stall the input box.
+ * Semantic search over the library's vectors. Both sides are L2-normalized at
+ * write time (recipe vectors via @huggingface/transformers with
+ * `normalize: true`, query likewise), so the dot product is the cosine
+ * similarity directly.
+ *
+ * The model and the vector matrix both live in the worker, so this is a string
+ * out and at most `limit` recipe ids back — no vector ever crosses onto the
+ * main thread. Result metadata is then read for just those ids, which keeps
+ * titles fresh without scanning the library.
  */
 export async function searchSemantic(
   ownerId: string,
   q: string,
   limit = 200,
+  timer: SearchTimer = nullSearchTimer(),
+  signal?: AbortSignal,
 ): Promise<SearchHit[]> {
   const trimmed = q.trim();
   if (!trimmed) return [];
-  const [queryVec, candidates] = await Promise.all([
-    embedText(trimmed),
-    listSearchableEmbeddings(ownerId),
-  ]);
-  if (candidates.length === 0) return [];
 
-  // Pack candidate vectors into a single flat Float32Array so the
-  // worker postMessage can transfer the buffer instead of copying N
-  // separate typed arrays. Each candidate occupies `DIM` floats
-  // starting at `idx * DIM`. The metadata stays on the main thread —
-  // we map back by index after the worker returns scores.
-  const flat = new Float32Array(candidates.length * DIM);
-  for (let i = 0; i < candidates.length; i += 1) {
-    flat.set(candidates[i]!.embedding, i * DIM);
+  const result = await timer.track('vectorQuery', () =>
+    queryVectors(ownerId, trimmed, limit, signal),
+  );
+  // The worker measures these two itself; surface them as first-class stages.
+  timer.mark('embed', result.embedMs);
+  timer.mark('cosine', result.scoreMs);
+  timer.vectors(result.scanned);
+  if (result.recipeIds.length === 0) return [];
+
+  // Adaptive cut anchored to the best hit, not a fixed floor — the absolute
+  // cosine band drifts per query on gte-small, so "within RELATIVE_WINDOW of
+  // the top" is what actually trims the tail. The worker already sorted
+  // descending, so this is a prefix.
+  const floor = adaptiveFloor(result.scores[0]!);
+  const keptIds: string[] = [];
+  const keptScores: number[] = [];
+  for (let i = 0; i < result.recipeIds.length; i += 1) {
+    if (result.scores[i]! < floor) break;
+    keptIds.push(result.recipeIds[i]!);
+    keptScores.push(result.scores[i]!);
   }
+  if (keptIds.length === 0) return [];
 
-  const scores = await scoreOffMainThread(queryVec, flat, candidates.length);
-
-  type Scored = { idx: number; score: number };
-  const scored: Scored[] = new Array<Scored>(scores.length);
-  for (let i = 0; i < scores.length; i += 1) {
-    scored[i] = { idx: i, score: scores[i]! };
-  }
-  scored.sort((a, b) => b.score - a.score);
-
-  // Adaptive cut anchored to the best hit, not a fixed floor — the
-  // absolute cosine band drifts per query on gte-small, so "within
-  // RELATIVE_WINDOW of the top" is what actually trims the tail.
-  const floor = scored.length > 0 ? adaptiveFloor(scored[0]!.score) : ABS_FLOOR;
+  const meta = await timer.track('metadata', () => listSearchHitsByIds(ownerId, keptIds));
+  const byId = new Map(meta.map((m) => [m.recipeId, m]));
 
   const out: SearchHit[] = [];
-  for (let i = 0; i < scored.length && out.length < limit; i += 1) {
-    const s = scored[i]!;
-    if (s.score < floor) break;
-    const c = candidates[s.idx]!;
-    out.push({
-      recipeId: c.recipeId,
-      recipeTitle: c.recipeTitle,
-      collectionId: c.collectionId,
-      collectionTitle: c.collectionTitle,
-      sourceType: c.sourceType,
-      isPlaceholder: c.isPlaceholder,
-      score: s.score,
-    });
+  for (let i = 0; i < keptIds.length; i += 1) {
+    const hit = byId.get(keptIds[i]!);
+    // Absent means deleted or un-shared since the matrix was hydrated — the
+    // metadata query re-applies visibility, so dropping it here is the fix.
+    if (!hit) continue;
+    out.push({ ...hit, score: keptScores[i]! });
   }
   return out;
 }
@@ -187,19 +138,41 @@ export async function searchSemantic(
  * also cover "not imported" placeholders and recipes with no embedding yet,
  * so nothing the literal search would have found is lost by going semantic.
  */
-export async function searchHybrid(ownerId: string, q: string, limit = 200): Promise<SearchHit[]> {
+export async function searchHybrid(
+  ownerId: string,
+  q: string,
+  limit = SEARCH_LIMIT,
+  signal?: AbortSignal,
+): Promise<SearchHit[]> {
   const trimmed = q.trim();
   if (!trimmed) return [];
+  const timer = createSearchTimer(trimmed);
   const [literal, semantic] = await Promise.all([
-    collectionRepo(ownerId).searchRecipes(trimmed),
-    searchSemantic(ownerId, trimmed, limit),
+    // Capped at `limit` because mergeLiteralAndSemantic slices to it anyway —
+    // fetching more rows only pays marshaling for results nobody can see.
+    timer.track('literal', () => collectionRepo(ownerId).searchRecipes(trimmed, limit)),
+    searchSemantic(ownerId, trimmed, limit, timer, signal),
   ]);
-  return mergeLiteralAndSemantic(literal, semantic, limit);
+  const merged = timer.sync('merge', () => mergeLiteralAndSemantic(literal, semantic, limit));
+  timer.finish({ mode: 'semantic', hits: merged.length });
+  return merged;
 }
 
 /** Literal fallback — used when the embedder is unavailable or the local
  *  vector cache is cold. Delegates to the repository's literal search, which
- *  also covers household-shared recipes and "not imported" placeholders. */
-export async function searchSubstring(ownerId: string, q: string): Promise<SearchHit[]> {
-  return collectionRepo(ownerId).searchRecipes(q);
+ *  also covers household-shared recipes and "not imported" placeholders.
+ *
+ *  Fetches one row past `limit` so the caller can tell "exactly this many" from
+ *  "at least this many" without paying for a second COUNT query. */
+export async function searchSubstring(
+  ownerId: string,
+  q: string,
+  limit = 200,
+): Promise<SearchHit[]> {
+  const timer = createSearchTimer(q.trim());
+  const hits = await timer.track('literal', () =>
+    collectionRepo(ownerId).searchRecipes(q, limit + 1),
+  );
+  timer.finish({ mode: 'substring', hits: hits.length });
+  return hits;
 }

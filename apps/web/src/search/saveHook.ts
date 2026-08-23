@@ -7,7 +7,7 @@ import {
 
 import { enqueue } from '../local/outbox.js';
 import { getLocalEmbedding, upsertLocalEmbedding } from '../local/repositories.js';
-import { embedText, getEmbedderStatus, preloadEmbedder } from './embedder.js';
+import { embedText, getEmbedderStatus, preloadEmbedder } from './workerClient.js';
 
 /**
  * Compute and persist a recipe's embedding locally, then enqueue an

@@ -9,6 +9,9 @@ import { LoadingState } from './components/LoadingState.js';
 import { SyncBadge } from './components/SyncBadge.js';
 import { useToast } from './components/ToastProvider.js';
 import { UserMenu } from './components/UserMenu.js';
+import { BreadcrumbTracker } from './feedback/BreadcrumbTracker.js';
+import { FeedbackDialog } from './feedback/FeedbackDialog.js';
+import { useFeedbackDialog } from './feedback/useFeedbackDialog.js';
 import { OcrOnboardingWizard } from './import/OcrOnboardingWizard.js';
 import { initShareIntent, type ShareIntentOutcome } from './import/shareIntent.js';
 import { HelpDialog } from './keyboard/HelpDialog.js';
@@ -21,6 +24,7 @@ import { ScrollTopButton } from './nav/ScrollTopButton.js';
 import { useHardwareBack } from './nav/useHardwareBack.js';
 import { useScrollRestoration } from './nav/useScrollRestoration.js';
 import { ActivityPage } from './pages/ActivityPage.js';
+import { AdminFeedbackPage } from './pages/AdminFeedbackPage.js';
 import { AdminGlobalTocPage } from './pages/AdminGlobalTocPage.js';
 import { AdminNutritionPage } from './pages/AdminNutritionPage.js';
 import { AdminPage } from './pages/AdminPage.js';
@@ -32,6 +36,7 @@ import { CookSessionPage } from './pages/CookSessionPage.js';
 import { CostCenterPage } from './pages/CostCenterPage.js';
 import { DataUsagePage } from './pages/DataUsagePage.js';
 import { DiscoverPage } from './pages/DiscoverPage.js';
+import { FeedbackPage } from './pages/FeedbackPage.js';
 import { HouseholdJoinPage } from './pages/HouseholdJoinPage.js';
 import { HouseholdPage } from './pages/HouseholdPage.js';
 import { ImportBakeoffNewPage } from './pages/ImportBakeoffNewPage.js';
@@ -63,6 +68,7 @@ import { ThemePicker } from './theme/ThemePicker.js';
 export function App() {
   const { user } = useAuth();
   const { showHelp, closeHelp } = useKeyboardShortcuts(APP_SHORTCUTS);
+  const feedback = useFeedbackDialog();
   // Back returns to where you were; Android hardware back navigates the SPA.
   useScrollRestoration();
   useHardwareBack();
@@ -75,6 +81,9 @@ export function App() {
           adjustments the Capacitor Keyboard plugin makes. */}
       <div className="min-h-dvh flex flex-col">
         <ShareIntentListener />
+        {/* Records the route/click trail a feedback report ships with. */}
+        <BreadcrumbTracker />
+        {feedback.open && <FeedbackDialog onClose={feedback.close} />}
         <a
           href="#main"
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-[max(0.5rem,env(safe-area-inset-top))] focus:z-50 focus:rounded focus:bg-stone-900 focus:px-3 focus:py-1.5 focus:text-sm focus:text-white"
@@ -411,6 +420,22 @@ export function App() {
             />
             <Route path="/legal/:doc" element={<LegalPage />} />
             <Route path="/legal" element={<LegalPage />} />
+            <Route
+              path="/feedback"
+              element={
+                <RequireAuth>
+                  <FeedbackPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/admin/feedback"
+              element={
+                <RequireAuth>
+                  <AdminFeedbackPage />
+                </RequireAuth>
+              }
+            />
             <Route
               path="/admin"
               element={

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
+import { openFeedbackDialog } from '../feedback/open.js';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
 import { ACCOUNT_NAV, ADMIN_NAV } from '../nav/navItems.js';
 
@@ -32,6 +33,14 @@ export function UserMenu() {
           {item.label}
         </Link>
       ))}
+      {/* Opens in place rather than navigating, so the breadcrumb trail the
+          report carries still points at the page the user was looking at. */}
+      <button
+        onClick={openFeedbackDialog}
+        className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"
+      >
+        Send feedback
+      </button>
       <button
         onClick={() => signOut()}
         className="rounded-md px-2 py-1 text-stone-600 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-600"

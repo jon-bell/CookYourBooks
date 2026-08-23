@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { SAFE_TOP } from '../components/mobileSafeArea.js';
 import { SyncBadge } from '../components/SyncBadge.js';
 import { useScrollLock } from '../components/useScrollLock.js';
+import { openFeedbackDialog } from '../feedback/open.js';
 import { useIsAdmin } from '../moderation/useIsAdmin.js';
 import { ThemePicker } from '../theme/ThemePicker.js';
 import { ACCOUNT_NAV, ADMIN_NAV, PRIMARY_NAV } from './navItems.js';
@@ -130,6 +131,20 @@ function MobileNavSheet({ open, setOpen }: { open: boolean; setOpen: (v: boolean
                 </Link>
               </li>
             ))}
+            <li>
+              {/* Opens over the page behind the sheet, so the report's
+                  breadcrumb trail still points where the user was. */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  openFeedbackDialog();
+                }}
+                className={`w-full text-left ${LINK_CLASS}`}
+              >
+                Send feedback
+              </button>
+            </li>
             <li>
               <button
                 type="button"

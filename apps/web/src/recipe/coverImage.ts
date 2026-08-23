@@ -35,6 +35,20 @@ function makeCanvas(width: number, height: number): HTMLCanvasElement | Offscree
   return c;
 }
 
+type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+/**
+ * Narrow the canvas before asking for its 2D context. On the bare
+ * `HTMLCanvasElement | OffscreenCanvas` union TypeScript stops matching the
+ * `'2d'` literal overload and falls back to the `string` one, widening the
+ * result to `RenderingContext` — which then rejects every 2D call. Whether it
+ * does that is sensitive to unrelated changes in the import graph, so narrow
+ * explicitly rather than relying on overload resolution luck.
+ */
+function get2d(canvas: HTMLCanvasElement | OffscreenCanvas): Ctx2D | null {
+  return 'convertToBlob' in canvas ? canvas.getContext('2d') : canvas.getContext('2d');
+}
+
 async function encode(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   type: string,
@@ -96,7 +110,7 @@ export async function prepareCoverImage(
       const width = Math.max(1, Math.round(bitmap.width * scale));
       const height = Math.max(1, Math.round(bitmap.height * scale));
       const canvas = makeCanvas(width, height);
-      const ctx = canvas.getContext('2d');
+      const ctx = get2d(canvas);
       if (!ctx) throw new Error('Could not acquire 2D canvas context');
       ctx.drawImage(bitmap, 0, 0, width, height);
 

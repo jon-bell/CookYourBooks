@@ -24,6 +24,7 @@ export const ACCOUNT_NAV: readonly NavItem[] = [
   { label: 'LLM costs', to: '/cost' },
   { label: 'Data usage', to: '/data-usage' },
   { label: 'Activity', to: '/activity' },
+  { label: 'Feedback', to: '/feedback' },
   { label: 'Settings', to: '/settings' },
 ];
 

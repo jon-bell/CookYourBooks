@@ -21,7 +21,12 @@ import type {
   RecipeTagRepository,
   Tag,
 } from '@cookyourbooks/domain';
-import { createWebCollection, newTagId, normalizeLabel } from '@cookyourbooks/domain';
+import {
+  createWebCollection,
+  EMBEDDING_DIM,
+  newTagId,
+  normalizeLabel,
+} from '@cookyourbooks/domain';
 
 import { CRR_SUPPRESS_MIN_ROWS, shouldSuppressCrrTriggers } from './crrSuppression.js';
 import { getLocalDb, type LocalDb } from './db.js';
@@ -1251,8 +1256,14 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
    * every recipe, so callers can reuse it as a plain recipe list.
    * Placeholders (no ingredients and no instructions) sort last, matching
    * the previous in-memory ranking.
+   *
+   * `limit` caps the rows crossing the wasm boundary. The scan itself is
+   * linear either way, but marshaling every match is not: on a 16k-recipe
+   * library a one-character query matches everything and costs ~130ms
+   * unbounded versus ~30ms capped. Callers that use this as a plain recipe
+   * list (empty query) leave it unset and still get everything.
    */
-  async searchRecipes(query: string): Promise<RecipeSearchHit[]> {
+  async searchRecipes(query: string, limit?: number): Promise<RecipeSearchHit[]> {
     const db = await getLocalDb();
     const q = query.trim().toLowerCase();
     const params: unknown[] = [this.ownerId];
@@ -1279,8 +1290,9 @@ export class LocalRecipeCollectionRepository implements RecipeCollectionReposito
         where r.deleted = 0 and c.deleted = 0
           and (c.owner_id = ? or c.shared_with_household_id is not null)
           ${filter}
-        order by has_content desc, c.title asc, r.sort_order asc`,
-      params as (string | number)[],
+        order by has_content desc, c.title asc, r.sort_order asc
+        ${limit && limit > 0 ? 'limit ?' : ''}`,
+      (limit && limit > 0 ? [...params, Math.floor(limit)] : params) as (string | number)[],
     )) as Array<{
       id: string;
       title: string;
@@ -2233,6 +2245,17 @@ export function unpackEmbedding(bytes: Uint8Array): Float32Array {
   return new Float32Array(copy);
 }
 
+// Bumped on every local write to `recipe_embeddings`. The search worker
+// hydrates the vector matrix once and keeps it; comparing this counter is how
+// it notices the mirror moved underneath it and re-hydrates. A plain counter
+// rather than a subscription so `local/` keeps no dependency on `search/`.
+let embeddingVersion = 0;
+
+/** Current local-embedding generation. See `embeddingVersion`. */
+export function getEmbeddingVersion(): number {
+  return embeddingVersion;
+}
+
 /**
  * Upsert a single embedding row — used by the realtime handler in
  * `sync.ts` and `search/saveHook.ts`. For batch pulls use
@@ -2251,6 +2274,7 @@ export async function upsertLocalEmbedding(row: LocalEmbeddingRow): Promise<void
      where excluded.updated_at >= recipe_embeddings.updated_at`,
     [row.recipeId, packEmbedding(row.embedding), row.textHash, row.model, row.updatedAtMs],
   );
+  embeddingVersion += 1;
 }
 
 export async function upsertLocalEmbeddingsBatch(
@@ -2299,12 +2323,14 @@ export async function upsertLocalEmbeddingsBatch(
       params as never[],
     );
   }
+  embeddingVersion += 1;
 }
 
 /** Drop a single row — used when the canonical Postgres row is deleted. */
 export async function deleteLocalEmbedding(recipeId: string): Promise<void> {
   const db = await getLocalDb();
   await db.exec(`delete from recipe_embeddings where recipe_id = ?`, [recipeId]);
+  embeddingVersion += 1;
 }
 
 /**
@@ -2341,72 +2367,103 @@ export async function getLocalEmbedding(recipeId: string): Promise<LocalEmbeddin
   };
 }
 
-/**
- * Walk every embedding the caller is allowed to search — joined to
- * recipes + recipe_collections so we can filter soft-deletes and (when
- * an owner id is supplied) restrict to that owner's library. Returns
- * lightweight rows: title + collection metadata enough to render a
- * result row without recipe hydration.
- */
-export interface SearchableEmbedding {
-  recipeId: string;
-  recipeTitle: string;
-  collectionId: string;
-  collectionTitle: string;
-  sourceType: string;
-  /** True for a content-less placeholder (global-ToC entry not yet imported);
-   *  rendered with a "Not imported" badge, same as the literal search. */
-  isPlaceholder: boolean;
-  embedding: Float32Array;
+/** The library's vectors, packed for transfer to the search worker. */
+export interface EmbeddingMatrix {
+  /** Recipe id per row, parallel to `vectors`. */
+  ids: string[];
+  /** `ids.length * EMBEDDING_DIM` floats, row-major. */
+  vectors: Float32Array;
 }
 
-export async function listSearchableEmbeddings(ownerId: string): Promise<SearchableEmbedding[]> {
+/**
+ * Every visible recipe vector as one flat buffer, ready to transfer into the
+ * search worker and stay there.
+ *
+ * Deliberately selects no metadata: titles and collection names go stale, so
+ * they're re-read per query for the handful of ids that actually come back
+ * (`listSearchHitsByIds`) rather than cached alongside the vectors. Decoding
+ * straight into the destination buffer also avoids the per-row Float32Array
+ * that `unpackEmbedding` would allocate.
+ *
+ * Visibility (own + household-shared) matches `searchRecipes`. A stale
+ * hydration can only ever contain ids that the per-query metadata lookup then
+ * re-filters, so sharing changes can't leak through it.
+ */
+export async function listEmbeddingVectors(ownerId: string): Promise<EmbeddingMatrix> {
   const db = await getLocalDb();
-  // Own recipes + household-shared ones. Co-members' embeddings are pulled
-  // into the local mirror by pullHouseholdSharedContent (the recipe_embeddings
-  // claim-based RLS grants household reads, 20260624000000), and their
-  // collections carry the local-only `shared_with_household_id` marker — same
-  // visibility rule the literal searchRecipes uses.
-  const rows = (await db.execO<{
-    recipe_id: string;
-    collection_id: string;
-    collection_title: string;
-    source_type: string;
-    title: string;
-    has_content: number;
-    embedding: Uint8Array;
-  }>(
-    `select e.recipe_id, e.embedding, r.collection_id, r.title,
-            c.title as collection_title, c.source_type,
-            r.has_content
+  const rows = (await db.execO<{ recipe_id: string; embedding: Uint8Array }>(
+    `select e.recipe_id, e.embedding
        from recipe_embeddings e
        join recipes r on r.id = e.recipe_id and r.deleted = 0
        join recipe_collections c on c.id = r.collection_id and c.deleted = 0
               and (c.owner_id = ? or c.shared_with_household_id is not null)`,
     [ownerId],
-  )) as {
-    recipe_id: string;
+  )) as { recipe_id: string; embedding: Uint8Array }[];
+
+  const stride = EMBEDDING_DIM * 4;
+  // Skip anything that isn't the expected width — a model change would
+  // otherwise silently misalign every row after it.
+  const usable = rows.filter((r) => r.embedding.byteLength === stride);
+  const vectors = new Float32Array(usable.length * EMBEDDING_DIM);
+  const bytes = new Uint8Array(vectors.buffer);
+  const ids = new Array<string>(usable.length);
+  for (let i = 0; i < usable.length; i += 1) {
+    const row = usable[i]!;
+    ids[i] = row.recipe_id;
+    bytes.set(row.embedding, i * stride);
+  }
+  return { ids, vectors };
+}
+
+/**
+ * Search-hit metadata for a specific set of recipe ids — the top-K the worker
+ * returned. Re-applies the same visibility filter as `searchRecipes`, so a
+ * recipe deleted or un-shared since the vectors were hydrated simply drops out.
+ */
+export async function listSearchHitsByIds(
+  ownerId: string,
+  ids: readonly string[],
+): Promise<RecipeSearchHit[]> {
+  if (ids.length === 0) return [];
+  const db = await getLocalDb();
+  const ph = ids.map(() => '?').join(',');
+  const rows = (await db.execO<{
+    id: string;
+    title: string;
     collection_id: string;
     collection_title: string;
-    source_type: string;
-    title: string;
+    source_type: CollectionRow['source_type'];
     has_content: number;
-    embedding: Uint8Array;
-  }[];
+  }>(
+    `select r.id, r.title, r.collection_id,
+            c.title as collection_title, c.source_type,
+            r.has_content
+       from recipes r
+       join recipe_collections c on c.id = r.collection_id and c.deleted = 0
+              and (c.owner_id = ? or c.shared_with_household_id is not null)
+      where r.deleted = 0 and r.id in (${ph})`,
+    [ownerId, ...ids] as (string | number)[],
+  )) as Array<{
+    id: string;
+    title: string;
+    collection_id: string;
+    collection_title: string;
+    source_type: CollectionRow['source_type'];
+    has_content: number;
+  }>;
   return rows.map((r) => ({
-    recipeId: r.recipe_id,
+    recipeId: r.id,
     recipeTitle: r.title,
     collectionId: r.collection_id,
     collectionTitle: r.collection_title,
     sourceType: r.source_type,
     isPlaceholder: !r.has_content,
-    embedding: unpackEmbedding(r.embedding),
   }));
 }
 
 /**
  * Cheap count of the locally-mirrored embeddings the semantic search can see
- * (own + household-shared, same visibility as `listSearchableEmbeddings`). Used
+ * (own + household-shared, same visibility as `listEmbeddingVectors`). Used
  * by the search page diagnostics to tell apart "the embedder failed to load"
  * from "no vectors have been pulled/computed locally yet" — the two reasons
  * semantic search silently degrades to literal matches.

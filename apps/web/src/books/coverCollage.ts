@@ -29,6 +29,18 @@ function makeCanvas(width: number, height: number): HTMLCanvasElement | Offscree
   return c;
 }
 
+/**
+ * Narrow the canvas before asking for its 2D context. On the bare
+ * `HTMLCanvasElement | OffscreenCanvas` union TypeScript stops matching the
+ * `'2d'` literal overload and falls back to the `string` one, widening the
+ * result to `RenderingContext` — which then rejects every 2D call. Whether it
+ * does that is sensitive to unrelated changes in the import graph, so narrow
+ * explicitly rather than relying on overload resolution luck.
+ */
+function get2d(canvas: HTMLCanvasElement | OffscreenCanvas): Ctx2D | null {
+  return 'convertToBlob' in canvas ? canvas.getContext('2d') : canvas.getContext('2d');
+}
+
 async function encode(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   type: string,
@@ -164,7 +176,7 @@ export async function buildCollectionCoverCollage(opts: CollageOptions): Promise
   if (paths.length === 0) throw new Error('No recipe covers selected for the collage.');
 
   const canvas = makeCanvas(COVER_W, COVER_H);
-  const ctx = canvas.getContext('2d');
+  const ctx = get2d(canvas);
   if (!ctx) throw new Error('Could not acquire 2D canvas context');
 
   // Neutral backdrop shows through if a cover fails to load.

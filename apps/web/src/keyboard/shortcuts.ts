@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { openFeedbackDialog } from '../feedback/open.js';
+
 // Keyboard shortcut map.
 // - Single-key entries fire on that keypress outside of input fields.
 // - Two-key "chord" entries (prefix 'g') require pressing `g` first, then the
@@ -133,6 +135,11 @@ export const APP_SHORTCUTS: Shortcut[] = [
     keys: 'g s',
     description: 'Go to Shopping list',
     run: ({ navigate }) => void navigate('/shopping'),
+  },
+  {
+    keys: 'f',
+    description: 'Send feedback',
+    run: () => openFeedbackDialog(),
   },
   {
     keys: 'n',

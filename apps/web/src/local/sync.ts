@@ -1237,7 +1237,7 @@ async function pullHouseholdSharedContent(
     // Co-members' recipe vectors, so household-shared recipes are semantically
     // searchable (not just literal-fallback). Tagged into the local mirror by
     // recipe_id; the collection's shared_with_household_id marker is what
-    // listSearchableEmbeddings joins on to surface them.
+    // listEmbeddingVectors joins on to surface them.
     await pullHouseholdEmbeddings(client, ownerId, householdId, coMemberIds),
   ];
 
@@ -2009,7 +2009,7 @@ async function pullRecipeEmbeddings(client: CookbooksClient, ownerId: string): P
  * indexed and join-free, exactly like the household recipe pull. The
  * claim-based recipe_embeddings RLS (20260624000000) confirms read access.
  * This is what makes household-shared recipes semantically searchable:
- * their vectors land in the same local mirror, and listSearchableEmbeddings
+ * their vectors land in the same local mirror, and listEmbeddingVectors
  * surfaces them via the collection's shared_with_household_id marker.
  * Watermarked per-household so switching households forces a fresh pull.
  */
