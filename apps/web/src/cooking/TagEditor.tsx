@@ -2,6 +2,7 @@ import { normalizeLabel } from '@cookyourbooks/domain';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { recordSuggestionEvent } from '../signals/capture.js';
 import { useAddRecipeTag, useAllTags, useRecipeTags, useRemoveRecipeTag } from './queries.js';
 
 /**
@@ -27,6 +28,23 @@ export function TagEditor({ recipeId }: { recipeId: string }) {
     const normalized = normalizeLabel(label);
     if (!normalized) return;
     addTag.mutate({ recipeId, label: normalized });
+    // Autocomplete is a ranker: given a prefix and the user's vocabulary, which
+    // label did they want? Only record when we actually offered something —
+    // typing a tag with no suggestions on screen teaches nothing about ranking.
+    if (suggestions.length > 0) {
+      const rank = suggestions.indexOf(normalized);
+      recordSuggestionEvent({
+        surface: 'tag',
+        action: rank === 0 ? 'accepted' : 'corrected',
+        input_text: normalizeLabel(input),
+        suggested_key: suggestions[0] ?? '',
+        chosen_key: normalized,
+        // Off-list: the user typed a label past the six we showed, which is
+        // the strongest evidence the ranking was wrong.
+        chosen_rank: rank >= 0 ? rank : undefined,
+        candidates: suggestions,
+      });
+    }
     setInput('');
   }
 

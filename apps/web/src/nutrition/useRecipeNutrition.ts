@@ -14,7 +14,8 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { useLocalQueryEnabled } from '../local/SyncProvider.js';
-import { readCachedFact, resolveMapping, searchNutrition } from './api.js';
+import { recordOnce, recordSuggestionEvent } from '../signals/capture.js';
+import { nutritionFactKey, readCachedFact, resolveMapping, searchNutrition } from './api.js';
 import { listConversionRulesForOwner } from './conversions.js';
 import { searchLocalEssentials } from './localCache.js';
 
@@ -101,14 +102,28 @@ export function useRecipeNutrition(recipe: Recipe | undefined) {
           // user confirms via the override UI, so we don't persist a
           // mapping at this point.
           try {
-            const localHits = await searchLocalEssentials(ing.name, 5);
-            if (localHits.length > 0) {
-              fact = localHits[0]!;
+            let hits = await searchLocalEssentials(ing.name, 5);
+            if (hits.length === 0) hits = await searchNutrition(ing.name, 5);
+            fact = hits[0] ?? null;
+            if (hits.length > 0) {
               needsReview = true;
-            } else {
-              const hits = await searchNutrition(ing.name, 5);
-              fact = hits[0] ?? null;
-              if (hits.length > 0) needsReview = true;
+              // The positive class for a future ingredient→food matcher.
+              // Without it the signal table would hold only corrections, and a
+              // model trained on corrections alone learns that every match is
+              // wrong. Deduped per page-load on the ingredient key: the same
+              // "butter" resolves on every recipe the user opens, and one
+              // unreviewed impression per session is plenty.
+              if (recordOnce(`nutrition:${key}`)) {
+                recordSuggestionEvent({
+                  surface: 'nutrition_match',
+                  action: 'auto',
+                  input_text: ing.name,
+                  suggested_key: nutritionFactKey(hits[0]!),
+                  chosen_key: nutritionFactKey(hits[0]!),
+                  chosen_rank: 0,
+                  candidates: hits.map(nutritionFactKey),
+                });
+              }
             }
           } catch (e) {
             console.warn('nutrition search failed', e);

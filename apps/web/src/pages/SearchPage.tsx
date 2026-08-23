@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import { LoadingState } from '../components/LoadingState.js';
 import { useSearch } from '../search/useSearch.js';
+import { recordSearchEvent } from '../signals/capture.js';
 
 type Filter = '' | SourceType;
 
@@ -85,7 +86,7 @@ export function SearchPage() {
   // move scrollY out from under the restoration loop.
   const [autoFocusInput] = useState(() => q.length === 0);
 
-  const { hits, isLoading, mode, embedderStatus, embeddedCount, truncated } = useSearch(q);
+  const { hits, isLoading, mode, embedderStatus, embeddedCount, truncated, queryId } = useSearch(q);
 
   const filteredHits = useMemo(() => {
     if (!sourceType) return hits;
@@ -142,10 +143,25 @@ export function SearchPage() {
             )}
           </div>
           <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
-            {filteredHits.map((hit) => (
+            {filteredHits.map((hit, rank) => (
               <li key={hit.recipeId}>
                 <Link
                   to={`/collections/${hit.collectionId}/recipes/${hit.recipeId}`}
+                  onClick={() => {
+                    // The relevance label: this query, this recipe, at this
+                    // rank. Rank is the position in the list the user actually
+                    // saw, so the source-type filter has to ride along for the
+                    // candidate set to be reconstructible.
+                    if (!queryId) return;
+                    recordSearchEvent({
+                      query_id: queryId,
+                      kind: 'open',
+                      opened_recipe_id: hit.recipeId,
+                      opened_rank: rank,
+                      opened_score: hit.score,
+                      source_filter: sourceType,
+                    });
+                  }}
                   className={`flex items-center justify-between gap-2 px-4 py-3 hover:bg-stone-50 dark:hover:bg-stone-900 ${
                     hit.isPlaceholder ? 'text-stone-500 dark:text-stone-500' : ''
                   }`}

@@ -8,6 +8,7 @@ import {
 } from '@cookyourbooks/domain';
 import { useMemo, useState } from 'react';
 
+import { nutritionFactKey } from './api.js';
 import { IngredientMatchOverrideDialog } from './IngredientMatchOverrideDialog.js';
 import { useRecipeNutrition } from './useRecipeNutrition.js';
 
@@ -32,6 +33,10 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
   const [overrideIngredient, setOverrideIngredient] = useState<{
     id: string;
     name: string;
+    /** The match this row is currently showing, so the dialog can tell an
+     *  "accepted" (picked the same one back) from a "corrected". '' when the
+     *  row had no match at all. */
+    suggestedKey: string;
   } | null>(null);
 
   const totals = data?.totals;
@@ -268,6 +273,7 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
                           setOverrideIngredient({
                             id: row.ingredientId,
                             name: row.ingredientName,
+                            suggestedKey: row.fact ? nutritionFactKey(row.fact) : '',
                           })
                         }
                         className="text-stone-600 dark:text-stone-400 hover:underline truncate inline-block max-w-[12rem]"
@@ -286,6 +292,7 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
                           setOverrideIngredient({
                             id: row.ingredientId,
                             name: row.ingredientName,
+                            suggestedKey: row.fact ? nutritionFactKey(row.fact) : '',
                           })
                         }
                         data-testid={`nutrition-match-${row.ingredientId}`}
@@ -346,6 +353,7 @@ export function RecipeNutritionPanel({ recipe }: { recipe: Recipe }) {
       {overrideIngredient && (
         <IngredientMatchOverrideDialog
           ingredientName={overrideIngredient.name}
+          suggestedKey={overrideIngredient.suggestedKey}
           onClose={() => setOverrideIngredient(null)}
         />
       )}

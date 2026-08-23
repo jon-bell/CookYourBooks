@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { countSearchableEmbeddings } from '../local/repositories.js';
+import { newQueryId, recordSearchEvent } from '../signals/capture.js';
 import { SEARCH_LIMIT, type SearchHit, searchHybrid, searchSubstring } from './semanticSearch.js';
 import {
   type EmbedderStatus,
@@ -25,6 +26,11 @@ export interface UseSearchResult {
   /** True when the result set hit the render cap, so the page can say "200+"
    *  instead of claiming the cap is the real total. */
   truncated: boolean;
+  /** Id of the recorded search this result set came from. The page passes it
+   *  back when the user opens a hit, which is what turns two independent rows
+   *  into a (query → clicked result) training pair. Null before the query has
+   *  run, or when capture is off. */
+  queryId: string | null;
 }
 
 /** Power-user diagnostic mirror, reusing the existing sync debug flag. */
@@ -104,11 +110,38 @@ export function useSearch(q: string): UseSearchResult {
     hits: SearchHit[];
     mode: 'semantic' | 'substring';
     truncated: boolean;
+    queryId: string;
   }>({
     queryKey: ['search', ownerId, trimmed, useSemantic ? 'sem' : 'sub'],
     enabled,
     queryFn: async ({ signal }) => {
-      if (!ownerId || !trimmed) return { hits: [], mode: 'substring' as const, truncated: false };
+      // Recording lives inside queryFn on purpose: React Query only calls it on
+      // a cache miss, so re-running the same search within `staleTime` (Back
+      // from a recipe, a re-render) reuses the cached queryId instead of
+      // logging a second, phantom search.
+      const queryId = newQueryId();
+      const record = (r: {
+        hits: SearchHit[];
+        mode: 'semantic' | 'substring';
+        truncated: boolean;
+      }) => {
+        recordSearchEvent({
+          query_id: queryId,
+          kind: 'query',
+          query: trimmed,
+          mode: r.mode,
+          // Pre-filter count — the collection-type filter is applied by the
+          // page after this returns, and rides on the 'open' event instead.
+          result_count: r.hits.length,
+          truncated: r.truncated,
+          embedder_status: embedderStatus,
+          embedded_count: embeddedCount,
+        });
+        return { ...r, queryId };
+      };
+      if (!ownerId || !trimmed) {
+        return { hits: [], mode: 'substring' as const, truncated: false, queryId };
+      }
       if (useSemantic) {
         // Hybrid: literal exact-term matches first, then semantic extras.
         // A one-word query like "salad" must surface every actual salad
@@ -124,11 +157,11 @@ export function useSearch(q: string): UseSearchResult {
             embeddedCount,
             hits: hybrid.length,
           });
-          return {
+          return record({
             hits: hybrid,
             mode: 'semantic' as const,
             truncated: hybrid.length >= SEARCH_LIMIT,
-          };
+          });
         }
         // Cold cache: no vectors have been pulled / computed yet. Fall
         // through to substring so the user gets *something* useful while
@@ -141,7 +174,7 @@ export function useSearch(q: string): UseSearchResult {
           embedderStatus,
           embeddedCount,
         });
-        return capSubstring(await searchSubstring(ownerId, trimmed));
+        return record(capSubstring(await searchSubstring(ownerId, trimmed)));
       }
       searchDebug({
         q: trimmed,
@@ -150,7 +183,7 @@ export function useSearch(q: string): UseSearchResult {
         embedderStatus,
         embeddedCount,
       });
-      return capSubstring(await searchSubstring(ownerId, trimmed));
+      return record(capSubstring(await searchSubstring(ownerId, trimmed)));
     },
     staleTime: 60_000,
   });
@@ -163,12 +196,14 @@ export function useSearch(q: string): UseSearchResult {
       embedderStatus,
       embeddedCount,
       truncated: false,
+      queryId: null,
     };
   }
   return {
     hits: data?.hits ?? [],
     isLoading,
     truncated: data?.truncated ?? false,
+    queryId: data?.queryId ?? null,
     // Reflect the path actually taken — semantic can fall back to
     // substring on a cold cache. Before the query resolves, report the
     // intended mode.
