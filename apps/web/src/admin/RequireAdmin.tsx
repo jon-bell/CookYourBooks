@@ -40,6 +40,7 @@ export function AdminTabs() {
       <AdminTabLink to="/admin/global-toc">Global ToC</AdminTabLink>
       <AdminTabLink to="/admin/global-toc/import">Import from library</AdminTabLink>
       <AdminTabLink to="/admin/nutrition">Nutrition</AdminTabLink>
+      <AdminTabLink to="/admin/feedback">Feedback</AdminTabLink>
     </nav>
   );
 }
