@@ -3,19 +3,30 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { LoadingState } from '../components/LoadingState.js';
-import { deleteMapping, saveMapping, searchNutrition } from './api.js';
+import { recordSuggestionEvent } from '../signals/capture.js';
+import { deleteMapping, nutritionFactKey, saveMapping, searchNutrition } from './api.js';
 
 /**
  * Lets the user pick the right USDA / Open Food Facts entry for an
  * ingredient when the auto-match is wrong (e.g. "butter" → "almond
  * butter"). Persists into `ingredient_nutrition_mappings` so the
  * choice sticks across recipes that use the same ingredient string.
+ *
+ * Every outcome here is a hand-labelled example for a future on-device
+ * ingredient→food matcher, so each one is recorded as a suggestion event:
+ * confirming the row's existing match is 'accepted', picking a different one
+ * is 'corrected' (the label that actually teaches something), and resetting is
+ * 'cleared'. Closing without picking records nothing — we can't tell "the
+ * match was fine" from "I gave up".
  */
 export function IngredientMatchOverrideDialog({
   ingredientName,
+  suggestedKey,
   onClose,
 }: {
   ingredientName: string;
+  /** Key of the match the recipe row was already showing, '' if none. */
+  suggestedKey: string;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -39,6 +50,22 @@ export function IngredientMatchOverrideDialog({
         source: fact.source,
         sourceId: fact.source_id,
       });
+      const candidates = (search.data ?? []).map(nutritionFactKey);
+      const chosenKey = nutritionFactKey(fact);
+      const rank = candidates.indexOf(chosenKey);
+      recordSuggestionEvent({
+        surface: 'nutrition_match',
+        action: chosenKey === suggestedKey ? 'accepted' : 'corrected',
+        // The ingredient string is the model input; `query` is only what the
+        // human typed to go find the answer, and is not always present.
+        input_text: ingredientName,
+        suggested_key: suggestedKey,
+        chosen_key: chosenKey,
+        // Omitted (→ null, "off-list") when the pick isn't in the list we
+        // captured — the query can change between render and click.
+        chosen_rank: rank >= 0 ? rank : undefined,
+        candidates,
+      });
       // Invalidate every recipe-nutrition query so the new mapping
       // takes effect immediately. Cheap — react-query refetches lazily.
       await qc.invalidateQueries({ queryKey: ['recipe-nutrition'] });
@@ -55,6 +82,12 @@ export function IngredientMatchOverrideDialog({
     setBusy(true);
     try {
       await deleteMapping(ingredientLookupKey(ingredientName));
+      recordSuggestionEvent({
+        surface: 'nutrition_match',
+        action: 'cleared',
+        input_text: ingredientName,
+        suggested_key: suggestedKey,
+      });
       await qc.invalidateQueries({ queryKey: ['recipe-nutrition'] });
       onClose();
     } catch (e) {

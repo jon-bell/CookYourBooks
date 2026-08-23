@@ -20,7 +20,7 @@
  *  that only need the version number. */
 export const CURRENT_TOS_VERSION = 1;
 
-export const LEGAL_LAST_UPDATED = '2026-05-27';
+export const LEGAL_LAST_UPDATED = '2026-08-23';
 
 export interface LegalDoc {
   slug: 'terms' | 'aup' | 'dmca' | 'privacy' | 'data-deletion';
@@ -299,10 +299,14 @@ category, what we use it for, and the legal basis under the GDPR.
 | Sync metadata | Last-sync timestamps per topic | Efficient incremental sync so we don't refetch everything | Performance of contract |
 | Audit log | Household / sharing / attestation / ToS actions with timestamps | Defending takedowns; investigating abuse | Legitimate interest |
 | Telemetry | Sentry error events, 10%-sampled performance traces, error-only session replay (Supabase user UUID only; text/inputs/media masked) | Debugging and reliability | Legitimate interest |
+| Product-improvement signals | The text of searches you run and which result you open; which suggested nutrition match or tag you accept or correct | Improving search ranking and automatic ingredient matching, including training our own models | Legitimate interest (opt out any time in Settings → Data & deletion) |
 | Google OAuth token | Issued by Google at sign-in | Authenticating your account via Google | Consent (you initiate the OAuth flow) |
 
 **What we do not collect:**
 - Third-party analytics or behavioral profiling (no GA, Mixpanel, Heap, etc.).
+  The product-improvement signals above are first-party, stay on our own
+  infrastructure, are visible only to you, and are never used to build an
+  advertising or cross-site profile.
 - Your physical address.
 - Any data from the OCR feature that you process yourself (see below).
 
@@ -322,7 +326,8 @@ The Service stores data locally in your browser:
 - **localStorage** — OCR fallback-model preference under
   \`cookyourbooks.ocr.fallback.v1\`; UI preferences (sort modes, dismissed
   onboarding) under other \`cookyourbooks.*\` keys; a debug flag under
-  \`cookyourbooks.sync.consoleMirror\`.
+  \`cookyourbooks.sync.consoleMirror\`; the product-improvement opt-out under
+  \`cookyourbooks.signals.optOut.v1\` (per-device).
 - **Session storage / cookies** — your Supabase auth session token.
 
 No advertising or analytics cookies are used. The cookies we set are strictly
@@ -371,6 +376,7 @@ contract with them directly and data flows from your browser to them.
 | Deleted account — content and sync data | Hard-deleted immediately when you delete your account in-app. The auth identity, profile, recipe collections, recipes, import history, conversion rules, household memberships, and all related rows cascade-delete in the same database transaction. |
 | Audit log | Retained indefinitely with the actor link set to NULL after deletion (legitimate-interest carve-out for takedown defense and abuse investigation). |
 | Sentry telemetry events | **[CONFIRM: 30 or 90 days per your Sentry project settings]** |
+| Product-improvement signals | 180 days, then deleted by a scheduled job. Deleted immediately along with everything else when you delete your account. |
 | OCR import artifacts (uploaded images) | **[CONFIRM: retention policy for Storage bucket]** |
 
 ## International data transfers

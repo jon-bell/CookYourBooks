@@ -14,6 +14,13 @@ import { readLocalFact, writeLocalFact, writeLocalFacts } from './localCache.js'
 
 const FUNCTION_PATH = '/functions/v1/nutrition';
 
+/** Stable identity of a food row — what the interaction-signal tables store
+ *  as `suggested_key` / `chosen_key` instead of the display description, which
+ *  USDA revises between data releases. */
+export function nutritionFactKey(fact: Pick<NutritionFact, 'source' | 'source_id'>): string {
+  return `${fact.source}|${fact.source_id}`;
+}
+
 async function callNutrition<T>(action: 'search' | 'get', body: unknown): Promise<T> {
   const session = await supabase.auth.getSession();
   const token = session.data.session?.access_token;
