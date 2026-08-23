@@ -63,6 +63,7 @@ import { SettingsLlmPage } from './pages/SettingsLlmPage.js';
 import { SharedRecipePage } from './pages/SharedRecipePage.js';
 import { ShoppingListPage } from './pages/ShoppingListPage.js';
 import { TagBrowsePage } from './pages/TagBrowsePage.js';
+import { loadSignalsPref } from './signals/prefs.js';
 import { ThemePicker } from './theme/ThemePicker.js';
 
 export function App() {
@@ -81,6 +82,9 @@ export function App() {
           adjustments the Capacitor Keyboard plugin makes. */}
       <div className="min-h-dvh flex flex-col">
         <ShareIntentListener />
+        {/* Pulls the account-level interaction-signal opt-out into the
+            synchronous gate that capture.ts reads. */}
+        <SignalsPrefLoader />
         {/* Records the route/click trail a feedback report ships with. */}
         <BreadcrumbTracker />
         {feedback.open && <FeedbackDialog onClose={feedback.close} />}
@@ -491,6 +495,27 @@ export function App() {
 function fileRoute(fileUrl: string, fileKind: 'pdf' | 'image'): string {
   const base = fileKind === 'pdf' ? '/import/pdf' : '/import/new';
   return `${base}?file=${encodeURIComponent(fileUrl)}`;
+}
+
+/**
+ * Hydrates `profiles.share_interaction_signals` into the signals pref cache
+ * once per signed-in session. Renders nothing.
+ *
+ * Without this, a device would run on its localStorage mirror until something
+ * else happened to fetch the profile — fine for correctness (the write RPCs
+ * enforce the account setting regardless) but it would keep putting events on
+ * the wire that the server then discards.
+ */
+function SignalsPrefLoader() {
+  const { user } = useAuth();
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    // Best-effort: on failure the cache keeps the mirror's value and the
+    // server still has the last word.
+    void loadSignalsPref().catch(() => {});
+  }, [userId]);
+  return null;
 }
 
 // Bridges the mobile share target into the router: when another app shares

@@ -326,8 +326,9 @@ The Service stores data locally in your browser:
 - **localStorage** — OCR fallback-model preference under
   \`cookyourbooks.ocr.fallback.v1\`; UI preferences (sort modes, dismissed
   onboarding) under other \`cookyourbooks.*\` keys; a debug flag under
-  \`cookyourbooks.sync.consoleMirror\`; the product-improvement opt-out under
-  \`cookyourbooks.signals.optOut.v1\` (per-device).
+  \`cookyourbooks.sync.consoleMirror\`; a cached copy of your
+  product-improvement setting under \`cookyourbooks.signals.enabled.v1\` (the
+  setting itself is stored on your account, not here).
 - **Session storage / cookies** — your Supabase auth session token.
 
 No advertising or analytics cookies are used. The cookies we set are strictly

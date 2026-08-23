@@ -9,22 +9,7 @@ import {
   resetSignalsForTest,
   setSignalTransport,
 } from './capture.js';
-import { isSignalsOptedOut, setSignalsOptedOut } from './prefs.js';
-
-// The unit suite runs under plain Node (no jsdom), so `localStorage` has to be
-// stood up by hand. That's also the honest shape of the environments this code
-// has to survive: prefs.ts treats a missing/throwing store as "not opted out".
-function installLocalStorage(): void {
-  const store = new Map<string, string>();
-  Object.defineProperty(globalThis, 'localStorage', {
-    configurable: true,
-    value: {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => void store.set(k, v),
-      removeItem: (k: string) => void store.delete(k),
-    },
-  });
-}
+import { primeSignalsPref, signalsEnabled } from './prefs.js';
 
 interface Captured {
   search: SearchEventPayload[][];
@@ -47,8 +32,9 @@ function fakeTransport(captured: Captured, fail = false) {
 let captured: Captured;
 
 beforeEach(() => {
-  installLocalStorage();
-  setSignalsOptedOut(false);
+  // The account setting is fetched asynchronously in the app; here we set the
+  // synchronous cache the enqueue gate actually reads.
+  primeSignalsPref(true);
   resetSignalsForTest();
   captured = { search: [], suggestion: [] };
   setSignalTransport(fakeTransport(captured));
@@ -103,8 +89,8 @@ describe('recordSearchEvent', () => {
 
 describe('opt-out', () => {
   it('drops events enqueued while opted out', async () => {
-    setSignalsOptedOut(true);
-    expect(isSignalsOptedOut()).toBe(true);
+    primeSignalsPref(false);
+    expect(signalsEnabled()).toBe(false);
 
     recordSearchEvent(aQuery);
     recordSuggestionEvent({ surface: 'tag', action: 'accepted' });
@@ -115,9 +101,9 @@ describe('opt-out', () => {
   });
 
   it('resumes when switched back on', async () => {
-    setSignalsOptedOut(true);
+    primeSignalsPref(false);
     recordSearchEvent(aQuery);
-    setSignalsOptedOut(false);
+    primeSignalsPref(true);
     recordSearchEvent({ query_id: 'q2', kind: 'query', query: 'soup' });
     await flushSignals();
 

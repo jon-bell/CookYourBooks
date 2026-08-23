@@ -9,7 +9,9 @@
 //   2. Batched. Events accumulate and flush on a timer / at a cap / when the
 //      page goes away, so a burst of typing is one round trip, not eight.
 //   3. Gated once, centrally. The opt-out is checked at enqueue time in one
-//      place — call sites call `recordSearchEvent` unconditionally.
+//      place — call sites call `recordSearchEvent` unconditionally. This gate
+//      is a courtesy (don't put opted-out data on the wire at all); the
+//      binding enforcement is server-side in the write RPCs.
 
 import {
   postSearchEvents,
@@ -17,7 +19,7 @@ import {
   type SearchEventPayload,
   type SuggestionEventPayload,
 } from './api.js';
-import { isSignalsOptedOut } from './prefs.js';
+import { signalsEnabled } from './prefs.js';
 
 /** Coalescing window. Long enough that scrolling a result list and clicking
  *  through rides in one request; short enough that a user who closes the tab
@@ -117,14 +119,14 @@ function push<T>(buf: T[], event: T): void {
 
 /** Enqueue a search or result-open event. No-op when opted out. */
 export function recordSearchEvent(event: SearchEventPayload): void {
-  if (isSignalsOptedOut()) return;
+  if (!signalsEnabled()) return;
   push(searchBuf, event);
   scheduleFlush();
 }
 
 /** Enqueue a suggestion accept/correct/clear. No-op when opted out. */
 export function recordSuggestionEvent(event: SuggestionEventPayload): void {
-  if (isSignalsOptedOut()) return;
+  if (!signalsEnabled()) return;
   push(suggestionBuf, event);
   scheduleFlush();
 }

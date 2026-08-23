@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { flushSignals } from '../signals/capture.js';
-import { isSignalsOptedOut, setSignalsOptedOut } from '../signals/prefs.js';
+import { loadSignalsPref, saveSignalsPref, signalsEnabled } from '../signals/prefs.js';
 
 /**
  * Opt-out for interaction-signal capture (what you searched for and which
@@ -9,19 +9,48 @@ import { isSignalsOptedOut, setSignalsOptedOut } from '../signals/prefs.js';
  * corrected). Lives on the Data & deletion tab beside the other "what leaves
  * this device" controls.
  *
- * The pref is per-device (localStorage — see signals/prefs.ts), which the copy
- * says out loud rather than implying an account-wide guarantee we don't make.
- * Switching capture off flushes whatever is already buffered: those events were
- * captured under the previous setting and dropping them silently would be a
- * worse answer than sending them, but nothing new is queued afterwards.
+ * The setting lives on the account (`profiles.share_interaction_signals`), so
+ * it follows the user to every device, and the write RPCs enforce it
+ * server-side — turning it off on a phone stops capture on the laptop too,
+ * without waiting for that laptop to reload.
+ *
+ * Optimistic-with-rollback: the checkbox flips immediately (the toggle should
+ * feel like a toggle) but reverts on a failed save, because a privacy control
+ * that silently claims a state it didn't reach is worse than a visible error.
  */
 export function ProductImprovementSection() {
-  const [optedOut, setOptedOut] = useState(() => isSignalsOptedOut());
+  const [enabled, setEnabled] = useState(() => signalsEnabled());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function onToggle(next: boolean) {
+  // Re-read the account setting on mount so this page shows the truth rather
+  // than whatever the local cache last guessed.
+  useEffect(() => {
+    let cancelled = false;
+    void loadSignalsPref().then((v) => {
+      if (!cancelled) setEnabled(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function onToggle(next: boolean) {
+    // Anything already buffered was captured under the old setting; flush it
+    // rather than dropping it silently, then stop queueing new events.
     if (!next) void flushSignals();
-    setSignalsOptedOut(!next);
-    setOptedOut(!next);
+    const previous = enabled;
+    setEnabled(next);
+    setBusy(true);
+    setError(null);
+    try {
+      await saveSignalsPref(next);
+    } catch (e) {
+      setEnabled(previous);
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -36,16 +65,18 @@ export function ProductImprovementSection() {
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
-          checked={!optedOut}
-          onChange={(e) => onToggle(e.target.checked)}
+          checked={enabled}
+          disabled={busy}
+          onChange={(e) => void onToggle(e.target.checked)}
           data-testid="product-improvement-toggle"
-          className="h-4 w-4"
+          className="h-4 w-4 disabled:opacity-60"
         />
         <span>Share search and correction signals</span>
       </label>
       <p className="text-xs text-stone-500 dark:text-stone-400">
-        This setting applies to this device only.
+        This setting applies to your account, on every device you sign in to.
       </p>
+      {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
     </section>
   );
 }

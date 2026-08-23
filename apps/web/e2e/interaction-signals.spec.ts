@@ -37,6 +37,36 @@ async function readSearchEvents(ownerId: string): Promise<SearchEventRow[]> {
   return (await resp.json()) as SearchEventRow[];
 }
 
+/** Read the account-level opt-out straight from `profiles`. */
+async function readSharePref(ownerId: string): Promise<boolean | undefined> {
+  const resp = await fetch(
+    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${ownerId}&select=share_interaction_signals`,
+    {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      },
+    },
+  );
+  if (!resp.ok) throw new Error(`read profiles ${resp.status}: ${await resp.text()}`);
+  const rows = (await resp.json()) as { share_interaction_signals: boolean }[];
+  return rows[0]?.share_interaction_signals;
+}
+
+/** Flip the account setting out-of-band, as another device would. */
+async function setSharePref(ownerId: string, enabled: boolean): Promise<void> {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${ownerId}`, {
+    method: 'PATCH',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ share_interaction_signals: enabled }),
+  });
+  if (!resp.ok) throw new Error(`patch profiles ${resp.status}: ${await resp.text()}`);
+}
+
 test.describe('Interaction signals', () => {
   test.beforeEach(async ({ authedPage: page }) => {
     // Same rationale as search.spec.ts: keep the 30 MB model download out of
@@ -82,7 +112,7 @@ test.describe('Interaction signals', () => {
     expect(open!.opened_recipe_id).toBeTruthy();
   });
 
-  test('records nothing after the user opts out in Settings', async ({
+  test('opting out persists to the account and stops recording', async ({
     authedPage: page,
     user,
   }) => {
@@ -90,6 +120,10 @@ test.describe('Interaction signals', () => {
     const toggle = page.getByTestId('product-improvement-toggle');
     await expect(toggle).toBeChecked();
     await toggle.uncheck();
+
+    // The setting has to reach `profiles`, not just localStorage — that's what
+    // makes it bind on the user's other devices.
+    await expect.poll(async () => readSharePref(user.id), { timeout: 10_000 }).toBe(false);
 
     await page.goto('/search');
     await page.getByPlaceholder(/Search by recipe/).fill('chicken');
@@ -99,6 +133,29 @@ test.describe('Interaction signals', () => {
 
     // Wait past the flush window, then assert the absence. Nothing was ever
     // enqueued, so there is nothing that could arrive late.
+    await page.waitForTimeout(6_000);
+    expect(await readSearchEvents(user.id)).toHaveLength(0);
+  });
+
+  test('the server drops events from a client that has not noticed the opt-out', async ({
+    authedPage: page,
+    user,
+  }) => {
+    // Flip the account setting behind the app's back, leaving this tab's cache
+    // stale — the shape of "opted out on my phone, laptop still open". The
+    // client gate is a courtesy; the RPC check is the guarantee, so this is the
+    // case that proves the setting actually syncs.
+    await setSharePref(user.id, false);
+
+    // Client-side nav on purpose: a full reload would re-run SignalsPrefLoader
+    // and the client gate would catch it, which is not the path under test.
+    await page.locator('header').getByRole('link', { name: 'Search', exact: true }).click();
+    await page.waitForURL(/\/search$/);
+    await page.getByPlaceholder(/Search by recipe/).fill('chicken');
+    await expect(page.getByText('Chicken Soup')).toBeVisible({ timeout: 5000 });
+    await page.getByRole('link', { name: /Chicken Soup/ }).click();
+    await expect(page.getByRole('heading', { name: 'Chicken Soup' })).toBeVisible();
+
     await page.waitForTimeout(6_000);
     expect(await readSearchEvents(user.id)).toHaveLength(0);
   });
