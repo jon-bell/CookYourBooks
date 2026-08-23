@@ -3,13 +3,13 @@ import { useEffect, useState } from 'react';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { countSearchableEmbeddings } from '../local/repositories.js';
+import { SEARCH_LIMIT, type SearchHit, searchHybrid, searchSubstring } from './semanticSearch.js';
 import {
   type EmbedderStatus,
   getEmbedderStatus,
   preloadEmbedder,
   subscribeEmbedderStatus,
-} from './embedder.js';
-import { type SearchHit, searchHybrid, searchSubstring } from './semanticSearch.js';
+} from './workerClient.js';
 
 export interface UseSearchResult {
   hits: SearchHit[];
@@ -22,6 +22,9 @@ export interface UseSearchResult {
    *  0 means the local cache is cold (embed queue undrained) — distinct from
    *  the embedder model failing to load. Surfaced in the page diagnostics. */
   embeddedCount: number;
+  /** True when the result set hit the render cap, so the page can say "200+"
+   *  instead of claiming the cap is the real total. */
+  truncated: boolean;
 }
 
 /** Power-user diagnostic mirror, reusing the existing sync debug flag. */
@@ -37,6 +40,21 @@ function searchDebug(payload: Record<string, unknown>): void {
   } catch {
     // localStorage can throw in locked-down webviews; diagnostics are best-effort.
   }
+}
+
+/** `searchSubstring` fetches SEARCH_LIMIT + 1 rows; that extra row is the
+ *  "there are more" signal and must not be rendered. */
+function capSubstring(rows: SearchHit[]): {
+  hits: SearchHit[];
+  mode: 'substring';
+  truncated: boolean;
+} {
+  const truncated = rows.length > SEARCH_LIMIT;
+  return {
+    hits: truncated ? rows.slice(0, SEARCH_LIMIT) : rows,
+    mode: 'substring',
+    truncated,
+  };
 }
 
 function useEmbedderStatus(enabled: boolean): EmbedderStatus {
@@ -82,18 +100,22 @@ export function useSearch(q: string): UseSearchResult {
     staleTime: 30_000,
   });
 
-  const { data, isLoading } = useQuery<{ hits: SearchHit[]; mode: 'semantic' | 'substring' }>({
+  const { data, isLoading } = useQuery<{
+    hits: SearchHit[];
+    mode: 'semantic' | 'substring';
+    truncated: boolean;
+  }>({
     queryKey: ['search', ownerId, trimmed, useSemantic ? 'sem' : 'sub'],
     enabled,
-    queryFn: async () => {
-      if (!ownerId || !trimmed) return { hits: [], mode: 'substring' as const };
+    queryFn: async ({ signal }) => {
+      if (!ownerId || !trimmed) return { hits: [], mode: 'substring' as const, truncated: false };
       if (useSemantic) {
         // Hybrid: literal exact-term matches first, then semantic extras.
         // A one-word query like "salad" must surface every actual salad
         // ahead of merely-related soups/dressings that pure semantic
         // interleaves (gte-small's cosine band is too compressed to
         // separate them — see semanticSearch.ts).
-        const hybrid = await searchHybrid(ownerId, trimmed);
+        const hybrid = await searchHybrid(ownerId, trimmed, SEARCH_LIMIT, signal);
         if (hybrid.length > 0) {
           searchDebug({
             q: trimmed,
@@ -102,7 +124,11 @@ export function useSearch(q: string): UseSearchResult {
             embeddedCount,
             hits: hybrid.length,
           });
-          return { hits: hybrid, mode: 'semantic' as const };
+          return {
+            hits: hybrid,
+            mode: 'semantic' as const,
+            truncated: hybrid.length >= SEARCH_LIMIT,
+          };
         }
         // Cold cache: no vectors have been pulled / computed yet. Fall
         // through to substring so the user gets *something* useful while
@@ -115,7 +141,7 @@ export function useSearch(q: string): UseSearchResult {
           embedderStatus,
           embeddedCount,
         });
-        return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
+        return capSubstring(await searchSubstring(ownerId, trimmed));
       }
       searchDebug({
         q: trimmed,
@@ -124,17 +150,25 @@ export function useSearch(q: string): UseSearchResult {
         embedderStatus,
         embeddedCount,
       });
-      return { hits: await searchSubstring(ownerId, trimmed), mode: 'substring' as const };
+      return capSubstring(await searchSubstring(ownerId, trimmed));
     },
     staleTime: 60_000,
   });
 
   if (!enabled) {
-    return { hits: [], isLoading: false, mode: 'empty', embedderStatus, embeddedCount };
+    return {
+      hits: [],
+      isLoading: false,
+      mode: 'empty',
+      embedderStatus,
+      embeddedCount,
+      truncated: false,
+    };
   }
   return {
     hits: data?.hits ?? [],
     isLoading,
+    truncated: data?.truncated ?? false,
     // Reflect the path actually taken — semantic can fall back to
     // substring on a cold cache. Before the query resolves, report the
     // intended mode.
