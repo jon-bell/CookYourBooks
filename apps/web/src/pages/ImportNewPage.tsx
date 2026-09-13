@@ -7,6 +7,8 @@ import { getEffectiveOcrConfig } from '../import/api.js';
 import { CollectionPicker } from '../import/CollectionPicker.js';
 import { isMultiShotAvailable } from '../import/multiShotShim.js';
 import { OcrSetupGuide } from '../import/OcrSetupGuide.js';
+import type { PageMarker } from '../import/pageMarker.js';
+import { setPendingPdf } from '../import/pdfHandoff.js';
 import { useOcrKeys } from '../import/queries.js';
 import { isLiveViewfinderSupported, scanPages } from '../import/scanPages.js';
 import { readSharedFile } from '../import/sharedFile.js';
@@ -17,6 +19,8 @@ import { DEFAULT_FALLBACK_MODEL, loadFallbackPrefs } from '../settings/FallbackM
 import { DEFAULT_MODEL_BY_PROVIDER } from '../settings/ocrSettings.js';
 
 type Step = 'source' | 'review' | 'settings' | 'uploading';
+
+const isPdf = (f: File) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
 
 export function ImportNewPage() {
   const { user } = useAuth();
@@ -29,10 +33,13 @@ export function ImportNewPage() {
   const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
   const { data: ocrKeys = [] } = useOcrKeys();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<Step>('source');
   const [files, setFiles] = useState<File[]>([]);
+  // Capture-time page markers from the camera, keyed by File identity (rather
+  // than index) so removing a thumbnail can't desync them. Files added by the
+  // picker / drag-drop simply have no entry and fall back to RECIPE.
+  const [markerByFile, setMarkerByFile] = useState<Map<File, PageMarker>>(() => new Map());
   const [previews, setPreviews] = useState<string[]>([]);
   const [name, setName] = useState(() => `Imported ${new Date().toLocaleDateString()}`);
   const [targetCollectionId, setTargetCollectionId] = useState<string>('');
@@ -115,6 +122,13 @@ export function ImportNewPage() {
     void (async () => {
       try {
         const file = await readSharedFile(fileUrl);
+        // Share routing sends PDFs to /import/pdf, but a mislabelled share
+        // must not sneak past the "one recipe or a cookbook?" question.
+        if (isPdf(file)) {
+          setPendingPdf(file);
+          navigate('/import/pdf');
+          return;
+        }
         // Inline the seed (rather than addFiles) so this effect depends only on
         // stable setters — keeps react-hooks/exhaustive-deps quiet.
         setFiles((cur) => [...cur, file]);
@@ -123,7 +137,7 @@ export function ImportNewPage() {
         setError("Couldn't read the shared image. Open the app and share again.");
       }
     })();
-  }, [params]);
+  }, [params, navigate]);
 
   // Generate object URL previews, revoking the old ones whenever the
   // file list changes.
@@ -152,16 +166,21 @@ export function ImportNewPage() {
     [files],
   );
 
-  const sourceKind = files.some(
-    (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'),
-  )
-    ? 'PDF'
-    : 'IMAGES';
+  const sourceKind = files.some(isPdf) ? 'PDF' : 'IMAGES';
 
   function addFiles(list: FileList | File[] | null | undefined) {
     if (!list) return;
     const arr = Array.from(list);
     if (arr.length === 0) return;
+    // A PDF is ambiguous (one printed recipe vs a scanned cookbook), and the
+    // answer must not depend on which door the user used. Hand it to the PDF
+    // page, which owns that question and both outcomes.
+    const pdf = arr.find(isPdf);
+    if (pdf) {
+      setPendingPdf(pdf);
+      navigate('/import/pdf');
+      return;
+    }
     setFiles((cur) => [...cur, ...arr]);
     setStep('review');
   }
@@ -170,10 +189,15 @@ export function ImportNewPage() {
     try {
       const captured = await scanPages();
       if (captured.length > 0) {
-        // Camera scans are organized on the grouping screen (page type +
-        // multi-page stitching), same as the dedicated Scan-pages flow.
-        // Markers aren't carried here — grouping is decided on that screen.
+        // Camera scans are organized on the grouping screen, same as the
+        // dedicated Scan-pages flow — and, as there, the shutter's ▤ Contents
+        // choice rides along to the item rows while ⛓ Join stays undoable.
         setImportMode('group-first');
+        setMarkerByFile((cur) => {
+          const next = new Map(cur);
+          for (const p of captured) next.set(p.file, p.marker);
+          return next;
+        });
         addFiles(captured.map((p) => p.file));
       }
     } catch (e) {
@@ -207,6 +231,10 @@ export function ImportNewPage() {
           keyOwnerId,
           sourceKind,
           files,
+          markers: files.map((f) => ({
+            kind: markerByFile.get(f)?.kind ?? 'RECIPE',
+            joinsPrevious: false,
+          })),
           awaitGrouping: importMode === 'group-first',
         },
         setProgress,
@@ -214,11 +242,14 @@ export function ImportNewPage() {
       // Group-first lands on the grouping UI; ocr-first lands on the
       // usual batch board where OCR is already churning.
       await syncNow();
-      navigate(
-        importMode === 'group-first'
-          ? `/import/${result.batchId}/group`
-          : `/import/${result.batchId}`,
-      );
+      if (importMode === 'group-first') {
+        const initialMerges = files.flatMap((f, i) =>
+          i > 0 && markerByFile.get(f)?.joinsPrevious ? [i - 1] : [],
+        );
+        navigate(`/import/${result.batchId}/group`, { state: { initialMerges } });
+      } else {
+        navigate(`/import/${result.batchId}`);
+      }
     } catch (e) {
       reportError(e, { operation: 'batch_upload', tags: { source: 'photos' } });
       setError((e as Error).message);
@@ -273,7 +304,7 @@ export function ImportNewPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">New import batch</h1>
+      <h1 className="text-2xl font-semibold">Upload photos</h1>
 
       {needsSetup && <OcrSetupGuide />}
       {configSource === 'household' && (
@@ -311,9 +342,9 @@ export function ImportNewPage() {
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <SourceButton label="Choose images" onClick={() => fileInputRef.current?.click()} />
-            <SourceButton label="Upload PDF" onClick={() => pdfInputRef.current?.click()} />
+            <SourceButton label="Upload PDF" onClick={() => navigate('/import/pdf')} />
             {(isLiveViewfinderSupported() || multiShotReady) && (
-              <SourceButton label="Scan with camera" onClick={onTakePhotos} />
+              <SourceButton label="Scan pages" onClick={onTakePhotos} />
             )}
           </div>
           <input
@@ -321,16 +352,6 @@ export function ImportNewPage() {
             type="file"
             accept="image/*"
             multiple
-            className="hidden"
-            onChange={(e) => {
-              addFiles(e.target.files);
-              e.target.value = '';
-            }}
-          />
-          <input
-            ref={pdfInputRef}
-            type="file"
-            accept="application/pdf"
             className="hidden"
             onChange={(e) => {
               addFiles(e.target.files);

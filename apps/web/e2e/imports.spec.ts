@@ -236,9 +236,17 @@ test.describe('bulk OCR imports', () => {
   }) => {
     await configureOcrKey(page, 'gemini');
 
-    await page.goto('/import/new');
+    // Every PDF goes through the one door that asks what it is. Three pages
+    // defaults to "one recipe", so a cookbook must be chosen explicitly.
+    await page.goto('/import/pdf');
     await uploadTestImages(page, ['three-pages.pdf']);
-    await page.getByRole('button', { name: 'Start import' }).click();
+
+    const scope = page.getByTestId('pdf-scope-step');
+    await expect(scope).toBeVisible({ timeout: 30_000 });
+    // Three pages defaults to "one recipe" — the split is a deliberate choice.
+    await expect(scope.getByRole('radio', { name: /one recipe/i })).toBeChecked();
+    await scope.getByRole('radio', { name: /split by page/ }).check();
+    await scope.getByRole('button', { name: 'Continue' }).click();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+$/, { timeout: 60_000 });
     const batchId = await batchIdFromUrl(page);

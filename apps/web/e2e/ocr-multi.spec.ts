@@ -1,12 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { expect, test, waitForSynced } from './support/fixtures.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES_DIR = resolve(__dirname, 'fixtures');
-import { configureOcrKey, pumpWorker, seedOcrFixture } from './support/imports.js';
+import { configureOcrKey, installScanShim, pumpWorker, seedOcrFixture } from './support/imports.js';
 
 const FAKE_DRAFTS = [
   {
@@ -53,36 +46,32 @@ async function seedMultiRecipeFixture(): Promise<void> {
   });
 }
 
-async function uploadAndOpenPicker(
+/**
+ * Scan one page into a fresh cookbook and land on its review item. A single
+ * captured page skips grouping, so the two drafts show up as tabs directly.
+ */
+async function scanAndOpenItem(
   page: import('@playwright/test').Page,
   collectionTitle: string,
 ): Promise<void> {
+  await installScanShim(page, ['page1.png']);
+
   await page.goto('/library');
   await page.getByRole('link', { name: 'New collection' }).click();
   await page.getByLabel('Title').fill(collectionTitle);
   await page.getByRole('button', { name: 'Create' }).click();
   await expect(page.getByRole('heading', { name: collectionTitle })).toBeVisible();
 
-  const fileChooserPromise = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Upload image' }).click();
-  const chooser = await fileChooserPromise;
-  // Real PNG — prepareImage decodes via canvas and throws on a
-  // stub-byte JPEG.
-  await chooser.setFiles({
-    name: 'spread.png',
-    mimeType: 'image/png',
-    buffer: readFileSync(resolve(FIXTURES_DIR, 'page1.png')),
-  });
+  await page.getByRole('link', { name: 'Scan pages', exact: true }).click();
+  await page.waitForURL(/\/import\/scan\?collection=[0-9a-f-]+$/);
+  await page.getByRole('button', { name: 'Scan pages' }).click();
 
-  // The page calls ocr_kick once the upload completes, but the test
-  // env doesn't have the vault secret. Pump the worker until it claims
-  // something — the outbox push that makes the row visible server-side
-  // is asynchronous.
+  // A single captured page skips grouping and lands on review immediately —
+  // before OCR has run — so pump the worker once we're there. The test env has
+  // no vault secret, so ocr_kick is a no-op; pumpWorker retries until the
+  // asynchronous outbox push has made the row visible server-side.
+  await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/, { timeout: 30_000 });
   await pumpWorker();
-
-  const picker = page.getByTestId('ocr-recipe-picker');
-  await expect(picker).toBeVisible({ timeout: 30_000 });
-  await expect(picker.getByText('Found 2 recipes')).toBeVisible();
 }
 
 test.describe('OCR multi-recipe review editor', () => {
@@ -93,14 +82,13 @@ test.describe('OCR multi-recipe review editor', () => {
   }) => {
     await configureOcrKey(page, 'gemini');
     await seedMultiRecipeFixture();
-    await uploadAndOpenPicker(page, 'Multi-Recipe Photo');
-
-    const picker = page.getByTestId('ocr-recipe-picker');
-    await picker.getByText('Chewy Cookies').click();
-    await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
+    await scanAndOpenItem(page, 'Multi-Recipe Photo');
 
     const tabs = page.getByTestId('draft-tabs');
-    await expect(tabs.getByRole('tab', { name: 'Chewy Cookies' })).toBeVisible();
+    // Drafts arrive over realtime once the worker writes them.
+    await expect(tabs.getByRole('tab', { name: 'Chewy Cookies' })).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(tabs.getByRole('tab', { name: 'Crispy Cookies' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Save as recipe' }).first().click();
@@ -121,12 +109,9 @@ test.describe('OCR multi-recipe review editor', () => {
   }) => {
     await configureOcrKey(page, 'gemini');
     await seedMultiRecipeFixture();
-    await uploadAndOpenPicker(page, 'Discard-One Photo');
+    await scanAndOpenItem(page, 'Discard-One Photo');
 
-    const picker = page.getByTestId('ocr-recipe-picker');
-    await picker.getByText('Chewy Cookies').click();
-    await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/);
-
+    await expect(page.getByTestId('draft-tabs')).toBeVisible({ timeout: 30_000 });
     await page.getByRole('button', { name: 'Discard this draft' }).click();
     await expect(page.getByTestId('draft-tabs')).toHaveCount(0);
 

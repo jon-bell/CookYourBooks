@@ -101,7 +101,7 @@ export function OcrKeysSection() {
         <p className="mt-1 text-sm text-stone-600">
           API keys for the OCR worker. Stored in Supabase Vault — only the worker (running as the
           service role) can decrypt them. The browser never reads the key back. The same keys power
-          the bulk import flow and the bakeoff page.
+          every way you add recipes — scanning, links, and PDFs.
         </p>
         <p className="mt-1 text-sm text-stone-600">
           Need a key? Create a free Google Gemini key at{' '}

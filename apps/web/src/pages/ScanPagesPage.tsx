@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
@@ -26,8 +26,13 @@ export function ScanPagesPage() {
   const { user } = useAuth();
   const { syncNow } = useSync();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { data: pickerOptions = [], isLoading: pickerLoading } = useCollectionPickerOptions();
-  const [targetCollectionId, setTargetCollectionId] = useState('');
+  // `?collection=` pre-scopes the scan to the cookbook the user came from
+  // (the "Scan pages" button on a collection page), so they don't re-pick it.
+  const [targetCollectionId, setTargetCollectionId] = useState(
+    () => searchParams.get('collection') ?? '',
+  );
   const [needsSetup, setNeedsSetup] = useState(false);
   const [phase, setPhase] = useState<Phase>('config');
   const [progress, setProgress] = useState<UploadProgress | undefined>();
@@ -88,7 +93,11 @@ export function ScanPagesPage() {
       const initialMerges = pages.flatMap((p, i) =>
         i > 0 && p.marker.joinsPrevious ? [i - 1] : [],
       );
-      const { batchId } = await uploadBatch(
+      // A single page has nothing to group — send it straight to OCR and drop
+      // the reviewer on the item, which is what the old collection-page
+      // "Take photo" button did. Its captured kind still rides along below.
+      const singlePage = pages.length === 1;
+      const result = await uploadBatch(
         {
           ownerId: user.id,
           name: `Scan ${new Date().toLocaleString()}`,
@@ -103,12 +112,22 @@ export function ScanPagesPage() {
           keyOwnerId: cfg?.source === 'household' ? cfg.keyOwnerId : null,
           sourceKind: 'IMAGES',
           files: pages.map((p) => p.file),
-          awaitGrouping: true,
+          // Carry the camera's ▤ Contents / Notes choice onto the item rows so
+          // the worker uses the right prompt and the organizer shows it
+          // pre-selected. `joinsPrevious` is deliberately NOT folded here —
+          // chaining stays undoable via `initialMerges` on the next screen.
+          markers: pages.map((p) => ({ kind: p.marker.kind, joinsPrevious: false })),
+          awaitGrouping: !singlePage,
         },
         setProgress,
       );
+      const { batchId, itemIds } = result;
       await syncNow();
-      navigate(`/import/${batchId}/group`, { state: { initialMerges } });
+      if (singlePage && itemIds[0]) {
+        navigate(`/import/${batchId}/items/${itemIds[0]}`);
+      } else {
+        navigate(`/import/${batchId}/group`, { state: { initialMerges } });
+      }
     } catch (e) {
       reportError(e, { operation: 'batch_upload', tags: { source: 'scan' } });
       setError((e as Error).message);
@@ -157,7 +176,7 @@ export function ScanPagesPage() {
         to="/import"
         className="inline-block text-sm text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
       >
-        ← Imports
+        ← Add recipes
       </Link>
       <h1 className="text-2xl font-semibold">Scan pages</h1>
       <p className="text-sm text-stone-600 dark:text-stone-400">

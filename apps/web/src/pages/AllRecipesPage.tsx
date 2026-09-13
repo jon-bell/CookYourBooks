@@ -1,4 +1,5 @@
 import { useCallback, useDeferredValue, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { EmptyMadeHint } from '../components/EmptyMadeHint.js';
 import { LoadingState } from '../components/LoadingState.js';
@@ -97,7 +98,15 @@ export function AllRecipesPage() {
           />
         ) : (
           <p className="text-stone-600 dark:text-stone-400">
-            No recipes yet. Add or import some to start your gallery.
+            No recipes yet.{' '}
+            <Link to="/import/scan" className="underline">
+              Scan a cookbook
+            </Link>{' '}
+            or{' '}
+            <Link to="/import/link" className="underline">
+              import from a link
+            </Link>{' '}
+            to start your gallery.
           </p>
         )
       ) : (

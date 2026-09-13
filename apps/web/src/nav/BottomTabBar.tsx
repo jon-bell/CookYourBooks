@@ -79,7 +79,7 @@ const TABS: readonly Tab[] = [
     ),
   },
   {
-    label: 'Import',
+    label: 'Add',
     to: '/import',
     icon: (
       <svg

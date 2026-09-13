@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { getUserOcrPrefs, setUserOcrPrefs } from '../import/api.js';
 import { DEFAULT_MODEL_BY_PROVIDER, DEFAULT_PROMPT, type OcrProvider } from './ocrSettings.js';
@@ -74,13 +75,16 @@ export function OcrModelPromptSection() {
       <div>
         <h2 className="text-lg font-semibold">Default model + prompt</h2>
         <p className="mt-1 text-sm text-stone-600">
-          Used as the starting values on the New import page. You can override per-batch when you
-          start an import, or use the{' '}
-          <a href="/import/new/bakeoff" className="underline">
-            Bakeoff
-          </a>{' '}
-          to compare configurations and promote a winner in one click.
+          Used as the starting values when you scan or upload pages. You can override these per
+          import, or race several configurations against the same pages and promote a winner in one
+          click.
         </p>
+        <Link
+          to="/import/new/bakeoff"
+          className="mt-2 inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+        >
+          Compare OCR models…
+        </Link>
       </div>
 
       {error && (

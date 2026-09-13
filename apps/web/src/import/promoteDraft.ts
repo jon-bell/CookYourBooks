@@ -33,6 +33,8 @@ export interface PromoteContext {
    * adaptations. Undefined for plain imports.
    */
   parentRecipeId?: string;
+  /** Origin link for link/PDF imports; cookbook scans have none. */
+  sourceUrl?: string;
 }
 
 /**
@@ -56,6 +58,7 @@ export function buildRecipeFromDraft(draft: ParsedRecipeDraft, ctx: PromoteConte
     bookTitle: ctx.collectionTitle ?? draft.bookTitle,
     pageNumbers,
     sourceImageText: draft.sourceImageText,
+    sourceUrl: ctx.sourceUrl,
     // New imports are never favorites; a fresh scan starts unmarked.
     starred: false,
   });

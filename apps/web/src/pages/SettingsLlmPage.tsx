@@ -17,9 +17,9 @@ export function SettingsLlmPage() {
   return (
     <SettingsLayout>
       <p className="text-sm text-stone-600 dark:text-stone-400">
-        Provider keys, the default model + prompt the bulk import flow uses, and the rewrite, remix,
-        and cover-image features. All values are stored server-side; the keys live in Supabase Vault
-        and never leave the worker.
+        Provider keys, the default model + prompt used when you scan or upload pages, and the
+        rewrite, remix, and cover-image features. All values are stored server-side; the keys live
+        in Supabase Vault and never leave the worker.
       </p>
       <OcrKeysSection />
       <FallbackModelSection />

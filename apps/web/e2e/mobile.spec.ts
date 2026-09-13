@@ -83,7 +83,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
       'Search',
       'Shopping',
       'Cooking',
-      'Import',
+      'Add',
       'Household',
       'Activity',
       'Settings',

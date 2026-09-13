@@ -547,7 +547,7 @@ export function ImportBatchPage() {
         to="/import"
         className="inline-block text-sm text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
       >
-        ← Imports
+        ← Add recipes
       </Link>
       {awaitingGroupingCount > 0 && (
         <div className="sticky top-0 z-10 rounded-md border border-violet-300 bg-violet-50 p-3 text-sm text-violet-900">
@@ -1124,7 +1124,7 @@ export function ImportBatchPage() {
           </span>
           <span className="ml-auto text-stone-500 dark:text-stone-400">
             <Link to="/import" className="underline">
-              ← All batches
+              ← Add recipes
             </Link>
           </span>
         </div>

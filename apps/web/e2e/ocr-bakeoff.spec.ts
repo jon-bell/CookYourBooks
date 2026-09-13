@@ -238,12 +238,19 @@ test.describe('OCR bakeoff import', () => {
       .toBe('gemini-2.5-flash');
   });
 
-  test('"Bakeoff" link navigates to the new bakeoff wizard', async ({ authedPage: page }) => {
+  test('the bake-off is reached from OCR settings, not the add-recipes hub', async ({
+    authedPage: page,
+  }) => {
     await page.evaluate(() => {
       localStorage.setItem('cookyourbooks.import.onboarded.v1', '1');
     });
+    // It is a model-tuning tool, so it must not sit beside the ways a user
+    // actually gets recipes in.
     await page.goto('/import');
-    await page.getByRole('link', { name: 'Bakeoff' }).click();
+    await expect(page.getByRole('link', { name: 'Bakeoff' })).toHaveCount(0);
+
+    await page.goto('/settings/llm');
+    await page.getByRole('link', { name: 'Compare OCR models…' }).click();
     await expect(page).toHaveURL(/\/import\/new\/bakeoff$/);
     await expect(page.getByRole('heading', { name: 'New bakeoff' })).toBeVisible();
   });
