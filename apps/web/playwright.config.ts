@@ -1,19 +1,9 @@
-import { existsSync } from 'node:fs';
-
 import { defineConfig, devices } from '@playwright/test';
 
+import { resolveChromiumPath } from './e2e/support/chromiumPath.js';
 import { IPHONE_17_USE } from './e2e/support/viewport.js';
 
-// Pick a chromium binary:
-//   1. `PLAYWRIGHT_CHROMIUM_PATH` env (set by CI or devs with their own copy).
-//   2. A known local cache path — works on the primary dev box without extra
-//      setup.
-//   3. Otherwise let Playwright pick up whichever browser `playwright install`
-//      brought down.
-const LOCAL_DEV_CHROMIUM = '/home/jon/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome';
-const executablePath =
-  process.env.PLAYWRIGHT_CHROMIUM_PATH ||
-  (existsSync(LOCAL_DEV_CHROMIUM) ? LOCAL_DEV_CHROMIUM : undefined);
+const executablePath = resolveChromiumPath();
 
 export default defineConfig({
   testDir: './e2e',
