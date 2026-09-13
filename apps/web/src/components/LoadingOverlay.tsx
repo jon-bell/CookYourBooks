@@ -15,6 +15,8 @@ export function LoadingOverlay({
   rotateMs = 2500,
   error,
   onRetry,
+  onDismiss,
+  dismissLabel = 'Continue anyway',
   testId,
 }: {
   title: string;
@@ -27,6 +29,10 @@ export function LoadingOverlay({
   rotateMs?: number;
   error?: string | null;
   onRetry?: () => void;
+  /** Lets the user out of the overlay while the work keeps going in the
+   *  background. Omit for waits the app genuinely can't render underneath. */
+  onDismiss?: () => void;
+  dismissLabel?: string;
   testId?: string;
 }) {
   const reducedMotion =
@@ -112,6 +118,16 @@ export function LoadingOverlay({
               Still working on it — you can keep waiting too.
             </p>
           </div>
+        )}
+
+        {onDismiss && (
+          <button
+            onClick={onDismiss}
+            className="mt-4 text-xs text-stone-500 underline underline-offset-2 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-200"
+            data-testid="overlay-dismiss"
+          >
+            {dismissLabel}
+          </button>
         )}
       </div>
     </div>

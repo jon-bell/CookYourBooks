@@ -13,7 +13,7 @@
 
 import { legacyChildRowsToStored, storedIngredientsSearchText } from '@cookyourbooks/db';
 
-import { getLocalDb } from './db.js';
+import { getLocalDb, msSinceAutoRecovery } from './db.js';
 import { computeAndApplyLinks } from './ingredientLinks.js';
 import { enqueue } from './outbox.js';
 import { logSync } from './syncLog.js';
@@ -21,6 +21,15 @@ import { logSync } from './syncLog.js';
 const CHUNK = 200;
 const CHUNK_GAP_MS = 40; // be a good citizen on the shared connection
 const PAUSE_POLL_MS = 500;
+
+// How long to leave backfills alone after the local DB auto-recovered (a
+// corruption reset or a lost-IDB-transaction reload). A backfill is the
+// heaviest sustained write load this app puts on the WASM/IndexedDB stack, so
+// it's the likeliest thing to have caused the fault we just recovered from —
+// and since recovery is a page reload, restarting it immediately re-creates
+// that load and reloads again. Sitting out one quiet period breaks that loop;
+// the work is resumable, so nothing is lost, it just happens later.
+const RECOVERY_QUIET_MS = 5 * 60_000;
 
 export interface BackfillProgress {
   id: string;
@@ -33,6 +42,12 @@ interface BackfillDef {
   id: string;
   /** Total rows to scan, for the progress bar (best-effort). */
   total(): Promise<number>;
+  /**
+   * True when `total()` counts only the rows still to do (rather than every row
+   * the pass walks). A resumed run must then add what it already processed to
+   * get a denominator the progress bar can divide by.
+   */
+  totalIsRemaining?: boolean;
   /**
    * Process one chunk starting after `cursor`. Returns the new cursor, how many
    * rows were scanned, and whether the backfill is complete. Must be idempotent.
@@ -147,6 +162,7 @@ const REGISTRY: BackfillDef[] = [
     // arrives with its JSON already set, so total() is 0 and it no-ops.
     // Runs BEFORE ingredient_links_v1 so the link pass sees the folded JSON.
     id: 'recipe_jsonb_v1',
+    totalIsRemaining: true,
     async total() {
       const db = await getLocalDb();
       const hasChildren = (await db.execO<{ c: number }>(
@@ -253,6 +269,13 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export async function startBackfills(opts: { shouldPause?: () => boolean } = {}): Promise<void> {
   if (started) return;
   started = true;
+  const sinceRecovery = msSinceAutoRecovery();
+  if (sinceRecovery < RECOVERY_QUIET_MS) {
+    logSync('warn', 'backfills: deferred — local DB auto-recovered recently', {
+      msSinceRecovery: Math.round(sinceRecovery),
+    });
+    return;
+  }
   const shouldPause = opts.shouldPause ?? (() => false);
 
   for (const def of REGISTRY) {
@@ -267,14 +290,17 @@ export async function startBackfills(opts: { shouldPause?: () => boolean } = {})
         });
         continue;
       }
-      const total = await def.total();
+      const remaining = await def.total();
       let cursor = state?.cursor ?? '';
       let processed = state?.processed ?? 0;
+      // A resumed run has already banked `processed` rows; when total() reports
+      // only what's left, fold them back in so the bar isn't stuck at 100%.
+      const total = def.totalIsRemaining ? processed + remaining : remaining;
 
       // Nothing to do (fresh/empty DB) — mark done WITHOUT ever entering the
       // running state, so the schema-upgrade overlay never flickers on a fresh
       // install / e2e context.
-      if (total === 0) {
+      if (remaining === 0) {
         await writeState(def.id, 'done', cursor, processed);
         progress.set(def.id, { id: def.id, status: 'done', processed, total: 0 });
         notify();
@@ -304,7 +330,15 @@ export async function startBackfills(opts: { shouldPause?: () => boolean } = {})
       logSync('info', `backfill ${def.id}: done`, { processed });
     } catch (err) {
       logSync('warn', `backfill ${def.id}: failed`, { error: (err as Error).message });
-      // Leave status as-is (resumable next launch); don't block other backfills.
+      // Persisted status is left as-is — the cursor makes it resumable next
+      // launch. But the in-memory status MUST come out of `running`: the
+      // schema-upgrade overlay is a blocking modal keyed off it, so leaving it
+      // running locks the user out of the app (search, everything) for the rest
+      // of the page session with no way to dismiss it.
+      const p = progress.get(def.id);
+      if (p) progress.set(def.id, { ...p, status: 'pending' });
+      notify();
+      // Don't block the other backfills.
     }
   }
 }
