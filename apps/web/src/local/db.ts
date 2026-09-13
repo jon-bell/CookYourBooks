@@ -70,14 +70,24 @@ export function recoveryKind(err: unknown): 'corrupt' | 'txn' | null {
   return null;
 }
 
-function recentlyAutoRecovered(): boolean {
+/**
+ * Milliseconds since the last automatic recovery (reload / reset), or Infinity
+ * if this device has never auto-recovered. Exported so optional background work
+ * can hold off right after a recovery instead of re-creating the load that
+ * triggered it — see `startBackfills`.
+ */
+export function msSinceAutoRecovery(): number {
   try {
-    return (
-      Date.now() - Number(localStorage.getItem(AUTO_RECOVER_AT_KEY) ?? 0) < AUTO_RECOVER_COOLDOWN_MS
-    );
+    const at = Number(localStorage.getItem(AUTO_RECOVER_AT_KEY) ?? 0);
+    return at > 0 ? Date.now() - at : Number.POSITIVE_INFINITY;
   } catch {
-    return false;
+    // no localStorage → treat as "never", same as the un-rate-limited path
+    return Number.POSITIVE_INFINITY;
   }
+}
+
+function recentlyAutoRecovered(): boolean {
+  return msSinceAutoRecovery() < AUTO_RECOVER_COOLDOWN_MS;
 }
 
 /**

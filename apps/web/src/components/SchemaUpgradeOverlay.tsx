@@ -12,9 +12,15 @@ import { LoadingOverlay } from './LoadingOverlay.js';
  * runs only post-login and only when there's existing data to migrate (an
  * empty DB finishes instantly without ever entering the running state), so it's
  * a safe, meaningful "we're upgrading your library" moment with real progress.
+ *
+ * It is still only a *courtesy* block: every page reads through the same local
+ * SQLite the backfill is filling in, and a partially-backfilled row renders
+ * fine. So the overlay is dismissible — on a large library the pass takes
+ * minutes, and a user who just wants to search shouldn't be held hostage to it.
  */
 export function SchemaUpgradeOverlay() {
   const [, force] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
     const unsub = subscribeBackfill(() => force((n) => n + 1));
     // Light poll so the progress bar advances between backfill chunk events.
@@ -26,7 +32,7 @@ export function SchemaUpgradeOverlay() {
   }, []);
 
   const backfill = getBackfillProgress().find((b) => b.status === 'running');
-  if (!backfill) return null;
+  if (!backfill || dismissed) return null;
 
   return (
     <LoadingOverlay
@@ -35,6 +41,8 @@ export function SchemaUpgradeOverlay() {
       step="Filling in the details…"
       progress={backfill.total ? { processed: backfill.processed, total: backfill.total } : null}
       lines={[...COOKING_FLAVOR_LINES]}
+      onDismiss={() => setDismissed(true)}
+      dismissLabel="Continue in the background"
       testId="schema-upgrade-overlay"
     />
   );
