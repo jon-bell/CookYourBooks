@@ -164,7 +164,7 @@ function NoHouseholdView({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="The Bell Family"
+            placeholder="Our household"
             maxLength={80}
             className="mt-1 w-full max-w-md rounded-md border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 px-3 py-1.5 text-sm"
           />

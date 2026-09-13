@@ -36,7 +36,7 @@ export function SignUpPage() {
     if (data.session) {
       navigate(redirectTo, { replace: true });
     } else {
-      setInfo('Check your email (Mailpit at http://127.0.0.1:54424) to confirm.');
+      setInfo('Check your email to confirm your account.');
     }
   }
 
