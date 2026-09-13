@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The runner is a module singleton (a `started` latch + a progress map), so
-// every case re-imports it fresh.
+// every case re-imports it fresh. `resetModules` invalidates the whole import
+// graph, so everything backfill.ts pulls in is mocked below — an unmocked
+// workspace package would be re-transformed on each load and blow the timeout
+// on a loaded CI runner.
 const loadRunner = async () => {
   vi.resetModules();
   return import('./backfill.js');
 };
+
+// Generous because each case pays a fresh module load; the work itself is
+// microseconds.
+vi.setConfig({ testTimeout: 30_000 });
 
 let msSinceRecovery = Number.POSITIVE_INFINITY;
 const execO = vi.fn();
@@ -16,6 +23,10 @@ vi.mock('./db.js', () => ({
   msSinceAutoRecovery: () => msSinceRecovery,
 }));
 vi.mock('./outbox.js', () => ({ enqueue: vi.fn(() => Promise.resolve()) }));
+vi.mock('@cookyourbooks/db', () => ({
+  legacyChildRowsToStored: () => ({ ingredients: [], instructions: [] }),
+  storedIngredientsSearchText: () => '',
+}));
 vi.mock('./ingredientLinks.js', () => ({
   computeAndApplyLinks: vi.fn(() => Promise.resolve(false)),
 }));
