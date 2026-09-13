@@ -1236,7 +1236,7 @@ function QuantityEditor({
           <br />
           <br />
           <strong className="block text-stone-900 dark:text-stone-100">House units</strong>A "house
-          unit" is your own measure — "a dollop", "one Bell mug" — defined as a conversion to a
+          unit" is your own measure — "a dollop", "one coffee mug" — defined as a conversion to a
           standard unit (e.g.
           <code> 1 dollop = 1 tbsp</code>). They'll show up here once you add them in{' '}
           <em>Settings → Conversions</em>. Until then, pick the closest standard unit and you can
