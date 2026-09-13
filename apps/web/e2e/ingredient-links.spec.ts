@@ -73,6 +73,10 @@ test.describe('Ingredient → recipe cross-reference links', () => {
     // 'dismissed' marker persists and isn't re-auto-linked).
     await expect(page.getByTestId('ingredient-link')).toHaveCount(0, { timeout: 10000 });
     await page.reload();
+    // A reload re-runs the first pull; its `meta` stage writes recipe cards
+    // with the bodies stripped, and `hydrated` flips there — so wait for the
+    // sync to settle before asserting on locally-cached data.
+    await waitForSynced(page);
     await expect(page.getByRole('heading', { name: 'Pizza' })).toBeVisible();
     await expect(page.getByTestId('ingredient-link')).toHaveCount(0);
   });

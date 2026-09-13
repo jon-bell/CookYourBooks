@@ -59,6 +59,10 @@ test.describe('Favorites', () => {
     await page.getByRole('button', { name: 'Favorite Tea' }).click();
     await waitForSynced(page);
     await page.reload();
+    // A reload re-runs the first pull; its `meta` stage writes recipe cards
+    // with the bodies stripped, and `hydrated` flips there — so wait for the
+    // sync to settle before asserting on locally-cached data.
+    await waitForSynced(page);
     await expect(page.getByRole('heading', { name: 'Faves' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove Tea from favorites' })).toBeVisible();
   });
