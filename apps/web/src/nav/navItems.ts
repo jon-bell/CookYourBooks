@@ -15,7 +15,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
   { label: 'Search', to: '/search' },
   { label: 'Shopping', to: '/shopping' },
   { label: 'Cooking', to: '/cooking' },
-  { label: 'Import', to: '/import' },
+  { label: 'Add', to: '/import' },
 ];
 
 /** Account destinations: the desktop UserMenu and the mobile sheet. */

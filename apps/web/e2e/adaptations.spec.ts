@@ -61,6 +61,10 @@ test.describe('Recipe adaptations', () => {
     // notes persist server-side.
     await waitForSynced(page);
     await page.reload();
+    // A reload re-runs the first pull; its `meta` stage writes recipe cards
+    // with the bodies stripped, and `hydrated` flips there — so wait for the
+    // sync to settle before asserting on locally-cached data.
+    await waitForSynced(page);
     await expect(page.getByRole('heading', { name: /Adaptations \(1\)/ })).toBeVisible();
   });
 });

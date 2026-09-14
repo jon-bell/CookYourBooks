@@ -149,31 +149,62 @@ test.describe('Scan → organize into recipes', () => {
     authedPage: page,
   }) => {
     await configureOcrKey(page, 'gemini');
-    await installScanShim(page, ['page1.png']);
+    // Two pages, so the capture routes through the organizer (a lone page has
+    // nothing to group and goes straight to review).
+    await installScanShim(page, ['page1.png', 'page2.png']);
 
     await page.goto('/import/scan');
     await page.getByRole('button', { name: 'Scan pages' }).click();
     await page.waitForURL(/\/import\/[0-9a-f-]+\/group$/, { timeout: 30_000 });
     const batchId = batchIdFromUrl(page);
 
-    // Choose the "Contents" page type on the single recipe card.
-    await page.getByRole('radio', { name: 'Table of contents page' }).click();
-    await page.getByRole('button', { name: /Start OCR on 1 page group/ }).click();
+    // Choose the "Contents" page type on the first recipe card.
+    await page.getByRole('radio', { name: 'Table of contents page' }).first().click();
+    await page.getByRole('button', { name: /Start OCR on 2 page groups/ }).click();
 
     await page.waitForURL(/\/import\/[0-9a-f-]+$/, { timeout: 30_000 });
-    const item = (await listBatchItems(batchId))[0]!;
+    const items = await listBatchItems(batchId);
+    items.sort((a, b) => a.page_index - b.page_index);
     // The organizer's page-type write reached the server as kind = TOC (no re-OCR).
-    await waitForItemKind(item.id, 'TOC');
+    await waitForItemKind(items[0]!.id, 'TOC');
 
     // The worker reads it with the ToC prompt and completes.
     await seedOcrFixture({
-      storagePath: item.storage_path,
+      storagePath: items[0]!.storage_path,
       provider: 'gemini',
       kind: 'toc',
       entries: [{ title: 'Lemon Cake', pageNumber: 12 }],
     });
+    await seedOcrFixture({
+      storagePath: items[1]!.storage_path,
+      provider: 'gemini',
+      kind: 'recipe',
+      draft: { title: 'Lemon Cake', ingredients: [], instructions: [] },
+    });
     await triggerWorker(batchId);
-    await waitForItemStatuses(batchId, (c) => c.ocrDone === 1, 45_000);
+    await waitForItemStatuses(batchId, (c) => c.ocrDone === 2, 45_000);
+  });
+
+  test("the camera's Contents shutter tags the page without visiting the organizer", async ({
+    authedPage: page,
+  }) => {
+    await configureOcrKey(page, 'gemini');
+    // A lone page marked at capture time: the ▤ Contents shutter used to be
+    // discarded at upload, so the choice silently did nothing.
+    await installScanShim(page, [{ name: 'page1.png', kind: 'TOC' }]);
+
+    await page.goto('/import/scan');
+    await page.getByRole('button', { name: 'Scan pages' }).click();
+
+    // One page skips grouping and lands straight on review.
+    await page.waitForURL(/\/import\/([0-9a-f-]+)\/items\/[0-9a-f-]+/, { timeout: 30_000 });
+    const batchId = /\/import\/([0-9a-f-]+)\//.exec(page.url())![1]!;
+
+    await expect
+      .poll(async () => (await listBatchItems(batchId)).length, { timeout: 30_000 })
+      .toBe(1);
+    const item = (await listBatchItems(batchId))[0]!;
+    await waitForItemKind(item.id, 'TOC');
   });
 
   test("reorganize an already-OCR'd batch: merging two pages re-OCRs them into one", async ({

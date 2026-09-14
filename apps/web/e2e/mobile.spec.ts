@@ -1,5 +1,5 @@
 import { seedUserLibrary } from './support/admin.js';
-import { expect, signIn, test } from './support/fixtures.js';
+import { expect, signIn, test, waitForSynced } from './support/fixtures.js';
 import { createRecipeViaUi } from './support/helpers.js';
 import {
   configureOcrKey,
@@ -83,7 +83,7 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
       'Search',
       'Shopping',
       'Cooking',
-      'Import',
+      'Add',
       'Household',
       'Activity',
       'Settings',
@@ -155,6 +155,10 @@ test.describe('Mobile layout (iPhone 17, 402px)', () => {
 
     // The preference survives a reload.
     await page.reload();
+    // A reload re-runs the first pull; its `meta` stage writes recipe cards
+    // with the bodies stripped, and `hydrated` flips there — so wait for the
+    // sync to settle before asserting on locally-cached data.
+    await waitForSynced(page);
     await expect(page.getByRole('heading', { name: 'Wide Recipe' })).toBeVisible();
     expect(
       await page.evaluate(() => localStorage.getItem('cookyourbooks.recipeTextScale.v1')),

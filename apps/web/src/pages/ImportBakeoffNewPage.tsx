@@ -141,7 +141,7 @@ export function ImportBakeoffNewPage() {
     <div className="space-y-6">
       <header className="space-y-1">
         <Link to="/import" className="text-sm text-stone-600 underline">
-          ← Imports
+          ← Add recipes
         </Link>
         <h1 className="text-2xl font-semibold">New bakeoff</h1>
         <p className="text-sm text-stone-600">

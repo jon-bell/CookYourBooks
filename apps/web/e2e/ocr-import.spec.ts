@@ -1,12 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { expect, test } from './support/fixtures.js';
-import { configureOcrKey, pumpWorker, seedOcrFixture } from './support/imports.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURES_DIR = resolve(__dirname, 'fixtures');
+import { configureOcrKey, installScanShim, pumpWorker, seedOcrFixture } from './support/imports.js';
 
 const FAKE_DRAFT = {
   title: "Grandma's Lemon Bars",
@@ -61,59 +54,48 @@ test.describe('OCR import from photo', () => {
       draft: FAKE_DRAFT,
     });
 
+    await installScanShim(page, ['page1.png']);
+
     await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Photo Imports');
     await page.getByRole('button', { name: 'Create' }).click();
     await expect(page.getByRole('heading', { name: 'Photo Imports' })).toBeVisible();
 
-    const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Take photo' }).click();
-    const chooser = await fileChooserPromise;
-    // Use a real PNG — `prepareImage` decodes the file via canvas and
-    // throws on a stub 4-byte JPEG.
-    await chooser.setFiles({
-      name: 'recipe.png',
-      mimeType: 'image/png',
-      buffer: readFileSync(resolve(FIXTURES_DIR, 'page1.png')),
-    });
+    // The collection's own capture entry is the standard scan flow, pre-scoped
+    // to this cookbook.
+    await page.getByRole('link', { name: 'Scan pages', exact: true }).click();
+    await page.waitForURL(/\/import\/scan\?collection=[0-9a-f-]+$/);
+    await page.getByRole('button', { name: 'Scan pages' }).click();
 
-    // The page calls ocr_kick once the upload completes, but the test
-    // env doesn't have the vault secret. Pump the worker manually so the
-    // batch's only item gets processed.
-    await pumpWorker();
-
+    // A single captured page has nothing to group, so it goes straight to
+    // review — before OCR has run. Pump the worker from there; the test env
+    // has no vault secret, so ocr_kick can't do it.
     await page.waitForURL(/\/import\/[0-9a-f-]+\/items\/[0-9a-f-]+/, { timeout: 30_000 });
+    await pumpWorker();
     await expect(page.getByRole('button', { name: "Grandma's Lemon Bars" })).toBeVisible({
       timeout: 30_000,
     });
     await expect(page.getByRole('button', { name: 'powdered sugar', exact: true })).toBeVisible();
   });
 
-  test('import button directs to the setup wizard when no OCR key is configured', async ({
+  test('scan entry directs to the setup wizard when no OCR key is configured', async ({
     authedPage: page,
   }) => {
-    // Don't configure any OCR key. The page's listOcrKeys call returns
-    // empty and the click surfaces the inline "isn't set up yet" error
-    // that routes into the onboarding wizard.
+    // Don't configure any OCR key. getEffectiveOcrConfig resolves to null, so
+    // the scan entry surfaces the setup guide instead of opening the camera.
     await page.goto('/library');
     await page.getByRole('link', { name: 'New collection' }).click();
     await page.getByLabel('Title').fill('Needs Setup');
     await page.getByRole('button', { name: 'Create' }).click();
     await expect(page.getByRole('heading', { name: 'Needs Setup' })).toBeVisible();
 
-    const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: 'Take photo' }).click();
-    const chooser = await fileChooserPromise;
-    await chooser.setFiles({
-      name: 'dummy.jpg',
-      mimeType: 'image/jpeg',
-      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
-    });
+    await page.getByRole('link', { name: 'Scan pages', exact: true }).click();
+    await page.waitForURL(/\/import\/scan\?collection=[0-9a-f-]+$/);
 
-    await expect(page.getByText(/Importing isn't set up yet/)).toBeVisible();
+    await expect(page.getByTestId('ocr-setup-guide')).toBeVisible();
     await page.getByRole('link', { name: /Set up importing/ }).click();
-    await page.waitForURL(/\/import\/setup$/);
+    await page.waitForURL(/\/import\/setup/);
     await expect(page.getByTestId('ocr-wizard')).toBeVisible();
   });
 

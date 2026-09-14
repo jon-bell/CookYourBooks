@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { getUserRewritePrefs, setUserRewritePrefs } from '../import/api.js';
 import {
@@ -143,12 +144,12 @@ export function RewriteSettingsSection() {
         >
           Reset prompt
         </button>
-        <a
-          href="/import/bakeoff?task=rewrite"
+        <Link
+          to="/import/bakeoff"
           className="rounded-md px-4 py-2 text-sm text-stone-600 underline hover:text-stone-900 dark:text-stone-300"
         >
-          Tune via bake-off
-        </a>
+          Compare rewrite models
+        </Link>
         {saved && <span className="text-sm text-emerald-700">Saved.</span>}
       </div>
     </form>

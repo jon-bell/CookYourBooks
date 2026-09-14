@@ -7,7 +7,8 @@ import { LoadingState } from '../components/LoadingState.js';
 import { useCollections } from '../data/queries.js';
 import { LocalImportItemRepository } from '../import/localRepos.js';
 import type { ImportBatch } from '../import/model.js';
-import { useImportBatches, useOcrKeys } from '../import/queries.js';
+import { useImportBatches } from '../import/queries.js';
+import { useOcrReadiness } from '../import/useOcrReadiness.js';
 import { useLocalQueryEnabled } from '../local/SyncProvider.js';
 
 interface BatchStats {
@@ -45,17 +46,19 @@ function useBatchStats(ownerId: string | undefined, batchIds: string[]) {
   });
 }
 
+const SECONDARY_CTA =
+  'inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800';
+
 export function ImportListPage() {
   const { user } = useAuth();
   const { data: batches = [], isLoading } = useImportBatches();
   const { data: collections = [] } = useCollections();
-  const { data: ocrKeys = [] } = useOcrKeys();
+  const { ready: ocrReady } = useOcrReadiness();
   const batchIds = useMemo(() => batches.map((b) => b.id), [batches]);
   const { data: stats = {} } = useBatchStats(user?.id, batchIds);
 
   const collectionsById = useMemo(() => new Map(collections.map((c) => [c.id, c])), [collections]);
 
-  const hasOcrKey = ocrKeys.length > 0;
   const [showOnboarding, setShowOnboarding] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -75,7 +78,7 @@ export function ImportListPage() {
     <div className="space-y-6">
       {showOnboarding && <OnboardingModal onDismiss={dismissOnboarding} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-semibold">Import OCR</h1>
+        <h1 className="text-2xl font-semibold">Add recipes</h1>
         <button
           type="button"
           onClick={() => {
@@ -86,33 +89,24 @@ export function ImportListPage() {
         >
           How it works
         </button>
+        <Link to="/import/link" className={SECONDARY_CTA}>
+          From a link
+        </Link>
+        <Link to="/import/pdf" className={SECONDARY_CTA}>
+          From a PDF
+        </Link>
+        <Link to="/import/new" className={SECONDARY_CTA}>
+          Upload photos
+        </Link>
         <Link
           to="/import/scan"
-          className="inline-flex items-center gap-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+          className="inline-flex items-center gap-1 rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
         >
           <span aria-hidden>📷</span> Scan pages
         </Link>
-        <Link
-          to="/import/link"
-          className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
-        >
-          From link
-        </Link>
-        <Link
-          to="/import/new/bakeoff"
-          className="inline-flex items-center rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
-        >
-          Bakeoff
-        </Link>
-        <Link
-          to="/import/new"
-          className="inline-flex items-center rounded-md bg-stone-900 dark:bg-stone-100 px-3 py-1.5 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
-        >
-          New batch
-        </Link>
       </div>
 
-      {!hasOcrKey && (
+      {ocrReady === false && (
         <div
           role="status"
           className="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-4 text-sm text-amber-900 dark:text-amber-200"
@@ -128,12 +122,15 @@ export function ImportListPage() {
       {batches.length === 0 ? (
         <p className="text-stone-600 dark:text-stone-400">
           No imports yet.{' '}
-          <Link to="/import/new" className="underline">
-            New batch →
+          <Link to="/import/scan" className="underline">
+            Scan some pages →
           </Link>
         </p>
       ) : (
-        <ul className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900">
+        <ul
+          aria-label="Recent imports"
+          className="divide-y divide-stone-200 dark:divide-stone-700 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900"
+        >
           {batches.map((b) => (
             <li key={b.id}>
               <Link
@@ -169,36 +166,30 @@ export function ImportListPage() {
 }
 
 function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
-  const steps: Array<{ title: string; body: string; placeholder: string }> = [
+  const steps: Array<{ title: string; body: string }> = [
     {
-      title: '1. Upload pages',
-      body: 'Drag in a stack of cookbook photos, or upload a PDF. We split PDFs page-by-page automatically. 100+ pages at a time is fine — uploads stream.',
-      placeholder: '[screenshot: drag-drop wizard]',
+      title: '1. Scan or upload pages',
+      body: 'Scan a stack of cookbook pages with your camera, or drag in photos or a PDF. We split PDFs page-by-page automatically. 100+ pages at a time is fine — uploads stream.',
     },
     {
       title: '2. Worker OCRs in the background',
       body: 'Pages move from Pending → Processing → Needs review as Gemini reads them. Close the tab and come back later — work continues server-side.',
-      placeholder: '[screenshot: batch board with progress + cost]',
     },
     {
       title: '3. Review with scan on the left',
       body: 'Each page opens with the source image alongside the parsed recipe. Click any field — title, ingredient, step — to edit in place. Quantity has a structured editor with the real unit list.',
-      placeholder: '[screenshot: split editor]',
     },
     {
       title: '4. Merge stitched-wrong pages',
       body: 'When a recipe spans a page break, the worker can parse each page in isolation and split it into two items. On the batch board, tick the checkboxes for the related pages and click "Merge into one item" — the worker re-runs OCR with all images attached at once and the result lands on the earliest page. Absorbed pages move to Discarded automatically.',
-      placeholder: '[screenshot: bulk select + merge]',
     },
     {
       title: '5. Save and move on',
       body: 'Save commits the recipe to the target cookbook (matching ToC titles get updated in place) and jumps you to the next reviewable page. Discard, Re-OCR, and Restore original are always one click away.',
-      placeholder: '[screenshot: save toast + jump]',
     },
     {
       title: '6. Keyboard',
       body: '← / k previous · → / j next · f fullscreen · esc to close · ? for this list. Edits inside fields keep their usual keys.',
-      placeholder: '[screenshot: kbd cheatsheet]',
     },
   ];
   return (
@@ -206,9 +197,9 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
       <div className="my-12 w-full max-w-2xl rounded-lg bg-white dark:bg-stone-900 p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold">How bulk import works</h2>
+            <h2 className="text-xl font-semibold">How scanning works</h2>
             <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-              Five steps. Most of the time you just upload, glance, and click Save.
+              Six steps. Most of the time you just scan, glance, and click Save.
             </p>
           </div>
           <button
@@ -222,16 +213,11 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
         </div>
         <ol className="mt-5 space-y-5">
           {steps.map((step) => (
-            <li key={step.title} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
-              <div>
-                <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
-                  {step.title}
-                </h3>
-                <p className="mt-1 text-sm text-stone-700 dark:text-stone-300">{step.body}</p>
-              </div>
-              <div className="flex h-20 w-40 items-center justify-center rounded-md border border-dashed border-stone-300 dark:border-stone-600 bg-stone-50 dark:bg-stone-900 text-[10px] text-stone-400 dark:text-stone-500">
-                {step.placeholder}
-              </div>
+            <li key={step.title}>
+              <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                {step.title}
+              </h3>
+              <p className="mt-1 text-sm text-stone-700 dark:text-stone-300">{step.body}</p>
             </li>
           ))}
         </ol>
@@ -241,7 +227,7 @@ function OnboardingModal({ onDismiss }: { onDismiss: () => void }) {
             onClick={onDismiss}
             className="rounded-md bg-stone-900 dark:bg-stone-100 px-4 py-2 text-sm font-medium text-white dark:text-stone-900 hover:bg-stone-800 dark:hover:bg-stone-200"
           >
-            Got it — let's import
+            Got it — let's scan
           </button>
         </div>
       </div>

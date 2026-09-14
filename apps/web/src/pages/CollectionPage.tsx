@@ -22,7 +22,6 @@ import {
   useToggleRecipeFavorite,
 } from '../data/queries.js';
 import { CollectionShareSection } from '../household/CollectionShareSection.js';
-import { ImportFromPhoto } from '../import/ImportFromPhoto.js';
 import { useCollectionNotes } from '../notes/queries.js';
 import { CopyLinkButton } from '../share/CopyLinkButton.js';
 import { collectionShareUrl } from '../share/shareUrl.js';
@@ -139,7 +138,12 @@ export function CollectionPage() {
         >
           Add recipe
         </Link>
-        <ImportFromPhoto collectionId={c.id} />
+        <Link
+          to={`/import/scan?collection=${c.id}`}
+          className="inline-flex items-center gap-1 rounded-md border border-stone-300 dark:border-stone-600 px-3 py-1.5 text-sm hover:bg-stone-100 dark:hover:bg-stone-800"
+        >
+          <span aria-hidden>📷</span> Scan pages
+        </Link>
         {recipes.length > 0 && (
           <GenerateCoversButton scope="collection" targetId={c.id} label="Generate covers" />
         )}
@@ -224,7 +228,17 @@ export function CollectionPage() {
 
         {tab === 'recipes' ? (
           recipes.length === 0 ? (
-            <p className="text-stone-600 dark:text-stone-400">No recipes yet.</p>
+            <p className="text-stone-600 dark:text-stone-400">
+              No recipes yet.{' '}
+              <Link to={`/collections/${c.id}/recipes/new`} className="underline">
+                Add one
+              </Link>{' '}
+              or{' '}
+              <Link to={`/import/scan?collection=${c.id}`} className="underline">
+                scan pages from the book
+              </Link>
+              .
+            </p>
           ) : (
             <CollectionRecipeBrowser
               collectionId={c.id}

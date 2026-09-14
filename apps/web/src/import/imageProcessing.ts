@@ -145,6 +145,22 @@ export async function prepareImage(file: File): Promise<PreparedPage> {
   }
 }
 
+/**
+ * How many pages a PDF has, without rendering any of them.
+ *
+ * Used to pre-select "one recipe" vs "split by page" before committing to the
+ * expensive render, so the scope question can be asked up front and the chosen
+ * branch does the work exactly once.
+ */
+export async function readPdfPageCount(file: File): Promise<number> {
+  const pdfjs = await import('pdfjs-dist');
+  const workerMod = await import(/* @vite-ignore */ 'pdfjs-dist/build/pdf.worker.mjs?url');
+  pdfjs.GlobalWorkerOptions.workerSrc = workerMod.default;
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjs.getDocument({ data: buf }).promise;
+  return doc.numPages;
+}
+
 export async function renderPdfToJpegs(
   file: File,
   onProgress?: (done: number, total: number) => void,

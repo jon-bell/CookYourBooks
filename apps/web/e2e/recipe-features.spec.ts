@@ -1,4 +1,4 @@
-import { expect, test } from './support/fixtures.js';
+import { expect, test, waitForSynced } from './support/fixtures.js';
 import { createRecipeViaUi, openRecipeMoreMenu } from './support/helpers.js';
 
 test.describe('Recipe features: scale, convert, export, cook mode', () => {
@@ -74,6 +74,11 @@ test.describe('Recipe features: scale, convert, export, cook mode', () => {
       };
     });
     await page.reload();
+    // The reload re-runs the first pull, whose `meta` stage writes recipe
+    // cards with the ingredients/instructions JSON stripped — and `hydrated`
+    // flips on that stage, so the menu is clickable before the bodies land.
+    // Exporting then serializes an empty ingredient list.
+    await waitForSynced(page);
 
     await openRecipeMoreMenu(page);
     await page.getByRole('menuitem', { name: 'Export' }).click();

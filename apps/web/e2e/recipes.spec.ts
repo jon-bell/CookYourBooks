@@ -91,8 +91,12 @@ test.describe('Recipes — CRUD + editor', () => {
     await expect(page.getByRole('heading', { name: 'Sunday Roast' })).toBeVisible();
     await waitForSynced(page);
 
-    // Reload to prove it round-tripped through the local DB.
+    // Reload to prove it round-tripped through the local DB. The reload
+    // re-boots the local DB and re-runs the first pull, which under parallel
+    // workers can outlast the default 5s expect timeout — wait for the
+    // SyncProvider's readiness signal first, as signIn() does.
     await page.reload();
+    await waitForSynced(page);
     await expect(page.getByRole('heading', { name: 'Sunday Roast' })).toBeVisible();
   });
 

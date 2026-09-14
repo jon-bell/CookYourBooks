@@ -93,7 +93,11 @@ export function LibraryPage() {
           />
         ) : (
           <p className="text-stone-600 dark:text-stone-400">
-            No collections yet. Create your first to start adding recipes.
+            No collections yet.{' '}
+            <Link to="/collections/new" className="underline">
+              Create your first
+            </Link>{' '}
+            to start adding recipes.
           </p>
         )
       ) : (

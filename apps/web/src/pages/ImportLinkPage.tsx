@@ -1,13 +1,12 @@
-import { createRecipe, type ParsedRecipeDraft } from '@cookyourbooks/domain';
+import type { ParsedRecipeDraft } from '@cookyourbooks/domain';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider.js';
 import { useCollectionPickerOptions } from '../data/queries.js';
-import { collectionRepo, recipeRepo } from '../data/repos.js';
 import { CollectionPicker } from '../import/CollectionPicker.js';
-import { withFreshIds } from '../import/draftToRecipe.js';
+import { saveSingleShotDraft } from '../import/saveSingleShot.js';
 import {
   extractRecipeFromVideo,
   VideoImportError,
@@ -50,29 +49,16 @@ export function ImportLinkPage() {
       setPhase('saving');
       setError(undefined);
       try {
-        const { ingredients, instructions } = withFreshIds(draft);
-        const recipe = createRecipe({
-          title: draft.title?.trim() || 'Untitled',
-          servings: draft.servings,
-          ingredients,
-          instructions,
-          description: draft.description,
-          timeEstimate: draft.timeEstimate,
-          equipment: draft.equipment,
-          sourceImageText: draft.sourceImageText,
+        const { collectionId, recipeId } = await saveSingleShotDraft({
+          ownerId: user.id,
+          draft,
+          platformTitle: res.platformTitle,
           sourceUrl: res.sourceUrl,
+          targetCollectionId,
+          qc,
         });
-        const collections = collectionRepo(user.id);
-        const collectionId =
-          targetCollectionId ||
-          (await collections.findOrCreateWebCollectionByPlatform(res.platformTitle));
-        await recipeRepo(collectionId).save(recipe);
-        qc.invalidateQueries({ queryKey: ['collections', user.id] });
-        qc.invalidateQueries({ queryKey: ['library-summaries', user.id] });
-        qc.invalidateQueries({ queryKey: ['collection', collectionId] });
-        qc.invalidateQueries({ queryKey: ['collection-picker', user.id] });
         void syncNow();
-        navigate(`/collections/${collectionId}/recipes/${recipe.id}`);
+        navigate(`/collections/${collectionId}/recipes/${recipeId}`);
       } catch (e) {
         setError((e as Error).message);
         setPhase('picking');
@@ -165,7 +151,7 @@ export function ImportLinkPage() {
         to="/import"
         className="mb-2 inline-block text-sm text-stone-500 underline-offset-2 hover:underline dark:text-stone-400"
       >
-        ← Imports
+        ← Add recipes
       </Link>
       <h1 className="mb-1 text-xl font-semibold">Import from a link</h1>
       <p className="mb-4 text-sm text-stone-600 dark:text-stone-400">
