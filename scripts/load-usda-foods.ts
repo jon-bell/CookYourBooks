@@ -230,12 +230,21 @@ function portionsFromUsda(food: UsdaFood): { unit: string; grams: number }[] {
     // the actual unit lives in `modifier` ("cup", "tbsp", "1 piece").
     // Branded uses measureUnit.name. Foundation uses portionDescription.
     // Pick the most specific available, skip ambiguous.
+    //
+    // Survey (FNDDS) is the exception: its `modifier` is a NUMERIC FNDDS
+    // portion code ("90000", "10205"), not a label, and the human text
+    // lives in portionDescription. Taking modifier first left all 5,432
+    // FNDDS foods with unusable portion units — 1,134 distinct codes over
+    // 22,193 entries — which is why `piece`, the most common unit in real
+    // recipes, could almost never be converted to grams.
+    const modifier = p.modifier?.toLowerCase().trim() ?? '';
+    const usableModifier = modifier && !/^\d+$/.test(modifier) ? modifier : '';
     let unit =
-      (p.modifier && p.modifier.toLowerCase().trim()) ||
+      usableModifier ||
+      (p.portionDescription && p.portionDescription.toLowerCase().trim()) ||
       (p.measureUnit?.name &&
         p.measureUnit.name.toLowerCase() !== 'undetermined' &&
         p.measureUnit.name.toLowerCase()) ||
-      (p.portionDescription && p.portionDescription.toLowerCase().trim()) ||
       '';
     if (!unit || unit === 'undetermined' || !p.gramWeight) continue;
     // Strip a leading "1 " ("1 cup" → "cup") since `amount` already

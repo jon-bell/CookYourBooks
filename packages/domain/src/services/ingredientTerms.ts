@@ -34,6 +34,10 @@ export interface IngredientTerms {
    *  `p_query` (Postgres re-tokenizes it). Empty string if nothing
    *  survives. */
   normalized: string;
+  /** True when the string names two distinct foods ("salt and pepper").
+   *  A single match cannot represent both, so callers should decline to
+   *  auto-match rather than confidently picking one of them. */
+  compound: boolean;
   /** Ordered, de-duplicated search tokens after noise removal. Used for
    *  the relaxed OR retrieval + coverage scoring on both sides. */
   terms: string[];
@@ -108,6 +112,23 @@ const PREP_WORDS = new Set([
   'about',
   'approx',
   'approximately',
+  // Preparation that appears after "and" ("melted and cooled") or as a
+  // trailing participle. Without these the word survives noise removal
+  // and reads as a food noun.
+  'cooled',
+  'warmed',
+  'chilled',
+  'thawed',
+  'stemmed',
+  'pitted',
+  'squeezed',
+  'deveined',
+  'julienned',
+  'shaved',
+  'torn',
+  'picked',
+  'rested',
+  'strained',
 ]);
 
 // Size / quantity / counting / container words. Dropped — they describe
@@ -222,6 +243,52 @@ const NUTRITION_MODIFIERS = new Set([
   'virgin',
 ]);
 
+// Parts of a plant / preparation forms that are NOT the food itself.
+// They stay in `terms` (they help coverage — "Spices, bay leaf" really
+// does contain "leaf"), but they must never be chosen as the head noun:
+// the head is what decides whether a lexical hit is on-topic, and
+// "cinnamon stick" is a cinnamon question, not a stick question.
+const PART_WORDS = new Set([
+  'stick',
+  'sticks',
+  'zest',
+  'zested',
+  'peel',
+  'rind',
+  'leaf',
+  'leaves',
+  'stem',
+  'stems',
+  'stalk',
+  'stalks',
+  'sprig',
+  'sprigs',
+  'wedge',
+  'wedges',
+  'kernel',
+  'kernels',
+  'floret',
+  'florets',
+  'root',
+  'roots',
+  'bulb',
+  'seeds',
+  'pods',
+  'halves',
+  // Preparation FORMS. Same reasoning: "tomato paste" is a tomato
+  // question, "red pepper flakes" a pepper question, "baking powder" a
+  // baking question. Leaving these as the head sent them to "Guava
+  // paste", "Cereal, wheat flakes" and "Baobab powder" respectively.
+  // They stay in `terms`, so the right row still scores for containing
+  // them.
+  'paste',
+  'powder',
+  'flakes',
+  'extract',
+  'puree',
+  'syrup',
+]);
+
 const DIGITS = /^\d+$/;
 
 /** True if a token carries no food meaning on its own. */
@@ -232,18 +299,101 @@ function isNoise(tok: string): boolean {
   return PREP_WORDS.has(tok) || SIZE_QTY_WORDS.has(tok) || STOP_WORDS.has(tok);
 }
 
+/**
+ * Resolve a plain "X or Y" alternative list.
+ *
+ * The old rule was "keep everything before `or`", which is right when
+ * the alternatives are whole foods ("light soy sauce or shoyu" →
+ * "light soy sauce") but destroys the far more common shape where the
+ * options share a trailing head noun:
+ *
+ *   "green or brown lentils"   -> "green"   (the lentils vanished)
+ *   "cherry or grape tomatoes" -> "cherry"
+ *   "coconut or vegetable oil" -> "coconut"
+ *
+ * Those all matched an unrelated food. When the right-hand side has
+ * more tokens than the left, the surplus is the shared noun, so splice
+ * it back onto the first option.
+ */
+function resolveAlternatives(text: string): string {
+  const m = /^(.*?)\s+or\s+(.*)$/.exec(text);
+  if (!m) return text;
+  const left = (m[1] ?? '').trim();
+  const right = (m[2] ?? '').trim();
+  if (!left || !right) return text.replace(/\s+or\b.*$/, ' ');
+  const lt = left.split(/\s+/).filter(Boolean);
+  const rt = right.split(/\s+/).filter(Boolean);
+  // Right side no longer than the left: the options are independent
+  // foods, keep the first one (the historical behaviour).
+  if (rt.length <= lt.length) return left;
+  // Surplus tokens on the right are the noun both options modify.
+  return [...lt, ...rt.slice(lt.length)].join(' ');
+}
+
+/**
+ * True when the string names two genuinely different foods joined by
+ * "and" — "salt and pepper", "kosher salt and ground black pepper".
+ * One nutrition row cannot stand in for both, and picking either is
+ * confidently wrong, so the caller declines to auto-match.
+ *
+ * Deliberately conservative, because most "and" strings are NOT
+ * compounds and a false positive silently drops a resolvable
+ * ingredient:
+ *   "half-and-half"                      — one food, hyphenated
+ *   "unsalted butter, melted and cooled" — "and" joins preparation
+ *   "cilantro leaves and tender stems"   — one food, two parts
+ * So we require a real food noun on both sides, and treat part-words
+ * and prep as disqualifying.
+ */
+function isCompound(text: string): boolean {
+  // Hyphenated "-and-" is a compound word, not a conjunction.
+  if (/-and-/.test(text)) return false;
+  // Only the first comma segment names the food; everything after it is
+  // preparation, and prep is full of harmless "and"s — "chicken thighs,
+  // boneless and skinless", "ginger, peeled and sliced", "asparagus,
+  // trimmed and cut into 1-inch lengths" are each ONE ingredient.
+  const foodSegment = text.split(',')[0] ?? '';
+  const parts = foodSegment.split(/\s+and\s+/);
+  if (parts.length !== 2) return false;
+  const [lhs, rhs] = parts as [string, string];
+  const headOf = (part: string): string | null => {
+    const toks = tokenizeIngredient(part).filter((t) => !isNoise(t));
+    if (toks.length === 0) return null;
+    // A clause that ENDS in a part word is describing a part of the
+    // other side's food, not a second food: "cilantro leaves and tender
+    // stems" is one herb. Requiring the clause to end in a real noun is
+    // what separates that from "salt and pepper".
+    if (PART_WORDS.has(toks[toks.length - 1] ?? '')) return null;
+    const nouns = toks.filter((t) => !NUTRITION_MODIFIERS.has(t) && !PART_WORDS.has(t));
+    return nouns.length > 0 ? (nouns[nouns.length - 1] ?? null) : null;
+  };
+  const a = headOf(lhs);
+  const b = headOf(rhs);
+  if (a === null || b === null || a === b) return false;
+  // "beet and rosemary syrup" / "burnt garlic sesame and chile oil" are
+  // ONE food whose name happens to contain "and": both sides modify a
+  // trailing noun, exactly like the "or" lists above. A genuine compound
+  // is balanced — "salt and pepper", "butter and oil" — so compare the
+  // count of real nouns, not tokens ("kosher salt and ground black
+  // pepper" is balanced once modifiers are discounted).
+  const nounCount = (part: string): number =>
+    tokenizeIngredient(part)
+      .filter((t) => !isNoise(t))
+      .filter((t) => !NUTRITION_MODIFIERS.has(t) && !PART_WORDS.has(t)).length;
+  return nounCount(rhs) <= nounCount(lhs);
+}
+
 export function extractIngredientTerms(raw: string): IngredientTerms {
-  const lower = (raw ?? '')
-    .toLowerCase()
-    // Drop parentheticals: "(chopped)", "(1 cup)".
-    .replace(/\([^)]*\)/g, ' ')
-    // "A, B, or other C": C is the category/head noun ("… or other
-    // neutral oil" → "neutral oil"); the listed examples before it are
-    // filler. Drop everything up to and including "or other".
-    .replace(/.*\bor\s+other\s+/, '')
-    // Plain alternatives "X or Y" (no "other"): keep the first concrete
-    // option ("light soy sauce or shoyu" → "light soy sauce").
-    .replace(/\s+or\b.*$/, ' ');
+  const original = (raw ?? '').toLowerCase();
+  const lower = resolveAlternatives(
+    original
+      // Drop parentheticals: "(chopped)", "(1 cup)".
+      .replace(/\([^)]*\)/g, ' ')
+      // "A, B, or other C": C is the category/head noun ("… or other
+      // neutral oil" → "neutral oil"); the listed examples before it are
+      // filler. Drop everything up to and including "or other".
+      .replace(/.*\bor\s+other\s+/, ''),
+  );
 
   // Split on commas into segments, then keep only segments that contain
   // at least one real food token. "garlic cloves, minced" → seg "minced"
@@ -282,11 +432,22 @@ export function extractIngredientTerms(raw: string): IngredientTerms {
   const foodNouns = terms.filter((t) => !NUTRITION_MODIFIERS.has(t));
   // Food names are head-final in English ("olive oil", "red onion",
   // "soy sauce"), so the last surviving food noun is the best single
-  // discriminator. Fall back to the last term if all are modifiers.
-  const head = foodNouns.length > 0 ? foodNouns[foodNouns.length - 1] : terms[terms.length - 1];
+  // discriminator. Prefer a noun that names an actual food over one that
+  // names a part of it, so "cinnamon stick" heads on "cinnamon" and
+  // "lemon zest" on "lemon". Fall back through part-words, then
+  // modifiers, so we always emit something.
+  const realNouns = foodNouns.filter((t) => !PART_WORDS.has(t));
+  const pool = realNouns.length > 0 ? realNouns : foodNouns;
+  const head = pool.length > 0 ? pool[pool.length - 1] : terms[terms.length - 1];
   const core = head ? [head] : [];
 
-  return { normalized: terms.join(' '), terms, core, modifiers };
+  return {
+    normalized: terms.join(' '),
+    terms,
+    core,
+    modifiers,
+    compound: isCompound(original.replace(/\([^)]*\)/g, ' ')),
+  };
 }
 
 /** Convenience: the space-joined cleaned query for the SQL RPC. */
