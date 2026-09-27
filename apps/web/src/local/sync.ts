@@ -33,6 +33,7 @@ import {
   type LocalEmbeddingRow,
   PULL_CRR_TABLES,
   purgeCollection,
+  purgeUnreadableHouseholdContent,
   purgeRecipe,
   type RecipeBatchEntry,
   recipeBatchRowCount,
@@ -1036,6 +1037,12 @@ export async function pullAll(
   checkAbort('household');
   const householdPhase = Date.now();
   const householdId = await getCurrentHouseholdId(client);
+  if (!householdId) {
+    // Not in a household (left, or never joined): nothing marked shared is
+    // readable any more — evict whatever an earlier membership cached.
+    const purged = await purgeUnreadableHouseholdContent(null, []);
+    if (purged > 0) logSync('info', `household: evicted ${purged} stale shared collection(s)`);
+  }
   const householdChanges = householdId
     ? await pullHouseholdSharedContent(client, ownerId, householdId, signal)
     : 0;
@@ -1101,6 +1108,11 @@ async function pullHouseholdSharedContent(
   // is index-friendly; the old `owner_id <> me` anti-filter seq-scanned every
   // shared table. Empty ⇒ nobody else is sharing ⇒ nothing to pull.
   const coMemberIds = await getSharingCoMemberIds(client, ownerId, householdId);
+  // Evict cached content from anyone no longer sharing into this household
+  // (a previous household, a member who left or turned sharing off) before
+  // pulling — nothing else would ever remove it locally.
+  const purged = await purgeUnreadableHouseholdContent(householdId, coMemberIds);
+  if (purged > 0) logSync('info', `household: evicted ${purged} stale shared collection(s)`);
   if (coMemberIds.length === 0) return 0;
 
   const recipeCursor = await getRecipeCursor(recipeTopic);

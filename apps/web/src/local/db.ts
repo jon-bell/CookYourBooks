@@ -330,12 +330,80 @@ function setInitStep(step: string): void {
   logSync('info', `db init: ${step}`);
 }
 
+// ---------- one database file per account ----------
+//
+// Each signed-in account gets its own SQLite file inside the VFS
+// (`cookyourbooks-<userId>.db`), bound once per page load. Before this, every
+// account on a device shared `cookyourbooks.db`, and sign-out cleared nothing —
+// so the next account to sign in inherited the previous one's cache (and, via
+// the household marker, saw a former co-member's recipes). A file per account
+// also keeps each account's unpushed outbox safe across a switch, and a switch
+// back doesn't re-download the library.
+//
+// Binding is one-way for the page's lifetime: a different account signing in
+// reloads the page (SyncProvider), which drops the open handle, any in-flight
+// sync still holding the old owner, and every in-memory cache.
+const LEGACY_DB_FILE = 'cookyourbooks.db';
+// localStorage: the file chosen for each account, so the choice is stable.
+const FILE_FOR_USER_KEY = 'cookyourbooks.db.file.';
+// localStorage: set once the pre-per-account file has been adopted by its
+// owner (or found empty) — nobody else may open it after that.
+const LEGACY_SETTLED_KEY = 'cookyourbooks.db.legacySettled';
+
+let boundUserId: string | null = null;
+const bindWaiters: ((userId: string) => void)[] = [];
+
+/**
+ * Tie this page's local database to `userId`. Returns 'reload' when a
+ * different account is already bound — the caller must reload the page
+ * rather than let two accounts' data share a page.
+ */
+export function bindLocalDbUser(userId: string): 'bound' | 'unchanged' | 'reload' {
+  if (boundUserId === userId) return 'unchanged';
+  if (boundUserId !== null) return 'reload';
+  boundUserId = userId;
+  for (const resolve of bindWaiters.splice(0)) resolve(userId);
+  return 'bound';
+}
+
+/** The account this page's database is bound to, if any. */
+export function boundLocalDbUser(): string | null {
+  return boundUserId;
+}
+
+function waitForBoundUser(): Promise<string> {
+  if (boundUserId) return Promise.resolve(boundUserId);
+  return new Promise((resolve) => bindWaiters.push(resolve));
+}
+
+function storageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // private mode — the choice is simply re-made next boot
+  }
+}
+
 export function getLocalDb(): Promise<LocalDb> {
   if (!initPromise) {
     initState.startedAt = Date.now();
-    initState.step = 'starting';
+    initState.step = 'waiting for sign-in';
     logSync('info', 'db init: starting (this should appear once per page load)');
-    initPromise = initialize()
+    // Nothing opens until an account is bound — signed-out pages never read
+    // the local cache, and opening early is exactly how accounts got mixed.
+    initPromise = waitForBoundUser()
+      .then((userId) => {
+        initState.step = 'starting';
+        return initialize(userId);
+      })
       .then((db) => {
         initState.finishedAt = Date.now();
         initState.step = 'ready';
@@ -382,12 +450,59 @@ const CRR_TRIGGER_HEAL_VERSION = 3;
 // applyPostSchemaMigration path, so their triggers are already current.
 const CRR_TRIGGER_HEAL_TABLES = ['cooking_events'];
 
-async function initialize(): Promise<LocalDb> {
+type Sqlite = Awaited<ReturnType<typeof initWasm>>;
+
+async function initialize(userId: string): Promise<LocalDb> {
   await drainPendingReset();
   setInitStep('init wasm');
   const sqlite = await initWasm(() => wasmUrl);
-  setInitStep('opening cookyourbooks.db');
-  const db = await sqlite.open('cookyourbooks.db');
+
+  const fileKey = FILE_FOR_USER_KEY + userId;
+  const ownFile = `cookyourbooks-${userId}.db`;
+  const remembered = storageGet(fileKey);
+  if (remembered) return lockDb(await openAndMigrate(sqlite, remembered));
+
+  // First boot for this account on this device. If the pre-per-account
+  // `cookyourbooks.db` hasn't been settled yet, it's most likely this
+  // account's own cache (the common case: the same person upgrading) —
+  // adopt it so nothing re-downloads and no unpushed edit is lost. Only
+  // adopt it with proof of ownership; someone else's cache stays closed.
+  if (!storageGet(LEGACY_SETTLED_KEY)) {
+    const legacy = await openAndMigrate(sqlite, LEGACY_DB_FILE);
+    const owner = await legacyOwnership(legacy, userId);
+    if (owner === 'mine') {
+      storageSet(fileKey, LEGACY_DB_FILE);
+      storageSet(LEGACY_SETTLED_KEY, userId);
+      logSync('info', 'db init: adopted the legacy cookyourbooks.db for this account');
+      return lockDb(legacy);
+    }
+    if (owner === 'empty') storageSet(LEGACY_SETTLED_KEY, 'empty');
+    await legacy.close();
+    rawHandle = null;
+  }
+  storageSet(fileKey, ownFile);
+  return lockDb(await openAndMigrate(sqlite, ownFile));
+}
+
+/** Whose cache is the legacy file? 'empty' when it holds nothing at all. */
+async function legacyOwnership(db: DB, userId: string): Promise<'mine' | 'other' | 'empty'> {
+  const [mine] = await db.execA<[number]>(
+    `select exists(select 1 from recipe_collections where owner_id = ?)
+         or exists(select 1 from import_batches where owner_id = ?)`,
+    [userId, userId],
+  );
+  if (mine?.[0]) return 'mine';
+  const [any] = await db.execA<[number]>(
+    `select exists(select 1 from recipe_collections)
+         or exists(select 1 from import_batches)
+         or exists(select 1 from outbox)`,
+  );
+  return any?.[0] ? 'other' : 'empty';
+}
+
+async function openAndMigrate(sqlite: Sqlite, file: string): Promise<DB> {
+  setInitStep(`opening ${file.startsWith('cookyourbooks-') ? 'account db' : file}`);
+  const db = await sqlite.open(file);
   rawHandle = db;
 
   try {
@@ -410,7 +525,7 @@ async function initialize(): Promise<LocalDb> {
     await maybeHealCrrTriggers(db);
 
     setInitStep('done (wrapping in lock)');
-    return lockDb(db);
+    return db;
   } catch (err) {
     // Don't leak the open handle: a wedged init would otherwise hold the
     // VFS IndexedDB open and block the emergency reset's delete forever.

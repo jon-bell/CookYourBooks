@@ -859,6 +859,64 @@ export async function purgeCollection(id: string): Promise<void> {
   });
 }
 
+/** Local tables whose co-member rows carry the `shared_with_household_id` marker. */
+const HOUSEHOLD_MARKED_TABLES = [
+  'recipe_collections',
+  'cooking_events',
+  'recipe_tags',
+  'collection_notes',
+] as const;
+
+/**
+ * Drop cached household content the viewer can no longer read. Local reads
+ * surface any row carrying the `shared_with_household_id` marker, and nothing
+ * else ever clears it — so after leaving (or switching) households, or a
+ * co-member turning library sharing off, their recipes stayed visible here
+ * indefinitely. Keeps only marked rows that belong to `householdId` AND to a
+ * member currently sharing into it; `householdId = null` drops them all.
+ *
+ * Local-only deletes (no outbox entry): this is cache eviction, never a
+ * server delete. Returns the number of collections purged.
+ */
+export async function purgeUnreadableHouseholdContent(
+  householdId: string | null,
+  sharingOwnerIds: readonly string[],
+): Promise<number> {
+  const db = await getLocalDb();
+  const keep =
+    householdId && sharingOwnerIds.length > 0
+      ? {
+          sql: ` and not (shared_with_household_id = ? and owner_id in (${sharingOwnerIds
+            .map(() => '?')
+            .join(',')}))`,
+          params: [householdId, ...sharingOwnerIds],
+        }
+      : { sql: '', params: [] as string[] };
+  const where = `shared_with_household_id is not null${keep.sql}`;
+  const stale = await db.execA<[string]>(
+    `select id from recipe_collections where ${where}`,
+    keep.params,
+  );
+  const staleOther = await Promise.all(
+    HOUSEHOLD_MARKED_TABLES.slice(1).map(
+      async (t) =>
+        (
+          await db.execA<[number]>(`select count(*) from ${t} where ${where}`, keep.params)
+        )[0]?.[0] ?? 0,
+    ),
+  );
+  if (stale.length === 0 && staleOther.every((n) => n === 0)) return 0;
+
+  await db.tx(async (tx) => {
+    // Children ride as JSON on the recipe row — deleting the recipes is enough.
+    for (const [id] of stale) await tx.exec(`delete from recipes where collection_id = ?`, [id]);
+    for (const t of HOUSEHOLD_MARKED_TABLES) {
+      await tx.exec(`delete from ${t} where ${where}`, keep.params);
+    }
+  });
+  return stale.length;
+}
+
 export async function purgeRecipe(id: string): Promise<void> {
   const db = await getLocalDb();
   await db.exec(`delete from recipes where id = ?`, [id]);

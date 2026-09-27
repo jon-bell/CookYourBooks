@@ -5,7 +5,13 @@ import { useAuth } from '../auth/AuthProvider.js';
 import { reportError, Sentry } from '../sentry.js';
 import { supabase } from '../supabase.js';
 import { startBackfills } from './backfill.js';
-import { beginDbStatsWindow, getLocalDb, readDbStats } from './db.js';
+import {
+  beginDbStatsWindow,
+  bindLocalDbUser,
+  boundLocalDbUser,
+  getLocalDb,
+  readDbStats,
+} from './db.js';
 import { countPending } from './outbox.js';
 import {
   pullAll,
@@ -212,7 +218,7 @@ function recordTransfer(
 }
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
-  const { user, householdId } = useAuth();
+  const { user, householdId, loading: authLoading } = useAuth();
   const qc = useQueryClient();
   const [status, setStatus] = useState<SyncStatus>('initializing');
   const [localReady, setLocalReady] = useState(false);
@@ -467,8 +473,27 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }, PULL_DEBOUNCE_MS);
   }
 
-  // Boot: ensure the local DB is ready before any page tries to read.
+  // Boot: bind the local DB to the signed-in account, then open it before any
+  // page tries to read. One account per page load (see db.ts): when a
+  // *different* account signs in (here, or in another tab), reload so the
+  // previous account's handle, any in-flight sync still holding its owner id,
+  // and every in-memory cache go with it. Signing out alone doesn't reload —
+  // no signed-out surface reads the DB, and signing back in as the same
+  // account reuses the open handle. Signed-out visitors never open it at all.
   useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      if (!boundLocalDbUser()) {
+        setLocalReady(true);
+        setStatus((s) => (s === 'initializing' ? 'idle' : s));
+      }
+      return;
+    }
+    if (bindLocalDbUser(user.id) === 'reload') {
+      logSync('info', 'account changed — reloading to open its own database');
+      location.reload();
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -495,7 +520,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authLoading, user?.id]);
 
   // Kick off cross-tab leader election. Subscribe so role changes
   // (e.g. another tab closing makes us the leader) are reflected.
