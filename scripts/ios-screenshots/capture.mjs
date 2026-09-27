@@ -21,15 +21,17 @@
 //                           the layout `fastlane deliver` expects).
 //   CYB_SCREENSHOT_PORT     control-server port (default 8977).
 //   CYB_SCREENSHOT_SKIP_BUILD=1  reuse the last screenshot build.
+//   CYB_DEMO_CONTENT        demo-content corpus for the import steps (default
+//                           scripts/demo-content/out; see PR #120's fetch.ts).
 //
 // `--web` runs the same driver + protocol in headless Chromium against
 // `vite preview` instead of a simulator — a fast way to check the steps on a
 // Linux box (needs local Supabase or VITE_SUPABASE_* pointing somewhere).
 
 import { execFileSync, spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -39,6 +41,9 @@ const PORT = Number(process.env.CYB_SCREENSHOT_PORT ?? 8977);
 const CONTROL_URL = `http://127.0.0.1:${PORT}`;
 const OUT = resolve(process.env.CYB_SCREENSHOT_OUT ?? join(REPO, 'apps/mobile/screenshots/en-US'));
 const STEPS = JSON.parse(readFileSync(join(REPO, 'scripts/ios-screenshots/steps.json'), 'utf8'));
+// Demo-content corpus (scripts/demo-content/fetch.ts output) for the import
+// steps. Missing is fine: the driver skips import steps it can't feed.
+const CORPUS = resolve(process.env.CYB_DEMO_CONTENT ?? join(REPO, 'scripts/demo-content/out'));
 
 // App Store Connect's required sizes: 6.9" iPhone (1320×2868) and, because
 // the app runs on iPad, 13" iPad (2064×2752). Fallbacks cover older Xcodes.
@@ -88,6 +93,19 @@ const server = createServer(async (req, res) => {
   const json = body ? JSON.parse(body) : {};
   if (!current) return reply(409, { error: 'no device run in progress' });
 
+  // Corpus endpoints for the import steps.
+  const url = decodeURIComponent(req.url ?? '');
+  if (url.startsWith('/corpus/')) {
+    const book = readCorpusBook(url.slice('/corpus/'.length));
+    return book ? reply(200, book) : reply(404, { error: `no corpus book at ${CORPUS}` });
+  }
+  if (url.startsWith('/asset/')) {
+    const file = resolve(CORPUS, url.slice('/asset/'.length));
+    if (!file.startsWith(CORPUS + sep) || !existsSync(file)) return reply(404, { error: 'no asset' });
+    res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+    return res.end(readFileSync(file));
+  }
+
   try {
     switch (req.url) {
       case '/script':
@@ -113,6 +131,35 @@ const server = createServer(async (req, res) => {
     current.reject(err);
   }
 });
+
+/** One demo-content book: source.json metadata + its recipe page folders,
+ *  with page paths relative to the corpus root (for /asset/<path>). */
+function readCorpusBook(id) {
+  const dir = join(CORPUS, id);
+  if (id.includes('/') || !existsSync(join(dir, 'source.json'))) return null;
+  const src = JSON.parse(readFileSync(join(dir, 'source.json'), 'utf8'));
+  const pagesDir = join(dir, 'pages');
+  const recipes = existsSync(pagesDir)
+    ? readdirSync(pagesDir)
+        .sort()
+        .filter((slug) => statSync(join(pagesDir, slug)).isDirectory())
+        .map((slug) => ({
+          slug,
+          pages: readdirSync(join(pagesDir, slug))
+            .filter((f) => /\.jpe?g$/i.test(f))
+            .sort()
+            .map((f) => relative(CORPUS, join(pagesDir, slug, f))),
+        }))
+    : [];
+  return {
+    id,
+    title: src.title ?? id,
+    author: src.author ?? null,
+    year: src.year ?? null,
+    collection: src.collection ?? 'cookbook',
+    recipes,
+  };
+}
 
 function runDevice(prefix, capture, timeoutMs = 15 * 60_000) {
   return new Promise((resolve, reject) => {

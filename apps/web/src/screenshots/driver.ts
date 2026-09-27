@@ -6,7 +6,9 @@
 // HTTP server on the Mac and boots a simulator; the simulator shares the
 // host's loopback, so the app can reach it at 127.0.0.1. The protocol:
 //
-//   GET  /script → { email, password, steps: [{ name, path, settleMs? }] }
+//   GET  /script        → { email, password, steps: ScreenshotStep[] }
+//   GET  /corpus/<book> → a demo-content book: metadata + recipe page paths
+//   GET  /asset/<path>  → one corpus file (a page image)
 //   POST /shot   { name }       → host runs `simctl io screenshot`, then replies
 //   POST /log    { msg }        → echoed to the CI log
 //   POST /done   { ok, error? } → host moves on to the next device
@@ -18,13 +20,25 @@
 // local-networking exemption the orchestrator adds to the screenshot build.
 
 import { supabase } from '../supabase.js';
+import { navigate, pageSettled, sleep, syncIdle, waitUntil } from './dom.js';
+import { type ImportContext, runImportAction } from './importScenario.js';
 
+/**
+ * One step of the script (scripts/ios-screenshots/steps.json). Either shows a
+ * route (`path`) or performs an import-flow action (`do`); `shot` names the
+ * screenshot taken once the page settles. A step without `shot` just acts.
+ */
 export interface ScreenshotStep {
-  /** File name stem, e.g. "01-recipes". */
-  name: string;
+  /** Screenshot file stem, e.g. "01-recipes". */
+  shot?: string;
   /** Route to show. `{recipe}` expands to a recipe from the gallery (one with
    *  a cover image when possible). */
-  path: string;
+  path?: string;
+  /** Import-flow action — see importScenario.ts. */
+  do?: 'import-select' | 'import-start' | 'import-wait' | 'import-item' | 'import-recipe';
+  /** import-select: corpus book id, and optionally which recipe folders. */
+  book?: string;
+  recipes?: string[];
   /** Extra settle time after the page reports ready. */
   settleMs?: number;
 }
@@ -47,6 +61,7 @@ interface CapacitorHttpPlugin {
     headers?: Record<string, string>;
     data?: unknown;
     readTimeout?: number;
+    responseType?: 'json' | 'text' | 'blob';
   }): Promise<HttpResponse>;
 }
 
@@ -62,70 +77,60 @@ function nativeHttp(): CapacitorHttpPlugin | undefined {
   return cap?.isNativePlatform?.() ? cap.Plugins?.CapacitorHttp : undefined;
 }
 
-async function call(base: string, method: 'GET' | 'POST', path: string, body?: unknown) {
-  const url = `${base}${path}`;
-  const http = nativeHttp();
-  if (http) {
-    const res = await http.request({
-      url,
+/** The host's control channel. */
+export interface Host {
+  call(method: 'GET' | 'POST', path: string, body?: unknown): Promise<unknown>;
+  /** Fetch a binary asset (a corpus page image). */
+  blob(path: string, type: string): Promise<Blob>;
+  log: (msg: string) => void;
+}
+
+function makeHost(base: string): Host {
+  const call = async (method: 'GET' | 'POST', path: string, body?: unknown) => {
+    const url = `${base}${path}`;
+    const http = nativeHttp();
+    if (http) {
+      const res = await http.request({
+        url,
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        data: body,
+        // /shot blocks while the host captures; give it room.
+        readTimeout: 60_000,
+      });
+      if (res.status >= 400) throw new Error(`${method} ${path}: HTTP ${res.status}`);
+      return typeof res.data === 'string' ? (JSON.parse(res.data || 'null') as unknown) : res.data;
+    }
+    const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      data: body,
-      // /shot blocks while the host captures; give it room.
-      readTimeout: 60_000,
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status >= 400) throw new Error(`${method} ${path}: HTTP ${res.status}`);
-    return typeof res.data === 'string' ? (JSON.parse(res.data || 'null') as unknown) : res.data;
-  }
-  const res = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status}`);
-  return (await res.json()) as unknown;
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Poll until `pred` holds; on timeout, log and carry on (a slightly
- *  unsettled screenshot beats no screenshot). */
-async function waitUntil(
-  label: string,
-  pred: () => boolean,
-  timeoutMs: number,
-  log: (msg: string) => void,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (pred()) return true;
-    await sleep(250);
-  }
-  log(`timed out waiting for ${label}`);
-  return false;
-}
-
-function navigate(path: string) {
-  // BrowserRouter listens for popstate; pushState alone doesn't notify it.
-  window.history.pushState({}, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
-}
-
-function syncIdle(): boolean {
-  const el = document.querySelector('[data-sync-state]');
-  return el?.getAttribute('data-sync-state') === 'idle';
-}
-
-function pageSettled(): boolean {
-  if (document.querySelector('[data-testid^="loading-"]')) return false;
-  // Every image in (or near) the viewport has finished decoding.
-  const vh = window.innerHeight * 1.2;
-  for (const img of Array.from(document.images)) {
-    const r = img.getBoundingClientRect();
-    if (r.bottom < 0 || r.top > vh || r.width === 0) continue;
-    if (!img.complete) return false;
-  }
-  return true;
+    if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status}`);
+    return (await res.json()) as unknown;
+  };
+  const blob = async (path: string, type: string) => {
+    const url = `${base}${path}`;
+    const http = nativeHttp();
+    if (http) {
+      // CapacitorHttp hands binary bodies back base64-encoded.
+      const res = await http.request({ url, method: 'GET', responseType: 'blob' });
+      if (res.status >= 400) throw new Error(`GET ${path}: HTTP ${res.status}`);
+      const bin = atob(String(res.data));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type });
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`GET ${path}: HTTP ${res.status}`);
+    return new Blob([await res.arrayBuffer()], { type });
+  };
+  // Everything reports to the host's CI log — console output from the
+  // WKWebView isn't visible there.
+  const log = (msg: string) => {
+    void call('POST', '/log', { msg }).catch(() => undefined);
+  };
+  return { call, blob, log };
 }
 
 const RECIPE_HREF = /^\/collections\/[^/]+\/recipes\/[^/]+$/;
@@ -145,13 +150,10 @@ function findRecipeLink(): string | undefined {
 }
 
 export async function runScreenshotDriver(base: string): Promise<void> {
-  // Everything reports to the host's CI log — console output from the
-  // WKWebView isn't visible there.
-  const log = (msg: string) => {
-    void call(base, 'POST', '/log', { msg }).catch(() => undefined);
-  };
+  const host = makeHost(base);
+  const { log } = host;
   try {
-    const script = (await call(base, 'GET', '/script')) as ScreenshotScript;
+    const script = (await host.call('GET', '/script')) as ScreenshotScript;
     log(`script: ${script.steps.length} steps`);
 
     const { data: existing } = await supabase.auth.getSession();
@@ -169,27 +171,38 @@ export async function runScreenshotDriver(base: string): Promise<void> {
     log('synced');
 
     let recipePath: string | undefined;
-    for (const step of script.steps) {
-      let path = step.path;
-      if (path.includes('{recipe}')) {
-        recipePath ??= await resolveRecipePath(log);
-        if (!recipePath) {
-          log(`skip ${step.name}: no recipe in the gallery`);
+    const importCtx: ImportContext = {};
+    for (const [i, step] of script.steps.entries()) {
+      const label = step.shot ?? step.do ?? `step ${i + 1}`;
+      if (step.do) {
+        const ok = await runImportAction(step, importCtx, host);
+        if (!ok) {
+          log(`skip ${label}`);
           continue;
         }
-        path = path.replace('{recipe}', recipePath);
+      } else if (step.path) {
+        let path = step.path;
+        if (path.includes('{recipe}')) {
+          recipePath ??= await resolveRecipePath(log);
+          if (!recipePath) {
+            log(`skip ${label}: no recipe in the gallery`);
+            continue;
+          }
+          path = path.replace('{recipe}', recipePath);
+        }
+        navigate(path);
       }
-      navigate(path);
+      if (!step.shot) continue;
       await sleep(300);
-      await waitUntil(`${step.name} settle`, () => pageSettled() && syncIdle(), 45_000, log);
+      await waitUntil(`${label} settle`, () => pageSettled() && syncIdle(), 45_000, log);
       window.scrollTo(0, 0);
       await sleep(step.settleMs ?? 1200);
-      await call(base, 'POST', '/shot', { name: step.name, path });
-      log(`shot ${step.name} (${path})`);
+      await host.call('POST', '/shot', { name: step.shot });
+      log(`shot ${step.shot} (${window.location.pathname})`);
     }
-    await call(base, 'POST', '/done', { ok: true });
+    await host.call('POST', '/done', { ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await call(base, 'POST', '/done', { ok: false, error: message }).catch(() => undefined);
+    await host.call('POST', '/done', { ok: false, error: message }).catch(() => undefined);
   }
 }

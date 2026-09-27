@@ -42,7 +42,11 @@ export function ImportNewPage() {
   const [markerByFile, setMarkerByFile] = useState<Map<File, PageMarker>>(() => new Map());
   const [previews, setPreviews] = useState<string[]>([]);
   const [name, setName] = useState(() => `Imported ${new Date().toLocaleDateString()}`);
-  const [targetCollectionId, setTargetCollectionId] = useState<string>('');
+  // `?collection=<id>` preselects the target cookbook (deep link from a
+  // cookbook, and what the App Store screenshot driver uses).
+  const [targetCollectionId, setTargetCollectionId] = useState<string>(
+    () => params.get('collection') ?? '',
+  );
   // 'ocr-first' = current behavior (worker OCRs each page, user merges
   // after). 'group-first' = user clicks splits between pages, then
   // each group OCRs as one call. Default stays 'ocr-first' so existing

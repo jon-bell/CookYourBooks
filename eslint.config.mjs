@@ -134,4 +134,11 @@ export default defineConfig([
       'no-console': 'off',
     },
   },
+  {
+    // A CLI's interface IS its console output.
+    files: ['apps/cli/src/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 ]);

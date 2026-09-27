@@ -29,6 +29,11 @@ on:
         required: false
         default: false
         type: boolean
+      load_demo_library:
+        description: 'ios-screenshots only: first load the demo corpus into the demo account (cyb demo load)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: mobile-${{ github.ref }}
@@ -310,6 +315,30 @@ jobs:
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
+
+      - name: Fetch demo corpus
+        # Public-domain page scans for the import screenshots (and the optional
+        # library load below). Needs Deno + poppler on the runner; without the
+        # corpus the driver just skips its import steps.
+        run: |
+          if [ -f scripts/demo-content/fetch.ts ] && command -v deno >/dev/null; then
+            deno run --allow-net --allow-read --allow-write --allow-run \
+              scripts/demo-content/fetch.ts --images
+          else
+            echo "::warning::Demo corpus not fetched (needs scripts/demo-content/fetch.ts + deno) — import screenshots will be skipped."
+          fi
+
+      - name: Load demo library (cyb demo load)
+        if: inputs.load_demo_library
+        # Idempotent: books already loaded resume instead of re-uploading.
+        env:
+          CYB_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          CYB_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          CYB_EMAIL: ${{ secrets.CYB_SCREENSHOT_EMAIL }}
+          CYB_PASSWORD: ${{ secrets.CYB_SCREENSHOT_PASSWORD }}
+        run: |
+          pnpm --filter @cookyourbooks/cli build
+          node apps/cli/dist/index.js demo load scripts/demo-content/out
 
       - name: Capture screenshots
         # capture.mjs runs `cap sync` (pod install) itself, so strip RVM vars
