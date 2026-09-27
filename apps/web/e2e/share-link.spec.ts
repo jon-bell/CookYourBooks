@@ -12,6 +12,10 @@ test.describe('Recipe share links', () => {
     context,
     browser,
   }) => {
+    // Four browser contexts (owner, two anonymous, a signed-in visitor) and two
+    // sign-ins, each opening its own account database — past the 30s default
+    // on a loaded CI runner.
+    test.setTimeout(60_000);
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
     await createRecipeViaUi(page, {
