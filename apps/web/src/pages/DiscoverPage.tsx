@@ -17,6 +17,7 @@ import {
   listGlobalTocEntries,
 } from '../data/globalCookbookLookup.js';
 import { useSync } from '../local/SyncProvider.js';
+import { BlockAuthorDialog } from '../moderation/BlockAuthorDialog.js';
 import { ReportDialog } from '../moderation/ReportDialog.js';
 import { supabase } from '../supabase.js';
 
@@ -24,6 +25,7 @@ export function DiscoverPage() {
   const [q, setQ] = useState('');
   const [sourceType, setSourceType] = useState<string>('');
   const [reporting, setReporting] = useState<PublicCollectionSummary | undefined>();
+  const [blocking, setBlocking] = useState<PublicCollectionSummary | undefined>();
   const { user } = useAuth();
   const { syncNow } = useSync();
   const navigate = useNavigate();
@@ -215,6 +217,15 @@ export function DiscoverPage() {
                     Report
                   </button>
                 )}
+                {user && (
+                  <button
+                    onClick={() => setBlocking(c)}
+                    className="rounded-md px-2 py-1 text-xs text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800 hover:text-stone-800"
+                    aria-label={`Block the author of ${c.title}`}
+                  >
+                    Block author
+                  </button>
+                )}
               </div>
             </li>
           ))}
@@ -231,6 +242,11 @@ export function DiscoverPage() {
         targetType="COLLECTION"
         targetId={reporting?.id ?? ''}
         targetLabel={reporting?.title ?? ''}
+      />
+      <BlockAuthorDialog
+        collection={blocking}
+        onClose={() => setBlocking(undefined)}
+        onBlocked={() => void qc.invalidateQueries({ queryKey: ['public-collections'] })}
       />
     </div>
   );

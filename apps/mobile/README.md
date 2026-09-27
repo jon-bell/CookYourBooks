@@ -224,9 +224,49 @@ cd apps/mobile/ios
 fastlane release
 ```
 
-This runs `beta` then `deliver --submit-for-review`. Screenshots and
-store metadata stay manual for now — manage them in App Store Connect's
-web UI until we automate them.
+This runs `beta` then `deliver --submit-for-review`. Store metadata stays
+manual — manage it in App Store Connect's web UI. Screenshots are generated
+by the pipeline below.
+
+### App Store screenshots
+
+`scripts/ios-screenshots/capture.mjs` produces the store screenshots from the
+real app on simulators — no hand-driving:
+
+1. Builds a **screenshot flavour** of the web bundle
+   (`VITE_SCREENSHOT_CONTROL_URL` set, which compiles in
+   `apps/web/src/screenshots/driver.ts`; normal builds don't contain it),
+   then a Release simulator build with an ATS local-networking exemption
+   added for that build only.
+2. Per device (6.9" iPhone + 13" iPad by default — the two sizes App Store
+   Connect requires since the app runs on iPad), creates a throwaway
+   simulator, forces light mode, pins the status bar to 9:41/full, installs
+   and launches the app.
+3. The in-app driver fetches its script from the host over `127.0.0.1`,
+   signs in as the demo account, walks `scripts/ios-screenshots/steps.json`
+   (`{recipe}` expands to a recipe from the gallery, preferring one with a
+   cover), and asks the host to `simctl io screenshot` at each step.
+
+Output lands in `apps/mobile/screenshots/en-US/` (gitignored), the layout
+`deliver` expects.
+
+```bash
+# Local (macOS + Xcode). Uses apps/web/.env.local for the Supabase target.
+CYB_SCREENSHOT_EMAIL=… CYB_SCREENSHOT_PASSWORD=… node scripts/ios-screenshots/capture.mjs
+
+# Same driver in headless Chromium — fast step iteration on Linux:
+CYB_SCREENSHOT_EMAIL=demo@cookyourbooks.local CYB_SCREENSHOT_PASSWORD=demo1234 \
+  node scripts/ios-screenshots/capture.mjs --web
+
+# Push the PNGs to the editable App Store version (replaces existing ones):
+cd apps/mobile/ios && bundle exec fastlane upload_screenshots
+```
+
+**CI:** run `mobile.yml` via *workflow_dispatch* with platform
+`ios-screenshots` (tick `upload_screenshots` to also push to App Store
+Connect). PNGs are uploaded as the `app-store-screenshots` artifact. Needs
+the `CYB_SCREENSHOT_EMAIL` / `CYB_SCREENSHOT_PASSWORD` secrets — a prod demo
+account with a photogenic library. Reuse it as the App Review demo login.
 
 ### Common pitfalls
 

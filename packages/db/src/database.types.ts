@@ -2808,6 +2808,39 @@ export type Database = {
         }
         Relationships: []
       }
+      user_blocks: {
+        Row: {
+          blocked_id: string
+          blocker_id: string
+          created_at: string
+        }
+        Insert: {
+          blocked_id: string
+          blocker_id: string
+          created_at?: string
+        }
+        Update: {
+          blocked_id?: string
+          blocker_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_blocks_blocked_id_fkey"
+            columns: ["blocked_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_blocks_blocker_id_fkey"
+            columns: ["blocker_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_cover_prefs: {
         Row: {
           model: string
@@ -3198,6 +3231,10 @@ export type Database = {
           p_variants: Json
         }
         Returns: string
+      }
+      block_collection_owner: {
+        Args: { p_collection_id: string }
+        Returns: undefined
       }
       clear_my_import_storage: {
         Args: { p_id?: string; p_scope: string }
@@ -3690,6 +3727,14 @@ export type Database = {
         Returns: boolean
       }
       leave_household: { Args: never; Returns: undefined }
+      list_my_blocks: {
+        Args: never
+        Returns: {
+          blocked_id: string
+          created_at: string
+          display_name: string
+        }[]
+      }
       llm_usage_summary: {
         Args: { p_from?: string; p_group_by?: string; p_to?: string }
         Returns: {
