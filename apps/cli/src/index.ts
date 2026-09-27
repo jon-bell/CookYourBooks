@@ -272,15 +272,20 @@ demoCommand
       ) {
         exitWith(`--provider must be "gemini" or "openai-compatible".`);
       }
-      const books = readCorpus(
+      const all = readCorpus(
         dir,
         opts.only?.split(',').map((s) => s.trim()),
       );
-      if (books.length === 0) exitWith(`${dir}: no books with recipe pages found.`);
-      for (const b of books) {
+      // Books with only contents / notes / handwriting sections have no
+      // recipe pages to import — skip them rather than create empty cookbooks.
+      const books = all.filter((b) => b.recipes.length > 0);
+      for (const b of all) {
         const n = Math.min(b.recipes.length, opts.maxRecipes ?? b.recipes.length);
-        console.error(`${b.id}: ${n} recipe(s) — ${b.title}`);
+        console.error(
+          `${b.id}: ${n > 0 ? `${n} recipe(s)` : 'no recipe pages, skipped'} — ${b.title}`,
+        );
       }
+      if (books.length === 0) exitWith(`${dir}: no books with recipe pages found.`);
       if (opts.dryRun) return;
 
       const { client, userId, email } = await signIn(opts);
