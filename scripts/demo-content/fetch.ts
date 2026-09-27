@@ -1,37 +1,40 @@
-// deno run --allow-net --allow-read --allow-write --allow-run \
+// deno run --allow-net --allow-read --allow-write \
 //   scripts/demo-content/fetch.ts [--only id,id] [--text] [--images] [--bulk] [--width N] [--force]
 //
-// Collects the public-domain demo corpus described in ./sources.ts into
+// Collects the rights-cleared demo corpus described in ./sources.ts into
 // scripts/demo-content/out/ (gitignored). Two shapes of output, so the same
 // books can demo both import paths:
 //
-//   out/<book>/text/         whole-book transcriptions (Gutenberg) and, for
-//                            PDF sources, one .txt per recipe from the PDF's
-//                            text layer — paste-able into the text importer.
-//   out/<book>/pages/<slug>/ page images for one recipe, in reading order —
-//                            drop the folder into the OCR import board.
-//   out/<book>/bulk/<label>/ a chapter-sized run of pages (--bulk only) for
-//                            the "scan a whole chapter" demo.
+//   out/<book>/text/book.txt   whole-book transcription (Project Gutenberg,
+//                              license/trademark header+footer stripped) —
+//                              paste-able into the text importer.
+//   out/<book>/pages/<slug>/   page images for one recipe, in reading order —
+//                              drop the folder into the OCR import board.
+//   out/<book>/bulk/<label>/   a chapter-sized run of pages (--bulk only) for
+//                              the "scan a whole chapter" demo.
 //   out/<book>/<kind>/<label>/ non-recipe example pages: contents, index,
-//                            blank-notes, handwritten, pasted-in (sources.ts
-//                            `sections`). PDF sections also get a .txt.
-//   out/<book>/cover.jpg     first scan leaf / first PDF page.
-//   out/<book>/source.json   title, author, year, rights basis, and an index
-//                            of every file written — the provenance record.
+//                              blank-notes, handwritten (sources.ts `sections`).
+//   out/<book>/cover.jpg       first page of the scan.
+//   out/<book>/source.json     title, author, year, rights and scan terms, and
+//                              an index of every file — the provenance record.
 //
 // Flags:
 //   --only a,b    just these book ids (see sources.ts)
-//   --text        only transcriptions / PDF text   (default: text + images)
-//   --images      only page images                 (default: text + images)
+//   --text        only transcriptions   (default: text + images)
+//   --images      only page images      (default: text + images)
 //   --bulk        also fetch the bulk chapter ranges (tens of pages each)
 //   --width N     IA page image width in px (default 1600; the scans are
 //                 ~1800 native, and 1600 keeps OCR accuracy at ~1/3 the bytes)
 //   --force       re-download files that already exist
 //
 // Re-runs are incremental: existing files are skipped unless --force.
-// PDF sources need poppler (`pdftotext`, `pdftoppm`) on PATH.
+//
+// out/ mirrors the manifest. A full run (no --only / --text / --images)
+// deletes every file sources.ts no longer produces — including whole books —
+// so a source pulled for rights reasons can't linger on anyone's disk.
+// (Without --bulk, bulk pages still in the manifest are kept, not fetched.)
 
-import { BOOKS, type Book, type PdfRecipe } from './sources.ts';
+import { BOOKS, type Book } from './sources.ts';
 
 const OUT = new URL('./out/', import.meta.url).pathname;
 const UA = 'CookYourBooks-demo-content/1.0 (+https://cookyourbooks.app)';
@@ -92,9 +95,33 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Which URL each file under out/<book>/ was downloaded from. A file only
+ * counts as a cache hit if it came from the URL the manifest names *now* —
+ * otherwise swapping a book to a different scan (as when a Google scan was
+ * replaced for rights reasons) would silently keep the old scan's files at
+ * any path the two share, like cover.jpg.
+ */
+type Ledger = Record<string, string>;
+const LEDGER = '.fetched.json';
+
+async function readLedger(dir: string): Promise<Ledger> {
+  try {
+    return JSON.parse(await Deno.readTextFile(`${dir}/${LEDGER}`));
+  } catch {
+    return {};
+  }
+}
+
 /** GET with retry. IA in particular throws the odd 5xx / reset under load. */
-async function download(url: string, dest: string, force: boolean): Promise<'hit' | 'fetched'> {
-  if (!force && (await exists(dest))) return 'hit';
+async function download(
+  url: string,
+  dest: string,
+  force: boolean,
+  ledger?: { entries: Ledger; key: string },
+): Promise<'hit' | 'fetched'> {
+  const fresh = ledger ? ledger.entries[ledger.key] === url : true;
+  if (!force && fresh && (await exists(dest))) return 'hit';
   await Deno.mkdir(dest.slice(0, dest.lastIndexOf('/')), { recursive: true });
   let lastErr: unknown;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -113,6 +140,7 @@ async function download(url: string, dest: string, force: boolean): Promise<'hit
       const tmp = `${dest}.part`;
       await Deno.writeFile(tmp, new Uint8Array(await res.arrayBuffer()));
       await Deno.rename(tmp, dest);
+      if (ledger) ledger.entries[ledger.key] = url;
       return 'fetched';
     } catch (e) {
       lastErr = e;
@@ -130,20 +158,6 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>): Prom
       for (let t = queue.shift(); t !== undefined; t = queue.shift()) await fn(t);
     }),
   );
-}
-
-async function run(cmd: string, args: string[]): Promise<string> {
-  let out: Deno.CommandOutput;
-  try {
-    out = await new Deno.Command(cmd, { args, stdout: 'piped', stderr: 'piped' }).output();
-  } catch (e) {
-    if (e instanceof Deno.errors.NotFound) {
-      throw new Error(`\`${cmd}\` not found — PDF sources need poppler (apt install poppler-utils / brew install poppler)`);
-    }
-    throw e;
-  }
-  if (!out.success) throw new Error(`${cmd} ${args.join(' ')}: ${new TextDecoder().decode(out.stderr)}`);
-  return new TextDecoder().decode(out.stdout);
 }
 
 // ── Internet Archive ────────────────────────────────────────────────────
@@ -188,9 +202,9 @@ function iaPageUrl(identifier: string, n: number, width: number): string {
   return `https://archive.org/download/${identifier}/page/n${n}_w${width}.jpg`;
 }
 
-async function fetchScans(book: Book, dir: string, o: Opts) {
+async function fetchScans(book: Book, dir: string, o: Opts, ledger: Ledger): Promise<string[]> {
   const ia = book.ia;
-  if (!ia) return;
+  if (!ia) return [];
   const index = await iaLeafIndex(ia.identifier);
   const page = (leaf: number) => {
     const n = index.get(leaf);
@@ -198,7 +212,7 @@ async function fetchScans(book: Book, dir: string, o: Opts) {
     return iaPageUrl(ia.identifier, n, o.width);
   };
   const jobs: { url: string; dest: string }[] = [];
-  // First access page: the cover on most scans (a library/Google title sheet on some).
+  // First access page: the cover on most scans (a library title sheet on some).
   jobs.push({ url: iaPageUrl(ia.identifier, 0, o.width), dest: `${dir}/cover.jpg` });
   for (const r of ia.recipes ?? []) {
     const slug = slugify(r.title);
@@ -214,136 +228,77 @@ async function fetchScans(book: Book, dir: string, o: Opts) {
       jobs.push({ url: page(leaf), dest: `${dir}/${sec.kind}/${sec.label}/${pad(i + 1)}-leaf${leaf}.jpg` });
     });
   }
-  if (o.bulk) {
-    for (const range of ia.bulk ?? []) {
-      for (let leaf = range.from; leaf <= range.to; leaf++) {
-        jobs.push({
-          url: page(leaf),
-          dest: `${dir}/bulk/${range.label}/${pad(leaf - range.from + 1, 3)}-leaf${leaf}.jpg`,
-        });
-      }
+  // Bulk runs are only downloaded with --bulk, but always listed as expected
+  // output, so a run without --bulk keeps current ones and prunes stale ones.
+  const bulk: { url: string; dest: string }[] = [];
+  for (const range of ia.bulk ?? []) {
+    for (let leaf = range.from; leaf <= range.to; leaf++) {
+      bulk.push({
+        url: page(leaf),
+        dest: `${dir}/bulk/${range.label}/${pad(leaf - range.from + 1, 3)}-leaf${leaf}.jpg`,
+      });
     }
   }
+  if (o.bulk) jobs.push(...bulk);
   let fetched = 0;
   await pool(jobs, 4, async (j) => {
-    if ((await download(j.url, j.dest, o.force)) === 'fetched') fetched++;
+    const key = j.dest.slice(dir.length + 1);
+    if ((await download(j.url, j.dest, o.force, { entries: ledger, key })) === 'fetched') fetched++;
   });
   console.log(`  scans: ${jobs.length} pages (${fetched} downloaded) from archive.org/details/${ia.identifier}`);
-}
-
-// ── Born-digital PDFs ───────────────────────────────────────────────────
-
-const norm = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[’‘]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-/**
- * Find each recipe's page(s) by the title printed at the top of the page.
- * `pages` is pdftotext's reading-order (non-layout) text, which is messy in
- * two known ways: a wrapped title can have the "Prep time:" sidebar spliced
- * into it (Dinners), and decorative banner text ("THE CLASSICS") can come
- * first (Family Meals). So: the title phrase near the top, or its first
- * three words at the very start with every title word nearby. Contents and
- * chapter-divider pages list titles too; they're the ones with bullets or
- * dot leaders. A recipe that runs over continues on pages headed
- * "<title> (continued)". Titles set as artwork aren't in the text layer at
- * all — give those explicit `pages` in sources.ts.
- */
-function locatePdfRecipes(pages: string[], recipes: PdfRecipe[]): Map<string, number[]> {
-  const heads = pages.map((p) => norm(p).slice(0, 300));
-  const isListing = (h: string) => h.includes('•') || h.includes('....');
-  const found = new Map<string, number[]>();
-  for (const r of recipes) {
-    if (typeof r !== 'string') {
-      found.set(r.title, r.pages);
-      continue;
-    }
-    const phrase = norm(r);
-    const words = phrase.split(' ');
-    const lead = words.slice(0, 3).join(' ');
-    const mentions = (h: string) => h.includes(phrase) || (h.startsWith(lead) && words.every((w) => h.includes(w)));
-    const start = heads.findIndex((h) => !isListing(h) && !h.includes('(continued)') && mentions(h));
-    if (start < 0) {
-      console.warn(`  ! pdf: no page headed "${r}" — check the title, or pin it with { title, pages }`);
-      continue;
-    }
-    const nums = [start + 1];
-    for (let i = start + 1; i < heads.length && heads[i].includes('(continued)') && heads[i].includes(lead); i++) {
-      nums.push(i + 1);
-    }
-    found.set(r, nums);
-  }
-  return found;
-}
-
-/** 150 dpi: legible for OCR, and the photos still look good in a deck. */
-async function renderPdfPage(src: string, page: number, dest: string, force: boolean) {
-  if (!force && (await exists(dest))) return;
-  await run('pdftoppm', ['-jpeg', '-r', '150', '-f', String(page), '-l', String(page), '-singlefile', src, dest.replace(/\.jpg$/, '')]);
-}
-
-async function fetchPdf(book: Book, dir: string, o: Opts) {
-  const pdf = book.pdf;
-  if (!pdf) return;
-  const src = `${dir}/source.pdf`;
-  const hit = await download(pdf.url, src, o.force);
-  console.log(`  pdf: ${hit === 'hit' ? 'cached' : 'downloaded'} ${pdf.url}`);
-
-  // Form feeds separate pages. Reading-order text to find recipes; layout
-  // text to write them out (keeps the ingredient / step columns apart).
-  const located = locatePdfRecipes((await run('pdftotext', [src, '-'])).split('\f'), pdf.recipes);
-  const pages = (await run('pdftotext', ['-layout', src, '-'])).split('\f');
-
-  if (o.images) {
-    const cover = `${dir}/cover.jpg`;
-    if (o.force || !(await exists(cover))) {
-      await run('pdftoppm', ['-jpeg', '-r', '100', '-f', '1', '-l', '1', '-singlefile', src, cover.replace(/\.jpg$/, '')]);
-    }
-  }
-  for (const [title, nums] of located) {
-    const slug = slugify(title);
-    if (o.text) {
-      const rel = `text/${slug}.txt`;
-      await Deno.mkdir(`${dir}/text`, { recursive: true });
-      await Deno.writeTextFile(`${dir}/${rel}`, nums.map((n) => pages[n - 1].trimEnd()).join('\n\n') + '\n');
-    }
-    if (o.images) {
-      await Deno.mkdir(`${dir}/pages/${slug}`, { recursive: true });
-      for (const [i, n] of nums.entries()) {
-        await renderPdfPage(src, n, `${dir}/pages/${slug}/${pad(i + 1)}-p${n}.jpg`, o.force);
-      }
-    }
-  }
-  for (const sec of pdf.sections ?? []) {
-    if (o.text) {
-      await Deno.mkdir(`${dir}/${sec.kind}`, { recursive: true });
-      await Deno.writeTextFile(
-        `${dir}/${sec.kind}/${sec.label}.txt`,
-        sec.leaves.map((n) => pages[n - 1].trimEnd()).join('\n\n') + '\n',
-      );
-    }
-    if (o.images) {
-      await Deno.mkdir(`${dir}/${sec.kind}/${sec.label}`, { recursive: true });
-      for (const [i, n] of sec.leaves.entries()) {
-        await renderPdfPage(src, n, `${dir}/${sec.kind}/${sec.label}/${pad(i + 1)}-p${n}.jpg`, o.force);
-      }
-    }
-  }
-  console.log(`  pdf: ${located.size}/${pdf.recipes.length} recipes located`);
+  return [...jobs, ...bulk].map((j) => j.dest.slice(dir.length + 1));
 }
 
 // ── Transcriptions ──────────────────────────────────────────────────────
 
-async function fetchText(book: Book, dir: string, o: Opts) {
+/**
+ * Project Gutenberg's license governs the "Project Gutenberg" trademark, not
+ * the public-domain text; PG's own terms say that removing the header and
+ * footer (every reference to the trademark) leaves an unrestricted text.
+ * So keep only what's between the START and END markers — and fail rather
+ * than write a file if they're missing, so license text never ships.
+ */
+export function stripGutenberg(raw: string, url: string): string {
+  const start = raw.match(/^\*\*\* ?START OF (THE|THIS) PROJECT GUTENBERG EBOOK[^\n]*\n/im);
+  const end = raw.match(/^\*\*\* ?END OF (THE|THIS) PROJECT GUTENBERG EBOOK/im);
+  if (!start || start.index === undefined || !end || end.index === undefined || end.index < start.index) {
+    throw new Error(`${url}: no Project Gutenberg START/END markers — refusing to write unstripped text`);
+  }
+  const body = raw.slice(start.index + start[0].length, end.index).trim();
+  if (/project gutenberg/i.test(body.slice(0, 2000)) || /project gutenberg/i.test(body.slice(-2000))) {
+    console.warn(`  ! ${url}: "Project Gutenberg" still appears near the start/end of the stripped text — check it`);
+  }
+  return body + '\n';
+}
+
+async function fetchText(book: Book, dir: string, o: Opts, ledger: Ledger): Promise<string[]> {
+  const rels: string[] = [];
   for (const t of book.text ?? []) {
     const rel = `text/${t.name}`;
-    const hit = await download(t.url, `${dir}/${rel}`, o.force);
-    console.log(`  text: ${hit === 'hit' ? 'cached' : 'downloaded'} ${t.url}`);
+    rels.push(rel);
+    const dest = `${dir}/${rel}`;
+    if (!o.force && ledger[rel] === t.url && (await exists(dest))) {
+      // A cache hit must already be stripped — files from before stripping
+      // existed still carry the license text, so strip those in place.
+      const cached = await Deno.readTextFile(dest);
+      if (/START OF (THE|THIS) PROJECT GUTENBERG EBOOK/i.test(cached)) {
+        await Deno.writeTextFile(dest, stripGutenberg(cached, t.url));
+        console.log(`  text: stripped cached ${t.url}`);
+      } else console.log(`  text: cached ${t.url}`);
+      continue;
+    }
+    // The raw download is a scratch file: it carries the PG license text.
+    const raw = `${dest}.gutenberg-raw`;
+    await download(t.url, raw, true);
+    try {
+      await Deno.writeTextFile(dest, stripGutenberg(await Deno.readTextFile(raw), t.url));
+      ledger[rel] = t.url;
+    } finally {
+      await Deno.remove(raw);
+    }
+    console.log(`  text: downloaded + stripped ${t.url}`);
   }
+  return rels;
 }
 
 /** Everything on disk for a book, grouped by folder — rebuilt each run so a
@@ -354,7 +309,7 @@ async function indexDir(dir: string): Promise<Record<string, string[]>> {
     for await (const e of Deno.readDir(rel ? `${dir}/${rel}` : dir)) {
       const path = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory) await walk(path);
-      else if (path !== 'source.json' && !path.endsWith('.part')) (index[rel || '.'] ??= []).push(path);
+      else if (path !== 'source.json' && path !== LEDGER && !path.endsWith('.part')) (index[rel || '.'] ??= []).push(path);
     }
   }
   await walk('');
@@ -362,12 +317,45 @@ async function indexDir(dir: string): Promise<Record<string, string[]>> {
   return Object.fromEntries(Object.entries(index).sort(([a], [b]) => a.localeCompare(b)));
 }
 
+/** Delete files under `dir` not in `keep`, then any directories left empty. */
+async function prune(dir: string, keep: Set<string>): Promise<number> {
+  let removed = 0;
+  async function walk(rel: string): Promise<boolean> {
+    let empty = true;
+    for await (const e of Deno.readDir(rel ? `${dir}/${rel}` : dir)) {
+      const path = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory) {
+        if (await walk(path)) await Deno.remove(`${dir}/${path}`);
+        else empty = false;
+      } else if (keep.has(path)) {
+        empty = false;
+      } else {
+        await Deno.remove(`${dir}/${path}`);
+        removed++;
+      }
+    }
+    return empty;
+  }
+  await walk('');
+  return removed;
+}
+
 // ── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
   const o = parseArgs(Deno.args);
   const books = BOOKS.filter((b) => !o.only || o.only.has(b.id));
+  // Only a full run knows the whole expected output, so only it prunes.
+  const full = !o.only && o.text && o.images;
   const failures: string[] = [];
+  if (full && (await exists(OUT))) {
+    for await (const e of Deno.readDir(OUT)) {
+      if (e.isDirectory && !BOOKS.some((b) => b.id === e.name)) {
+        await Deno.remove(`${OUT}${e.name}`, { recursive: true });
+        console.log(`removed out/${e.name}/ — no longer in the manifest`);
+      }
+    }
+  }
   for (const book of books) {
     console.log(`${book.id} — ${book.title} (${book.author}, ${book.year})`);
     const dir = `${OUT}${book.id}`;
@@ -376,26 +364,34 @@ async function main() {
     const steps: [boolean, typeof fetchText][] = [
       [o.text, fetchText],
       [o.images, fetchScans],
-      [o.text || o.images, fetchPdf],
     ];
+    const expected = new Set(['source.json', LEDGER]);
+    const ledger = await readLedger(dir);
+    let complete = full;
     for (const [enabled, step] of steps) {
       if (!enabled) continue;
       try {
-        await step(book, dir, o);
+        for (const rel of await step(book, dir, o, ledger)) expected.add(rel);
       } catch (e) {
+        complete = false; // don't prune on a partial picture of what's expected
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`  ✗ ${step.name}: ${msg}`);
         failures.push(`${book.id}/${step.name}: ${msg}`);
       }
     }
-    const { text: _t, ia, pdf, ...meta } = book;
+    if (complete) {
+      const n = await prune(dir, expected);
+      if (n) console.log(`  pruned ${n} file(s) no longer in the manifest`);
+      for (const k of Object.keys(ledger)) if (!expected.has(k)) delete ledger[k];
+    }
+    await Deno.writeTextFile(`${dir}/${LEDGER}`, JSON.stringify(ledger, null, 2) + '\n');
+    const { text: _t, ia, ...meta } = book;
     await Deno.writeTextFile(
       `${dir}/source.json`,
       JSON.stringify(
         {
           ...meta,
           scan: ia ? `https://archive.org/details/${ia.identifier}` : undefined,
-          pdf: pdf?.url,
           fetchedAt: new Date().toISOString(),
           files: await indexDir(dir),
         },
