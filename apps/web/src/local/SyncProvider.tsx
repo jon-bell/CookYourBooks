@@ -481,14 +481,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   // no signed-out surface reads the DB, and signing back in as the same
   // account reuses the open handle. Signed-out visitors never open it at all.
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      if (!boundLocalDbUser()) {
-        setLocalReady(true);
-        setStatus((s) => (s === 'initializing' ? 'idle' : s));
-      }
-      return;
-    }
+    // Signed out: nothing to open (readiness is derived below).
+    if (authLoading || !user) return;
     if (bindLocalDbUser(user.id) === 'reload') {
       logSync('info', 'account changed — reloading to open its own database');
       location.reload();
@@ -520,6 +514,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user?.id]);
 
   // Kick off cross-tab leader election. Subscribe so role changes
@@ -657,11 +652,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const isLocalReady = localReady && (!user || hydrated);
+  // A signed-out visitor never opens the DB (it's bound per account), so
+  // there's nothing to wait for — ready and idle once auth has resolved.
+  const signedOutReady = !authLoading && !user && !boundLocalDbUser();
+  const effectiveLocalReady = localReady || signedOutReady;
+  const isLocalReady = effectiveLocalReady && (!user || hydrated);
 
   const value: SyncState = {
-    status,
-    localReady,
+    status: signedOutReady && status === 'initializing' ? 'idle' : status,
+    localReady: effectiveLocalReady,
     hydrated,
     isLocalReady,
     pendingWrites,

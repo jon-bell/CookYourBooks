@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
 
 import pkg from '../package.json' with { type: 'json' };
-
 import {
   type CookbookEntry,
   type CookbookMetadata,

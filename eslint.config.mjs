@@ -135,10 +135,17 @@ export default defineConfig([
     },
   },
   {
-    // A CLI's interface IS its console output.
     files: ['apps/cli/src/**/*.ts'],
     rules: {
+      // A CLI's interface IS its console output.
       'no-console': 'off',
+      // The CLI ships as one esbuild bundle: the workspace packages it imports
+      // (@cookyourbooks/domain, /db) are compiled in, so they're
+      // devDependencies of the published package by design.
+      'import/no-extraneous-dependencies': [
+        'error',
+        { devDependencies: true, includeInternal: true },
+      ],
     },
   },
 ]);
