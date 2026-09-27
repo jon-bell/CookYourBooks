@@ -299,8 +299,9 @@ export const SCHEMA_STATEMENTS: string[] = [
   // Bulk-loaded snapshot of USDA Foundation + SR Legacy from
   // `nutrition_foods_master` on the server. Pulled once per session on
   // first boot (one-shot, not incremental — these update once or twice
-  // a year). Powers offline ingredient → USDA matching: ~8k rows, ~5 MB
-  // on disk. Branded stays server-only because it's 500k+ rows.
+  // a year). Powers offline ingredient → USDA matching: ~13.5k rows
+  // (Foundation + SR Legacy + Survey FNDDS), ~8 MB on disk. Branded
+  // stays server-only because it's 500k+ rows.
   // Not CRR — pure reference data, server is canonical.
   `create table if not exists nutrition_foods_essentials (
     source text not null default '',
@@ -318,9 +319,13 @@ export const SCHEMA_STATEMENTS: string[] = [
     fiber_g real,
     sodium_mg real,
     portions text not null default '[]',
-    -- Pre-lowercased "description | brand | brand_owner" blob for
-    -- substring matching. ~8k rows so plain LIKE is fast enough; no
-    -- need for FTS5 + triggers + content-table choreography yet.
+    -- Tokenized, space-PADDED "description brand brand_owner" blob,
+    -- built by buildSearchBlob in local/sync.ts. The padding is what
+    -- makes a LIKE '% salt %' probe a whole-word test: the previous raw
+    -- lowercased join could only do substring matching, so "bay" hit
+    -- "Scallops, bay, Patagonian" and "pure" hit "Tomato, puree".
+    -- ~13.5k rows so plain LIKE is fast enough; no need for FTS5 +
+    -- triggers + content-table choreography yet.
     search_blob text not null default '',
     primary key (source, source_id)
   )`,

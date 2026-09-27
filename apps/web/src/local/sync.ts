@@ -7,6 +7,7 @@ import type {
   RecipeRow,
   RecipeTagRow,
 } from '@cookyourbooks/db';
+import { tokenizeIngredient } from '@cookyourbooks/domain';
 import { decode as msgpackDecode } from '@msgpack/msgpack';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
@@ -1254,14 +1255,46 @@ async function pullHouseholdSharedContent(
   );
 }
 
-// ---------- nutrition essentials (USDA Foundation + SR Legacy) ----------
+// ---------- nutrition essentials (USDA generic foods) ----------
 //
 // Pulled separately from pullAll because it's reference data, not user
 // data — slow first load shouldn't block the recipes from appearing.
 // Run once per device on first sign-in; refresh monthly to pick up
 // upstream changes. Branded stays server-only (500k rows is too much
 // to mirror to every client).
-const NUTRITION_ESSENTIALS_TOPIC = 'nutrition_essentials';
+//
+// Survey (FNDDS) joined Foundation + SR Legacy in 2026-09: without it
+// 305 distinct ingredient names had no local candidate at all and fell
+// through to the edge function, which the audit graded 0% usable. It
+// adds ~5.4k rows (~13.5k total, still a few MB) and its rows carry
+// calories, which the hard filter in searchLocalEssentials now requires.
+//
+// The topic is versioned because `search_blob` changed format (see
+// buildSearchBlob): bumping it resets the watermark so existing devices
+// re-pull and rewrite their blobs instead of searching stale ones.
+const NUTRITION_ESSENTIALS_TOPIC = 'nutrition_essentials_v2';
+
+/**
+ * Space-padded, tokenized match blob for `nutrition_foods_essentials`.
+ *
+ * Padding plus single-space separation is what lets the local ranker ask
+ * for a WHOLE WORD (`like '% salt %'`) rather than a substring. The old
+ * blob was a raw lowercased join, so `'%bay%'` matched "Scallops, bay,
+ * Patagonian" and `'%pure%'` matched "Tomato, puree" — the single
+ * largest source of wrong nutrition matches.
+ *
+ * Tokenization goes through the domain's `tokenizeIngredient` so the
+ * blob and the query are normalized identically (punctuation collapsed,
+ * diacritics folded); if they disagreed, terms would stop matching.
+ */
+function buildSearchBlob(r: {
+  description: string;
+  brand?: string | null;
+  brand_owner?: string | null;
+}): string {
+  const raw = [r.description, r.brand ?? '', r.brand_owner ?? ''].join(' ');
+  return ` ${tokenizeIngredient(raw).join(' ')} `;
+}
 const NUTRITION_ESSENTIALS_REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface EssentialsRow {
@@ -1323,7 +1356,7 @@ export async function pullNutritionEssentials(
         'source,source_id,data_type,description,brand,brand_owner,' +
           'calories_kcal,protein_g,fat_g,saturated_fat_g,carbs_g,sugar_g,fiber_g,sodium_mg,portions',
       )
-      .in('data_type', ['Foundation', 'SR Legacy'])
+      .in('data_type', ['Foundation', 'SR Legacy', 'Survey (FNDDS)'])
       .order('source_id', { ascending: true })
       .range(from, to),
   );
@@ -1370,7 +1403,7 @@ async function upsertEssentialsBatch(rows: EssentialsRow[]): Promise<void> {
     const chunk = rows.slice(i, i + CHUNK);
     const params: unknown[] = [];
     for (const r of chunk) {
-      const blob = [r.description, r.brand ?? '', r.brand_owner ?? ''].join(' ').toLowerCase();
+      const blob = buildSearchBlob(r);
       params.push(
         r.source,
         r.source_id,

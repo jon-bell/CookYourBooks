@@ -75,6 +75,49 @@ describe('quantityToGrams', () => {
     const r = quantityToGrams(1, 'pinch', 'salt', {});
     expect(r).toBeNull();
   });
+
+  // --- volume chaining (2026-09) ---
+  // Every density in global_conversions is per-millilitre, but recipes
+  // are written in cups/tbsp/tsp — which outnumber millilitres ~13:1 in
+  // the production corpus. Without the chain those all fell through to
+  // the water-equivalent guess below, so 1 cup of flour weighed 236 g
+  // instead of ~120 g.
+  it('chains a per-millilitre density through a volume unit', () => {
+    const r = quantityToGrams(1, 'cup', 'all-purpose flour', {
+      densityRules: [{ fromUnit: 'milliliter', factor: 0.53, ingredientName: 'flour' }],
+    });
+    // 236.588 mL x 0.53 g/mL
+    expect(r?.grams).toBeCloseTo(125.4, 1);
+    // A real density is not a guess, so this must NOT be flagged approximate.
+    expect(r?.approximate).toBe(false);
+    expect(r?.source).toBe('density-volume');
+  });
+
+  it('prefers an exact-unit rule over the millilitre chain', () => {
+    const r = quantityToGrams(1, 'cup', 'flour', {
+      densityRules: [
+        { fromUnit: 'cup', factor: 120, ingredientName: 'flour' },
+        { fromUnit: 'milliliter', factor: 0.53, ingredientName: 'flour' },
+      ],
+    });
+    expect(r?.grams).toBe(120);
+    expect(r?.source).toBe('density');
+  });
+
+  it('still falls back to water-equivalent when no density covers the ingredient', () => {
+    const r = quantityToGrams(1, 'cup', 'mystery liquid', {
+      densityRules: [{ fromUnit: 'milliliter', factor: 0.92, ingredientName: 'oil' }],
+    });
+    expect(r?.source).toBe('water-equiv');
+    expect(r?.approximate).toBe(true);
+  });
+
+  it('folds diacritics when matching a density rule to an ingredient', () => {
+    const r = quantityToGrams(1, 'cup', 'crème fraîche', {
+      densityRules: [{ fromUnit: 'milliliter', factor: 0.98, ingredientName: 'creme fraiche' }],
+    });
+    expect(r?.source).toBe('density-volume');
+  });
 });
 
 describe('totalNutrition', () => {

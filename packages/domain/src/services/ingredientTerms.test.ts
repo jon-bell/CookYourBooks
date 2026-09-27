@@ -90,4 +90,57 @@ describe('extractIngredientTerms', () => {
     expect(ingredientSearchQuery('garlic cloves, minced')).toBe('garlic');
     expect(ingredientSearchQuery('plain full-fat yogurt')).toBe('plain full fat yogurt');
   });
+
+  // --- Accented ingredients (2026-09) ---
+  // The tokenizer used to strip non-ASCII, which shattered the word
+  // rather than folding it: "jalapeño" → ["jalape"], "pâté" → []. Every
+  // accented ingredient in the corpus failed to match anything.
+  it('folds diacritics instead of shattering the word', () => {
+    expect(ingredientSearchQuery('jalapeño')).toBe('jalapeno');
+    expect(ingredientSearchQuery('crème fraîche')).toBe('creme fraiche');
+    expect(ingredientSearchQuery('tomato purée')).toBe('tomato puree');
+    // Previously produced the empty string, so the search had nothing
+    // to run and the ingredient silently resolved to nothing.
+    expect(ingredientSearchQuery('pâté')).toBe('pate');
+  });
+
+  // --- Shared head noun across an alternative list (2026-09) ---
+  it('keeps the noun that both options of an "or" list share', () => {
+    expect(ingredientSearchQuery('green or brown lentils')).toBe('green lentils');
+    expect(ingredientSearchQuery('cherry or grape tomatoes')).toBe('cherry tomatoes');
+    expect(ingredientSearchQuery('coconut or vegetable oil')).toBe('coconut oil');
+    expect(ingredientSearchQuery('unsulfured or blackstrap molasses')).toBe('unsulfured molasses');
+  });
+
+  it('still keeps only the first option when the alternatives are whole foods', () => {
+    expect(ingredientSearchQuery('light soy sauce or shoyu')).toBe('light soy sauce');
+    expect(ingredientSearchQuery('unsalted butter or vegan butter')).toBe('unsalted butter');
+  });
+
+  // --- Head noun must be the food, not a part of it (2026-09) ---
+  it('heads on the food rather than the part word', () => {
+    expect(extractIngredientTerms('cinnamon stick').core).toEqual(['cinnamon']);
+    expect(extractIngredientTerms('lemon zest').core).toEqual(['lemon']);
+    expect(extractIngredientTerms('basil leaves').core).toEqual(['basil']);
+    expect(extractIngredientTerms('lime wedges').core).toEqual(['lime']);
+    expect(extractIngredientTerms('broccoli florets').core).toEqual(['broccoli']);
+    // The part word still contributes to retrieval coverage — USDA's
+    // row really is "Spices, bay leaf".
+    expect(extractIngredientTerms('basil leaves').terms).toContain('leaves');
+  });
+
+  // --- Compound strings (2026-09) ---
+  it('flags two-food strings so callers can decline to auto-match', () => {
+    expect(extractIngredientTerms('salt and pepper').compound).toBe(true);
+    expect(extractIngredientTerms('kosher salt and ground black pepper').compound).toBe(true);
+  });
+
+  it('does not flag "and" strings that name a single food', () => {
+    // Hyphenated compound word, not a conjunction.
+    expect(extractIngredientTerms('half-and-half').compound).toBe(false);
+    // "and" joining preparation, not foods.
+    expect(extractIngredientTerms('unsalted butter, melted and cooled').compound).toBe(false);
+    // One food, two parts of it.
+    expect(extractIngredientTerms('fresh cilantro leaves and tender stems').compound).toBe(false);
+  });
 });

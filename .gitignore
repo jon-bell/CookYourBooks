@@ -42,3 +42,6 @@ apps/mobile/.capacitor/
 # Claude Code local state
 .claude/
 perf-fixtures/
+
+# Demo-content corpus (scripts/demo-content/fetch.ts output) — re-fetchable, ~100MB
+scripts/demo-content/out/
