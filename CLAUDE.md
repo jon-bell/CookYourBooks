@@ -122,6 +122,12 @@ chromium`). If you want to reuse a pre-downloaded copy, set
 `PLAYWRIGHT_CHROMIUM_PATH`; the config also falls back to a known local
 cache path (`~/.cache/ms-playwright/chromium-1217/`) if it exists.
 
+The OCR specs drive the worker themselves and seed per-path fixtures *after*
+the upload, so they expect **no `import_worker_config` in Vault**. That's the
+state after `db reset`, and it's how CI runs. With the secret set, an upload's
+`ocr_kick` starts the real worker before the spec has seeded its fixture, and
+the page fails. Delete the secret (or reset) before running them.
+
 ## CI
 
 GitHub Actions workflows live in `.github/workflows/` and run on
