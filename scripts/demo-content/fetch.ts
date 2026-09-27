@@ -12,6 +12,9 @@
 //                            drop the folder into the OCR import board.
 //   out/<book>/bulk/<label>/ a chapter-sized run of pages (--bulk only) for
 //                            the "scan a whole chapter" demo.
+//   out/<book>/<kind>/<label>/ non-recipe example pages: contents, index,
+//                            blank-notes, handwritten, pasted-in (sources.ts
+//                            `sections`). PDF sections also get a .txt.
 //   out/<book>/cover.jpg     first scan leaf / first PDF page.
 //   out/<book>/source.json   title, author, year, rights basis, and an index
 //                            of every file written — the provenance record.
@@ -151,21 +154,29 @@ async function run(cmd: string, args: string[]): Promise<string> {
  * two don't line up by a fixed offset: some scans number leaves from 0,
  * others from 1 with a hidden colour-card leaf 0 in front. So build the map
  * from the scan's own manifest — scandata.xml (access pages in order), or
- * failing that page_numbers.json (which lists the same pages).
+ * failing that page_numbers.json (which lists the same pages). Look both up
+ * in the item's file list: user uploads name them after the original file
+ * ("Gem Chopper Cook Book_scandata.xml"), not the identifier.
  */
 async function iaLeafIndex(identifier: string): Promise<Map<number, number>> {
   const meta = await (await fetch(`https://archive.org/metadata/${identifier}`, { headers: { 'User-Agent': UA } })).json();
   if (!meta.server) throw new Error(`no such IA item: ${identifier}`);
-  const base = `https://${meta.server}${meta.dir}/${identifier}`;
+  const base = `https://${meta.server}${meta.dir}/`;
+  const named = (suffix: string) => {
+    const f = (meta.files as { name: string }[]).find((f) => f.name.endsWith(suffix));
+    return f ? base + f.name.split('/').map(encodeURIComponent).join('/') : null;
+  };
   let leaves: number[] = [];
-  const sd = await fetch(`${base}_scandata.xml`, { headers: { 'User-Agent': UA } });
-  if (sd.ok) {
+  const sdUrl = named('_scandata.xml');
+  const sd = sdUrl ? await fetch(sdUrl, { headers: { 'User-Agent': UA } }) : null;
+  if (sd?.ok) {
     for (const m of (await sd.text()).matchAll(/<page leafNum="(\d+)">([\s\S]*?)<\/page>/g)) {
       if (!/<addToAccessFormats>false</.test(m[2])) leaves.push(Number(m[1]));
     }
-  } else await sd.body?.cancel();
-  if (!leaves.length) {
-    const pn = await fetch(`${base}_page_numbers.json`, { headers: { 'User-Agent': UA } });
+  } else await sd?.body?.cancel();
+  const pnUrl = named('_page_numbers.json');
+  if (!leaves.length && pnUrl) {
+    const pn = await fetch(pnUrl, { headers: { 'User-Agent': UA } });
     if (pn.ok) leaves = ((await pn.json()) as { pages: { leafNum: number }[] }).pages.map((p) => p.leafNum);
     else await pn.body?.cancel();
   }
@@ -189,13 +200,18 @@ async function fetchScans(book: Book, dir: string, o: Opts) {
   const jobs: { url: string; dest: string }[] = [];
   // First access page: the cover on most scans (a library/Google title sheet on some).
   jobs.push({ url: iaPageUrl(ia.identifier, 0, o.width), dest: `${dir}/cover.jpg` });
-  for (const r of ia.recipes) {
+  for (const r of ia.recipes ?? []) {
     const slug = slugify(r.title);
     r.leaves.forEach((leaf, i) => {
       jobs.push({
         url: page(leaf),
         dest: `${dir}/pages/${slug}/${pad(i + 1)}-leaf${leaf}.jpg`,
       });
+    });
+  }
+  for (const sec of ia.sections ?? []) {
+    sec.leaves.forEach((leaf, i) => {
+      jobs.push({ url: page(leaf), dest: `${dir}/${sec.kind}/${sec.label}/${pad(i + 1)}-leaf${leaf}.jpg` });
     });
   }
   if (o.bulk) {
@@ -264,6 +280,12 @@ function locatePdfRecipes(pages: string[], recipes: PdfRecipe[]): Map<string, nu
   return found;
 }
 
+/** 150 dpi: legible for OCR, and the photos still look good in a deck. */
+async function renderPdfPage(src: string, page: number, dest: string, force: boolean) {
+  if (!force && (await exists(dest))) return;
+  await run('pdftoppm', ['-jpeg', '-r', '150', '-f', String(page), '-l', String(page), '-singlefile', src, dest.replace(/\.jpg$/, '')]);
+}
+
 async function fetchPdf(book: Book, dir: string, o: Opts) {
   const pdf = book.pdf;
   if (!pdf) return;
@@ -292,14 +314,22 @@ async function fetchPdf(book: Book, dir: string, o: Opts) {
     if (o.images) {
       await Deno.mkdir(`${dir}/pages/${slug}`, { recursive: true });
       for (const [i, n] of nums.entries()) {
-        const rel = `pages/${slug}/${pad(i + 1)}-p${n}.jpg`;
-        if (o.force || !(await exists(`${dir}/${rel}`))) {
-          // 150 dpi: legible for OCR, and the photos still look good in a deck.
-          await run('pdftoppm', [
-            '-jpeg', '-r', '150', '-f', String(n), '-l', String(n), '-singlefile',
-            src, `${dir}/${rel}`.replace(/\.jpg$/, ''),
-          ]);
-        }
+        await renderPdfPage(src, n, `${dir}/pages/${slug}/${pad(i + 1)}-p${n}.jpg`, o.force);
+      }
+    }
+  }
+  for (const sec of pdf.sections ?? []) {
+    if (o.text) {
+      await Deno.mkdir(`${dir}/${sec.kind}`, { recursive: true });
+      await Deno.writeTextFile(
+        `${dir}/${sec.kind}/${sec.label}.txt`,
+        sec.leaves.map((n) => pages[n - 1].trimEnd()).join('\n\n') + '\n',
+      );
+    }
+    if (o.images) {
+      await Deno.mkdir(`${dir}/${sec.kind}/${sec.label}`, { recursive: true });
+      for (const [i, n] of sec.leaves.entries()) {
+        await renderPdfPage(src, n, `${dir}/${sec.kind}/${sec.label}/${pad(i + 1)}-p${n}.jpg`, o.force);
       }
     }
   }

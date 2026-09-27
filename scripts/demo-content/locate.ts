@@ -21,15 +21,17 @@ if (!meta.server) {
   console.error(`no such IA item: ${identifier}`);
   Deno.exit(1);
 }
-const { server, dir } = meta as { server: string; dir: string };
+const { server, dir, files } = meta as { server: string; dir: string; files: { name: string }[] };
 
 const printed = new Map<number, string>();
-const pn = await fetch(`https://${server}${dir}/${identifier}_page_numbers.json`);
-if (pn.ok) {
+// Looked up by suffix: user uploads name it after the original file.
+const pnFile = files.find((f) => f.name.endsWith('_page_numbers.json'));
+const pn = pnFile ? await fetch(`https://${server}${dir}/${encodeURIComponent(pnFile.name)}`) : null;
+if (pn?.ok) {
   const { pages } = (await pn.json()) as { pages: { leafNum: number; pageNumber: string }[] };
   for (const p of pages) if (p.pageNumber) printed.set(p.leafNum, p.pageNumber);
 } else {
-  await pn.body?.cancel();
+  await pn?.body?.cancel();
   console.log('(no page map for this scan — leaf numbers only)');
 }
 

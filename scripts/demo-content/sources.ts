@@ -10,8 +10,8 @@
 // licensing conversation.
 //
 // Scanned pages come from the Internet Archive. `leaves` are IA *leaf
-// numbers* — the 1-based `page` that IA's search-inside returns and that
-// `<id>_page_numbers.json` calls `leafNum` — not printed page numbers
+// numbers* — the `page` that IA's search-inside returns and that the scan's
+// scandata / page_numbers.json call `leafNum` — not printed page numbers
 // (front matter, plates and Google cover sheets throw those off, and some
 // scans have no page map at all). Find new ones with
 //   deno run --allow-net scripts/demo-content/locate.ts <identifier> "chop suey"
@@ -33,6 +33,30 @@ export interface ScanRange {
 }
 
 /**
+ * Non-recipe pages worth having as examples:
+ *   contents     — the book's table of contents (the "scan the contents to
+ *                  build a cookbook" demo)
+ *   index        — the back index, for books with no contents page
+ *   blank-notes  — pages printed for the owner's own recipes ("Memoranda",
+ *                  "My Own Recipes", "Notes"), left empty
+ *   handwritten  — an owner's handwritten recipes or notes
+ *   pasted-in    — a clipped recipe pasted or tipped into the book
+ */
+export type SectionKind = 'contents' | 'index' | 'blank-notes' | 'handwritten' | 'pasted-in';
+
+export interface Section {
+  kind: SectionKind;
+  /** Folder name under `<kind>/`. */
+  label: string;
+  /** IA leaf numbers (scans) or 1-based PDF page numbers (PDFs), in order. */
+  leaves: number[];
+}
+
+/** Inclusive run of leaf / page numbers, for long contents and index runs. */
+export const span = (from: number, to: number): number[] =>
+  Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+/**
  * A recipe title as printed at the top of its page (case-insensitive) —
  * fetch.ts finds the page(s) from the PDF's text layer. When the title is
  * artwork rather than text, pin the 1-based PDF page numbers instead.
@@ -48,6 +72,11 @@ export interface Book {
   collection: CollectionKind;
   /** Why this is public domain. Shown in the README / source.json. */
   rights: string;
+  /**
+   * For copies carrying an owner's handwriting: the rights position on the
+   * *annotations*, which is separate from the printed book's. See README.
+   */
+  annotationRights?: string;
   /** Human landing page, for attribution. */
   homepage: string;
   /** Whole-book transcriptions (Project Gutenberg etc.). */
@@ -55,13 +84,15 @@ export interface Book {
   /** Internet Archive page scans, for the OCR import demo. */
   ia?: {
     identifier: string;
-    recipes: ScannedRecipe[];
+    recipes?: ScannedRecipe[];
+    sections?: Section[];
     bulk?: ScanRange[];
   };
   /** A born-digital PDF (federal cookbooks). Recipes are located by title. */
   pdf?: {
     url: string;
     recipes: PdfRecipe[];
+    sections?: Section[];
   };
 }
 
@@ -80,6 +111,10 @@ export const BOOKS: Book[] = [
     ],
     ia: {
       // Google scan of the 1896 first edition (leaves numbered from 0).
+      sections: [
+        { kind: 'contents', label: 'contents', leaves: span(14, 35) },
+        { kind: 'index', label: 'index', leaves: span(580, 611) },
+      ],
       identifier: 'bostoncookingsc00collgoog',
       recipes: [
         { title: 'Boston Brown Bread', leaves: [95] }, // p. 60
@@ -109,7 +144,8 @@ export const BOOKS: Book[] = [
       { name: 'book.html', url: 'https://www.gutenberg.org/cache/epub/18435/pg18435-images.html' },
     ],
     ia: {
-      // No page map on this scan — leaves only.
+      // No page map on this scan — leaf numbers only. Contents at the back.
+      sections: [{ kind: 'contents', label: 'contents', leaves: span(140, 145) }],
       identifier: 'tx715_E8_1911',
       recipes: [
         { title: 'Chicken Gumbo, Creole Style', leaves: [15, 16] },
@@ -135,6 +171,8 @@ export const BOOKS: Book[] = [
     ],
     ia: {
       identifier: 'italiancookbooka00gentiala',
+      // No contents page; the index is numbered by recipe, not page.
+      sections: [{ kind: 'index', label: 'index', leaves: span(161, 164) }],
       recipes: [
         { title: 'Gnocchi', leaves: [11, 12] }, // pp. 7–8
         { title: 'Minestrone alla Milanese', leaves: [14, 15] }, // pp. 10–11
@@ -163,6 +201,10 @@ export const BOOKS: Book[] = [
     ],
     ia: {
       identifier: 'chinesejapanesec00boss_1', // the 1914 first printing
+      sections: [
+        { kind: 'contents', label: 'contents', leaves: [9] },
+        { kind: 'index', label: 'index', leaves: span(123, 129) },
+      ],
       recipes: [
         { title: 'Noodle Soup', leaves: [22, 23] }, // pp. 12–13
         { title: 'Ten Sune Gune (Sweet and Sour Fish)', leaves: [30, 31] }, // pp. 20–21
@@ -187,6 +229,11 @@ export const BOOKS: Book[] = [
     homepage: 'https://www.nhlbi.nih.gov/resources/keep-beat-recipes-deliciously-healthy-dinners',
     pdf: {
       url: 'https://www.nhlbi.nih.gov/sites/default/files/publications/10-2921.pdf',
+      sections: [
+        { kind: 'contents', label: 'contents', leaves: span(5, 8) },
+        // Printed "Notes" pages at the back of the book.
+        { kind: 'blank-notes', label: 'notes', leaves: [157, 158] },
+      ],
       recipes: [
         'cocoa-spiced beef tenderloin with pineapple salsa',
         'stir-fried orange beef',
@@ -215,6 +262,7 @@ export const BOOKS: Book[] = [
     homepage: 'https://www.nhlbi.nih.gov/resources/keep-beat-recipes-deliciously-healthy-family-meals',
     pdf: {
       url: 'https://www.nhlbi.nih.gov/sites/default/files/publications/10-7531.pdf',
+      sections: [{ kind: 'contents', label: 'contents', leaves: span(5, 7) }],
       recipes: [
         'crunchy chicken fingers with tangy dipping sauce',
         'garden turkey meatloaf',
@@ -227,6 +275,127 @@ export const BOOKS: Book[] = [
         'watermelon and tomato salad',
         'quinoa-stuffed tomatoes',
         'peanut butter hummus',
+      ],
+    },
+  },
+
+  // ── Owners' copies: blank notes pages and handwriting ────────────────────
+  // Each of these is one specific library copy that an earlier owner wrote
+  // in. No transcription exists (the handwriting is the point), so these
+  // have no `text` or `recipes` entries — only `sections`.
+  {
+    id: 'manuscript-receipt-book',
+    title: 'The Manuscript Receipt Book and Household Treasury',
+    author: 'Dawson Brothers (publisher); unknown owner',
+    year: 1872,
+    collection: 'personal',
+    rights: 'Published 1872 — US public domain (pre-1931).',
+    annotationRights:
+      'Handwriting by an unknown owner in a period hand, in an 1872 printing — an unpublished work of ' +
+      'unknown authorship more than 120 years old, so public domain. The safest of the handwritten sets.',
+    homepage: 'https://archive.org/details/McGillLibrary-rbsc_manuscript-receipt-book_TX7156B57351874-18489',
+    ia: {
+      // A printed blank book: a contents page plus a titled, ruled section
+      // per course, sold for owners to fill in. This owner filled most of it.
+      identifier: 'McGillLibrary-rbsc_manuscript-receipt-book_TX7156B57351874-18489',
+      sections: [
+        { kind: 'contents', label: 'contents', leaves: [10] },
+        { kind: 'blank-notes', label: 'soups-unfilled', leaves: [22, 23] },
+        { kind: 'handwritten', label: 'potato-soup', leaves: [15] },
+        { kind: 'handwritten', label: 'fish-and-white-sauce', leaves: [28] },
+        { kind: 'handwritten', label: 'fancy-cakes', leaves: [131] },
+      ],
+      // The whole handwritten soups section: a bulk OCR run on handwriting.
+      bulk: [{ label: 'soups-handwritten', from: 14, to: 21 }],
+    },
+  },
+  {
+    id: 'gem-chopper-cook-book',
+    title: 'Gem Chopper Cook Book',
+    author: 'Sargent & Company (recipes by Janet McKenzie Hill)',
+    year: 1902,
+    collection: 'cookbook',
+    rights: 'Published 1902 — US public domain (pre-1931).',
+    annotationRights:
+      'Pencil recipes by an unknown owner, undated (after 1902). Low-risk functional recipe text, ' +
+      'but not provably public domain: use in-product and for OCR testing, not in marketing.',
+    homepage: 'https://archive.org/details/gem-chopper-cook-book',
+    ia: {
+      // A promotional cookbook with a printed "My Own Recipes" grid page after
+      // every few recipe pages. The owner pencilled recipes into the first five.
+      identifier: 'gem-chopper-cook-book',
+      sections: [
+        { kind: 'handwritten', label: 'oatmeal-cookies', leaves: [19] },
+        { kind: 'handwritten', label: 'cookies', leaves: [23] },
+        { kind: 'handwritten', label: 'cake', leaves: [27] },
+        { kind: 'handwritten', label: 'rocks', leaves: [33] },
+        { kind: 'handwritten', label: 'molasses-cookies', leaves: [37] },
+        { kind: 'blank-notes', label: 'my-own-recipes', leaves: [41] },
+        { kind: 'index', label: 'index', leaves: [96] },
+      ],
+    },
+  },
+  {
+    id: 'cooks-friend',
+    title: "The Cook's Friend",
+    author: 'The Cosmos Society of the M. E. Church, Middletown, Indiana',
+    year: 1902,
+    collection: 'cookbook',
+    rights: 'Published 1902 — US public domain (pre-1931).',
+    annotationRights: 'Owner notes, undated (after 1902). Not provably public domain: in-product and OCR testing only.',
+    homepage: 'https://archive.org/details/cooksfriend00cosm',
+    ia: {
+      // A church fundraiser cookbook, every recipe signed by its contributor,
+      // with printed "MEMORANDA" pages between chapters.
+      identifier: 'cooksfriend00cosm',
+      sections: [
+        { kind: 'blank-notes', label: 'memoranda', leaves: [44] },
+        { kind: 'handwritten', label: 'front-leaf-recipe', leaves: [11] },
+        { kind: 'handwritten', label: 'laid-in-slip', leaves: [171] },
+      ],
+    },
+  },
+  {
+    id: 'peerless-cook-book',
+    title: 'The Peerless Cook Book: A Compilation of Tested Recipes',
+    author: "Ladies of St. James' Methodist Church, Montreal",
+    year: 1890,
+    collection: 'cookbook',
+    rights: 'Published in the 1890s — US public domain (pre-1931).',
+    annotationRights:
+      'Handwritten recipes by an unknown owner, undated. Not provably public domain: in-product and OCR testing only.',
+    homepage: 'https://archive.org/details/peerlesscookbook00unse',
+    ia: {
+      identifier: 'peerlesscookbook00unse',
+      sections: [
+        // This one keeps its contents at the back.
+        { kind: 'contents', label: 'contents', leaves: span(95, 99) },
+        { kind: 'handwritten', label: 'back-pages', leaves: span(100, 102) },
+      ],
+    },
+  },
+  {
+    id: 'ylmia-cook-book',
+    title: 'Y.L.M.I.A. Cook Book',
+    author: "Young Ladies' Mutual Improvement Association, Blackfoot, Idaho",
+    year: 1926,
+    collection: 'cookbook',
+    rights: 'Published 1926 — US public domain (pre-1931).',
+    annotationRights:
+      'Handwriting and a pasted clipping, undated (after 1926): likely still in copyright as unpublished ' +
+      'work. In-product and OCR testing only; never in marketing or screenshots.',
+    homepage: 'https://archive.org/details/ylmiacookbookthi00blac',
+    ia: {
+      // A community cookbook whose blank pages the owner used for their own
+      // recipes, plus a newspaper recipe pasted onto one of them.
+      identifier: 'ylmiacookbookthi00blac',
+      sections: [
+        { kind: 'contents', label: 'contents', leaves: [8] },
+        { kind: 'blank-notes', label: 'blank-page', leaves: [38] },
+        { kind: 'handwritten', label: 'specials', leaves: [62] },
+        { kind: 'handwritten', label: 'cabbage-and-tomatoes', leaves: [63] },
+        { kind: 'handwritten', label: 'steamed-pudding', leaves: [95] },
+        { kind: 'pasted-in', label: 'ginger-cracker-cake-clipping', leaves: [59] },
       ],
     },
   },
