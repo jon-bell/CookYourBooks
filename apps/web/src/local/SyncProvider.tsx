@@ -10,6 +10,7 @@ import {
   bindLocalDbUser,
   boundLocalDbUser,
   getLocalDb,
+  preloadLocalDbEngine,
   readDbStats,
 } from './db.js';
 import { countPending } from './outbox.js';
@@ -480,6 +481,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   // and every in-memory cache go with it. Signing out alone doesn't reload —
   // no signed-out surface reads the DB, and signing back in as the same
   // account reuses the open handle. Signed-out visitors never open it at all.
+  // Warm the (account-independent) SQLite engine while auth resolves, so
+  // signing in only has to open the account's file.
+  useEffect(() => {
+    void preloadLocalDbEngine().catch(() => {
+      // Surfaces (and auto-recovers) through getLocalDb() on the real open.
+    });
+  }, []);
+
   useEffect(() => {
     // Signed out: nothing to open (readiness is derived below).
     if (authLoading || !user) return;

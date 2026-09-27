@@ -452,10 +452,24 @@ const CRR_TRIGGER_HEAL_TABLES = ['cooking_events'];
 
 type Sqlite = Awaited<ReturnType<typeof initWasm>>;
 
+// The cr-sqlite WASM engine is account-independent and the slowest part of
+// opening the database (fetch + compile), so it's started at boot — before
+// anyone signs in — and only the per-account file open waits for sign-in.
+let enginePromise: Promise<Sqlite> | undefined;
+
+/** Start loading the SQLite engine (idempotent). Called at app boot. */
+export function preloadLocalDbEngine(): Promise<Sqlite> {
+  enginePromise ??= initWasm(() => wasmUrl).catch((err: unknown) => {
+    enginePromise = undefined; // let the real open retry
+    throw err;
+  });
+  return enginePromise;
+}
+
 async function initialize(userId: string): Promise<LocalDb> {
   await drainPendingReset();
   setInitStep('init wasm');
-  const sqlite = await initWasm(() => wasmUrl);
+  const sqlite = await preloadLocalDbEngine();
 
   const fileKey = FILE_FOR_USER_KEY + userId;
   const ownFile = `cookyourbooks-${userId}.db`;
