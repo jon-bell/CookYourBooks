@@ -116,7 +116,10 @@ git tag cli-v0.1.0 && git push origin cli-v0.1.0
 ```
 
 The workflow typechecks, tests, installs the packed tarball into an empty
-project as a smoke test, then runs `npm publish --provenance`. The published
+project as a smoke test, then publishes. Publishing is tokenless: it uses npm
+trusted publishing (GitHub OIDC), so there's no `NPM_TOKEN` secret. The
+package's npm settings trust `jon-bell/CookYourBooks` →
+`.github/workflows/cli-publish.yml`, and provenance is attached automatically. The published
 package is the single esbuild bundle (`dist/index.js`); the workspace packages
 it uses (`@cookyourbooks/domain`, `@cookyourbooks/db`) are compiled into it, so
 they're devDependencies and aren't published.

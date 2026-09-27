@@ -4,11 +4,14 @@ name: Publish CLI to npm
 # matches the package version:
 #
 #   # bump apps/cli/package.json "version", commit, then
-#   git tag cli-v0.1.0 && git push origin cli-v0.1.0
+#   git tag cli-v0.1.1 && git push origin cli-v0.1.1
 #
-# Needs the NPM_TOKEN secret (an npm "Automation" token with publish rights on
-# the @cookyourbooks scope). Runs on a GitHub-hosted runner because npm's
-# provenance attestation only supports GitHub-hosted runners.
+# Tokenless: npm trusted publishing (OIDC). There is no NPM_TOKEN secret —
+# npmjs.com trusts this exact workflow file instead. One-time setup on
+# npmjs.com → @cookyourbooks/cli → Settings → Trusted publishing → GitHub
+# Actions: owner `jon-bell`, repository `CookYourBooks`, workflow
+# `cli-publish.yml` (no environment). Trusted publishing needs npm ≥ 11.5.1
+# and a GitHub-hosted runner, and attaches provenance automatically.
 
 on:
   push:
@@ -22,7 +25,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # OIDC for npm trusted publishing (and its provenance)
 
 jobs:
   publish:
@@ -41,6 +44,9 @@ jobs:
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
+
+      - name: npm with trusted-publishing support (>= 11.5.1)
+        run: npm install -g npm@latest && npm --version
 
       - name: Check the tag matches the package version
         if: github.event_name == 'push'
@@ -71,6 +77,6 @@ jobs:
       - name: Publish
         if: github.event_name == 'push' || !inputs.dry_run
         working-directory: apps/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        # No token: npm exchanges this job's OIDC identity for a short-lived
+        # publish credential, and records provenance.
+        run: npm publish --access public
