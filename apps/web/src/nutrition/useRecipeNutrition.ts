@@ -1,5 +1,6 @@
 import {
   type ConversionContext,
+  extractIngredientTerms,
   ingredientLookupKey,
   type IngredientNutritionRow,
   type NutritionFact,
@@ -91,6 +92,14 @@ export function useRecipeNutrition(recipe: Recipe | undefined) {
         let fact: NutritionFact | null = null;
         if (mapping) {
           fact = await readCachedFact(mapping.source, mapping.source_id);
+          // A mapped row with no calorie data is worse than no mapping:
+          // it contributes zero to every nutrient and quietly deflates
+          // the whole recipe, and because the mapping short-circuits the
+          // search it can never be recovered from. Several curated rows
+          // point at USDA Foundation entries that carry no energy value
+          // (73.8% of that tier does), so drop through to the search
+          // instead — which now hard-filters those out.
+          if (fact && fact.calories_kcal == null) fact = null;
         }
         if (!fact) {
           // No mapping yet OR cache miss. Try the local Foundation/SR
@@ -102,8 +111,24 @@ export function useRecipeNutrition(recipe: Recipe | undefined) {
           // user confirms via the override UI, so we don't persist a
           // mapping at this point.
           try {
-            let hits = await searchLocalEssentials(ing.name, 5);
-            if (hits.length === 0) hits = await searchNutrition(ing.name, 5);
+            // "salt and pepper" names two foods. One row cannot stand in
+            // for both and picking either is confidently wrong, so the
+            // auto-match declines and the panel reports it as not
+            // counted. This sits above BOTH searches — guarding only the
+            // local one just meant the edge function answered instead.
+            // The override dialog deliberately does not go through here:
+            // a query the user typed themselves should always search.
+            let hits: NutritionFact[] = [];
+            if (!extractIngredientTerms(ing.name).compound) {
+              hits = await searchLocalEssentials(ing.name, 5);
+              if (hits.length === 0) hits = await searchNutrition(ing.name, 5);
+            }
+            // searchLocalEssentials filters these in SQL, but the remote
+            // fallback does not, so a fall-through could still hand back
+            // a row with no energy value — which contributes zero to
+            // every nutrient and quietly deflates the recipe. Drop them
+            // here so both sources obey the same rule.
+            hits = hits.filter((h) => h.calories_kcal != null);
             fact = hits[0] ?? null;
             if (hits.length > 0) {
               needsReview = true;

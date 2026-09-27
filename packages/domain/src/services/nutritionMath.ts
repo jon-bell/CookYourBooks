@@ -117,6 +117,9 @@ export interface ConversionContext {
  *   1. user-supplied override (mapping row's custom_grams_per_unit)
  *   2. global_conversions row matching this ingredient + unit
  *   3. nutrition-source portion data
+ *   3b. the same density table via a volume chain: recipe unit -> mL ->
+ *       grams, because every density we have is expressed per-mL while
+ *       recipes are written in cups/tbsp/tsp
  *   4. pure mass (g / oz / lb / kg) — independent of ingredient
  *   5. pure volume × generic density 1 g/mL (water-equivalent)
  *      — last-resort approximation, flagged via `approximate: true`
@@ -124,7 +127,7 @@ export interface ConversionContext {
 export interface ConversionResult {
   grams: number;
   approximate: boolean;
-  source: 'override' | 'density' | 'portion' | 'mass' | 'water-equiv';
+  source: 'override' | 'density' | 'density-volume' | 'portion' | 'mass' | 'water-equiv';
 }
 
 export function quantityToGrams(
@@ -150,13 +153,16 @@ export function quantityToGrams(
   //      beats the null-name generic.
   //    Tokenization normalizes hyphens to whitespace, so "all-purpose"
   //    and "all purpose" hash the same way.
-  if (ctx.densityRules && ctx.densityRules.length > 0) {
-    const recipeTokens = new Set(tokenizeIngredient(name));
+  const recipeTokens = new Set(tokenizeIngredient(name));
+
+  /** Best density rule for `forUnit`, most-specific-ingredient-match first. */
+  function bestRuleFor(forUnit: string): { factor: number } | null {
+    if (!ctx.densityRules || ctx.densityRules.length === 0) return null;
     let bestSpecific: (typeof ctx.densityRules)[number] | null = null;
     let bestScore = 0;
     let bestGeneric: (typeof ctx.densityRules)[number] | null = null;
     for (const r of ctx.densityRules) {
-      if (normUnit(r.fromUnit) !== u) continue;
+      if (normUnit(r.fromUnit) !== forUnit) continue;
       if (r.ingredientName == null) {
         bestGeneric = r;
         continue;
@@ -184,16 +190,44 @@ export function quantityToGrams(
         bestSpecific = r;
       }
     }
-    const match = bestSpecific ?? bestGeneric;
-    if (match) {
-      return { grams: amount * match.factor, approximate: false, source: 'density' };
-    }
+    return bestSpecific ?? bestGeneric;
+  }
+
+  const exact = bestRuleFor(u);
+  if (exact) {
+    return { grams: amount * exact.factor, approximate: false, source: 'density' };
   }
 
   // 3. Nutrition-source portion data.
   if (ctx.portions) {
     const p = ctx.portions.find((x) => normUnit(x.unit) === u);
     if (p) return { grams: amount * p.grams, approximate: false, source: 'portion' };
+  }
+
+  // 3b. Volume chain. Every row in global_conversions is keyed to
+  //     `milliliter` (oil 0.92 g/mL, honey 1.42, sugar 0.85), but recipes
+  //     are overwhelmingly written in tablespoons, cups and teaspoons —
+  //     in the production corpus those outnumber millilitres ~13:1. With
+  //     only an exact-unit match, every one of those fell through to the
+  //     water-equivalent guess below while the correct density sat in the
+  //     table unused (1 cup of flour = 236 g instead of ~120 g).
+  //     Normalizing the recipe unit to mL first makes that data
+  //     reachable, and the result is a real density, so it is NOT
+  //     approximate.
+  //
+  //     This sits BELOW portions on purpose: USDA measured "1 cup of THIS
+  //     food = 200 g" for the specific row we matched, which beats a
+  //     density keyed on the ingredient name.
+  const ml = VOLUME_TO_ML[u];
+  if (ml != null) {
+    const perMl = bestRuleFor('milliliter');
+    if (perMl) {
+      return {
+        grams: amount * ml * perMl.factor,
+        approximate: false,
+        source: 'density-volume',
+      };
+    }
   }
 
   // 4. Pure mass.
@@ -374,10 +408,19 @@ export function ingredientLookupKey(name: string): string {
  * one place means both sides agree on whether a rule "applies".
  */
 export function tokenizeIngredient(name: string): string[] {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  return (
+    name
+      .toLowerCase()
+      // Decompose accented characters and drop the combining marks, so
+      // "jalapeño" tokenizes as "jalapeno" rather than shattering into
+      // ["jalape"] when the ASCII strip below eats the ñ. Without this,
+      // "crème fraîche" became ["cr","me","fra","che"] and "pâté" became
+      // [] entirely — every accented ingredient failed to match.
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+  );
 }

@@ -196,3 +196,156 @@ test.describe('Recipe nutrition panel', () => {
     }
   });
 });
+
+/**
+ * Seed rows into `nutrition_foods_master` — the table the local
+ * essentials mirror is pulled from. Unlike `seedNutrition` above, this
+ * exercises the actual matcher (`searchLocalEssentials`), because no
+ * mapping exists for these ingredients and the hook has to pick a row.
+ */
+async function seedMasterFoods(
+  foods: Array<{
+    source_id: string;
+    data_type: 'Foundation' | 'SR Legacy' | 'Survey (FNDDS)';
+    description: string;
+    calories_kcal: number | null;
+  }>,
+): Promise<void> {
+  await fetch(`${SUPABASE_URL}/rest/v1/nutrition_foods_master`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(
+      foods.map((f) => ({
+        source: 'USDA_FDC',
+        brand: null,
+        brand_owner: null,
+        protein_g: 1,
+        fat_g: 1,
+        carbs_g: 1,
+        portions: [],
+        ...f,
+      })),
+    ),
+  });
+}
+
+test.describe('Ingredient → USDA matching', () => {
+  // Each of these three ingredients had a specific, reproducible wrong
+  // answer in production. The decoys below are the rows that actually
+  // won, so a regression in the ranker fails this test rather than
+  // quietly deflating someone's nutrition panel.
+  test('picks the food, not a substring or calorie-less collision', async ({ page }) => {
+    const u = await createTestUser('nutrition-match');
+    try {
+      await seedMasterFoods([
+        // "honey" used to match "honeydew" because the blob was matched
+        // with LIKE '%honey%'.
+        { source_id: 'm-honey', data_type: 'SR Legacy', description: 'Honey', calories_kcal: 304 },
+        {
+          source_id: 'm-honeydew',
+          data_type: 'Foundation',
+          description: 'Melons, honeydew, raw',
+          calories_kcal: 36,
+        },
+        // "ground black pepper" used to match ground turkey: Foundation
+        // was the FIRST sort key, so a row matching one token beat a row
+        // matching all of them.
+        {
+          source_id: 'm-pepper',
+          data_type: 'SR Legacy',
+          description: 'Spices, pepper, black',
+          calories_kcal: 251,
+        },
+        {
+          source_id: 'm-turkey',
+          data_type: 'Foundation',
+          description: 'Turkey, ground, 93% lean, 7% fat, pan-broiled crumbles',
+          calories_kcal: 176,
+        },
+        // "unsalted butter" used to match a Foundation row carrying NO
+        // calorie data, which silently contributed zero.
+        {
+          source_id: 'm-butter-null',
+          data_type: 'Foundation',
+          description: 'Butter, stick, unsalted',
+          calories_kcal: null,
+        },
+        {
+          source_id: 'm-butter',
+          data_type: 'Survey (FNDDS)',
+          description: 'Butter, NFS',
+          calories_kcal: 717,
+        },
+      ]);
+
+      await signIn(page, u);
+      await createRecipeViaUi(page, {
+        collectionTitle: 'Matching',
+        recipeTitle: 'Decoys',
+        ingredients: [
+          { kind: 'measured', amount: '2', unit: 'tablespoon', name: 'honey' },
+          { kind: 'measured', amount: '1', unit: 'teaspoon', name: 'ground black pepper' },
+          { kind: 'measured', amount: '3', unit: 'tablespoon', name: 'unsalted butter' },
+        ],
+        steps: ['Combine.'],
+      });
+
+      const panel = page.getByTestId('recipe-nutrition-panel');
+      await expect(panel).toBeVisible({ timeout: 15_000 });
+      await panel.getByText(/Per-ingredient breakdown/).click();
+
+      const honeyRow = panel.locator('tr', { hasText: 'honey' });
+      await expect(honeyRow).toContainText('Honey');
+      await expect(honeyRow).not.toContainText('honeydew');
+
+      const pepperRow = panel.locator('tr', { hasText: 'ground black pepper' });
+      await expect(pepperRow).toContainText('Spices, pepper, black');
+      await expect(pepperRow).not.toContainText('Turkey');
+
+      // The calorie-less Foundation row must never be chosen, even
+      // though its description is the closest textual match.
+      const butterRow = panel.locator('tr', { hasText: 'unsalted butter' });
+      await expect(butterRow).toContainText('Butter, NFS');
+      await expect(butterRow).not.toContainText('stick');
+    } finally {
+      await u.cleanup();
+    }
+  });
+
+  test('declines to match a string naming two foods', async ({ page }) => {
+    const u = await createTestUser('nutrition-compound');
+    try {
+      await seedMasterFoods([
+        {
+          source_id: 'm-salt',
+          data_type: 'SR Legacy',
+          description: 'Salt, table',
+          calories_kcal: 0,
+        },
+      ]);
+      await signIn(page, u);
+      await createRecipeViaUi(page, {
+        collectionTitle: 'Compound',
+        recipeTitle: 'Seasoned',
+        ingredients: [{ kind: 'measured', amount: '1', unit: 'teaspoon', name: 'salt and pepper' }],
+        steps: ['Season.'],
+      });
+
+      const panel = page.getByTestId('recipe-nutrition-panel');
+      await expect(panel).toBeVisible({ timeout: 15_000 });
+      await panel.getByText(/Per-ingredient breakdown/).click();
+
+      // One row cannot represent two foods, so we report it as unmatched
+      // rather than silently counting only the salt.
+      const row = panel.locator('tr', { hasText: 'salt and pepper' });
+      await expect(row).toContainText(/no match/);
+    } finally {
+      await u.cleanup();
+    }
+  });
+});
