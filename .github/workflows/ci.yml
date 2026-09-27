@@ -91,8 +91,12 @@ jobs:
       - name: Formatting
         run: pnpm -w format
 
-      - name: Unit tests (domain + db + web)
-        run: pnpm -w test
+      - name: Unit tests (domain + db + web + cli)
+        # One package at a time: each vitest already fans out across every
+        # core, and four of them at once saturated the runner badly enough
+        # that module loading hit vitest's worker RPC timeout ("Timeout calling
+        # fetch") — even main was at ~40s for db's 14 tiny tests.
+        run: pnpm -w test --concurrency=1
 
       # Supabase has to start *before* the web build — Vite inlines
       # `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` at build time, and
