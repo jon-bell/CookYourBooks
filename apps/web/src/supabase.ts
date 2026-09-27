@@ -13,6 +13,12 @@ if (!url || !anonKey) {
   );
 }
 
+/** The project URL + public anon key this build talks to — surfaced on the
+ *  CLI settings page so `cyb login` can be copy-pasted. Both are public (they
+ *  ship in this bundle); the CLI token is the real credential. */
+export const SUPABASE_URL: string = url;
+export const SUPABASE_ANON_KEY: string = anonKey;
+
 /** Approximate the serialized byte size of a request body without consuming it. */
 function requestBodyBytes(body: BodyInit | null | undefined): number {
   if (body == null) return 0;

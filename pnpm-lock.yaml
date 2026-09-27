@@ -44,12 +44,6 @@ importers:
 
   apps/cli:
     dependencies:
-      '@cookyourbooks/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@cookyourbooks/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
       '@supabase/supabase-js':
         specifier: ^2.46.1
         version: 2.103.3
@@ -57,6 +51,12 @@ importers:
         specifier: ^12.1.0
         version: 12.1.0
     devDependencies:
+      '@cookyourbooks/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cookyourbooks/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.17

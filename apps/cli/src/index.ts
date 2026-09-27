@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { Command, InvalidArgumentError } from 'commander';
 
+import pkg from '../package.json' with { type: 'json' };
+
 import {
   type CookbookEntry,
   type CookbookMetadata,
@@ -22,7 +24,7 @@ import { signIn } from './demo/session.js';
 
 const program = new Command();
 
-program.name('cyb').description('CookYourBooks command-line client').version('0.0.0');
+program.name('cyb').description('CookYourBooks command-line client').version(pkg.version);
 
 program
   .command('login')

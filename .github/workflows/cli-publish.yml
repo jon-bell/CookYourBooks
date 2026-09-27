@@ -1,0 +1,76 @@
+name: Publish CLI to npm
+
+# Publishes apps/cli as @cookyourbooks/cli. Trigger by pushing a tag that
+# matches the package version:
+#
+#   # bump apps/cli/package.json "version", commit, then
+#   git tag cli-v0.1.0 && git push origin cli-v0.1.0
+#
+# Needs the NPM_TOKEN secret (an npm "Automation" token with publish rights on
+# the @cookyourbooks scope). Runs on a GitHub-hosted runner because npm's
+# provenance attestation only supports GitHub-hosted runners.
+
+on:
+  push:
+    tags: ['cli-v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Pack and validate only; do not publish'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the tag matches the package version
+        if: github.event_name == 'push'
+        run: |
+          version=$(node -p "require('./apps/cli/package.json').version")
+          if [ "cli-v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match apps/cli/package.json version $version"
+            exit 1
+          fi
+
+      - name: Typecheck + test
+        run: |
+          pnpm --filter @cookyourbooks/cli typecheck
+          pnpm --filter @cookyourbooks/cli build
+          pnpm --filter @cookyourbooks/cli test
+
+      - name: Smoke-test the packed tarball
+        # Install the exact tarball npm would publish into an empty project,
+        # so a missing dependency or file shows up here and not for users.
+        run: |
+          cd apps/cli && npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          npm init -y >/dev/null
+          npm install "$RUNNER_TEMP"/cookyourbooks-cli-*.tgz
+          npx cyb --version
+          npx cyb --help
+
+      - name: Publish
+        if: github.event_name == 'push' || !inputs.dry_run
+        working-directory: apps/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public

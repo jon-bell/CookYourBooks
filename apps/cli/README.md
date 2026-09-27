@@ -1,9 +1,19 @@
 # `cyb` — CookYourBooks CLI
 
 ```bash
+npm install -g @cookyourbooks/cli     # Node.js 20+; or: npx @cookyourbooks/cli <command>
+cyb --help
+```
+
+The quickest start is **Settings → CLI tokens** in the app. Create a token
+there and the page shows a ready-to-paste `cyb login` command with this
+deployment's URL and anon key filled in.
+
+From a checkout instead of npm:
+
+```bash
 pnpm --filter @cookyourbooks/cli build     # bundles to apps/cli/dist/index.js
 alias cyb="node $PWD/apps/cli/dist/index.js"
-cyb --help
 ```
 
 The CLI has two kinds of commands, which authenticate differently.
@@ -94,3 +104,19 @@ The App Store screenshot pipeline (`scripts/ios-screenshots/`) uses the same
 corpus. `mobile.yml`'s `ios-screenshots` dispatch can run `cyb demo load`
 first (`load_demo_library`), so the demo account is fully stocked before the
 screenshots are taken.
+
+## Releasing
+
+Published to npm as [`@cookyourbooks/cli`](https://www.npmjs.com/package/@cookyourbooks/cli)
+by `.github/workflows/cli-publish.yml`. To release, bump `version` in
+`apps/cli/package.json`, commit, and push a matching tag:
+
+```bash
+git tag cli-v0.1.0 && git push origin cli-v0.1.0
+```
+
+The workflow typechecks, tests, installs the packed tarball into an empty
+project as a smoke test, then runs `npm publish --provenance`. The published
+package is the single esbuild bundle (`dist/index.js`); the workspace packages
+it uses (`@cookyourbooks/domain`, `@cookyourbooks/db`) are compiled into it, so
+they're devDependencies and aren't published.

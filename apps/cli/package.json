@@ -1,29 +1,51 @@
 {
   "name": "@cookyourbooks/cli",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Command-line client for CookYourBooks. Library commands use a CLI token minted in the app; `cyb demo` signs in as a user to load demo content.",
+  "version": "0.1.0",
+  "description": "Command-line client for CookYourBooks: export/import your recipe library, seed cookbook tables of contents, and load demo content.",
+  "keywords": [
+    "cookyourbooks",
+    "recipes",
+    "cookbook",
+    "cli"
+  ],
+  "homepage": "https://github.com/jon-bell/CookYourBooks/tree/main/apps/cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jon-bell/CookYourBooks.git",
+    "directory": "apps/cli"
+  },
+  "license": "AGPL-3.0-only",
   "type": "module",
   "bin": {
     "cyb": "./dist/index.js"
   },
+  "files": [
+    "dist/index.js"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --external:commander --external:@supabase/supabase-js",
+    "build": "rm -rf dist && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --external:commander --external:@supabase/supabase-js",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@cookyourbooks/db": "workspace:*",
-    "@cookyourbooks/domain": "workspace:*",
     "@supabase/supabase-js": "^2.46.1",
     "commander": "^12.1.0"
   },
   "devDependencies": {
+    "@cookyourbooks/db": "workspace:*",
+    "@cookyourbooks/domain": "workspace:*",
     "@types/node": "^22.10.2",
+    "esbuild": "^0.25.12",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "esbuild": "^0.25.12"
+    "vitest": "^2.1.8"
   }
 }

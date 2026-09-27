@@ -9,7 +9,7 @@ import { type CliTokenRow, issueCliToken, listCliTokens, revokeCliToken } from '
  * token once, with a copy button, and warns the user that it won't be
  * shown again.
  */
-export function CliTokensSection() {
+export function CliTokensSection({ onIssued }: { onIssued?: (rawToken: string) => void } = {}) {
   const [tokens, setTokens] = useState<CliTokenRow[] | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -33,6 +33,7 @@ export function CliTokensSection() {
     try {
       const raw = await issueCliToken(name.trim());
       setJustIssued({ name: name.trim(), raw });
+      onIssued?.(raw);
       setName('');
       await refresh();
     } catch (e) {
