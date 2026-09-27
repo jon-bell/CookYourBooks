@@ -63,6 +63,7 @@ out/<id>/
   cover.jpg
   text/book.txt            whole-book transcription (PG header/footer stripped)
   pages/<recipe>/01-….jpg  the page(s) one recipe spans, in order → OCR import
+  pages.json               printed page number per recipe leaf (IA's page map, when the scan has one)
   bulk/<chapter>/001-….jpg a chapter's worth of pages (--bulk) → bulk OCR board
   contents/, index/        table of contents / back index pages
   blank-notes/<label>/     printed pages meant for the owner's own recipes, left empty

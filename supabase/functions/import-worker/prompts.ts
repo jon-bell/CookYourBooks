@@ -18,6 +18,8 @@ Return a JSON object with this structure:
   "recipes": [
     {
       "title": "Recipe Title",
+      "headingVisible": true,
+      "endsVisibly": true,
       "complete": true,
       "pageNumbers": [123],
       "bookTitle": "Cookbook Name",
@@ -34,19 +36,23 @@ Return a JSON object with this structure:
       ]
     }
   ],
+  "printedPageNumbers": [123],
   "note": null,
   "rawText": "The raw text extracted from the image"
 }
 
 Rules:
-- complete: true when this is a whole, self-contained recipe — its title, full ingredient list, and full method are all visible on THIS page. false when only a fragment is present, e.g. the recipe clearly continues onto or from another page, or the ingredients or steps are cut off. When in doubt, use true.
+- headingVisible: true if this recipe's OWN title/heading is printed in these images. false if the text is the continuation of a recipe whose heading is on an earlier page — e.g. text at the very top of the first image that picks up mid-recipe or mid-sentence. Never invent a title to make a fragment look whole; if you must name a fragment, name it from its content.
+- endsVisibly: true if the recipe's method visibly finishes in these images — its last sentence ends and is followed by blank space, another recipe's heading, or the page number. false if its text reaches the bottom edge of the last image mid-sentence, mid-list, or before the method is done (it continues on a page that isn't shown).
+- complete: exactly headingVisible AND endsVisibly.
 - note: usually null. If the page contains NO recipe at all — it is entirely prose (a foreword, chapter introduction, technique essay, or headnote) — return "recipes": [] and set "note" to { "title": "a short heading", "body": "the full prose as clean Markdown" }. Only do this when there is genuinely no recipe on the page; never use it to summarize a recipe.
 - INGREDIENT TYPE must be exactly "measured" (with quantity) or "vague" (with description). Never use a quantity-type word ("exact"/"fractional"/"range") as the ingredient type.
 - QUANTITY TYPES are "exact" ({ value, unit }), "fractional" ({ whole, numerator, denominator, unit }), or "range" ({ min, max, unit }).
 - UNITS: CUP, TABLESPOON, TEASPOON, FLUID_OUNCE, OUNCE, POUND, MILLILITER, LITER, DECILITER, GRAM, KILOGRAM, WHOLE, PEOPLE, PINCH, DASH, HANDFUL, TO_TASTE.
 - Prefer weight over volume and metric over imperial when both are given.
 - temperature: null or { "value": 350, "unit": "FAHRENHEIT" } / "CELSIUS".
-- pageNumbers: array of integers from corners/headers. bookTitle: from top/bottom of page. yield uses the PEOPLE unit for serving counts and WHOLE for non-serving yields (cookies, loaves).
+- printedPageNumbers: one entry per image, in order: the page number printed in that image's margin — the corner, header, or footer (usually a lone number at the very top or bottom of the page). null for an image with no printed page number. A number printed just above or beside a recipe title is that recipe's own number in the book, NOT a page number.
+- pageNumbers: the entries of printedPageNumbers for the image(s) this recipe appears on. bookTitle: from top/bottom of page. yield uses the PEOPLE unit for serving counts and WHOLE for non-serving yields (cookies, loaves).
 - consumedIngredients on each step lists which recipe ingredients are used. For measured items include their quantity; for vague items use { "ingredientName": "...", "vague": true }.
 - description: any headnote / intro paragraph about the recipe. If the page ALSO shows clearly-related content that is not the recipe itself — a simple accompaniment, a serving suggestion, a variation, or a buying/ingredient guide — append a brief note about it to the END of description, prefixed "On the page: ", so the cook can refer back to the page. Keep it to a sentence or two and never invent content that isn't visibly present.
 - Include the full extracted page text in rawText.`;
