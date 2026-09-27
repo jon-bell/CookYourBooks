@@ -224,9 +224,70 @@ cd apps/mobile/ios
 fastlane release
 ```
 
-This runs `beta` then `deliver --submit-for-review`. Screenshots and
-store metadata stay manual for now — manage them in App Store Connect's
-web UI until we automate them.
+This runs `beta` then `deliver --submit-for-review`. Store metadata stays
+manual — manage it in App Store Connect's web UI. Screenshots are generated
+by the pipeline below.
+
+### App Store screenshots
+
+`scripts/ios-screenshots/capture.mjs` produces the store screenshots from the
+real app on simulators — no hand-driving:
+
+1. Builds a **screenshot flavour** of the web bundle
+   (`VITE_SCREENSHOT_CONTROL_URL` set, which compiles in
+   `apps/web/src/screenshots/driver.ts`; normal builds don't contain it),
+   then a Release simulator build with an ATS local-networking exemption
+   added for that build only.
+2. Per device (6.9" iPhone + 13" iPad by default — the two sizes App Store
+   Connect requires since the app runs on iPad), creates a throwaway
+   simulator, forces light mode, pins the status bar to 9:41/full, installs
+   and launches the app.
+3. The in-app driver fetches its script from the host over `127.0.0.1`,
+   signs in as the demo account, walks `scripts/ios-screenshots/steps.json`
+   (`{recipe}` expands to a recipe from the gallery, preferring one with a
+   cover), and asks the host to `simctl io screenshot` at each step.
+4. **Import flow.** Steps with `do:` drive a real import
+   (`apps/web/src/screenshots/importScenario.ts`). The host serves page scans
+   from the demo-content corpus (`CYB_DEMO_CONTENT`, default
+   `scripts/demo-content/out`). The driver attaches them to `/import/new`'s file
+   input with the book's cookbook preselected (`?collection=`), presses
+   **Start import**, and keeps the batch board open while OCR drains, so the
+   app's own auto-accept files the recipes. That captures the picker, the
+   processing board, the finished board and the review screen, and leaves the
+   recipes in the account. The import steps run first, so the gallery shots
+   that follow include them. Without a corpus, the import steps are skipped.
+
+Each step is `{ "shot"?: name, "path"?: route }` or
+`{ "shot"?: name, "do": "import-select" | "import-start" | "import-wait" |
+"import-item" | "import-recipe", "book"?, "recipes"? }`. File names sort
+into store order, and App Store Connect takes at most 10 per device.
+
+Output lands in `apps/mobile/screenshots/en-US/` (gitignored), the layout
+`deliver` expects.
+
+```bash
+# Local (macOS + Xcode). Uses apps/web/.env.local for the Supabase target.
+CYB_SCREENSHOT_EMAIL=… CYB_SCREENSHOT_PASSWORD=… node scripts/ios-screenshots/capture.mjs
+
+# Same driver in headless Chromium — fast step iteration on Linux. The import
+# steps need the local worker (see apps/cli/README.md → "Local Supabase"):
+CYB_SCREENSHOT_EMAIL=demo@cookyourbooks.local CYB_SCREENSHOT_PASSWORD=demo1234 \
+  node scripts/ios-screenshots/capture.mjs --web
+
+# Push the PNGs to the editable App Store version (replaces existing ones):
+cd apps/mobile/ios && bundle exec fastlane upload_screenshots
+```
+
+**CI:** run `mobile.yml` via *workflow_dispatch* with platform
+`ios-screenshots`. PNGs are uploaded as the `app-store-screenshots` artifact.
+- Tick `upload_screenshots` to also push them to App Store Connect.
+- Tick `load_demo_library` to stock the account first with
+  `cyb demo load` (see `apps/cli/README.md`).
+
+The job fetches the corpus when `scripts/demo-content/fetch.ts` and Deno are
+available. It needs the `CYB_SCREENSHOT_EMAIL` / `CYB_SCREENSHOT_PASSWORD`
+secrets for a prod demo account with an OCR key saved. Reuse it as the App
+Review demo login.
 
 ### Common pitfalls
 

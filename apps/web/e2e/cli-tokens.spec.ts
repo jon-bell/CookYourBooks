@@ -34,6 +34,13 @@ test.describe('CLI tokens', () => {
     const rawToken = (await page.locator('code', { hasText: /^cyb_cli_/ }).textContent()) ?? '';
     expect(rawToken).toMatch(/^cyb_cli_[0-9a-f]{48}$/);
 
+    // The setup instructions hand back a complete, copy-pasteable login
+    // command: this build's URL + anon key and the token just created.
+    await expect(page.getByTestId('cli-setup')).toContainText(
+      `cyb login --url ${SUPABASE_URL} --anon-key ${SUPABASE_ANON_KEY} --token ${rawToken}`,
+    );
+    await expect(page.getByTestId('cli-setup')).toContainText('npm install -g @cookyourbooks/cli');
+
     // 3. Exercise the token. Run from inside the page so it inherits the
     //    live Supabase URL and anon key baked into the bundle.
     const exportResult = await page.evaluate(

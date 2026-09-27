@@ -26,3 +26,6 @@ ios/build/
 
 # App Store Connect API key — never commit the .p8 file, even by accident.
 *.p8
+
+# Output of scripts/ios-screenshots/capture.mjs — regenerated on demand.
+screenshots/

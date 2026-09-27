@@ -1,0 +1,22 @@
+[
+  {
+    "do": "import-select",
+    "book": "italian-cook-book",
+    "recipes": [
+      "risotto-milanaise",
+      "spaghetti-or-macaroni-with-butter-and-cheese",
+      "curled-omelet-frittata-in-riccioli",
+      "zabaione"
+    ],
+    "shot": "04-import-pages"
+  },
+  { "do": "import-start", "shot": "05-import-processing", "settleMs": 300 },
+  { "do": "import-wait", "shot": "06-import-done" },
+  { "do": "import-item", "shot": "07-import-review", "settleMs": 2500 },
+  { "shot": "01-recipes", "path": "/" },
+  { "shot": "02-recipe", "path": "{recipe}" },
+  { "shot": "03-cook-mode", "path": "{recipe}/cook" },
+  { "shot": "08-library", "path": "/library" },
+  { "shot": "09-search", "path": "/search?q=chicken", "settleMs": 2500 },
+  { "shot": "10-shopping", "path": "/shopping" }
+]

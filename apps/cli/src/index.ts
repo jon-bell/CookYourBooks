@@ -2,8 +2,9 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 
+import pkg from '../package.json' with { type: 'json' };
 import {
   type CookbookEntry,
   type CookbookMetadata,
@@ -16,10 +17,13 @@ import {
   type TocCollection,
 } from './api.js';
 import { loadConfig, requireConfig, saveConfig } from './config.js';
+import { readCorpus } from './demo/corpus.js';
+import { type BookResult, loadBook } from './demo/load.js';
+import { signIn } from './demo/session.js';
 
 const program = new Command();
 
-program.name('cyb').description('CookYourBooks command-line client').version('0.0.0');
+program.name('cyb').description('CookYourBooks command-line client').version(pkg.version);
 
 program
   .command('login')
@@ -215,6 +219,117 @@ tocCommand
     console.error(`Imported ${ids.length} placeholder recipe(s).`);
     if (ids.length === 0) process.exit(1);
   });
+
+const demoCommand = program
+  .command('demo')
+  .description('Load demo content into an account (signs in as that user; see apps/cli/README.md)');
+
+demoCommand
+  .command('load')
+  .description(
+    'Push a demo-content corpus (scripts/demo-content/out) through the OCR import pipeline ' +
+      'and auto-accept the clean recipes',
+  )
+  .argument('[dir]', 'Corpus directory', 'scripts/demo-content/out')
+  .option('--only <ids>', 'Comma-separated book ids (folder names) to load')
+  .option('--max-recipes <n>', 'At most this many recipes per book', parsePositiveInt)
+  .option('--email <email>', 'Account to load into (or $CYB_EMAIL)')
+  .option('--password-env <var>', 'Env var holding the password', 'CYB_PASSWORD')
+  .option('--url <url>', 'Supabase URL (or $CYB_SUPABASE_URL, or the `cyb login` config)')
+  .option('--anon-key <key>', 'Supabase anon key (or $CYB_SUPABASE_ANON_KEY, or the config)')
+  .option(
+    '--provider <provider>',
+    "Override the account's OCR provider (gemini | openai-compatible)",
+  )
+  .option('--model <model>', "Override the account's OCR model")
+  .option('--no-accept', 'Leave OCR results on the batch board for manual review')
+  .option('--no-wait', 'Queue the batches and exit without waiting for OCR')
+  .option('--timeout <minutes>', 'Per-book wait limit', parsePositiveInt, 20)
+  .option('--force', "Upload again even if the book's batch already exists")
+  .option('--dry-run', 'List what would be loaded, then exit')
+  .action(
+    async (
+      dir: string,
+      opts: {
+        only?: string;
+        maxRecipes?: number;
+        email?: string;
+        passwordEnv: string;
+        url?: string;
+        anonKey?: string;
+        provider?: string;
+        model?: string;
+        accept: boolean;
+        wait: boolean;
+        timeout: number;
+        force?: boolean;
+        dryRun?: boolean;
+      },
+    ) => {
+      if (
+        opts.provider !== undefined &&
+        opts.provider !== 'gemini' &&
+        opts.provider !== 'openai-compatible'
+      ) {
+        exitWith(`--provider must be "gemini" or "openai-compatible".`);
+      }
+      const all = readCorpus(
+        dir,
+        opts.only?.split(',').map((s) => s.trim()),
+      );
+      // Books with only contents / notes / handwriting sections have no
+      // recipe pages to import — skip them rather than create empty cookbooks.
+      const books = all.filter((b) => b.recipes.length > 0);
+      for (const b of all) {
+        const n = Math.min(b.recipes.length, opts.maxRecipes ?? b.recipes.length);
+        console.error(
+          `${b.id}: ${n > 0 ? `${n} recipe(s)` : 'no recipe pages, skipped'} — ${b.title}`,
+        );
+      }
+      if (books.length === 0) exitWith(`${dir}: no books with recipe pages found.`);
+      if (opts.dryRun) return;
+
+      const { client, userId, email } = await signIn(opts);
+      console.error(`Signed in as ${email}`);
+      const results: BookResult[] = [];
+      for (const book of books) {
+        console.error(`\n${book.title}`);
+        try {
+          results.push(
+            await loadBook(client, userId, book, {
+              maxRecipes: opts.maxRecipes,
+              accept: opts.accept,
+              wait: opts.wait,
+              timeoutMs: opts.timeout * 60_000,
+              force: opts.force ?? false,
+              provider: opts.provider,
+              model: opts.model,
+              log: (line) => console.error(line),
+            }),
+          );
+        } catch (e) {
+          console.error(`  ! ${(e as Error).message}`);
+        }
+      }
+
+      console.error('\nbook                             queued  recipes  review  failed  pending');
+      for (const r of results) {
+        console.error(
+          `${r.book.padEnd(32)} ${String(r.uploaded).padStart(6)} ${String(r.recipesCreated).padStart(8)}` +
+            ` ${String(r.heldForReview).padStart(7)} ${String(r.failed).padStart(7)} ${String(r.pending).padStart(8)}`,
+        );
+      }
+      await client.auth.signOut();
+      if (results.length < books.length) process.exit(1);
+    },
+  );
+
+function parsePositiveInt(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0)
+    throw new InvalidArgumentError('Expected a positive integer.');
+  return n;
+}
 
 /**
  * Render a ToC export as a plain-text file. Each collection gets a

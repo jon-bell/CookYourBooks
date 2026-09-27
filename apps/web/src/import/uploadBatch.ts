@@ -1,5 +1,6 @@
 import { getLocalDb } from '../local/db.js';
 import { enqueue } from '../local/outbox.js';
+import { pushImportBatchGraph } from '../local/sync.js';
 import { supabase } from '../supabase.js';
 import type { BakeoffVariantInput } from './api.js';
 import { kickOcr } from './api.js';
@@ -264,9 +265,14 @@ export async function uploadBatch(
   // group-first batches need grouping before OCR starts.
   if (!input.awaitGrouping && !isBakeoff) {
     try {
+      // ocr_kick authorizes against the server-side batch row, which the
+      // outbox hasn't pushed yet at this point — kicking first just 403s and
+      // the batch waits for the cron tick. Push the graph directly, then kick.
+      await pushImportBatchGraph(supabase, batchId);
       await kickOcr(batchId);
     } catch {
-      // Kick is best-effort — pg_cron's 30s tick will still pick the batch up.
+      // Best-effort (offline, worker not configured): the outbox still pushes
+      // the rows and pg_cron's tick picks the batch up.
     }
   }
   onProgress?.({ phase: 'done', done: total, total });

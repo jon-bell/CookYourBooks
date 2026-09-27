@@ -23,7 +23,17 @@ on:
         required: true
         default: sync
         type: choice
-        options: [sync, ios, ios-release, android]
+        options: [sync, ios, ios-release, ios-screenshots, android]
+      upload_screenshots:
+        description: 'ios-screenshots only: also upload to App Store Connect'
+        required: false
+        default: false
+        type: boolean
+      load_demo_library:
+        description: 'ios-screenshots only: first load the demo corpus into the demo account (cyb demo load)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: mobile-${{ github.ref }}
@@ -266,6 +276,99 @@ jobs:
       - name: Clean up decoded ASC key
         if: always()
         run: rm -f "$RUNNER_TEMP/asc/AuthKey_${CYB_ASC_KEY_ID}.p8"
+
+  ios-screenshots:
+    name: App Store screenshots (simulator)
+    # On demand only: workflow_dispatch with platform=ios-screenshots. Builds a
+    # screenshot flavour of the app, drives it on throwaway 6.9" iPhone + 13"
+    # iPad simulators as the demo account, and uploads the PNGs as an
+    # artifact. Set `upload_screenshots` to also push them to App Store
+    # Connect (replaces the current screenshots on the editable version).
+    if: github.event_name == 'workflow_dispatch' && inputs.platform == 'ios-screenshots'
+    runs-on: [self-hosted, macOS, X64, cyb-mac]
+    timeout-minutes: 60
+    env:
+      LANG: en_US.UTF-8
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      # Demo account the driver signs in as (also the App Review demo login).
+      CYB_SCREENSHOT_EMAIL: ${{ secrets.CYB_SCREENSHOT_EMAIL }}
+      CYB_SCREENSHOT_PASSWORD: ${{ secrets.CYB_SCREENSHOT_PASSWORD }}
+      CYB_ASC_KEY_ID: ${{ secrets.CYB_ASC_KEY_ID }}
+      CYB_ASC_ISSUER_ID: ${{ secrets.CYB_ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Activate Node 20 + pnpm
+        run: |
+          export NVM_DIR="/usr/local/opt/nvm"
+          . "$NVM_DIR/nvm.sh"
+          nvm use 20 --delete-prefix >/dev/null
+          echo "$(dirname "$(which node)")" >> "$GITHUB_PATH"
+
+      - name: Write .env.local with Supabase config
+        run: |
+          cat > apps/web/.env.local <<EOF
+          VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+          VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+          EOF
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch demo corpus
+        # Public-domain page scans for the import screenshots (and the optional
+        # library load below). Needs Deno + poppler on the runner; without the
+        # corpus the driver just skips its import steps.
+        run: |
+          if [ -f scripts/demo-content/fetch.ts ] && command -v deno >/dev/null; then
+            deno run --allow-net --allow-read --allow-write --allow-run \
+              scripts/demo-content/fetch.ts --images
+          else
+            echo "::warning::Demo corpus not fetched (needs scripts/demo-content/fetch.ts + deno) — import screenshots will be skipped."
+          fi
+
+      - name: Load demo library (cyb demo load)
+        if: inputs.load_demo_library
+        # Idempotent: books already loaded resume instead of re-uploading.
+        env:
+          CYB_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          CYB_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          CYB_EMAIL: ${{ secrets.CYB_SCREENSHOT_EMAIL }}
+          CYB_PASSWORD: ${{ secrets.CYB_SCREENSHOT_PASSWORD }}
+        run: |
+          pnpm --filter @cookyourbooks/cli build
+          node apps/cli/dist/index.js demo load scripts/demo-content/out
+
+      - name: Capture screenshots
+        # capture.mjs runs `cap sync` (pod install) itself, so strip RVM vars
+        # for brew's pod the same way the ios job does.
+        run: |
+          rm -rf apps/mobile/screenshots
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            node scripts/ios-screenshots/capture.mjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-store-screenshots
+          path: apps/mobile/screenshots/
+          if-no-files-found: warn
+
+      - name: Upload to App Store Connect
+        if: inputs.upload_screenshots
+        working-directory: apps/mobile/ios
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          echo "${{ secrets.CYB_ASC_KEY_P8_BASE64 }}" | base64 --decode \
+            > "$RUNNER_TEMP/asc/AuthKey_${CYB_ASC_KEY_ID}.p8"
+          export CYB_ASC_KEY_PATH="$RUNNER_TEMP/asc/AuthKey_${CYB_ASC_KEY_ID}.p8"
+          env -u GEM_PATH -u GEM_HOME -u RUBY_VERSION -u MY_RUBY_HOME \
+              -u IRBRC -u rvm_path \
+            PATH="/usr/local/opt/ruby/bin:$PATH" \
+            sh -c 'bundle config set --local path vendor/bundle && bundle install --jobs 4 && bundle exec fastlane upload_screenshots'
+          rm -f "$CYB_ASC_KEY_PATH"
 
   android:
     name: Build Android

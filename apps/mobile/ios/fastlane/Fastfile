@@ -346,6 +346,24 @@ platform :ios do
     upload_dsyms_to_sentry
   end
 
+  desc "Upload apps/mobile/screenshots (from scripts/ios-screenshots/capture.mjs) to the editable App Store version, replacing what's there. Metadata and binary are untouched."
+  lane :upload_screenshots do
+    with_asc_retry("deliver screenshots") do
+      deliver(
+        api_key: asc_api_key,
+        app_identifier: "app.cookyourbooks",
+        screenshots_path: File.expand_path("../../screenshots", __dir__),
+        overwrite_screenshots: true,
+        skip_binary_upload: true,
+        skip_metadata: true,
+        skip_app_version_update: true,
+        submit_for_review: false,
+        force: true,
+        run_precheck_before_submit: false,
+      )
+    end
+  end
+
   desc "Build + upload to TestFlight + submit the build for App Store review. Use only when you actually want a public release."
   lane :release do
     beta

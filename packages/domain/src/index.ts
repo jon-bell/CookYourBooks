@@ -24,6 +24,7 @@ export * from './services/embeddingModel.js';
 export * from './services/nutritionMath.js';
 export * from './services/ingredientTerms.js';
 export * from './services/recipeLinks.js';
+export * from './services/draftPromotion.js';
 
 // Export
 export * from './export/markdown.js';

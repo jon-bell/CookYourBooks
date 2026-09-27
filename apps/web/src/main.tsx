@@ -119,3 +119,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </Sentry.ErrorBoundary>
   </React.StrictMode>,
 );
+
+// App Store screenshot builds only (scripts/ios-screenshots/capture.mjs). Vite
+// inlines the env var, so in every other build this branch is dead code and
+// the driver chunk is never emitted.
+if (import.meta.env.VITE_SCREENSHOT_CONTROL_URL) {
+  const controlUrl = import.meta.env.VITE_SCREENSHOT_CONTROL_URL;
+  void import('./screenshots/driver.js').then((m) => m.runScreenshotDriver(controlUrl));
+}

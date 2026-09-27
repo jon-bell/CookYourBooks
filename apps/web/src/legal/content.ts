@@ -226,6 +226,11 @@ process at [/legal/dmca](/legal/dmca) is the formal channel; the
 in-app report is a faster informal route and is appropriate for most
 cases.
 
+You can also **Block author** on any public collection. That hides
+everything the author publishes from your Discover page, and our
+moderators are notified. Manage your blocked authors under Settings →
+Data & deletion.
+
 ## 6. Appeals
 
 If your account is suspended or content is removed and you believe

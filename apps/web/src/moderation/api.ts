@@ -171,3 +171,34 @@ export async function listModerationActions(limit = 100): Promise<ModerationActi
   if (error) throw error;
   return data ?? [];
 }
+
+// ---------- User blocks ----------
+// A block hides every collection the author publishes from the blocker's
+// Discover (enforced in the `public_collections` view) and files a USER
+// report so moderation sees it. See 20260717000000_user_blocks.sql.
+
+export interface BlockedUser {
+  blocked_id: string;
+  display_name: string | null;
+  created_at: string;
+}
+
+/** Block whoever owns this public collection. The owner id never reaches
+ *  the client — the RPC resolves it server-side. */
+export async function blockCollectionOwner(collectionId: string): Promise<void> {
+  const { error } = await supabase.rpc('block_collection_owner', {
+    p_collection_id: collectionId,
+  });
+  if (error) throw error;
+}
+
+export async function listMyBlocks(): Promise<BlockedUser[]> {
+  const { data, error } = await supabase.rpc('list_my_blocks');
+  if (error) throw error;
+  return data;
+}
+
+export async function unblockUser(blockedId: string): Promise<void> {
+  const { error } = await supabase.from('user_blocks').delete().eq('blocked_id', blockedId);
+  if (error) throw error;
+}

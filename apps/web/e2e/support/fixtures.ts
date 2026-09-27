@@ -22,6 +22,10 @@ export async function signIn(page: Page, user: TestUser): Promise<void> {
   // waitForSynced) raced it and flaked across every authedPage-based test.
   // Wait for the SyncProvider's own readiness signal first, then assert the
   // heading it unlocks.
+  // Signed-out pages report sync 'idle' too (there's no local DB to open), so
+  // first wait for the sign-in to land — the page navigates off /sign-in —
+  // or waitForSynced could pass on the pre-sign-in state.
+  await expect(page).not.toHaveURL(/\/sign-in/, { timeout: 15_000 });
   await waitForSynced(page);
   await expect(page.getByRole('heading', { name: 'Recipes', exact: true })).toBeVisible();
 }

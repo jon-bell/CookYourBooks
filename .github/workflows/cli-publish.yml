@@ -1,0 +1,82 @@
+name: Publish CLI to npm
+
+# Publishes apps/cli as @cookyourbooks/cli. Trigger by pushing a tag that
+# matches the package version:
+#
+#   # bump apps/cli/package.json "version", commit, then
+#   git tag cli-v0.1.1 && git push origin cli-v0.1.1
+#
+# Tokenless: npm trusted publishing (OIDC). There is no NPM_TOKEN secret —
+# npmjs.com trusts this exact workflow file instead. One-time setup on
+# npmjs.com → @cookyourbooks/cli → Settings → Trusted publishing → GitHub
+# Actions: owner `jon-bell`, repository `CookYourBooks`, workflow
+# `cli-publish.yml` (no environment). Trusted publishing needs npm ≥ 11.5.1
+# and a GitHub-hosted runner, and attaches provenance automatically.
+
+on:
+  push:
+    tags: ['cli-v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Pack and validate only; do not publish'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # OIDC for npm trusted publishing (and its provenance)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: npm with trusted-publishing support (>= 11.5.1)
+        run: npm install -g npm@latest && npm --version
+
+      - name: Check the tag matches the package version
+        if: github.event_name == 'push'
+        run: |
+          version=$(node -p "require('./apps/cli/package.json').version")
+          if [ "cli-v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match apps/cli/package.json version $version"
+            exit 1
+          fi
+
+      - name: Typecheck + test
+        run: |
+          pnpm --filter @cookyourbooks/cli typecheck
+          pnpm --filter @cookyourbooks/cli build
+          pnpm --filter @cookyourbooks/cli test
+
+      - name: Smoke-test the packed tarball
+        # Install the exact tarball npm would publish into an empty project,
+        # so a missing dependency or file shows up here and not for users.
+        run: |
+          cd apps/cli && npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          npm init -y >/dev/null
+          npm install "$RUNNER_TEMP"/cookyourbooks-cli-*.tgz
+          npx cyb --version
+          npx cyb --help
+
+      - name: Publish
+        if: github.event_name == 'push' || !inputs.dry_run
+        working-directory: apps/cli
+        # No token: npm exchanges this job's OIDC identity for a short-lived
+        # publish credential, and records provenance.
+        run: npm publish --access public
