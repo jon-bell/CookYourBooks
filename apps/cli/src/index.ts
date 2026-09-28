@@ -252,6 +252,10 @@ demoCommand
     'One import item per page (how a person scans a book) instead of one per recipe — for evaluating OCR',
   )
   .option('--label <label>', 'Append to the batch name, so this run gets its own batch')
+  .option(
+    '--fallback-model <model>',
+    'Retry pages the model refuses (e.g. Gemini "recitation") on this model; also re-queues refused pages when resuming',
+  )
   .option('--dry-run', 'List what would be loaded, then exit')
   .action(
     async (
@@ -273,6 +277,7 @@ demoCommand
         promptFile?: string;
         splitPages?: boolean;
         label?: string;
+        fallbackModel?: string;
       },
     ) => {
       if (
@@ -316,6 +321,7 @@ demoCommand
               promptOverride: opts.promptFile ? readFileSync(opts.promptFile, 'utf8') : undefined,
               splitPages: opts.splitPages ?? false,
               label: opts.label,
+              fallbackModel: opts.fallbackModel,
               log: (line) => console.error(line),
             }),
           );
