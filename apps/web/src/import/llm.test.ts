@@ -366,6 +366,25 @@ describe('parseLlmJson', () => {
       parseLlmJson('{"recipes":[{"title":"T","ingredients":[],"instructions":[]}]}')[0]!.complete,
     ).toBeUndefined();
   });
+
+  it('derives `complete` from headingVisible AND endsVisibly, overriding the model’s own flag', () => {
+    const mk = (fields: Record<string, unknown>) =>
+      JSON.stringify({
+        recipes: [{ title: 'T', ...fields, ingredients: [], instructions: [] }],
+        printedPageNumbers: [47],
+      });
+    const complete = (fields: Record<string, unknown>) => parseLlmJson(mk(fields))[0]!.complete;
+    expect(complete({ headingVisible: true, endsVisibly: true })).toBe(true);
+    // A recipe that runs off the bottom of the page — even if the model still
+    // claimed `complete: true` (what gemini-3.1-flash-lite did for cut-off
+    // neighbours before the prompt split the question).
+    expect(complete({ headingVisible: true, endsVisibly: false, complete: true })).toBe(false);
+    // A continuation from an earlier page.
+    expect(complete({ headingVisible: false, endsVisibly: true, complete: true })).toBe(false);
+    // Only one of the two answered → fall back to the bare flag.
+    expect(complete({ headingVisible: true, complete: false })).toBe(false);
+    expect(complete({ endsVisibly: 'yes', complete: true })).toBe(true);
+  });
 });
 
 describe('parseNotesJson', () => {

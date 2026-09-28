@@ -180,12 +180,12 @@ export const BOOKS: Book[] = [
       sections: [{ kind: 'index', label: 'index', leaves: span(161, 164) }],
       recipes: [
         { title: 'Gnocchi', leaves: [11, 12] }, // pp. 7–8
-        { title: 'Minestrone alla Milanese', leaves: [14, 15] }, // pp. 10–11
+        { title: 'Minestrone alla Milanese', leaves: [15] }, // p. 11
         { title: 'Ravioli', leaves: [15, 16] }, // pp. 11–12
         { title: 'Spaghetti or Macaroni with Butter and Cheese', leaves: [21] }, // p. 17
         { title: 'Risotto Milanaise', leaves: [26] }, // p. 22
         { title: 'Polenta Pie', leaves: [35, 36] }, // pp. 31–32
-        { title: 'Curled Omelet (Frittata in riccioli)', leaves: [51] }, // p. 47
+        { title: 'Curled Omelet (Frittata in riccioli)', leaves: [51, 52] }, // pp. 47–48
         { title: 'Zabaione', leaves: [150] }, // p. 146
       ],
       // Soups → macaroni → rice → polenta: a realistic "scan a chapter" run.

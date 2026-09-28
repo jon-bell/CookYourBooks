@@ -172,7 +172,9 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>): Prom
  * in the item's file list: user uploads name them after the original file
  * ("Gem Chopper Cook Book_scandata.xml"), not the identifier.
  */
-async function iaLeafIndex(identifier: string): Promise<Map<number, number>> {
+async function iaLeafIndex(
+  identifier: string,
+): Promise<{ index: Map<number, number>; printed: Map<number, number> }> {
   const meta = await (await fetch(`https://archive.org/metadata/${identifier}`, { headers: { 'User-Agent': UA } })).json();
   if (!meta.server) throw new Error(`no such IA item: ${identifier}`);
   const base = `https://${meta.server}${meta.dir}/`;
@@ -188,14 +190,21 @@ async function iaLeafIndex(identifier: string): Promise<Map<number, number>> {
       if (!/<addToAccessFormats>false</.test(m[2])) leaves.push(Number(m[1]));
     }
   } else await sd?.body?.cancel();
+  // page_numbers.json is also IA's printed-page detection per leaf — the
+  // numbers in the page margins — which lets the demo loader set a recipe's
+  // page numbers exactly instead of trusting the OCR model's guess.
+  const printed = new Map<number, number>();
   const pnUrl = named('_page_numbers.json');
-  if (!leaves.length && pnUrl) {
+  if (pnUrl) {
     const pn = await fetch(pnUrl, { headers: { 'User-Agent': UA } });
-    if (pn.ok) leaves = ((await pn.json()) as { pages: { leafNum: number }[] }).pages.map((p) => p.leafNum);
-    else await pn.body?.cancel();
+    if (pn.ok) {
+      const pages = ((await pn.json()) as { pages: { leafNum: number; pageNumber?: string }[] }).pages;
+      if (!leaves.length) leaves = pages.map((p) => p.leafNum);
+      for (const p of pages) if (/^\d+$/.test(p.pageNumber ?? '')) printed.set(p.leafNum, Number(p.pageNumber));
+    } else await pn.body?.cancel();
   }
   if (!leaves.length) throw new Error(`${identifier}: no scandata.xml or page_numbers.json to map leaves → page images`);
-  return new Map(leaves.map((leaf, n) => [leaf, n]));
+  return { index: new Map(leaves.map((leaf, n) => [leaf, n])), printed };
 }
 
 function iaPageUrl(identifier: string, n: number, width: number): string {
@@ -205,7 +214,7 @@ function iaPageUrl(identifier: string, n: number, width: number): string {
 async function fetchScans(book: Book, dir: string, o: Opts, ledger: Ledger): Promise<string[]> {
   const ia = book.ia;
   if (!ia) return [];
-  const index = await iaLeafIndex(ia.identifier);
+  const { index, printed } = await iaLeafIndex(ia.identifier);
   const page = (leaf: number) => {
     const n = index.get(leaf);
     if (n === undefined) throw new Error(`${ia.identifier}: leaf ${leaf} is not an access page`);
@@ -246,7 +255,17 @@ async function fetchScans(book: Book, dir: string, o: Opts, ledger: Ledger): Pro
     if ((await download(j.url, j.dest, o.force, { entries: ledger, key })) === 'fetched') fetched++;
   });
   console.log(`  scans: ${jobs.length} pages (${fetched} downloaded) from archive.org/details/${ia.identifier}`);
-  return [...jobs, ...bulk].map((j) => j.dest.slice(dir.length + 1));
+  // pages.json: printed page number for each recipe leaf, where IA detected one.
+  const recipeLeaves = (ia.recipes ?? []).flatMap((r) => r.leaves);
+  const pageMap = Object.fromEntries(
+    recipeLeaves.filter((l) => printed.has(l)).map((l) => [String(l), printed.get(l)!]),
+  );
+  const out = [...jobs, ...bulk].map((j) => j.dest.slice(dir.length + 1));
+  if (Object.keys(pageMap).length > 0) {
+    await Deno.writeTextFile(`${dir}/pages.json`, JSON.stringify(pageMap, null, 2) + '\n');
+    out.push('pages.json');
+  }
+  return out;
 }
 
 // ── Transcriptions ──────────────────────────────────────────────────────

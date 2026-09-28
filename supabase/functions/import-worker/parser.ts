@@ -398,7 +398,7 @@ function buildDraft(raw: unknown, rawText: string | undefined): ParsedRecipeDraf
     ingredients,
     instructions,
     leftover,
-    complete: asBoolean(obj.complete),
+    complete: draftCompleteness(obj),
     description: asTrimmedString(obj.description),
     timeEstimate: asTrimmedString(obj.timeEstimate),
     equipment,
@@ -635,6 +635,23 @@ export function parseLlmNote(text: string): ParsedNote | null {
 }
 
 // ---------- helpers ----------
+
+/**
+ * The recipe prompt asks two concrete questions — is this recipe's own heading
+ * printed here (`headingVisible`), and does its method visibly finish here
+ * (`endsVisibly`) — and defines `complete` as their AND. Derive it rather than
+ * trust the model's arithmetic: asked directly ("is this complete?") models
+ * passed cut-off fragments as complete. A bare `complete` from older prompts or
+ * custom user prompts is still honoured.
+ */
+function draftCompleteness(obj: Record<string, unknown>): boolean | undefined {
+  const headingVisible = asBoolean(obj.headingVisible);
+  const endsVisibly = asBoolean(obj.endsVisibly);
+  if (headingVisible !== undefined && endsVisibly !== undefined) {
+    return headingVisible && endsVisibly;
+  }
+  return asBoolean(obj.complete);
+}
 
 function asBoolean(raw: unknown): boolean | undefined {
   return typeof raw === 'boolean' ? raw : undefined;

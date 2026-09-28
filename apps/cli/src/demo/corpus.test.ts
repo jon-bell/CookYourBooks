@@ -59,6 +59,14 @@ describe('readCorpus', () => {
     expect(books[1]).toMatchObject({ collection: 'personal', author: null, recipes: [] });
   });
 
+  it('attaches printed page numbers from pages.json only when every page is known', () => {
+    writeFileSync(join(dir, 'italian', 'pages.json'), JSON.stringify({ '11': 7, '12': 8 }));
+    const [italian] = readCorpus(dir, ['italian']);
+    expect(italian!.recipes.find((r) => r.slug === 'gnocchi')!.printedPages).toEqual([7, 8]);
+    // risotto's leaf (26) isn't in the map → no partial page list.
+    expect(italian!.recipes.find((r) => r.slug === 'risotto')!.printedPages).toBeUndefined();
+  });
+
   it('filters by id and reports unknown ids', () => {
     expect(readCorpus(dir, ['receipts']).map((b) => b.id)).toEqual(['receipts']);
     expect(() => readCorpus(dir, ['nope'])).toThrow(/nope/);

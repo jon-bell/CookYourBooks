@@ -246,6 +246,12 @@ demoCommand
   .option('--no-wait', 'Queue the batches and exit without waiting for OCR')
   .option('--timeout <minutes>', 'Per-book wait limit', parsePositiveInt, 20)
   .option('--force', "Upload again even if the book's batch already exists")
+  .option('--prompt-file <file>', "OCR with this prompt instead of the account's saved one")
+  .option(
+    '--split-pages',
+    'One import item per page (how a person scans a book) instead of one per recipe — for evaluating OCR',
+  )
+  .option('--label <label>', 'Append to the batch name, so this run gets its own batch')
   .option('--dry-run', 'List what would be loaded, then exit')
   .action(
     async (
@@ -264,6 +270,9 @@ demoCommand
         timeout: number;
         force?: boolean;
         dryRun?: boolean;
+        promptFile?: string;
+        splitPages?: boolean;
+        label?: string;
       },
     ) => {
       if (
@@ -304,6 +313,9 @@ demoCommand
               force: opts.force ?? false,
               provider: opts.provider,
               model: opts.model,
+              promptOverride: opts.promptFile ? readFileSync(opts.promptFile, 'utf8') : undefined,
+              splitPages: opts.splitPages ?? false,
+              label: opts.label,
               log: (line) => console.error(line),
             }),
           );

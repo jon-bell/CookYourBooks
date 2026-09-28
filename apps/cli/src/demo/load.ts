@@ -12,6 +12,7 @@ import {
 
 import type { DemoBook } from './corpus.js';
 import type { DemoClient } from './session.js';
+import { pickTargetDraft } from './targetMatch.js';
 
 // `cyb demo load`: push a demo-content corpus through the real OCR import
 // pipeline — the same Storage layout, import_batches / import_items rows and
@@ -37,6 +38,15 @@ export interface LoadOptions {
   force: boolean;
   provider?: 'gemini' | 'openai-compatible';
   model?: string;
+  /** Use this OCR prompt instead of the account's saved one (snapshotted onto
+   *  the batch, exactly as the app does with a custom prompt). */
+  promptOverride?: string;
+  /** One import item per page — how a person scanning a book page by page
+   *  imports — instead of one item per recipe. For evaluating OCR; the drafts
+   *  go through the normal auto-accept bar rather than the recipe-folder match. */
+  splitPages: boolean;
+  /** Appended to the batch name, so a labelled run gets its own batch. */
+  label?: string;
   log: (line: string) => void;
 }
 
@@ -60,7 +70,8 @@ const DEFAULT_MODEL = { gemini: 'gemini-3.1-flash-lite', 'openai-compatible': 'g
 const IN_FLIGHT = new Set(['PENDING', 'CLAIMED']);
 const FAILED = new Set(['OCR_FAILED', 'NEEDS_FALLBACK']);
 
-export const batchNameFor = (book: DemoBook) => `Demo · ${book.title}`;
+export const batchNameFor = (book: DemoBook, label?: string) =>
+  `Demo · ${book.title}${label ? ` · ${label}` : ''}`;
 
 export async function loadBook(
   client: DemoClient,
@@ -80,7 +91,7 @@ export async function loadBook(
     heldForReview: 0,
   };
 
-  const existing = opts.force ? null : await findBatch(client, batchNameFor(book));
+  const existing = opts.force ? null : await findBatch(client, batchNameFor(book, opts.label));
   if (existing) {
     result.batchId = existing;
     opts.log(`  = batch already exists (${existing}) — resuming`);
@@ -102,7 +113,12 @@ export async function loadBook(
   result.failed = items.filter((i) => FAILED.has(i.status)).length;
 
   if (opts.accept) {
-    const promoted = await promoteBatch(client, collectionId, book, items);
+    // Each recipe item was uploaded for ONE named recipe (its corpus folder),
+    // but its pages usually also carry neighbouring recipes — often cut off at
+    // the page edge. Only that named recipe is wanted; split-page runs have no
+    // per-item target and use the plain auto-accept bar.
+    const targets = opts.splitPages ? undefined : recipes;
+    const promoted = await promoteBatch(client, collectionId, book, items, targets, opts.log);
     result.recipesCreated = promoted.created;
     result.heldForReview = promoted.held;
   }
@@ -172,7 +188,7 @@ async function resolveOcrConfig(client: DemoClient, opts: LoadOptions): Promise<
   return {
     provider,
     model: model ?? DEFAULT_MODEL[provider],
-    prompt: prefs?.provider === provider ? prefs.prompt : null,
+    prompt: opts.promptOverride ?? (prefs?.provider === provider ? prefs.prompt : null),
   };
 }
 
@@ -194,13 +210,21 @@ async function uploadBatch(
     extraStoragePaths: string[];
   }[] = [];
 
+  // What becomes one import item: a recipe's pages (default), or — with
+  // splitPages — each distinct page on its own, in book order. Recipe folders
+  // can share a page (one recipe ends where the next begins), so split mode
+  // de-duplicates by the scan's leaf file name.
+  const units: { label: string; pages: string[] }[] = opts.splitPages
+    ? splitIntoPages(recipes)
+    : recipes.map((r) => ({ label: r.slug, pages: r.pages }));
+
   // Storage first, rows second — the same order as the app, so the worker
   // never claims an item whose image isn't there yet.
   let uploaded = 0;
-  const total = recipes.reduce((n, r) => n + r.pages.length, 0);
-  for (const [pageIndex, recipe] of recipes.entries()) {
+  const total = units.reduce((n, u) => n + u.pages.length, 0);
+  for (const [pageIndex, unit] of units.entries()) {
     const paths: string[] = [];
-    for (const file of recipe.pages) {
+    for (const file of unit.pages) {
       const path = pagePath(randomUUID());
       const { error } = await client.storage.from('imports').upload(path, readFileSync(file), {
         contentType: 'image/jpeg',
@@ -217,16 +241,14 @@ async function uploadBatch(
       storagePath: leader,
       extraStoragePaths: paths.slice(1),
     });
-    opts.log(
-      `  ↑ ${recipe.slug} (${recipe.pages.length} page${recipe.pages.length > 1 ? 's' : ''})`,
-    );
+    opts.log(`  ↑ ${unit.label} (${unit.pages.length} page${unit.pages.length > 1 ? 's' : ''})`);
   }
   opts.log(`  uploaded ${uploaded}/${total} page images`);
 
   const { error: batchError } = await client.from('import_batches').insert({
     id: batchId,
     owner_id: userId,
-    name: batchNameFor(book),
+    name: batchNameFor(book, opts.label),
     batch_kind: 'STANDARD',
     source_kind: 'IMAGES',
     target_collection_id: collectionId,
@@ -259,8 +281,24 @@ async function uploadBatch(
   return batchId;
 }
 
+/** Each distinct page once, in book order (by the leaf number fetch.ts puts in
+ *  the file name, e.g. "02-leaf15.jpg"). */
+function splitIntoPages(recipes: DemoBook['recipes']): { label: string; pages: string[] }[] {
+  const byLeaf = new Map<string, string>();
+  for (const r of recipes) {
+    for (const file of r.pages) {
+      const leaf = /leaf(\d+)/.exec(file)?.[1] ?? file;
+      if (!byLeaf.has(leaf)) byLeaf.set(leaf, file);
+    }
+  }
+  return [...byLeaf.entries()]
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([leaf, file]) => ({ label: `leaf ${leaf}`, pages: [file] }));
+}
+
 interface ItemRow {
   id: string;
+  page_index: number;
   status: string;
   kind: string;
   last_error: string | null;
@@ -278,7 +316,7 @@ async function waitForBatch(
   for (;;) {
     const { data, error } = await client
       .from('import_items')
-      .select('id, status, kind, last_error, parsed_drafts_json, created_recipe_ids')
+      .select('id, page_index, status, kind, last_error, parsed_drafts_json, created_recipe_ids')
       .eq('batch_id', batchId)
       .order('page_index');
     if (error) throw error;
@@ -306,14 +344,18 @@ const normTitle = (t: string) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
-/** Promote every auto-acceptable draft on the batch's OCR_DONE recipe items.
- *  Mirrors the batch board's auto-accept pass: accepted drafts leave the item,
- *  weak ones stay for review, and the item closes (REVIEWED) once empty. */
+/** Promote the batch's OCR_DONE recipe items. Mirrors the batch board's
+ *  auto-accept pass (accepted drafts leave the item, weak ones stay for review,
+ *  the item closes as REVIEWED once empty), with one demo-specific rule: when
+ *  `targets` names the recipe each item was uploaded for (by page_index), only
+ *  that draft is kept and the neighbours sharing its pages are discarded. */
 async function promoteBatch(
   client: DemoClient,
   collectionId: string,
   book: DemoBook,
   items: ItemRow[],
+  targets: DemoBook['recipes'] | undefined,
+  log: (line: string) => void,
 ): Promise<{ created: number; held: number }> {
   const { data: existing, error } = await client
     .from('recipes')
@@ -330,9 +372,31 @@ async function promoteBatch(
     const drafts = Array.isArray(item.parsed_drafts_json)
       ? (item.parsed_drafts_json as unknown as ParsedRecipeDraft[])
       : [];
+    let candidates = drafts;
+    const targetRecipe = targets?.[item.page_index];
+    const target = targetRecipe?.slug;
+    if (targetRecipe && target) {
+      const i = pickTargetDraft(drafts, target);
+      if (i === -1) {
+        log(
+          `  ? ${target}: no draft titled like it (${drafts.map((d) => d.title).join(', ')}) — left for review`,
+        );
+        held += drafts.length;
+        continue;
+      }
+      const dropped = drafts.filter((_, j) => j !== i).map((d) => d.title);
+      if (dropped.length > 0) log(`  – ${target}: dropped neighbours ${dropped.join(', ')}`);
+      // The corpus knows the printed pages exactly; the model often reads a
+      // recipe's number in the book as its page number.
+      candidates = [
+        targetRecipe.printedPages
+          ? { ...drafts[i]!, pageNumbers: targetRecipe.printedPages }
+          : drafts[i]!,
+      ];
+    }
     const accepted: ParsedRecipeDraft[] = [];
     const remaining: ParsedRecipeDraft[] = [];
-    for (const d of drafts)
+    for (const d of candidates)
       (isDraftAutoAcceptable(normalizeDraft(d)) ? accepted : remaining).push(d);
     held += remaining.length;
     if (accepted.length === 0) continue;

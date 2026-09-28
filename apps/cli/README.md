@@ -49,8 +49,16 @@ app's auto-accept bar (`isDraftAutoAcceptable` in `@cookyourbooks/domain`).
 - One cookbook and one batch (`Demo · <title>`) per book.
 - One import item per recipe. A recipe that crosses a page break is sent as
   one multi-image OCR call.
-- Weak drafts stay on the batch board under **Needs review**, as they would in
-  the app.
+- **Only the named recipe is kept.** A recipe's pages usually also carry
+  neighbouring recipes, often cut off at the page edge. The loader keeps the
+  draft whose title matches the folder (`minestrone-alla-milanese` →
+  "Vegetable Chowder (Minestrone alla Milanese)") and drops the rest. If none
+  matches, the whole item stays on the board for review.
+- **Page numbers come from the corpus** (`pages.json`, the Internet Archive's
+  page map) when the scan has one. Models often mistake a recipe's number in
+  the book for its page number.
+- A draft that fails the auto-accept bar stays on the batch board under
+  **Needs review**, as it would in the app.
 
 These commands **sign in as the account** instead of using a CLI token,
 because Storage uploads need a user session. The session exists only for the
@@ -73,6 +81,15 @@ cyb demo load                                   # every book
 cyb demo load --only italian-cook-book --max-recipes 4
 cyb demo load --no-accept                       # leave results for review in the app
 cyb demo load --no-wait                         # queue and exit; the worker finishes later
+```
+
+Evaluating OCR prompts or models against real scans (nothing is filed):
+
+```bash
+# One item per page — how a person scans a book — with a candidate prompt,
+# into its own labelled batch; compare the drafts on the batch board.
+cyb demo load --only italian-cook-book --split-pages --no-accept \
+  --prompt-file my-prompt.txt --model gemini-2.5-flash --label eval-flash
 ```
 
 A run prints each upload and the OCR queue as it drains, then a summary:

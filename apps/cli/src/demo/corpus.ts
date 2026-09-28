@@ -5,6 +5,7 @@ import { join } from 'node:path';
 //
 //   <dir>/<book-id>/source.json            title, author, year, collection kind
 //   <dir>/<book-id>/pages/<recipe>/NN-*.jpg the page(s) one recipe spans, in order
+//   <dir>/<book-id>/pages.json              printed page per scan leaf (optional)
 //
 // Only the recipe page folders are loaded; contents / index / notes pages and
 // the whole-book transcriptions are ignored here.
@@ -16,6 +17,9 @@ export interface DemoRecipe {
   slug: string;
   /** Absolute paths to the page images, in reading order. */
   pages: string[];
+  /** The printed page numbers of those pages (from pages.json), when every
+   *  one is known — exact, unlike the OCR model's guess. */
+  printedPages?: number[];
 }
 
 export interface DemoBook {
@@ -44,6 +48,7 @@ export function readCorpus(dir: string, only?: readonly string[]): DemoBook[] {
     const sourcePath = join(bookDir, 'source.json');
     if (!existsSync(sourcePath)) continue;
     const book = parseBook(id, JSON.parse(readFileSync(sourcePath, 'utf8')) as unknown);
+    const pageMap = readPageMap(join(bookDir, 'pages.json'));
     const pagesDir = join(bookDir, 'pages');
     if (existsSync(pagesDir)) {
       for (const slug of readdirSync(pagesDir).sort()) {
@@ -53,7 +58,13 @@ export function readCorpus(dir: string, only?: readonly string[]): DemoBook[] {
           .filter((f) => IMAGE.test(f))
           .sort()
           .map((f) => join(recipeDir, f));
-        if (pages.length > 0) book.recipes.push({ slug, pages });
+        if (pages.length === 0) continue;
+        const printed = pages.map((f) => pageMap.get(/leaf(\d+)/.exec(f)?.[1] ?? ''));
+        book.recipes.push({
+          slug,
+          pages,
+          printedPages: printed.every((n) => n !== undefined) ? printed : undefined,
+        });
       }
     }
     books.push(book);
@@ -63,6 +74,19 @@ export function readCorpus(dir: string, only?: readonly string[]): DemoBook[] {
     if (missing.length > 0) throw new Error(`not in ${dir}: ${missing.join(', ')}`);
   }
   return books;
+}
+
+/** pages.json: `{ "<leaf>": <printed page> }`. Missing or malformed → empty. */
+function readPageMap(path: string): Map<string, number> {
+  if (!existsSync(path)) return new Map();
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    return new Map(
+      Object.entries(raw).filter((e): e is [string, number] => typeof e[1] === 'number'),
+    );
+  } catch {
+    return new Map();
+  }
 }
 
 function parseBook(id: string, raw: unknown): DemoBook {

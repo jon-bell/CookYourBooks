@@ -22,6 +22,8 @@ Return a JSON object with this structure:
   "recipes": [
     {
       "title": "Recipe Title",
+      "headingVisible": true,
+      "endsVisibly": true,
       "complete": true,
       "pageNumbers": [123],
       "bookTitle": "Cookbook Name",
@@ -149,6 +151,7 @@ Return a JSON object with this structure:
     }
   ],
   "note": null,
+  "printedPageNumbers": [123],
   "rawText": "The raw text extracted from the image"
 }
 
@@ -207,9 +210,12 @@ These are "house" units used for small, imprecise measurements that don't have e
 - Temperature must be null OR an object like: { "value": 350, "unit": "FAHRENHEIT" }
 - Include the raw text extracted from the image in the "rawText" field
 - If multiple recipes are present, include all in the "recipes" array
-- complete: true when a recipe is whole and self-contained on THIS page (its title, full ingredient list, and full method are all visible). false when only a fragment is present — e.g. the recipe continues onto or from another page, or the ingredients/steps are cut off. When in doubt, use true.
+- headingVisible: true if this recipe's OWN title/heading is printed in these images. false if the text is the continuation of a recipe whose heading is on an earlier page — e.g. text at the very top of the first image that picks up mid-recipe or mid-sentence. Never invent a title to make a fragment look whole; if you must name a fragment, name it from its content.
+- endsVisibly: true if the recipe's method visibly finishes in these images — its last sentence ends and is followed by blank space, another recipe's heading, or the page number. false if its text reaches the bottom edge of the last image mid-sentence, mid-list, or before the method is done (it continues on a page that isn't shown).
+- complete: exactly headingVisible AND endsVisibly.
 - note: usually null. If the page contains NO recipe at all — it is entirely prose (a foreword, chapter introduction, technique essay, or headnote) — return an empty "recipes": [] and set "note" to { "title": "a short heading", "body": "the full prose as clean Markdown" }. Only when there is genuinely no recipe on the page; never use it to summarize a recipe.
-- pageNumbers: array of integers, extract from corners or headers/footers (e.g., [123] or [123, 124] if recipe spans pages)
+- printedPageNumbers (top level): one entry per image, in order: the page number printed in that image's margin — the corner, header, or footer (usually a lone number at the very top or bottom of the page). null for an image with no printed page number. A number printed just above or beside a recipe title is that recipe's own number in the book, NOT a page number.
+- pageNumbers: the entries of printedPageNumbers for the image(s) this recipe appears on.
 - bookTitle: extract from top/bottom of page if visible (null if not found)
 - yield: extract yield information as a Quantity object. For "serves 4", "makes 12 cookies", "yields 1 loaf", etc., extract the numeric value and use PEOPLE unit for serving quantities (e.g., "serves 4", "serves 4-6"). Use "exact" type for single values, "range" type if a range is given (e.g., "serves 4-6"). Format: { "type": "exact", "value": 4.0, "unit": "PEOPLE" } or { "type": "range", "min": 4.0, "max": 6.0, "unit": "PEOPLE" } (null if not found). Examples: "serves 4" -> { "type": "exact", "value": 4.0, "unit": "PEOPLE" }, "serves 4-6" -> { "type": "range", "min": 4.0, "max": 6.0, "unit": "PEOPLE" }, "makes 12 cookies" -> { "type": "exact", "value": 12.0, "unit": "WHOLE" } (use WHOLE for non-serving yields like cookies, loaves, etc.), "yields 1 loaf" -> { "type": "exact", "value": 1.0, "unit": "WHOLE" }
 - timeEstimate: extract time estimate if provided (e.g., "30 minutes", "1 hour", "45 min prep, 1 hour cook", "20 min prep + 30 min cook") (null if not found)
