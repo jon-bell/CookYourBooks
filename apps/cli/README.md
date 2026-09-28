@@ -81,7 +81,14 @@ cyb demo load                                   # every book
 cyb demo load --only italian-cook-book --max-recipes 4
 cyb demo load --no-accept                       # leave results for review in the app
 cyb demo load --no-wait                         # queue and exit; the worker finishes later
+cyb demo load --fallback-model gemini-3.5-flash # retry pages Gemini refuses as "recitation"
 ```
+
+Each batch gets a small `demo-manifest.json` in Storage beside its pages,
+recording which recipe each import item was uploaded for. A later run resumes
+from that record, so renaming or adding corpus folders doesn't re-pair items.
+When resuming, `--fallback-model` also re-queues pages that were already
+parked on a refusal.
 
 Evaluating OCR prompts or models against real scans (nothing is filed):
 

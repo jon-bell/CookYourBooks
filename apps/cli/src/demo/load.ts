@@ -47,6 +47,10 @@ export interface LoadOptions {
   splitPages: boolean;
   /** Appended to the batch name, so a labelled run gets its own batch. */
   label?: string;
+  /** Retry pages the model refuses (Gemini "recitation" of published text) on
+   *  this model, same provider — set on new batches, and applied to an
+   *  existing batch's parked pages when resuming. */
+  fallbackModel?: string;
   log: (line: string) => void;
 }
 
@@ -92,12 +96,23 @@ export async function loadBook(
   };
 
   const existing = opts.force ? null : await findBatch(client, batchNameFor(book, opts.label));
+  let targets: (Target | undefined)[] | undefined = opts.splitPages
+    ? undefined
+    : recipes.map(toTarget);
   if (existing) {
     result.batchId = existing;
     opts.log(`  = batch already exists (${existing}) — resuming`);
+    // Pair items with recipes by what was uploaded, not by today's corpus:
+    // renaming or adding a recipe folder reorders the list.
+    const manifest = await readManifest(client, userId, existing);
+    if (manifest) targets = manifest;
+    else if (targets)
+      opts.log('  ! no demo manifest on this batch — pairing items by corpus order');
+    if (opts.fallbackModel) await applyFallback(client, existing, opts);
   } else {
     const config = await resolveOcrConfig(client, opts);
     result.batchId = await uploadBatch(client, userId, book, recipes, collectionId, config, opts);
+    if (targets) await writeManifest(client, userId, result.batchId, targets);
     result.uploaded = recipes.length;
     const { error } = await client.rpc('ocr_kick', { p_batch_id: result.batchId });
     if (error) {
@@ -117,7 +132,6 @@ export async function loadBook(
     // but its pages usually also carry neighbouring recipes — often cut off at
     // the page edge. Only that named recipe is wanted; split-page runs have no
     // per-item target and use the plain auto-accept bar.
-    const targets = opts.splitPages ? undefined : recipes;
     const promoted = await promoteBatch(client, collectionId, book, items, targets, opts.log);
     result.recipesCreated = promoted.created;
     result.heldForReview = promoted.held;
@@ -257,6 +271,13 @@ async function uploadBatch(
     default_prompt: config.prompt?.trim() || null,
     status: 'OPEN',
     total_items: items.length,
+    ...(opts.fallbackModel
+      ? {
+          fallback_provider: config.provider,
+          fallback_model: opts.fallbackModel,
+          recitation_policy: 'FALLBACK',
+        }
+      : {}),
   });
   if (batchError) throw batchError;
 
@@ -294,6 +315,75 @@ function splitIntoPages(recipes: DemoBook['recipes']): { label: string; pages: s
   return [...byLeaf.entries()]
     .sort(([a], [b]) => Number(a) - Number(b))
     .map(([leaf, file]) => ({ label: `leaf ${leaf}`, pages: [file] }));
+}
+
+/** What each import item was uploaded for, by page_index. */
+interface Target {
+  slug: string;
+  printedPages?: number[];
+}
+
+const toTarget = (r: DemoBook['recipes'][number]): Target => ({
+  slug: r.slug,
+  ...(r.printedPages ? { printedPages: r.printedPages } : {}),
+});
+
+const manifestPath = (userId: string, batchId: string) => `${userId}/${batchId}/demo-manifest.json`;
+
+/** Saved beside the batch's pages so a later run pairs items with recipes by
+ *  what was actually uploaded. */
+async function writeManifest(
+  client: DemoClient,
+  userId: string,
+  batchId: string,
+  targets: readonly (Target | undefined)[],
+): Promise<void> {
+  const body = JSON.stringify({ version: 1, targets });
+  const { error } = await client.storage
+    .from('imports')
+    .upload(manifestPath(userId, batchId), new Blob([body], { type: 'application/json' }), {
+      contentType: 'application/json',
+      upsert: true,
+    });
+  if (error) throw new Error(`demo manifest: ${error.message}`);
+}
+
+async function readManifest(
+  client: DemoClient,
+  userId: string,
+  batchId: string,
+): Promise<(Target | undefined)[] | null> {
+  const { data } = await client.storage.from('imports').download(manifestPath(userId, batchId));
+  if (!data) return null;
+  try {
+    const parsed = JSON.parse(await data.text()) as { targets?: (Target | null)[] };
+    return Array.isArray(parsed.targets) ? parsed.targets.map((t) => t ?? undefined) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Point an existing batch's fallback at `opts.fallbackModel` and re-queue any
+ *  pages parked on a refusal (import_set_recitation_policy un-parks them). */
+async function applyFallback(client: DemoClient, batchId: string, opts: LoadOptions) {
+  const { data: batch, error } = await client
+    .from('import_batches')
+    .select('default_provider')
+    .eq('id', batchId)
+    .single();
+  if (error) throw error;
+  const { error: updateError } = await client
+    .from('import_batches')
+    .update({ fallback_provider: batch.default_provider, fallback_model: opts.fallbackModel })
+    .eq('id', batchId);
+  if (updateError) throw updateError;
+  const { error: policyError } = await client.rpc('import_set_recitation_policy', {
+    p_batch_id: batchId,
+    p_policy: 'FALLBACK',
+  });
+  if (policyError) throw policyError;
+  const { error: kickError } = await client.rpc('ocr_kick', { p_batch_id: batchId });
+  if (kickError) opts.log(`  ! ocr_kick: ${kickError.message}`);
 }
 
 interface ItemRow {
@@ -354,7 +444,7 @@ async function promoteBatch(
   collectionId: string,
   book: DemoBook,
   items: ItemRow[],
-  targets: DemoBook['recipes'] | undefined,
+  targets: readonly (Target | undefined)[] | undefined,
   log: (line: string) => void,
 ): Promise<{ created: number; held: number }> {
   const { data: existing, error } = await client
@@ -396,8 +486,14 @@ async function promoteBatch(
     }
     const accepted: ParsedRecipeDraft[] = [];
     const remaining: ParsedRecipeDraft[] = [];
-    for (const d of candidates)
-      (isDraftAutoAcceptable(normalizeDraft(d)) ? accepted : remaining).push(d);
+    for (const d of candidates) {
+      // A target's corpus folder holds every page of that recipe, so the
+      // model's `complete` flag adds nothing but noise there — it has marked
+      // two-page recipes incomplete when judging page by page. Keep the
+      // structural bar (title, ingredients, steps, nothing unplaced).
+      const judged = normalizeDraft(targetRecipe ? { ...d, complete: undefined } : d);
+      (isDraftAutoAcceptable(judged) ? accepted : remaining).push(d);
+    }
     held += remaining.length;
     if (accepted.length === 0) continue;
 

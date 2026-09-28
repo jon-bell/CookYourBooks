@@ -213,7 +213,7 @@ export const BOOKS: Book[] = [
         { kind: 'index', label: 'index', leaves: span(123, 129) },
       ],
       recipes: [
-        { title: 'Noodle Soup', leaves: [22, 23] }, // pp. 12–13
+        { title: 'Yat Ko Main (Noodle Soup)', leaves: [22, 23] }, // pp. 12–13
         { title: 'Ten Sune Gune (Sweet and Sour Fish)', leaves: [30, 31] }, // pp. 20–21
         { title: 'Fried Rice with Chicken and Mushrooms', leaves: [49, 50] }, // pp. 39–40
         { title: 'Extra White Chop Suey', leaves: [51, 52] }, // pp. 41–42
